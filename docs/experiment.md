@@ -2,35 +2,38 @@
 
 ## Purpose
 
-Evaluate whether a new Rust GUI foundation can improve application development
-enough to justify the effort of building and maintaining it. Replacing GPUI Fusion
-is not an established requirement.
+Evaluate a Rust GUI foundation with fine-grained updates, low resource usage,
+and support for custom rendering and animation.
 
 ## Current boundary
 
-The current milestone is limited to development guidelines and a buildable Cargo
-workspace with one empty core library. It does not include functional GUI code.
+The current milestone is a persistent node tree in `solor-core`: stable live
+handles, ordered parent-child relationships, payload access, and subtree removal.
+The design and acceptance criteria are in [node-tree.md](node-tree.md).
+
+This tree is a storage foundation. It does not yet establish a UI update model.
 
 The following are outside this milestone:
 
-- Node storage, persistent trees, signals, and invalidation tracking.
+- Moving existing nodes, immutable snapshots, and serialization.
+- Signals, dependency tracking, and invalidation propagation.
 - Layout, rendering, text, input, and window integration.
 - Widgets, showcase applications, and performance benchmarks.
 - Selecting a rendering backend or committing to a complete framework design.
 
-Scaffold acceptance consists of successful formatting, compilation, and lint
-checks. These checks establish project setup only.
+Acceptance covers handle validity, topology consistency, ordered children,
+payload lifetime, deep-tree removal, and isolated payload edits. Formatting,
+compilation, lint checks, and focused tests validate this milestone.
 
 ## Candidate investigations
 
 Local updates and baseline resource usage are candidate investigations, not
-implemented capabilities or an approved implementation sequence. A retained
-tree, signals, a particular arena, and CPU rendering remain design options.
+implemented capabilities or an approved implementation sequence. SlotMap backs
+the current tree experiment; this does not settle reactive or rendering choices.
 
-The first functional experiment should address one concrete limitation observed
-in application development. Its scope and acceptance criteria must be established
-before implementation. Local update propagation and CPU rendering should be
-evaluated separately so their costs and benefits can be identified.
+The next experiment needs its own concrete problem and acceptance criteria.
+Local update propagation and CPU rendering should be evaluated separately so
+their costs and benefits can be identified.
 
 The initial native desktop investigation is limited to Linux with Wayland.
 Cross-platform support is a later decision, not a current deliverable.
@@ -48,7 +51,7 @@ For each functional experiment, record:
 Continue when the evidence supports a useful improvement and the next milestone
 fits the available effort. Revise or stop when the expected benefit is absent,
 the comparison is inconclusive, or the required scope exceeds the agreed budget.
-Successful scaffolding alone does not justify further architectural commitments.
+Successful storage tests alone do not justify further architectural commitments.
 
 No comparative performance result, fixed implementation schedule, or commitment
 to replace an existing framework has been established.

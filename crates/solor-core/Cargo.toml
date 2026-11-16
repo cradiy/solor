@@ -3,7 +3,10 @@ name = "solor-core"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
-description = "Core library scaffold for the Solor GUI experiment"
+description = "Core data structures for the Solor GUI experiment"
+
+[dependencies]
+slotmap.workspace = true
 
 [lints]
 workspace = true

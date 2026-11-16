@@ -6,6 +6,9 @@ resolver = "3"
 edition = "2024"
 publish = false
 
+[workspace.dependencies]
+slotmap = "1.1.1"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
