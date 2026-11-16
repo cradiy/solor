@@ -131,6 +131,14 @@ impl<T> Tree<T> {
     /// auxiliary storage. Payloads are dropped leaf-first. If a payload destructor
     /// panics, removal can be partial, but the remaining topology is valid.
     pub fn remove_subtree(&mut self, id: NodeId) -> Result<usize, TreeError> {
+        self.remove_subtree_with(id, |_| {})
+    }
+
+    pub(crate) fn remove_subtree_with(
+        &mut self,
+        id: NodeId,
+        mut before_remove: impl FnMut(NodeId),
+    ) -> Result<usize, TreeError> {
         if self.node(id)?.parent.is_none() {
             return Err(TreeError::CannotRemoveRoot);
         }
@@ -146,6 +154,7 @@ impl<T> Tree<T> {
             let parent = self.nodes[current]
                 .parent
                 .expect("a removable node has a parent");
+            before_remove(self.handle(current));
             if current == id.key {
                 self.nodes[parent].children.retain(|&key| key != current);
             } else {

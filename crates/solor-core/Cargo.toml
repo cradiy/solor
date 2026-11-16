@@ -10,3 +10,7 @@ slotmap.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "state_updates"
+harness = false

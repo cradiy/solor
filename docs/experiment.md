@@ -7,29 +7,30 @@ and support for custom rendering and animation.
 
 ## Current boundary
 
-The current milestone is a persistent node tree in `solor-core`: stable live
-handles, ordered parent-child relationships, payload access, and subtree removal.
-The design and acceptance criteria are in [node-tree.md](node-tree.md).
-
-This tree is a storage foundation. It does not yet establish a UI update model.
+The current milestone is explicit state-to-node updates: typed signals, bindings,
+deduplicated pending work, and lifecycle cleanup. The runtime owns the
+[persistent node tree](node-tree.md). Its scheduling contract and acceptance
+criteria are in [state-updates.md](state-updates.md).
 
 The following are outside this milestone:
 
 - Moving existing nodes, immutable snapshots, and serialization.
-- Signals, dependency tracking, and invalidation propagation.
+- Derived signals, automatic dependency tracking, and multi-source bindings.
+- Writes to runtime state from update callbacks and layout/paint invalidation.
 - Layout, rendering, text, input, and window integration.
-- Widgets, showcase applications, and performance benchmarks.
+- Widgets, showcase applications, and application-level performance comparisons.
 - Selecting a rendering backend or committing to a complete framework design.
 
-Acceptance covers handle validity, topology consistency, ordered children,
-payload lifetime, deep-tree removal, and isolated payload edits. Formatting,
-compilation, lint checks, and focused tests validate this milestone.
+Acceptance covers local callback execution, batch coalescing, equality suppression,
+and cancellation of pending work when bindings, signals, or nodes are removed.
+Focused tests cover panic behavior and index consistency. Release benchmarks
+measure update dispatch across node counts and workloads, separately from rendering.
 
 ## Candidate investigations
 
-Local updates and baseline resource usage are candidate investigations, not
-implemented capabilities or an approved implementation sequence. SlotMap backs
-the current tree experiment; this does not settle reactive or rendering choices.
+The current explicit update mechanism does not settle automatic dependency
+tracking or rendering choices. Baseline application resource usage remains a
+separate investigation.
 
 The next experiment needs its own concrete problem and acceptance criteria.
 Local update propagation and CPU rendering should be evaluated separately so
