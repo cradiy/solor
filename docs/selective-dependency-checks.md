@@ -157,6 +157,8 @@ target runs the same correctness and complete-update workloads.
 The measured decision is to keep normal layout as the default. Same-order
 [checkpoint refresh](checkpoint-refresh.md) addresses redundant index rebuilding;
 the [shared-attempt path](shared-layout-attempt.md) addresses repeated subtree
-layout. Any candidate must
+layout. The [parent-layout skip](parent-layout-skip.md) measures retaining a
+validated root layout and guards against unpublished work hidden by an advanced
+standalone-audit cursor. Any candidate must
 retain failure atomicity and be measured across stable edits, changed results,
 batch updates, and resizing rather than only the favorable stable-label case.

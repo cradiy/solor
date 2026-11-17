@@ -121,6 +121,7 @@ fn validate_dependency_results() {
         )
         .unwrap();
     assert_eq!(result.published, 2);
+    assert!(!result.skipped_parent_layout);
     assert_eq!(result.reused_layouts, 1);
     assert_eq!(result.checks[1].outcome, CheckOutcome::Changed);
     println!(
@@ -142,4 +143,30 @@ fn validate_dependency_results() {
     );
     scene.run(Query::Exact(10), None, true).unwrap();
     assert_eq!(scene.snapshot(), incremental);
+    // Refresh after the forced reference publication, then validate a stable edit.
+    assert!(
+        scene
+            .refresh_selective_dependencies(&mut selective, allocated)
+            .unwrap()
+    );
+    assert!(
+        scene
+            .refresh_selective_dependencies(&mut selected_measure, measured)
+            .unwrap()
+    );
+    scene.edit_layout::<Drawing>(child, |_| {}).unwrap();
+    let result = scene
+        .run_pruned(
+            Query::Exact(10),
+            Size {
+                width: 10,
+                height: 5,
+            },
+            &mut selected_measure,
+            &mut selective,
+        )
+        .unwrap();
+    assert!(result.skipped_parent_layout);
+    assert_eq!(scene.snapshot(), incremental);
+    println!("equal dependencies: parent layout skipped; adopted geometry matches reference");
 }

@@ -73,8 +73,8 @@ buffer growth directly and runs in the contract and both cache-capacity targets.
 
 The existing 384-step mixed oracle also includes shared attempts: verdicts match
 linear auditing and geometry matches cache-disabled recomputation. Both one-slot
-and three-slot release examples complete. The workspace has 76 passing tests,
-including 48 layout-contract tests.
+and three-slot release examples complete. The [layout contract](layout-contract.md)
+describes the current correctness coverage.
 
 ## Complete update cost
 
@@ -145,7 +145,7 @@ cargo run --release -p solor-core --example layout_cost_one --offline
 ```
 
 Keep shared attempts as an explicit experiment: repeated subtree layout is
-eliminated without losing publication atomicity. The next boundary is skipping a
-parent's layout when its inputs, allocation, and consumed results are unchanged,
-while retaining descendant movement and prior placement decisions. That behavior
-is not implemented here.
+eliminated without losing publication atomicity. The separate
+[parent-layout skip](parent-layout-skip.md) evaluates retaining the current root
+layout when its inputs, allocation, and consumed results are unchanged, while
+publishing descendant movement and preserving prior placement decisions.

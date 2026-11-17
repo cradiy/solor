@@ -130,3 +130,5 @@ updates, including checkpoint replacement, while retaining normal reconciliation
 for atomic publication. It is not selected for automatic runtime validation.
 The [shared-attempt experiment](shared-layout-attempt.md) combines root audits
 with normal layout so adopted subtree results can publish in the same update.
+The [parent-layout skip](parent-layout-skip.md) additionally checks that evidence
+validates the current publication before retaining the root layout.

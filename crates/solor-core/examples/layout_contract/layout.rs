@@ -656,6 +656,7 @@ pub struct Scene {
     pending: bool,
     request: Option<(Query, Option<Size>)>,
     changes: Option<validation::ChangeLog>,
+    publication: u64,
 }
 
 impl Scene {
@@ -669,6 +670,7 @@ impl Scene {
             pending: true,
             request: None,
             changes: None,
+            publication: 0,
         }
     }
 
@@ -759,12 +761,17 @@ impl Scene {
         if !self.pending && self.request == Some((query, assigned)) && !force {
             return Ok(0);
         }
+        let publication = self
+            .publication
+            .checked_add(1)
+            .ok_or(LayoutError::RevisionExhausted)?;
         self.pending = true;
         let attempt = Attempt(&mut self.scratch);
         layout_root(&mut self.store, attempt.0, query, assigned, force)?;
         let published = publish_layout(&mut self.store, attempt.0);
         self.request = Some((query, assigned));
         self.pending = false;
+        self.publication = publication;
         Ok(published)
     }
 

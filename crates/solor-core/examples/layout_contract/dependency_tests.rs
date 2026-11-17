@@ -17,6 +17,9 @@ mod selective_tests;
 #[path = "shared_attempt_tests.rs"]
 mod shared_attempt_tests;
 
+#[path = "parent_skip_tests.rs"]
+mod parent_skip_tests;
+
 #[test]
 fn validation_separates_measurements_from_final_baseline_and_content() {
     let initial = LayoutOutput {

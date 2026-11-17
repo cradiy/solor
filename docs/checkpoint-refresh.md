@@ -113,5 +113,6 @@ cargo run --release -p solor-core --example layout_cost_one --offline
 
 Keep same-order refresh in the explicit experiment. The
 [shared-attempt experiment](shared-layout-attempt.md) measures descendant layout
-reuse while preserving atomic publication. Normal layout remains the default,
-and propagation pruning remains outside this milestone.
+reuse while preserving atomic publication. The separate
+[parent-layout skip](parent-layout-skip.md) evaluates root layout pruning with
+publication-anchored evidence. Normal layout remains the default.

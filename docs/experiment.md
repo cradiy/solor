@@ -29,8 +29,8 @@ The [dependency-boundary investigation](layout-dependencies.md) establishes
 counterexamples to size-only propagation checks and measures updates that change
 content while preserving all geometry. The current
 [dependency-recording experiment](dependency-recording.md) retains per-query
-measurement reads and atomically published layout reads. Propagation pruning is
-not implemented, and the record representation has substantial measured overhead.
+measurement reads and atomically published layout reads. The record representation
+has substantial measured overhead.
 The [record-storage evaluation](record-storage-evaluation.md) compares a pooled
 candidate with this reference and adds warmed live-heap probes. The pool is not
 selected because local-update CPU cost and active retained storage regress.
@@ -49,6 +49,10 @@ results and resizing. The [shared layout attempt](shared-layout-attempt.md) lets
 normal layout adopt completed audit subtrees within one update. Only adopted
 drafts publish after root success; failed attempts retain both checkpoint cursors.
 The audit remains opt-in and is not selected for automatic runtime validation.
+The [parent-layout skip](parent-layout-skip.md) uses complete unchanged layout
+dependencies to retain the current root layout while publishing audited child
+changes. Evidence must be anchored to that publication; standalone checks cannot
+hide unpublished work. Root measurement remains conservative.
 The [node execution model draft](node-execution.md) remains the broader proposal.
 
 The following are outside this milestone:
@@ -56,7 +60,7 @@ The following are outside this milestone:
 - Publishing a node behavior API or UI property facade, or replacing the backing map.
 - Moving existing nodes, immutable snapshots, and serialization.
 - Derived signals, automatic dependency tracking, and multi-source bindings.
-- Integration with signal callbacks, dependency-based pruning, and paint invalidation.
+- Integration with signal callbacks, recursive dependency pruning, and paint invalidation.
 - General layout algorithms, real text measurement, rendering, input, and windows.
 - Widgets, showcase applications, and application-level performance comparisons.
 - Selecting a rendering backend or committing to a complete framework design.
@@ -65,8 +69,7 @@ Acceptance requires independent per-query records, cache-hit observations,
 conditional replacement, eviction, bounded recording, and no partial layout-record
 publication after errors or panics. Geometry and execution counts must agree with
 the unrecorded baseline; CPU, allocation, and retained-storage costs are measured
-separately. Stop at reliable record semantics and their representation cost before
-changing invalidation. Storage candidates must also measure heap after repeated
+separately. Storage candidates must also measure heap after repeated
 updates and explicit reclamation; fewer allocations alone does not justify a
 regression in the target workload. Existing failure and scratch-reclamation
 guarantees remain required. Optional record blocks must distinguish empty from incomplete evidence
@@ -82,8 +85,15 @@ requires an unchanged child sequence and valid evidence. Refresh must preserve
 old evidence on rejection. Shared attempts must reject mismatched allocations,
 discard obsolete drafts, preserve internal movement, and leave geometry and
 checkpoint cursors unchanged after failure. Staged results cannot survive into
-another update. These checks do not validate real text, pixel output, or a
-complete incremental layout system.
+another update. Skipping root layout requires unchanged owner inputs, allocation,
+complete consumed results, and evidence for the current publication. Preserve
+direct-child placement and newly computed descendant movement. Historical equality
+or a cursor advanced by standalone auditing must fall back to normal layout.
+Measure complete updates and retained storage, including cases that cannot skip.
+This bounded headless milestone is sufficient when its selective benefit and
+fallback costs are understood; it does not require further micro-optimization.
+These checks do not validate real text, pixel output, or a complete incremental
+layout system.
 
 ## Candidate investigations
 
