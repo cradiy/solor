@@ -20,6 +20,8 @@ edit, edits to ten percent of labels, alternating widths, a 24-width sweep, and
 changes to allocated height. All timing includes edits, ancestor invalidation,
 query lookup, measurement/layout, temporary allocation, and geometry publication.
 Construction, warmup, counters, checksums, and correctness checks are outside timing.
+The executable also includes the [stable-geometry label workload](layout-dependencies.md),
+with preparation outside timing and explicit checks that geometry stays unchanged.
 
 Each target first compares every workload with cache-disabled recomputation.
 Timed runs emit final geometry fingerprints and work counts. Fingerprints and
@@ -32,6 +34,9 @@ timed work, construction plus initial layout, and destruction for an external
 allocation probe. Allocation-instrumented timings must not be used as CPU results.
 Construction probes retain the fixture across the end marker; destruction probes
 check that its live heap storage is released. Heap measurements are not RSS/PSS.
+The [record-storage probes](record-storage-evaluation.md) also measure live storage
+after 100 updates, explicit scratch release, and destruction. They run after all
+timed workloads and include stable-label preparation where applicable.
 
 ```sh
 cargo build --release -p solor-core --example layout_cost_one --example layout_cost_three --offline
@@ -144,3 +149,7 @@ and allocation reduction.
 Reducing traversal requires a separate decision about container invalidation and
 placement dependencies. Neither finding calls for changing the backing map or
 publishing the prototype as a UI API.
+
+The [selective-check measurements](selective-dependency-checks.md) compare normal
+layout, linear auditing, and indexed auditing through full updates, including
+checkpoint replacement and retained index/history storage.

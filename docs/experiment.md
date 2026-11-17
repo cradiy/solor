@@ -22,9 +22,29 @@ ancestor invalidation and publication only after a complete successful layout.
 The [layout cost experiment](layout-cost.md) measures the complete
 headless update path with one and three inline cache slots, including local
 edits, batch edits, width changes, temporary allocation, and live fixture storage.
-The current [scratch reuse experiment](layout-scratch.md) uses scene-owned
+The [scratch reuse experiment](layout-scratch.md) uses scene-owned
 publication and child-state buffers, with cleanup on every exit and explicit
 capacity reclamation. It compares complete updates with the fresh-scratch baseline.
+The [dependency-boundary investigation](layout-dependencies.md) establishes
+counterexamples to size-only propagation checks and measures updates that change
+content while preserving all geometry. The current
+[dependency-recording experiment](dependency-recording.md) retains per-query
+measurement reads and atomically published layout reads. Propagation pruning is
+not implemented, and the record representation has substantial measured overhead.
+The [record-storage evaluation](record-storage-evaluation.md) compares a pooled
+candidate with this reference and adds warmed live-heap probes. The pool is not
+selected because local-update CPU cost and active retained storage regress.
+The current representation uses optional per-node record blocks: complete empty
+evidence is implicit, and unused blocks are released. It reduces warmed heap
+without changing recording during callbacks or ancestor traversal.
+The [dependency-result audit](dependency-validation.md) checks captured reads
+against current child results. Owner-input revisions and exact requests gate the
+check; incomplete evidence is unverifiable. Speculative geometry is discarded,
+and normal layout still completes the update without propagation pruning.
+The [selective-check experiment](selective-dependency-checks.md) routes bounded
+edit history through a checkpoint-local child/read index. Stable local audits
+visit fewer reads; changed results and resizing pay substantial index-rebuild
+costs. It remains opt-in and is not selected for automatic runtime validation.
 The [node execution model draft](node-execution.md) remains the broader proposal.
 
 The following are outside this milestone:
@@ -32,17 +52,29 @@ The following are outside this milestone:
 - Publishing a node behavior API or UI property facade, or replacing the backing map.
 - Moving existing nodes, immutable snapshots, and serialization.
 - Derived signals, automatic dependency tracking, and multi-source bindings.
-- Integration with signal callbacks, automatic layout dependencies, and paint invalidation.
+- Integration with signal callbacks, dependency-based pruning, and paint invalidation.
 - General layout algorithms, real text measurement, rendering, input, and windows.
 - Widgets, showcase applications, and application-level performance comparisons.
 - Selecting a rendering backend or committing to a complete framework design.
 
-Acceptance requires preserved sizing, locality, and failure guarantees; matching
-geometry and work counts; repeated sequential CPU measurements; and separate
-allocation measurements with a positive control. Scratch must remain empty after
-errors and panics, and reclamation must preserve clean requests and pending retries.
-Stop at the measured allocation/retention tradeoff and remaining costs. These
-checks do not validate real text, pixel output, or a complete incremental layout
+Acceptance requires independent per-query records, cache-hit observations,
+conditional replacement, eviction, bounded recording, and no partial layout-record
+publication after errors or panics. Geometry and execution counts must agree with
+the unrecorded baseline; CPU, allocation, and retained-storage costs are measured
+separately. Stop at reliable record semantics and their representation cost before
+changing invalidation. Storage candidates must also measure heap after repeated
+updates and explicit reclamation; fewer allocations alone does not justify a
+regression in the target workload. Existing failure and scratch-reclamation
+guarantees remain required. Optional record blocks must distinguish empty from incomplete evidence
+and preserve published layout evidence when measurement records are cleared. These
+audits must distinguish measured metrics from final layout output, retain internal
+movement behind unchanged outputs, survive cache eviction, and leave published
+geometry and records intact after errors or panics. Audit work and checkpoint
+storage must be reported separately from the normal update path. Selection must
+retain exact queries and execution order, reject missing edit history, and keep
+pending descendant changes when an audit cursor advances. Complete update costs
+must include checkpoint replacement as well as repeated layout work. These checks do
+not validate real text, pixel output, or a complete incremental layout
 system.
 
 ## Candidate investigations

@@ -145,7 +145,7 @@ cargo run -p solor-core --example layout_contract --offline
 cargo test -p solor-core --example layout_contract --offline
 ```
 
-Nineteen focused tests include a 256-step vertical comparison and a 384-step row
+Forty focused tests include a 256-step vertical comparison and a 384-step row
 comparison with all measurement and layout caches bypassed. The reference uses
 the same fixture algorithms, so known-value assertions independently check
 wrapping height, baseline, sibling origins, final allocations, and content extent.
@@ -165,3 +165,11 @@ integration with signals remain separate decisions.
 
 The [layout cost experiment](layout-cost.md) measures the same execution path
 with larger fixtures, including invalidation, scratch allocation, and publication.
+The [dependency-boundary investigation](layout-dependencies.md) adds executable
+counterexamples and a stable-geometry workload before ancestor pruning is attempted.
+The [recording experiment](dependency-recording.md) attaches reads to individual
+measurement results and publishes layout records atomically with geometry.
+The [result-validation experiment](dependency-validation.md) audits those records
+without pruning ancestors or publishing speculative child geometry.
+The [selective-check experiment](selective-dependency-checks.md) compares indexed
+checks with linear replay and normal layout across complete updates.

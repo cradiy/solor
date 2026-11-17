@@ -436,6 +436,7 @@ fn caught_child_errors_and_panics_still_abort_the_attempt() {
                 Err(LayoutError::FailedChildOperation)
             );
             assert_eq!(scene.snapshot(), vec![None, None]);
+            assert!(scene.published_layout_reads(root).is_none());
             assert!(scene.scratch_usage().iter().all(|&(len, _)| len == 0));
             assert!(scene.is_pending());
             scene.body_mut::<Drawing>(child).unwrap().fault = None;

@@ -118,9 +118,10 @@ policy require workloads beyond this prototype.
 
 The remaining local-edit cost includes visiting the root column's entire child
 list: a single-label edit still issues 5,009 queries in the large fixture. The
-next bounded investigation is container invalidation and placement dependencies,
-including edits that preserve a child's size versus edits that move later
-siblings. Scratch reuse alone cannot reduce that work.
+[dependency-boundary investigation](layout-dependencies.md) covers container
+invalidation and placement dependencies, including edits that preserve a child's
+size versus edits that move later siblings. Scratch reuse alone cannot reduce
+that work.
 
 ```sh
 cargo test -p solor-core --example layout_contract --example layout_cost_one --example layout_cost_three --offline

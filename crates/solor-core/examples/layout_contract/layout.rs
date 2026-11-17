@@ -8,6 +8,9 @@ use super::store::{AccessError, Context, NodeStore};
 
 const _: () = assert!(MEASUREMENT_CACHE_SLOTS > 0);
 
+#[path = "validation.rs"]
+pub mod validation;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayoutError {
     Access(AccessError),
@@ -21,6 +24,7 @@ pub enum LayoutError {
     UnplacedChildren,
     FailedChildOperation,
     StructureLocked,
+    RevisionExhausted,
     #[cfg(test)]
     Injected,
 }
@@ -124,10 +128,87 @@ pub trait LayoutNode: Any {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
+// A trace is evidence for one result, not a history of all reads by a node.
+pub(super) const MAX_RECORDED_READS: usize = 16_384;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Read {
+    Measure {
+        node: NodeId,
+        query: Query,
+        metrics: Metrics,
+    },
+    Layout {
+        node: NodeId,
+        assigned: Size,
+        output: LayoutOutput,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReadSet {
+    pub reads: Vec<Read>,
+    pub complete: bool,
+}
+
+impl Default for ReadSet {
+    fn default() -> Self {
+        Self {
+            reads: Vec::new(),
+            complete: true,
+        }
+    }
+}
+
+impl ReadSet {
+    fn is_empty(&self) -> bool {
+        self.complete && self.reads.is_empty()
+    }
+
+    fn push(&mut self, read: Read) {
+        if !self.complete {
+            return;
+        }
+        if self.reads.len() == MAX_RECORDED_READS {
+            self.reads = Vec::new();
+            self.complete = false;
+        } else {
+            self.reads.push(read);
+        }
+    }
+}
+
+struct Measurement {
+    query: Query,
+    metrics: Metrics,
+}
+
+struct DependencyRecords {
+    measurements: [ReadSet; MEASUREMENT_CACHE_SLOTS],
+    layout: ReadSet,
+}
+
+impl Default for DependencyRecords {
+    fn default() -> Self {
+        Self {
+            measurements: std::array::from_fn(|_| ReadSet::default()),
+            layout: ReadSet::default(),
+        }
+    }
+}
+
+impl DependencyRecords {
+    fn is_empty(&self) -> bool {
+        self.layout.is_empty() && self.measurements.iter().all(ReadSet::is_empty)
+    }
+}
+
 struct Entry {
     body: Box<dyn LayoutNode>,
     // Cache hits restore metrics, not the behavior's private measurement state.
-    measure_cache: [Option<(Query, Metrics)>; MEASUREMENT_CACHE_SLOTS],
+    measure_cache: [Option<Measurement>; MEASUREMENT_CACHE_SLOTS],
+    records: Option<Box<DependencyRecords>>,
+    input_revision: u64,
     replacement: usize,
     measure_dirty: bool,
     layout_dirty: bool,
@@ -139,7 +220,9 @@ impl Entry {
     fn new(body: impl LayoutNode) -> Self {
         Self {
             body: Box::new(body),
-            measure_cache: [None; MEASUREMENT_CACHE_SLOTS],
+            measure_cache: std::array::from_fn(|_| None),
+            records: None,
+            input_revision: 0,
             replacement: 0,
             measure_dirty: true,
             layout_dirty: true,
@@ -147,10 +230,37 @@ impl Entry {
             counts: Counts::default(),
         }
     }
+
+    fn discard_empty_records(&mut self) {
+        if self
+            .records
+            .as_ref()
+            .is_some_and(|records| records.is_empty())
+        {
+            self.records = None;
+        }
+    }
+
+    fn set_measurement_reads(&mut self, slot: usize, reads: ReadSet) {
+        if self.records.is_some() || !reads.is_empty() {
+            self.records
+                .get_or_insert_with(Default::default)
+                .measurements[slot] = reads;
+            self.discard_empty_records();
+        }
+    }
+
+    fn set_layout_reads(&mut self, reads: ReadSet) {
+        if self.records.is_some() || !reads.is_empty() {
+            self.records.get_or_insert_with(Default::default).layout = reads;
+            self.discard_empty_records();
+        }
+    }
 }
 
 pub struct MeasureContext<'a, 'store> {
     access: &'a mut Context<'store, Entry>,
+    reads: &'a mut ReadSet,
     force: bool,
     failed: bool,
 }
@@ -172,6 +282,11 @@ impl MeasureContext<'_, '_> {
         let metrics = self.access.execute_child(id, |entry, access| {
             Ok(measure(entry, access, query, self.force))
         })??;
+        self.reads.push(Read::Measure {
+            node: id,
+            query,
+            metrics,
+        });
         self.failed = false;
         Ok(metrics)
     }
@@ -185,20 +300,26 @@ fn measure(
 ) -> Result<Metrics> {
     entry.counts.queries += 1;
     if entry.measure_dirty {
-        entry.measure_cache.fill(None);
+        entry.measure_cache.iter_mut().for_each(|slot| *slot = None);
+        if let Some(records) = entry.records.as_mut() {
+            records.measurements = std::array::from_fn(|_| ReadSet::default());
+        }
+        entry.discard_empty_records();
         entry.replacement = 0;
     } else if !force {
-        for &(cached_query, metrics) in entry.measure_cache.iter().flatten() {
-            if cached_query == query {
+        for cached in entry.measure_cache.iter().flatten() {
+            if cached.query == query {
                 entry.counts.cache_hits += 1;
-                return Ok(metrics);
+                return Ok(cached.metrics);
             }
         }
     }
     entry.measure_dirty = true;
     entry.counts.measures += 1;
+    let mut reads = ReadSet::default();
     let mut cx = MeasureContext {
         access,
+        reads: &mut reads,
         force,
         failed: false,
     };
@@ -211,12 +332,14 @@ fn measure(
     }
     if let Some(slot) = entry
         .measure_cache
-        .iter_mut()
-        .find(|slot| slot.is_some_and(|(key, _)| key == query))
+        .iter()
+        .position(|slot| slot.as_ref().is_some_and(|cached| cached.query == query))
     {
-        *slot = Some((query, metrics));
+        entry.measure_cache[slot] = Some(Measurement { query, metrics });
+        entry.set_measurement_reads(slot, reads);
     } else {
-        entry.measure_cache[entry.replacement] = Some((query, metrics));
+        entry.measure_cache[entry.replacement] = Some(Measurement { query, metrics });
+        entry.set_measurement_reads(entry.replacement, reads);
         entry.replacement = (entry.replacement + 1) % entry.measure_cache.len();
     }
     entry.measure_dirty = false;
@@ -226,6 +349,7 @@ fn measure(
 struct Draft {
     node: NodeId,
     geometry: Geometry,
+    reads: Option<ReadSet>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -254,6 +378,7 @@ pub struct LayoutContext<'a, 'store> {
     access: &'a mut Context<'store, Entry>,
     scratch: &'a mut Scratch,
     children_start: usize,
+    reads: ReadSet,
     force: bool,
     failed: bool,
 }
@@ -276,6 +401,7 @@ impl LayoutContext<'_, '_> {
         self.failed = true;
         let metrics = MeasureContext {
             access: self.access,
+            reads: &mut self.reads,
             force: self.force,
             failed: false,
         }
@@ -304,6 +430,11 @@ impl LayoutContext<'_, '_> {
         })??;
         // Recursive growth may relocate the vector; retain indexes, never references.
         self.scratch.children[self.children_start + index].draft = Some(position);
+        self.reads.push(Read::Layout {
+            node: id,
+            assigned,
+            output,
+        });
         self.failed = false;
         Ok(output)
     }
@@ -347,6 +478,7 @@ fn layout(
         scratch.draft.push(Draft {
             node: access.current(),
             geometry,
+            reads: None,
         });
         return Ok((
             position,
@@ -366,6 +498,7 @@ fn layout(
         access,
         scratch,
         children_start,
+        reads: ReadSet::default(),
         force,
         failed: false,
     };
@@ -382,6 +515,7 @@ fn layout(
     let position = cx.scratch.draft.len();
     cx.scratch.draft.push(Draft {
         node: cx.access.current(),
+        reads: Some(std::mem::take(&mut cx.reads)),
         geometry: Geometry {
             metrics: Metrics {
                 size: assigned,
@@ -400,6 +534,7 @@ pub struct Scene {
     nodes: Vec<NodeId>,
     pending: bool,
     request: Option<(Query, Option<Size>)>,
+    changes: Option<validation::ChangeLog>,
 }
 
 impl Scene {
@@ -412,6 +547,7 @@ impl Scene {
             nodes,
             pending: true,
             request: None,
+            changes: None,
         }
     }
 
@@ -465,6 +601,15 @@ impl Scene {
         node: NodeId,
         change: impl FnOnce(&mut N),
     ) -> Result<()> {
+        let entry = self.store.get_mut(node)?;
+        let revision = entry
+            .input_revision
+            .checked_add(1)
+            .ok_or(LayoutError::RevisionExhausted)?;
+        if let Some(changes) = &mut self.changes {
+            changes.record(node)?;
+        }
+        entry.input_revision = revision;
         self.invalidate(node)?;
         change(self.body_mut::<N>(node)?);
         Ok(())
@@ -500,7 +645,7 @@ impl Scene {
         })??;
         attempt.0.draft[position].geometry.origin = Origin::default();
         let mut published = 0;
-        for change in &attempt.0.draft {
+        for change in &mut attempt.0.draft {
             let entry = self
                 .store
                 .get_mut(change.node)
@@ -510,6 +655,9 @@ impl Scene {
                 entry.geometry = Some(change.geometry);
             }
             entry.layout_dirty = false;
+            if let Some(reads) = change.reads.take() {
+                entry.set_layout_reads(reads);
+            }
         }
         self.request = Some((query, assigned));
         self.pending = false;
@@ -532,6 +680,63 @@ impl Scene {
             total.layouts += counts.layouts;
             total
         })
+    }
+
+    /// Counts retained evidence independently of measurement/layout execution work.
+    pub fn dependency_stats(&self) -> (usize, usize, usize) {
+        let mut stats = (0, 0, 0);
+        for &id in &self.nodes {
+            let entry = self.store.get(id).unwrap();
+            let Some(records) = entry.records.as_ref() else {
+                continue;
+            };
+            for reads in records
+                .measurements
+                .iter()
+                .chain(std::iter::once(&records.layout))
+            {
+                stats.0 += reads.reads.len();
+                stats.1 += reads.reads.capacity() * std::mem::size_of::<Read>();
+                stats.2 += usize::from(!reads.complete);
+            }
+        }
+        stats
+    }
+
+    #[cfg(test)]
+    pub fn measurement_reads(&self, id: NodeId, query: Query) -> Option<ReadSet> {
+        let entry = self.store.get(id).unwrap();
+        if entry.measure_dirty {
+            return None;
+        }
+        entry
+            .measure_cache
+            .iter()
+            .position(|slot| slot.as_ref().is_some_and(|cached| cached.query == query))
+            .map(|slot| {
+                entry
+                    .records
+                    .as_ref()
+                    .map_or_else(ReadSet::default, |records| {
+                        records.measurements[slot].clone()
+                    })
+            })
+    }
+
+    #[cfg(test)]
+    pub fn published_layout_reads(&self, id: NodeId) -> Option<ReadSet> {
+        let entry = self.store.get(id).unwrap();
+        entry.geometry.map(|_| {
+            entry
+                .records
+                .as_ref()
+                .map_or_else(ReadSet::default, |records| records.layout.clone())
+        })
+    }
+
+    #[cfg(test)]
+    pub fn has_record_block(&self, id: NodeId) -> bool {
+        self.store.get(id).unwrap().records.is_some()
     }
 
     #[cfg(test)]
