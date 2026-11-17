@@ -2,6 +2,7 @@
 
 mod fixtures;
 mod layout;
+mod negotiation;
 
 // Reuse the access prototype; this target exercises only part of its API.
 #[allow(dead_code)]
@@ -11,13 +12,17 @@ mod store;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod negotiation_tests;
+
 use fixtures::{Wrapping, nested};
+use layout::Query;
 
 fn main() {
     let (mut incremental, ids) = nested();
     let (mut reference, reference_ids) = nested();
-    incremental.run(100, false).unwrap();
-    reference.run(100, true).unwrap();
+    incremental.run(Query::Exact(100), None, false).unwrap();
+    reference.run(Query::Exact(100), None, true).unwrap();
     assert_eq!(incremental.snapshot(), reference.snapshot());
     let before = incremental.counts();
     incremental
@@ -26,8 +31,8 @@ fn main() {
     reference
         .edit_layout::<Wrapping>(reference_ids.text, |text| text.units = 100)
         .unwrap();
-    let published = incremental.run(100, false).unwrap();
-    reference.run(100, true).unwrap();
+    let published = incremental.run(Query::Exact(100), None, false).unwrap();
+    reference.run(Query::Exact(100), None, true).unwrap();
     assert_eq!(incremental.snapshot(), reference.snapshot());
     let after = incremental.counts();
     println!(
@@ -39,9 +44,10 @@ fn main() {
     let before = incremental.counts();
     incremental.set_ink(ids.drawing, 17).unwrap();
     reference.set_ink(reference_ids.drawing, 17).unwrap();
-    assert_eq!(incremental.run(100, false), Ok(0));
-    reference.run(100, true).unwrap();
+    assert_eq!(incremental.run(Query::Exact(100), None, false), Ok(0));
+    reference.run(Query::Exact(100), None, true).unwrap();
     assert_eq!(incremental.snapshot(), reference.snapshot());
     assert_eq!(incremental.counts(), before);
     println!("ink edit: no measurement or layout; geometry matches full recomputation");
+    negotiation::run();
 }

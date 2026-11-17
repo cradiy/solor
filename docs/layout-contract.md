@@ -4,16 +4,17 @@
 
 This experiment tests parent/child layout dependencies and completion using the
 scoped node store. It is a headless executable, not a public widget API. Its
-fixtures are vertical containers, a synthetic wrapping leaf, and a fixed-size
-drawing leaf. The wrapping leaf computes integer cell counts; it does not shape
-text. The drawing leaf has no renderer.
+fixtures include vertical containers, a synthetic wrapping leaf, a fixed-size
+drawing leaf, and an icon/label/button row. The wrapping leaf computes integer
+cell counts; it does not shape text. The drawing leaf has no renderer. The
+[size negotiation contract](size-negotiation.md) specifies the row and query rules.
 
-The initial sizing domain is deliberately narrow: a positive available width,
-content-dependent height, integer coordinates, and an optional first baseline.
-Minimum/maximum and intrinsic-size queries, flex distribution, height constraints,
-overflow policy, transforms, and pixel damage are not selected by this experiment.
-Container padding must fit the available width. Arithmetic overflow and invalid
-metrics are errors, not silently accepted geometry.
+The sizing domain is deliberately narrow: natural, maximum, or exact width queries,
+content-dependent measured height, integer coordinates, and an optional first
+baseline. Zero-width boxes and allocations different from measured sizes are
+valid. Content extent can exceed the allocation. General two-axis constraints,
+min-content sizing, flex distribution, transforms, and pixel damage remain outside
+the experiment. Arithmetic overflow and invalid metrics are explicit errors.
 
 ## Ownership and candidate interface
 
@@ -22,8 +23,8 @@ metrics are errors, not silently accepted geometry.
 | Node implementation | Typed inputs and behavior-specific state |
 | Framework entry | Measurement cache, measurement/layout invalidity, execution counters, last published local geometry |
 | Parent implementation | Child sizing queries, assigned sizes, and relative origins |
-| Layout attempt | Unpublished geometry changes and child-placement validation |
-| Scene coordinator | Pending layout, last successful root width, and publication boundary |
+| Layout attempt | Unpublished geometry, final child outputs, and placement validation |
+| Scene coordinator | Pending layout, last successful root query/allocation, and publication boundary |
 
 The experiment uses these private interfaces:
 
@@ -32,19 +33,21 @@ trait LayoutNode {
     fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query)
         -> Result<Metrics, LayoutError>;
     fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size)
-        -> Result<(), LayoutError>;
+        -> Result<LayoutOutput, LayoutError>;
 }
 ```
 
-Measurement can query direct children, but cannot place them. Layout can measure
-and place direct children, but cannot edit topology or another node's inputs.
-Each direct child must be placed exactly once in this fixture contract. This is
-not a decision about virtualized, hidden, portal, or out-of-flow children.
+Measurement can query direct children, but cannot lay out or place them. Layout
+can measure direct children, execute their layout with an assigned size, and then
+place them using final outputs. It cannot edit topology or another node's inputs.
+Each direct child must be laid out and placed exactly once. This is not a decision
+about virtualized, hidden, portal, or out-of-flow children.
 
-A container measures its children under its inner width, computes its own height
-and baseline, then uses those results to assign child sizes and relative origins
-during layout. The fixture assigns measured sizes directly. The separation of
-query and assignment does not establish support for arbitrary assigned sizes.
+A container measures its children, computes a proposed size, and then negotiates
+child assignments using its actual allocation during layout. Child layout returns
+the final baseline and content extent; the parent uses them to decide relative
+origins. The framework retains the assigned size rather than copying a previous
+measurement's size or baseline into published geometry.
 
 ## Invalidation and reuse
 
@@ -53,13 +56,13 @@ measurement and layout. The initial policy does not stop propagation when the
 remeasured size happens to be unchanged. Baselines and child placement can matter
 even when outer dimensions do not change.
 
-Measurement reuse requires a matching width and no outstanding input/dependency
+Measurement reuse requires a matching query kind/value and no outstanding input/dependency
 invalidation. All layout-affecting edits go through a boundary that invalidates
 before invoking the mutation callback, so a callback panic cannot leave a clean
 cache after a partial edit. Synthetic font metrics are explicit leaf inputs;
 changing them uses the same invalidation path.
 
-Layout reuse requires clean layout state and matching assigned metrics. A parent
+Layout reuse requires clean layout state and matching assigned size. A parent
 can change a child's relative origin without executing that child's layout body
 when the child's local geometry remains valid. Descendant origins remain relative
 to their own parents; no absolute-coordinate composition is implemented.
@@ -67,7 +70,8 @@ to their own parents; no absolute-coordinate composition is implemented.
 An affected container still enumerates its children and queries cached metrics.
 Skipping a clean subtree's behavior is not equivalent to eliminating all access
 to that subtree. No per-edge dependency graph or changed-size early stop is
-implemented. The measurement cache holds one query result per node.
+implemented. The measurement cache holds at most three query results per node,
+using FIFO replacement; input/dependency invalidation discards all three.
 
 A drawing-only ink change does not request layout. This tests layout exclusion,
 not paint scheduling, drawing correctness, or damage handling.
@@ -115,8 +119,10 @@ boundary is not a concurrent scene snapshot or a renderer resource transaction.
    unchanged published snapshot and a successful retry matching full recomputation.
 6. Reject invalid child placement and invalid sizing without partial publication.
 
-Work counters distinguish measurement bodies, layout bodies, and published
-geometry entries. They establish execution locality, not frame-time performance.
+Work counters distinguish query requests, cache hits, measurement bodies, layout
+bodies, and changed geometry entries at publication. They establish execution
+locality, not frame-time performance. A staged entry with unchanged geometry can
+complete layout without being counted as changed publication.
 The journal and placement validation use scratch storage proportional to visited
 work. No whole-tree geometry clone is required by a normal layout attempt.
 
@@ -135,9 +141,10 @@ cargo run -p solor-core --example layout_contract --offline
 cargo test -p solor-core --example layout_contract --offline
 ```
 
-Eleven focused tests include a 256-step comparison with all measurement and layout
-caches bypassed. The reference uses the same fixture algorithms, so known-value
-assertions independently check wrapping height, baseline, and sibling origins.
+Eighteen focused tests include a 256-step vertical comparison and a 384-step row
+comparison with all measurement and layout caches bypassed. The reference uses
+the same fixture algorithms, so known-value assertions independently check
+wrapping height, baseline, sibling origins, final allocations, and content extent.
 The reference can perform repeated measurements; it is a correctness oracle,
 not an optimized full-layout performance baseline.
 

@@ -3,8 +3,8 @@ use std::any::Any;
 use solor_core::tree::NodeId;
 
 use super::layout::{
-    LayoutContext, LayoutError, LayoutNode, MeasureContext, Metrics, Origin, Query, Result, Scene,
-    Size,
+    LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext, Metrics, Origin, Query,
+    Result, Scene, Size,
 };
 
 fn add(a: u32, b: u32) -> Result<u32> {
@@ -17,54 +17,72 @@ pub struct Column {
 }
 
 impl Column {
-    fn inner(&self, width: u32) -> Result<Query> {
-        Query::new(
-            width
-                .checked_sub(add(self.padding, self.padding)?)
-                .ok_or(LayoutError::InvalidSize)?,
-        )
+    fn child_query(&self, query: Query) -> Result<Query> {
+        let inset = add(self.padding, self.padding)?;
+        Ok(match query {
+            Query::Natural => Query::Natural,
+            Query::AtMost(width) | Query::Exact(width) => {
+                Query::AtMost(width.saturating_sub(inset))
+            }
+        })
     }
 }
 
 impl LayoutNode for Column {
     fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
-        let inner = self.inner(query.width())?;
+        let child_query = self.child_query(query)?;
         let mut height = self.padding;
+        let mut width = 0;
         let mut baseline = None;
         for index in 0..cx.child_count() {
             if index > 0 {
                 height = add(height, self.gap)?;
             }
-            let child = cx.measure_child(index, inner)?;
+            let child = cx.measure_child(index, child_query)?;
             if index == 0 {
                 baseline = child.baseline.map(|value| add(value, height)).transpose()?;
             }
             height = add(height, child.size.height)?;
+            width = width.max(child.size.width);
         }
         Ok(Metrics {
             size: Size {
-                width: query.width(),
+                width: query.resolve(add(width, add(self.padding, self.padding)?)?),
                 height: add(height, self.padding)?,
             },
             baseline,
         })
     }
 
-    fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<()> {
-        let inner = self.inner(assigned.width)?;
+    fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {
+        let query = self.child_query(Query::Exact(assigned.width))?;
         let mut y = self.padding;
+        let mut content = Size {
+            width: add(self.padding, self.padding)?,
+            height: self.padding,
+        };
+        let mut baseline = None;
         for index in 0..cx.child_count() {
             if index > 0 {
                 y = add(y, self.gap)?;
             }
-            let child = cx.measure_child(index, inner)?;
-            cx.place_child(index, child, Origin { x: self.padding, y })?;
+            let child = cx.measure_child(index, query)?;
+            let output = cx.layout_child(index, child.size)?;
+            cx.place_child(index, Origin { x: self.padding, y })?;
+            if index == 0 {
+                baseline = output.baseline.map(|value| add(value, y)).transpose()?;
+            }
+            content.width = content.width.max(add(
+                add(self.padding, child.size.width.max(output.content.width))?,
+                self.padding,
+            )?);
+            content.height = content
+                .height
+                .max(add(y, child.size.height.max(output.content.height))?);
             y = add(y, child.size.height)?;
         }
-        if add(y, self.padding)? != assigned.height {
-            return Err(LayoutError::InvalidSize);
-        }
-        Ok(())
+        content.height = add(content.height.max(y), self.padding)?;
+        Ok(LayoutOutput { baseline, content })
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
@@ -79,27 +97,50 @@ pub struct Wrapping {
     pub ascent: u32,
 }
 
-impl LayoutNode for Wrapping {
-    fn measure(&mut self, _cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
+impl Wrapping {
+    fn compute(&self, query: Query) -> Result<(Metrics, Size)> {
         if self.advance == 0 || self.line_height == 0 || self.ascent > self.line_height {
             return Err(LayoutError::InvalidSize);
         }
-        let columns = (query.width() / self.advance).max(1);
+        let natural = self
+            .units
+            .checked_mul(self.advance)
+            .ok_or(LayoutError::InvalidSize)?;
+        let width = query.resolve(natural);
+        let columns = (width / self.advance).max(1);
         let lines = self.units.div_ceil(columns);
         let height = lines
             .checked_mul(self.line_height)
             .ok_or(LayoutError::InvalidSize)?;
-        Ok(Metrics {
-            size: Size {
-                width: query.width(),
-                height,
+        let content = Size {
+            width: self
+                .units
+                .min(columns)
+                .checked_mul(self.advance)
+                .ok_or(LayoutError::InvalidSize)?,
+            height,
+        };
+        Ok((
+            Metrics {
+                size: Size { width, height },
+                baseline: (lines > 0).then_some(self.ascent),
             },
-            baseline: (lines > 0).then_some(self.ascent),
-        })
+            content,
+        ))
+    }
+}
+
+impl LayoutNode for Wrapping {
+    fn measure(&mut self, _cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
+        Ok(self.compute(query)?.0)
     }
 
-    fn layout(&mut self, _cx: &mut LayoutContext<'_, '_>, _assigned: Size) -> Result<()> {
-        Ok(())
+    fn layout(&mut self, _cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {
+        let (metrics, content) = self.compute(Query::Exact(assigned.width))?;
+        Ok(LayoutOutput {
+            baseline: metrics.baseline,
+            content,
+        })
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
@@ -158,17 +199,20 @@ impl LayoutNode for Drawing {
         self.check(Phase::Measure)?;
         Ok(Metrics {
             size: Size {
-                width: self.size.width.min(query.width()),
+                width: query.resolve(self.size.width),
                 height: self.size.height,
             },
             baseline: None,
         })
     }
 
-    fn layout(&mut self, _cx: &mut LayoutContext<'_, '_>, _assigned: Size) -> Result<()> {
+    fn layout(&mut self, _cx: &mut LayoutContext<'_, '_>, _assigned: Size) -> Result<LayoutOutput> {
         #[cfg(test)]
         self.check(Phase::Layout)?;
-        Ok(())
+        Ok(LayoutOutput {
+            baseline: None,
+            content: self.size,
+        })
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

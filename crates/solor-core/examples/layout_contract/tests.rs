@@ -3,8 +3,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use super::fixtures::{Column, Drawing, Fault, Ids, Phase, Wrapping, nested};
 use super::layout::{
-    LayoutContext, LayoutError, LayoutNode, MeasureContext, Metrics, Origin, Query, Result, Scene,
-    Size,
+    LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext, Metrics, Origin, Query,
+    Result, Scene, Size,
 };
 
 #[test]
@@ -23,7 +23,7 @@ fn known_wrapping_dimensions_baselines_and_sibling_positions() {
         )
         .unwrap();
     let drawing = scene.append(root, Drawing::new(6, 4)).unwrap();
-    assert_eq!(scene.run(12, false), Ok(3));
+    assert_eq!(scene.run(Query::Exact(12), None, false), Ok(3));
     let root_geometry = scene.geometry(root).unwrap();
     assert_eq!(
         root_geometry.metrics,
@@ -52,7 +52,7 @@ fn known_wrapping_dimensions_baselines_and_sibling_positions() {
     scene
         .edit_layout::<Wrapping>(text, |text| text.units = 17)
         .unwrap();
-    scene.run(12, false).unwrap();
+    scene.run(Query::Exact(12), None, false).unwrap();
     assert_eq!(scene.geometry(root).unwrap().metrics.size.height, 36);
     assert_eq!(scene.geometry(drawing).unwrap().origin.y, 30);
     assert_eq!(scene.node_counts(drawing).layouts, 1);
@@ -66,7 +66,7 @@ fn known_wrapping_dimensions_baselines_and_sibling_positions() {
 fn text_edit_moves_siblings_without_executing_unrelated_subtree_bodies() {
     let (mut scene, ids) = nested();
     let (mut reference, reference_ids) = nested();
-    scene.run(100, false).unwrap();
+    scene.run(Query::Exact(100), None, false).unwrap();
     let before = scene.counts();
     let right = scene.node_counts(ids.right);
     let drawing = scene.node_counts(ids.drawing);
@@ -77,11 +77,13 @@ fn text_edit_moves_siblings_without_executing_unrelated_subtree_bodies() {
     reference
         .edit_layout::<Wrapping>(reference_ids.text, |text| text.units = 100)
         .unwrap();
-    scene.run(100, false).unwrap();
-    reference.run(100, true).unwrap();
+    scene.run(Query::Exact(100), None, false).unwrap();
+    reference.run(Query::Exact(100), None, true).unwrap();
     assert_eq!(scene.snapshot(), reference.snapshot());
-    assert_eq!(scene.node_counts(ids.right), right);
-    assert_eq!(scene.node_counts(ids.drawing), drawing);
+    assert_eq!(scene.node_counts(ids.right).measures, right.measures);
+    assert_eq!(scene.node_counts(ids.right).layouts, right.layouts);
+    assert_eq!(scene.node_counts(ids.drawing).measures, drawing.measures);
+    assert_eq!(scene.node_counts(ids.drawing).layouts, drawing.layouts);
     assert!(scene.geometry(ids.right).unwrap().origin.y > right_origin.y);
     assert_eq!(scene.counts().measures - before.measures, 3);
     assert_eq!(scene.counts().layouts - before.layouts, 3);
@@ -90,12 +92,12 @@ fn text_edit_moves_siblings_without_executing_unrelated_subtree_bodies() {
 #[test]
 fn ink_edits_and_clean_frames_do_no_layout_work() {
     let (mut scene, ids) = nested();
-    scene.run(100, false).unwrap();
+    scene.run(Query::Exact(100), None, false).unwrap();
     let before = scene.counts();
     let geometry = scene.snapshot();
     scene.set_ink(ids.drawing, 0xff00ff).unwrap();
-    assert_eq!(scene.run(100, false), Ok(0));
-    assert_eq!(scene.run(100, false), Ok(0));
+    assert_eq!(scene.run(Query::Exact(100), None, false), Ok(0));
+    assert_eq!(scene.run(Query::Exact(100), None, false), Ok(0));
     assert_eq!(scene.counts(), before);
     assert_eq!(scene.snapshot(), geometry);
     assert!(!scene.is_pending());
@@ -104,18 +106,19 @@ fn ink_edits_and_clean_frames_do_no_layout_work() {
 #[test]
 fn baseline_only_changes_reach_ancestors_even_when_sizes_match() {
     let (mut scene, ids) = nested();
-    scene.run(100, false).unwrap();
+    scene.run(Query::Exact(100), None, false).unwrap();
     let before = scene.snapshot();
+    let measured = [scene.root(), ids.left, ids.text].map(|id| scene.node_counts(id).measures);
     scene
         .edit_layout::<Wrapping>(ids.text, |text| text.ascent -= 1)
         .unwrap();
-    scene.run(100, false).unwrap();
+    scene.run(Query::Exact(100), None, false).unwrap();
     for (old, new) in before.iter().zip(scene.snapshot()) {
         assert_eq!(old.unwrap().metrics.size, new.unwrap().metrics.size);
         assert_eq!(old.unwrap().origin, new.unwrap().origin);
     }
-    for id in [scene.root(), ids.left, ids.text] {
-        assert_eq!(scene.node_counts(id).measures, 2);
+    for (id, previous) in [scene.root(), ids.left, ids.text].into_iter().zip(measured) {
+        assert!(scene.node_counts(id).measures > previous);
         assert_eq!(scene.node_counts(id).layouts, 2);
     }
     assert_eq!(
@@ -160,8 +163,8 @@ fn mixed_edits_match_cache_disabled_recomputation_after_every_step() {
         edit(&mut scene, &ids, step);
         edit(&mut reference, &reference_ids, step);
         let width = 16 + ((step / 3) * 17) % 200;
-        scene.run(width, false).unwrap();
-        reference.run(width, true).unwrap();
+        scene.run(Query::Exact(width), None, false).unwrap();
+        reference.run(Query::Exact(width), None, true).unwrap();
         assert_eq!(scene.snapshot(), reference.snapshot(), "step {step}");
         assert!(!scene.is_pending());
     }
@@ -173,7 +176,7 @@ fn errors_and_panics_preserve_publication_and_retry_incomplete_work() {
         for fault in [Fault::Error, Fault::Panic] {
             let (mut scene, ids) = nested();
             let (mut reference, reference_ids) = nested();
-            scene.run(100, false).unwrap();
+            scene.run(Query::Exact(100), None, false).unwrap();
             let before = scene.snapshot();
             scene
                 .edit_layout::<Wrapping>(ids.text, |text| text.units = 100)
@@ -181,7 +184,9 @@ fn errors_and_panics_preserve_publication_and_retry_incomplete_work() {
             scene
                 .edit_layout::<Drawing>(ids.drawing, |drawing| drawing.fault = Some((phase, fault)))
                 .unwrap();
-            let outcome = catch_unwind(AssertUnwindSafe(|| scene.run(100, false)));
+            let outcome = catch_unwind(AssertUnwindSafe(|| {
+                scene.run(Query::Exact(100), None, false)
+            }));
             match fault {
                 Fault::Error => assert_eq!(outcome.unwrap(), Err(LayoutError::Injected)),
                 Fault::Panic => assert!(outcome.is_err()),
@@ -190,11 +195,11 @@ fn errors_and_panics_preserve_publication_and_retry_incomplete_work() {
             assert!(scene.is_pending());
             // Remove only the fault injector: retry must rely on retained invalidity.
             scene.body_mut::<Drawing>(ids.drawing).unwrap().fault = None;
-            scene.run(100, false).unwrap();
+            scene.run(Query::Exact(100), None, false).unwrap();
             reference
                 .edit_layout::<Wrapping>(reference_ids.text, |text| text.units = 100)
                 .unwrap();
-            reference.run(100, true).unwrap();
+            reference.run(Query::Exact(100), None, true).unwrap();
             assert_eq!(scene.snapshot(), reference.snapshot());
             assert!(!scene.is_pending());
         }
@@ -205,7 +210,7 @@ fn errors_and_panics_preserve_publication_and_retry_incomplete_work() {
 fn interrupted_input_edit_invalidates_before_the_callback_runs() {
     let (mut scene, ids) = nested();
     let (mut reference, reference_ids) = nested();
-    scene.run(100, false).unwrap();
+    scene.run(Query::Exact(100), None, false).unwrap();
     let before = scene.snapshot();
     assert!(
         catch_unwind(AssertUnwindSafe(|| {
@@ -218,11 +223,11 @@ fn interrupted_input_edit_invalidates_before_the_callback_runs() {
     );
     assert_eq!(scene.snapshot(), before);
     assert!(scene.is_pending());
-    scene.run(100, false).unwrap();
+    scene.run(Query::Exact(100), None, false).unwrap();
     reference
         .edit_layout::<Wrapping>(reference_ids.text, |text| text.units = 100)
         .unwrap();
-    reference.run(100, true).unwrap();
+    reference.run(Query::Exact(100), None, true).unwrap();
     assert_eq!(scene.snapshot(), reference.snapshot());
 }
 
@@ -249,7 +254,7 @@ fn later_branch_failure_does_not_complete_an_unpublished_subtree() {
 
     let (mut scene, text, last) = fixture();
     let (mut reference, reference_text, _) = fixture();
-    scene.run(100, false).unwrap();
+    scene.run(Query::Exact(100), None, false).unwrap();
     let before = scene.snapshot();
     scene
         .edit_layout::<Wrapping>(text, |text| text.units = 100)
@@ -259,26 +264,37 @@ fn later_branch_failure_does_not_complete_an_unpublished_subtree() {
             drawing.fault = Some((Phase::Layout, Fault::Error))
         })
         .unwrap();
-    assert_eq!(scene.run(100, false), Err(LayoutError::Injected));
+    assert_eq!(
+        scene.run(Query::Exact(100), None, false),
+        Err(LayoutError::Injected)
+    );
     assert_eq!(scene.snapshot(), before);
     scene.body_mut::<Drawing>(last).unwrap().fault = None;
-    scene.run(100, false).unwrap();
+    scene.run(Query::Exact(100), None, false).unwrap();
     reference
         .edit_layout::<Wrapping>(reference_text, |text| text.units = 100)
         .unwrap();
-    reference.run(100, true).unwrap();
+    reference.run(Query::Exact(100), None, true).unwrap();
     assert_eq!(scene.snapshot(), reference.snapshot());
 }
 
 #[test]
-fn invalid_queries_and_overflow_preserve_geometry_and_allow_retry() {
+fn invalid_inputs_and_overflow_preserve_geometry_and_allow_retry() {
     let (mut scene, ids) = nested();
-    scene.run(100, false).unwrap();
+    scene.run(Query::Exact(100), None, false).unwrap();
     let before = scene.snapshot();
-    assert_eq!(scene.run(0, false), Err(LayoutError::InvalidSize));
-    assert_eq!(scene.run(4, false), Err(LayoutError::InvalidSize));
+    scene
+        .edit_layout::<Wrapping>(ids.text, |text| text.advance = 0)
+        .unwrap();
+    assert_eq!(
+        scene.run(Query::Exact(100), None, false),
+        Err(LayoutError::InvalidSize)
+    );
     assert_eq!(scene.snapshot(), before);
-    scene.run(100, false).unwrap();
+    scene
+        .edit_layout::<Wrapping>(ids.text, |text| text.advance = 5)
+        .unwrap();
+    scene.run(Query::Exact(100), None, false).unwrap();
     assert_eq!(scene.snapshot(), before);
 
     scene
@@ -287,7 +303,10 @@ fn invalid_queries_and_overflow_preserve_geometry_and_allow_retry() {
             text.line_height = u32::MAX;
         })
         .unwrap();
-    assert_eq!(scene.run(100, false), Err(LayoutError::InvalidSize));
+    assert_eq!(
+        scene.run(Query::Exact(100), None, false),
+        Err(LayoutError::InvalidSize)
+    );
     assert_eq!(scene.snapshot(), before);
     assert!(scene.is_pending());
     scene
@@ -296,7 +315,7 @@ fn invalid_queries_and_overflow_preserve_geometry_and_allow_retry() {
             text.line_height = 10;
         })
         .unwrap();
-    scene.run(100, false).unwrap();
+    scene.run(Query::Exact(100), None, false).unwrap();
     assert_eq!(scene.snapshot(), before);
 }
 
@@ -306,6 +325,8 @@ enum Placement {
     Duplicate,
     Missing,
     InvalidMetrics,
+    BeforeLayout,
+    DuplicateLayout,
 }
 
 struct InvalidParent(Placement);
@@ -315,19 +336,30 @@ impl LayoutNode for InvalidParent {
         cx.measure_child(0, query)
     }
 
-    fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<()> {
+    fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {
+        let mut output = LayoutOutput {
+            baseline: None,
+            content: assigned,
+        };
         if matches!(self.0, Placement::Missing) {
-            return Ok(());
+            return Ok(output);
         }
-        let mut metrics = cx.measure_child(0, Query::new(assigned.width)?)?;
-        if matches!(self.0, Placement::InvalidMetrics) {
-            metrics.baseline = Some(metrics.size.height + 1);
+        if matches!(self.0, Placement::BeforeLayout) {
+            cx.place_child(0, Origin::default())?;
         }
-        cx.place_child(0, metrics, Origin::default())?;
+        let child = cx.measure_child(0, Query::AtMost(assigned.width))?;
+        cx.layout_child(0, child.size)?;
+        if matches!(self.0, Placement::DuplicateLayout) {
+            cx.layout_child(0, child.size)?;
+        }
+        cx.place_child(0, Origin::default())?;
         if matches!(self.0, Placement::Duplicate) {
-            cx.place_child(0, metrics, Origin::default())?;
+            cx.place_child(0, Origin::default())?;
         }
-        Ok(())
+        if matches!(self.0, Placement::InvalidMetrics) {
+            output.baseline = Some(output.content.height + 1);
+        }
+        Ok(output)
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
@@ -341,15 +373,17 @@ fn invalid_child_placement_cannot_publish_a_partial_first_frame() {
         (Placement::Duplicate, LayoutError::DuplicatePlacement(0)),
         (Placement::Missing, LayoutError::UnplacedChildren),
         (Placement::InvalidMetrics, LayoutError::InvalidSize),
+        (Placement::BeforeLayout, LayoutError::MissingLayout(0)),
+        (Placement::DuplicateLayout, LayoutError::DuplicateLayout(0)),
     ] {
         let mut scene = Scene::new(InvalidParent(mode));
         let root = scene.root();
         scene.append(root, Drawing::new(5, 5)).unwrap();
-        assert_eq!(scene.run(10, false), Err(error));
+        assert_eq!(scene.run(Query::Exact(10), None, false), Err(error));
         assert_eq!(scene.snapshot(), vec![None, None]);
         assert!(scene.is_pending());
         scene.body_mut::<InvalidParent>(root).unwrap().0 = Placement::Normal;
-        assert_eq!(scene.run(10, false), Ok(2));
+        assert_eq!(scene.run(Query::Exact(10), None, false), Ok(2));
         assert!(scene.snapshot().iter().all(Option::is_some));
     }
 }
@@ -363,19 +397,23 @@ impl LayoutNode for CatchingParent {
         }
         Ok(Metrics {
             size: Size {
-                width: query.width(),
+                width: query.resolve(5),
                 height: 5,
             },
             baseline: None,
         })
     }
 
-    fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<()> {
-        let child = cx.measure_child(0, Query::new(assigned.width)?)?;
+    fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {
+        let child = cx.measure_child(0, Query::AtMost(assigned.width))?;
         let _ = catch_unwind(AssertUnwindSafe(|| {
-            cx.place_child(0, child, Origin::default())
+            cx.layout_child(0, child.size)?;
+            cx.place_child(0, Origin::default())
         }));
-        Ok(())
+        Ok(LayoutOutput {
+            baseline: None,
+            content: assigned,
+        })
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
@@ -392,11 +430,14 @@ fn caught_child_errors_and_panics_still_abort_the_attempt() {
             let mut drawing = Drawing::new(5, 5);
             drawing.fault = Some((phase, fault));
             let child = scene.append(root, drawing).unwrap();
-            assert_eq!(scene.run(10, false), Err(LayoutError::FailedChildOperation));
+            assert_eq!(
+                scene.run(Query::Exact(10), None, false),
+                Err(LayoutError::FailedChildOperation)
+            );
             assert_eq!(scene.snapshot(), vec![None, None]);
             assert!(scene.is_pending());
             scene.body_mut::<Drawing>(child).unwrap().fault = None;
-            assert_eq!(scene.run(10, false), Ok(2));
+            assert_eq!(scene.run(Query::Exact(10), None, false), Ok(2));
             assert!(!scene.is_pending());
         }
     }
