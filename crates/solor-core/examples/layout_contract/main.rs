@@ -1,5 +1,7 @@
 //! Headless layout contract experiment, not a public UI API.
 
+const MEASUREMENT_CACHE_SLOTS: usize = 3;
+
 mod fixtures;
 mod layout;
 mod negotiation;

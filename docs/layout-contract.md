@@ -158,3 +158,6 @@ contract, not real font metrics or rendered output.
 The milestone ends at these checks. Public API selection, layout algorithms for
 real controls, actual font measurement, topology edits during updates, and
 integration with signals remain separate decisions.
+
+The [layout cost experiment](layout-cost.md) measures the same execution path
+with larger fixtures, including invalidation, scratch allocation, and publication.

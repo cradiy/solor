@@ -3,7 +3,10 @@ use std::num::NonZeroUsize;
 
 use solor_core::tree::NodeId;
 
+use super::MEASUREMENT_CACHE_SLOTS;
 use super::store::{AccessError, Context, NodeStore};
+
+const _: () = assert!(MEASUREMENT_CACHE_SLOTS > 0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayoutError {
@@ -124,7 +127,7 @@ pub trait LayoutNode: Any {
 struct Entry {
     body: Box<dyn LayoutNode>,
     // Cache hits restore metrics, not the behavior's private measurement state.
-    measure_cache: [Option<(Query, Metrics)>; 3],
+    measure_cache: [Option<(Query, Metrics)>; MEASUREMENT_CACHE_SLOTS],
     replacement: usize,
     measure_dirty: bool,
     layout_dirty: bool,
@@ -136,7 +139,7 @@ impl Entry {
     fn new(body: impl LayoutNode) -> Self {
         Self {
             body: Box::new(body),
-            measure_cache: [None; 3],
+            measure_cache: [None; MEASUREMENT_CACHE_SLOTS],
             replacement: 0,
             measure_dirty: true,
             layout_dirty: true,

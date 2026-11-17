@@ -22,3 +22,11 @@ path = "examples/node_store/main.rs"
 [[example]]
 name = "layout_contract"
 path = "examples/layout_contract/main.rs"
+
+[[example]]
+name = "layout_cost_one"
+path = "examples/layout_cost/one.rs"
+
+[[example]]
+name = "layout_cost_three"
+path = "examples/layout_cost/three.rs"

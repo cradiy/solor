@@ -13,12 +13,15 @@ deduplicated pending work, and lifecycle cleanup.
 
 The [access experiment](node-store-experiment.md) records scoped payload borrowing,
 failure behavior, and measured costs for scalar and heterogeneous workloads.
-The current milestone extends the [layout contract experiment](layout-contract.md)
-with [size negotiation](size-negotiation.md): explicit width-query semantics,
+The [layout contract experiment](layout-contract.md) includes
+[size negotiation](size-negotiation.md): explicit width-query semantics,
 final allocation distinct from measurement, child layout outputs before placement,
 and bounded multi-query caching. A synthetic icon/label/button row exercises
 wrapping, baseline alignment, and content overflow while retaining conservative
 ancestor invalidation and publication only after a complete successful layout.
+The current [layout cost experiment](layout-cost.md) measures the complete
+headless update path with one and three inline cache slots, including local
+edits, batch edits, width changes, temporary allocation, and live fixture storage.
 The [node execution model draft](node-execution.md) remains the broader proposal.
 
 The following are outside this milestone:
@@ -31,12 +34,12 @@ The following are outside this milestone:
 - Widgets, showcase applications, and application-level performance comparisons.
 - Selecting a rendering backend or committing to a complete framework design.
 
-Acceptance requires distinct Natural/AtMost/Exact query behavior, correct output
-for allocations different from measurements, known baseline and overflow results,
-bounded cache replacement, and agreement with cache-disabled recomputation after
-width and content edits. Earlier locality and failure guarantees remain required.
-Stop at the documented synthetic sizing contract; these checks do not validate
-real text, pixel output, or a complete incremental layout system.
+Acceptance requires preserved sizing, locality, and failure guarantees; matching
+geometry and publication counts across cache capacities; repeated sequential CPU
+measurements; and separate allocation measurements with a positive control.
+Stop at a measured cache tradeoff and identification of remaining costs. These
+checks do not validate real text, pixel output, or a complete incremental layout
+system.
 
 ## Candidate investigations
 
@@ -66,5 +69,5 @@ fits the available effort. Revise or stop when the expected benefit is absent,
 the comparison is inconclusive, or the required scope exceeds the agreed budget.
 Successful storage tests alone do not justify further architectural commitments.
 
-No comparative performance result, fixed implementation schedule, or commitment
-to replace an existing framework has been established.
+No application-level comparative performance result, fixed implementation
+schedule, or commitment to replace an existing framework has been established.

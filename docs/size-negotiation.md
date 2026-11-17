@@ -124,6 +124,8 @@ Three slots bound cache storage and avoid repeated work in these scenarios, but
 increase per-node resident storage relative to one slot. This experiment does
 not establish an optimal cache capacity or a CPU/memory advantage for real UI
 workloads. No performance claim is based solely on query-hit counts.
+The separate [layout cost experiment](layout-cost.md) measures this tradeoff
+with identical fixtures compiled at one and three inline slots.
 
 ```sh
 cargo run --release -p solor-core --example layout_contract --offline
