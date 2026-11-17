@@ -43,8 +43,10 @@ check; incomplete evidence is unverifiable. Speculative geometry is discarded,
 and normal layout still completes the update without propagation pruning.
 The [selective-check experiment](selective-dependency-checks.md) routes bounded
 edit history through a checkpoint-local child/read index. Stable local audits
-visit fewer reads; changed results and resizing pay substantial index-rebuild
-costs. It remains opt-in and is not selected for automatic runtime validation.
+visit fewer reads. [Checkpoint refresh](checkpoint-refresh.md) reuses an index
+when the ordered child reads match, reducing replacement costs for changed
+results and resizing. Reconciliation still repeats speculative layout work.
+The audit remains opt-in and is not selected for automatic runtime validation.
 The [node execution model draft](node-execution.md) remains the broader proposal.
 
 The following are outside this milestone:
@@ -73,7 +75,9 @@ geometry and records intact after errors or panics. Audit work and checkpoint
 storage must be reported separately from the normal update path. Selection must
 retain exact queries and execution order, reject missing edit history, and keep
 pending descendant changes when an audit cursor advances. Complete update costs
-must include checkpoint replacement as well as repeated layout work. These checks do
+must include checkpoint replacement as well as repeated layout work. Index reuse
+requires an unchanged child sequence and valid evidence. Refresh must preserve
+old evidence on rejection. These checks do
 not validate real text, pixel output, or a complete incremental layout
 system.
 

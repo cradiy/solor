@@ -107,6 +107,18 @@ fn validate_dependency_results() {
     );
     scene.run(Query::Exact(10), None, false).unwrap();
     let incremental = scene.snapshot();
+    assert!(
+        scene
+            .refresh_selective_dependencies(&mut selective, allocated)
+            .unwrap()
+    );
+    assert_eq!(
+        scene
+            .check_selective_dependencies(&mut selective, allocated)
+            .unwrap()
+            .outcome,
+        CheckOutcome::Unchanged
+    );
     scene.run(Query::Exact(10), None, true).unwrap();
     assert_eq!(scene.snapshot(), incremental);
 }

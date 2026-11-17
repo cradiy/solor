@@ -2,6 +2,201 @@ use super::*;
 use crate::layout::validation::MAX_TRACKED_EDITS;
 
 #[test]
+fn refreshing_equal_child_order_replaces_results_and_request() {
+    let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+    let root = scene.root();
+    let child = scene.append(root, Drawing::new(20, 5)).unwrap();
+    scene.run(Query::Exact(10), None, false).unwrap();
+    let old = CheckTarget::Layout(Size {
+        width: 10,
+        height: 5,
+    });
+    let mut checkpoint = scene
+        .capture_selective_dependencies(root, old)
+        .unwrap()
+        .unwrap();
+    scene
+        .edit_layout::<Drawing>(child, |leaf| leaf.size.width = 21)
+        .unwrap();
+    assert_eq!(
+        scene
+            .check_selective_dependencies(&mut checkpoint, old)
+            .unwrap()
+            .outcome,
+        CheckOutcome::Changed
+    );
+    scene.run(Query::Exact(30), None, false).unwrap();
+    let current = CheckTarget::Layout(Size {
+        width: 30,
+        height: 5,
+    });
+    assert!(
+        scene
+            .refresh_selective_dependencies(&mut checkpoint, current)
+            .unwrap()
+    );
+    assert_eq!(
+        scene
+            .check_selective_dependencies(&mut checkpoint, old)
+            .unwrap()
+            .outcome,
+        CheckOutcome::Unverifiable
+    );
+    scene.edit_layout::<Drawing>(child, |_| {}).unwrap();
+    let report = scene
+        .check_selective_dependencies(&mut checkpoint, current)
+        .unwrap();
+    assert_eq!(report.outcome, CheckOutcome::Unchanged);
+    assert_eq!(report.checked_reads, 2);
+    // Returning to the original value differs from the refreshed comparison value.
+    scene
+        .edit_layout::<Drawing>(child, |leaf| leaf.size.width = 20)
+        .unwrap();
+    assert_eq!(
+        scene
+            .check_selective_dependencies(&mut checkpoint, current)
+            .unwrap()
+            .outcome,
+        CheckOutcome::Changed
+    );
+    scene.run(Query::Exact(30), None, false).unwrap();
+    let incremental = scene.snapshot();
+    scene.run(Query::Exact(30), None, true).unwrap();
+    assert_eq!(scene.snapshot(), incremental);
+}
+
+#[test]
+fn refresh_rebuilds_conditional_reads_and_distinguishes_incomplete_from_empty() {
+    let (mut scene, children) = reading_fixture();
+    let root = scene.root();
+    let target = CheckTarget::Measure(Query::Natural);
+    scene.run(Query::Natural, None, false).unwrap();
+    let mut checkpoint = scene
+        .capture_selective_dependencies(root, target)
+        .unwrap()
+        .unwrap();
+    for repeats in [1, 5, 0, MAX_RECORDED_READS + 1, 1] {
+        scene
+            .edit_layout::<ReadingParent>(root, |parent| {
+                parent.selected = 1;
+                parent.repeats = repeats;
+            })
+            .unwrap();
+        assert!(
+            !scene
+                .refresh_selective_dependencies(&mut checkpoint, target)
+                .unwrap()
+        );
+        scene.run(Query::Natural, None, false).unwrap();
+        assert!(
+            scene
+                .refresh_selective_dependencies(&mut checkpoint, target)
+                .unwrap()
+        );
+        scene
+            .edit_layout::<Drawing>(children[0], |leaf| leaf.size.width += 1)
+            .unwrap();
+        let report = scene
+            .check_selective_dependencies(&mut checkpoint, target)
+            .unwrap();
+        assert_eq!(report.checked_reads, 0);
+        assert_eq!(
+            report.outcome,
+            if repeats > MAX_RECORDED_READS {
+                CheckOutcome::Unverifiable
+            } else {
+                CheckOutcome::Unchanged
+            }
+        );
+        scene.edit_layout::<Drawing>(children[1], |_| {}).unwrap();
+        let report = scene
+            .check_selective_dependencies(&mut checkpoint, target)
+            .unwrap();
+        assert_eq!(
+            report.checked_reads,
+            if repeats > MAX_RECORDED_READS {
+                0
+            } else {
+                repeats
+            }
+        );
+    }
+    scene
+        .edit_layout::<Drawing>(children[1], |leaf| leaf.size.width += 1)
+        .unwrap();
+    assert_eq!(
+        scene
+            .check_selective_dependencies(&mut checkpoint, target)
+            .unwrap()
+            .outcome,
+        CheckOutcome::Changed
+    );
+}
+
+#[test]
+fn rejected_refresh_preserves_evidence_and_cursor_through_failure() {
+    for fault in [Fault::Error, Fault::Panic] {
+        let (mut scene, children) = reading_fixture();
+        let root = scene.root();
+        scene.run(Query::Natural, None, false).unwrap();
+        let target = CheckTarget::Layout(scene.geometry(root).unwrap().metrics.size);
+        let mut checkpoint = scene
+            .capture_selective_dependencies(root, target)
+            .unwrap()
+            .unwrap();
+        // A request not represented by published geometry cannot replace evidence.
+        assert!(
+            !scene
+                .refresh_selective_dependencies(
+                    &mut checkpoint,
+                    CheckTarget::Layout(Size {
+                        width: 90,
+                        height: 90
+                    })
+                )
+                .unwrap()
+        );
+        let mut foreign = Scene::new(Drawing::new(5, 5));
+        foreign.run(Query::Natural, None, false).unwrap();
+        assert!(
+            foreign
+                .refresh_selective_dependencies(&mut checkpoint, target)
+                .is_err()
+        );
+        scene
+            .edit_layout::<Drawing>(children[1], |leaf| {
+                leaf.fault = Some((Phase::Layout, fault))
+            })
+            .unwrap();
+        let original = scene.snapshot();
+        let result = catch_unwind(AssertUnwindSafe(|| scene.run(Query::Natural, None, false)));
+        match fault {
+            Fault::Error => assert!(result.unwrap().is_err()),
+            Fault::Panic => assert!(result.is_err()),
+        }
+        assert!(
+            !scene
+                .refresh_selective_dependencies(&mut checkpoint, target)
+                .unwrap()
+        );
+        assert_eq!(scene.snapshot(), original);
+        scene.body_mut::<Drawing>(children[1]).unwrap().fault = None;
+        let report = scene
+            .check_selective_dependencies(&mut checkpoint, target)
+            .unwrap();
+        assert_eq!(report.outcome, CheckOutcome::Unchanged);
+        assert_eq!(report.checked_reads, 1);
+        scene.run(Query::Natural, None, false).unwrap();
+        assert!(
+            scene
+                .refresh_selective_dependencies(&mut checkpoint, target)
+                .unwrap()
+        );
+        assert_eq!(scene.snapshot(), original);
+    }
+}
+
+#[test]
 fn indexed_reads_keep_query_identity_after_cache_eviction() {
     let (mut scene, ids) = fixture();
     let root = scene.root();

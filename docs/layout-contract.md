@@ -145,7 +145,7 @@ cargo run -p solor-core --example layout_contract --offline
 cargo test -p solor-core --example layout_contract --offline
 ```
 
-Forty focused tests include a 256-step vertical comparison and a 384-step row
+Forty-three focused tests include a 256-step vertical comparison and a 384-step row
 comparison with all measurement and layout caches bypassed. The reference uses
 the same fixture algorithms, so known-value assertions independently check
 wrapping height, baseline, sibling origins, final allocations, and content extent.

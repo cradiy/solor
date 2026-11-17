@@ -75,6 +75,11 @@ impl Runner {
         let scene = &mut self.fixture.scene;
         let root = scene.root();
         let (measure, layout, _) = targets(width);
+        if let Evidence::Selective(a, b) = &mut self.evidence {
+            assert!(scene.refresh_selective_dependencies(a, measure).unwrap());
+            assert!(scene.refresh_selective_dependencies(b, layout).unwrap());
+            return;
+        }
         self.evidence = match self.mode {
             Mode::Plain => Evidence::None,
             Mode::Linear => Evidence::Linear(

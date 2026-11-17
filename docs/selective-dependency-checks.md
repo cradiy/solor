@@ -8,8 +8,10 @@ the [linear audit](dependency-validation.md) as a reference and leaves normal
 ancestor invalidation and geometry publication unchanged.
 
 The mechanism is retained as an explicit experiment, not selected for automatic
-runtime validation. It reduces audit work for stable local updates, but rebuilding
-its indexes makes changed-result and resize workloads substantially slower.
+runtime validation. It reduces audit work for stable local updates. The
+full-recapture reference measured below rebuilds indexes on changed results and
+resizes. The current [checkpoint refresh](checkpoint-refresh.md) reuses indexes
+when the ordered child reads match and measures that cost separately.
 No public-core API, propagation pruning, or new layout algorithm is introduced.
 
 ## Ownership and validity
@@ -45,6 +47,11 @@ Normal updates and scratch reclamation do not consume history on behalf of other
 checkpoints. A dormant checkpoint can expire while an actively checked one stays
 valid. This bounded-history policy is an experiment limit, not a UI frame limit.
 
+After normal layout, `refresh_selective_dependencies` can install current
+evidence into an existing checkpoint. Unavailable evidence leaves it intact;
+changed child order rebuilds the index. Refreshing is separate from advancing an
+audit cursor after equality.
+
 Selection costs scale with edits times tree depth, affected recorded reads, and
 sorting those reads. History is capped at 256 edits and each record at 16,384
 reads. Complete equality still depends on the existing contract: layout-affecting
@@ -65,9 +72,10 @@ owner mutation, foreign handles, and ordered error/panic recovery. A 384-step
 mixed workload compares both audit verdicts and complete geometry with linear
 validation and cache-disabled recomputation, using both cache capacities.
 
-## Complete update measurements
+## Full-recapture reference measurements
 
-The shared [workload](../crates/solor-core/examples/layout_cost/selection.rs)
+The full-recapture reference at `e111a54` uses the shared
+[workload](../crates/solor-core/examples/layout_cost/selection.rs) and
 compares three paths: normal layout alone, linear audit followed by normal layout,
 and selective audit followed by normal layout. Every timed update includes edits,
 history maintenance when enabled, both root audits, reconciliation, publication,
@@ -109,7 +117,7 @@ normal layout. This is why reduced read counts do not imply reduced update cost.
 The stable single-label path approaches normal layout cost; no improvement over
 normal layout is established.
 
-## Allocation and retained storage
+## Full-recapture reference storage
 
 An external allocator probe measures release builds separately from CPU timing.
 The positive Rust control observes one 123-byte request and 136 usable bytes.
@@ -142,8 +150,8 @@ cargo run --release -p solor-core --example layout_cost_one --offline
 and destruction markers delimit allocation probes after timing. The one-slot
 target runs the same correctness and complete-update workloads.
 
-The measured decision is to keep normal layout as the default. Before integrating
-pruning, the experiment must address index rebuilding when results change and
-speculative layout work that reconciliation executes again. Any candidate must
+The measured decision is to keep normal layout as the default. Same-order
+[checkpoint refresh](checkpoint-refresh.md) addresses redundant index rebuilding;
+speculative layout work still executes again during reconciliation. Any candidate must
 retain failure atomicity and be measured across stable edits, changed results,
 batch updates, and resizing rather than only the favorable stable-label case.

@@ -37,6 +37,21 @@ pub struct SelectiveCheckpoint {
     next: Vec<usize>,
 }
 
+fn index_reads(reads: &[Read]) -> (HashMap<NodeId, usize>, Vec<usize>) {
+    let mut heads = HashMap::new();
+    let mut next = vec![END; reads.len()];
+    for (index, read) in reads.iter().enumerate().rev() {
+        next[index] = heads.insert(read.node(), index).unwrap_or(END);
+    }
+    (heads, next)
+}
+
+struct EvidenceRef<'a> {
+    input_revision: u64,
+    reads: &'a [Read],
+    complete: bool,
+}
+
 impl Read {
     fn node(self) -> NodeId {
         match self {
@@ -83,17 +98,55 @@ impl Scene {
             return Ok(None);
         };
         let revision = self.changes.get_or_insert_with(ChangeLog::default).revision;
-        let mut heads = HashMap::new();
-        let mut next = vec![END; evidence.reads.reads.len()];
-        for (index, read) in evidence.reads.reads.iter().enumerate().rev() {
-            next[index] = heads.insert(read.node(), index).unwrap_or(END);
-        }
+        let (heads, next) = index_reads(&evidence.reads.reads);
         Ok(Some(SelectiveCheckpoint {
             evidence,
             revision,
             heads,
             next,
         }))
+    }
+
+    /// Refresh from a valid result; unavailable evidence leaves the checkpoint intact.
+    pub fn refresh_selective_dependencies(
+        &self,
+        checkpoint: &mut SelectiveCheckpoint,
+        target: CheckTarget,
+    ) -> Result<bool> {
+        let Some(current) = self.dependency_record(checkpoint.evidence.owner, target)? else {
+            return Ok(false);
+        };
+        let same_order = checkpoint.evidence.reads.reads.len() == current.reads.len()
+            && checkpoint
+                .evidence
+                .reads
+                .reads
+                .iter()
+                .zip(current.reads)
+                .all(|(old, new)| old.node() == new.node());
+        if same_order {
+            checkpoint
+                .evidence
+                .reads
+                .reads
+                .copy_from_slice(current.reads);
+        } else {
+            // Changed structure owns fresh storage, releasing the previous high-water mark.
+            let reads = current.reads.to_vec();
+            let (heads, next) = index_reads(&reads);
+            checkpoint.evidence.reads.reads = reads;
+            checkpoint.heads = heads;
+            checkpoint.next = next;
+        }
+        checkpoint.evidence.reads.complete = current.complete;
+        checkpoint.evidence.input_revision = current.input_revision;
+        checkpoint.evidence.target = target;
+        checkpoint.revision = self
+            .changes
+            .as_ref()
+            .expect("capture enables change tracking")
+            .revision;
+        Ok(true)
     }
 
     /// Select only reads reached by recorded edits; never marks layout work complete.
@@ -175,6 +228,24 @@ impl Scene {
         owner: NodeId,
         target: CheckTarget,
     ) -> Result<Option<Checkpoint>> {
+        Ok(self
+            .dependency_record(owner, target)?
+            .map(|current| Checkpoint {
+                owner,
+                input_revision: current.input_revision,
+                target,
+                reads: ReadSet {
+                    reads: current.reads.to_vec(),
+                    complete: current.complete,
+                },
+            }))
+    }
+
+    fn dependency_record(
+        &self,
+        owner: NodeId,
+        target: CheckTarget,
+    ) -> Result<Option<EvidenceRef<'_>>> {
         let entry = self.store.get(owner)?;
         if self.request.is_none() {
             return Ok(None);
@@ -207,11 +278,10 @@ impl Scene {
                 entry.records.as_ref().map(|records| &records.layout)
             }
         };
-        Ok(Some(Checkpoint {
-            owner,
+        Ok(Some(EvidenceRef {
             input_revision: entry.input_revision,
-            target,
-            reads: reads.cloned().unwrap_or_default(),
+            reads: reads.map_or(&[], |reads| reads.reads.as_slice()),
+            complete: reads.is_none_or(|reads| reads.complete),
         }))
     }
 
