@@ -14,3 +14,7 @@ workspace = true
 [[bench]]
 name = "state_updates"
 harness = false
+
+[[example]]
+name = "node_store"
+path = "examples/node_store/main.rs"

@@ -7,13 +7,19 @@ and support for custom rendering and animation.
 
 ## Current boundary
 
-The current milestone is explicit state-to-node updates: typed signals, bindings,
-deduplicated pending work, and lifecycle cleanup. The runtime owns the
-[persistent node tree](node-tree.md). Its scheduling contract and acceptance
-criteria are in [state-updates.md](state-updates.md).
+The implemented foundation consists of a [persistent node tree](node-tree.md)
+and [explicit state-to-node updates](state-updates.md), including typed signals,
+deduplicated pending work, and lifecycle cleanup.
+
+The current milestone tests scoped payload loans in an isolated example over the
+existing tree. The [access experiment](node-store-experiment.md) records ownership,
+failure behavior, correctness checks, and measured costs. It does not change the
+public core API. The [node execution model draft](node-execution.md) remains a
+proposal for stages, layout dependencies, and cache lifetime.
 
 The following are outside this milestone:
 
+- Publishing a node behavior API or UI property facade, or replacing the backing map.
 - Moving existing nodes, immutable snapshots, and serialization.
 - Derived signals, automatic dependency tracking, and multi-source bindings.
 - Writes to runtime state from update callbacks and layout/paint invalidation.
@@ -21,10 +27,12 @@ The following are outside this milestone:
 - Widgets, showcase applications, and application-level performance comparisons.
 - Selecting a rendering backend or committing to a complete framework design.
 
-Acceptance covers local callback execution, batch coalescing, equality suppression,
-and cancellation of pending work when bindings, signals, or nodes are removed.
-Focused tests cover panic behavior and index consistency. Release benchmarks
-measure update dispatch across node counts and workloads, separately from rendering.
+Acceptance requires nested heterogeneous execution in safe Rust, stable identity
+and payload addresses, rejection of reentry and traversal-time structural edits,
+restoration after errors and panic unwinding, and an explicit depth limit. Measure
+lookup, invocation, allocation, and storage costs before adopting the mechanism.
+Stop this milestone at the access layer; public UI design requires a separate
+decision. Neither these checks nor state-dispatch tests validate layout or paint.
 
 ## Candidate investigations
 
