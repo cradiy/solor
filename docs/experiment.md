@@ -11,28 +11,31 @@ The implemented foundation consists of a [persistent node tree](node-tree.md)
 and [explicit state-to-node updates](state-updates.md), including typed signals,
 deduplicated pending work, and lifecycle cleanup.
 
-The current milestone tests scoped payload loans in an isolated example over the
-existing tree. The [access experiment](node-store-experiment.md) records ownership,
-failure behavior, correctness checks, and measured costs. It does not change the
-public core API. The [node execution model draft](node-execution.md) remains a
-proposal for stages, layout dependencies, and cache lifetime.
+The [access experiment](node-store-experiment.md) records scoped payload borrowing,
+failure behavior, and measured costs for scalar and heterogeneous workloads.
+The current milestone is the [layout contract experiment](layout-contract.md):
+private measurement and placement contexts, conservative ancestor invalidation,
+and publication only after a complete successful layout. Synthetic leaves and a
+vertical container allow incremental results to be checked against full
+recomputation without selecting a public UI API or rendering backend.
+The [node execution model draft](node-execution.md) remains the broader proposal.
 
 The following are outside this milestone:
 
 - Publishing a node behavior API or UI property facade, or replacing the backing map.
 - Moving existing nodes, immutable snapshots, and serialization.
 - Derived signals, automatic dependency tracking, and multi-source bindings.
-- Writes to runtime state from update callbacks and layout/paint invalidation.
-- Layout, rendering, text, input, and window integration.
+- Integration with signal callbacks, automatic layout dependencies, and paint invalidation.
+- General layout algorithms, real text measurement, rendering, input, and windows.
 - Widgets, showcase applications, and application-level performance comparisons.
 - Selecting a rendering backend or committing to a complete framework design.
 
-Acceptance requires nested heterogeneous execution in safe Rust, stable identity
-and payload addresses, rejection of reentry and traversal-time structural edits,
-restoration after errors and panic unwinding, and an explicit depth limit. Measure
-lookup, invocation, allocation, and storage costs before adopting the mechanism.
-Stop this milestone at the access layer; public UI design requires a separate
-decision. Neither these checks nor state-dispatch tests validate layout or paint.
+Acceptance requires correct dimensions and sibling placement, baseline dependency
+propagation, agreement with cache-disabled recomputation, no layout for drawing-only
+edits, and reuse of unrelated subtree behavior. Returned errors and panic unwinding
+must preserve previously published geometry and permit a correct retry. Stop at
+the documented synthetic sizing contract; these checks do not validate real text,
+pixel output, or a complete incremental layout system.
 
 ## Candidate investigations
 

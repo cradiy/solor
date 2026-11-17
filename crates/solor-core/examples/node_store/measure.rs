@@ -53,7 +53,12 @@ fn elapsed(iterations: usize, operation: &mut impl FnMut()) -> Duration {
     start.elapsed()
 }
 
-fn paired(label: &str, iterations: usize, mut direct: impl FnMut(), mut loan: impl FnMut()) {
+pub(super) fn paired(
+    label: &str,
+    iterations: usize,
+    mut direct: impl FnMut(),
+    mut loan: impl FnMut(),
+) {
     for _ in 0..100 {
         direct();
         loan();

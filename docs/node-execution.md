@@ -8,8 +8,10 @@ trait, layout system, paint recorder, or rendering backend is selected by this
 draft.
 
 An isolated [node-store access experiment](node-store-experiment.md) implements
-scoped payload loans over the existing tree. It validates that borrowing mechanism,
-not the stage, cache, or lifecycle contracts proposed here.
+scoped payload loans over the existing tree. A separate
+[layout contract experiment](layout-contract.md) validates a narrow sizing domain,
+conservative invalidation, and geometry publication. Neither example selects the
+public node API or implements the full stage and lifecycle contracts proposed here.
 
 The proposed direction is a persistent tree of heterogeneous nodes, with explicit
 mutation and framework-controlled execution stages. Validate the contract with a
@@ -249,10 +251,11 @@ tests rather than assuming identical behavior.
 
 ## Validation before implementation expands
 
-The isolated access prototype establishes the basic borrowing mechanism. After
-reviewing its measured costs and the stage contract, a headless execution
-experiment can validate the container and two leaf behaviors described above.
-This does not yet justify a public `Ui` facade.
+The isolated access prototype establishes the basic borrowing mechanism. The
+headless layout experiment tests synthetic versions of the container and two
+leaves, including comparison with full recomputation and failure recovery. It
+does not validate real font inputs, paint records, or the broader sizing model.
+These examples do not yet justify a public `Ui` facade.
 
 | Contract | Required evidence |
 | --- | --- |
@@ -266,5 +269,6 @@ This does not yet justify a public `Ui` facade.
 
 Geometry agreement is not visual acceptance. Pixel output, clipping, overlap,
 damage, native input, and platform integration require later dedicated checks.
-The document establishes a candidate contract; it contains no performance results
-or implemented UI capabilities.
+This document establishes the broader candidate contract. The linked experiment
+documents distinguish their implemented subsets and evidence from unresolved
+framework capabilities.

@@ -18,3 +18,7 @@ harness = false
 [[example]]
 name = "node_store"
 path = "examples/node_store/main.rs"
+
+[[example]]
+name = "layout_contract"
+path = "examples/layout_contract/main.rs"

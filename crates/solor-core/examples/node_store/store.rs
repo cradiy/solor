@@ -68,6 +68,10 @@ impl<T: ?Sized> NodeStore<T> {
         self.tree.node_count()
     }
 
+    pub fn parent(&self, node: NodeId) -> Result<Option<NodeId>, TreeError> {
+        self.tree.parent(node)
+    }
+
     pub fn append(&mut self, parent: NodeId, body: Box<T>) -> Result<NodeId, TreeError> {
         self.tree.append(
             parent,
@@ -191,7 +195,6 @@ impl<T: ?Sized> Context<'_, T> {
 
     pub fn parent(&self) -> Option<NodeId> {
         self.store
-            .tree
             .parent(self.current)
             .expect("current node is live")
     }

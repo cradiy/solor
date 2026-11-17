@@ -13,8 +13,9 @@ contract needs separate validation. No layout, paint, invalidation scheduler,
 deferred edit queue, or component API is implemented here.
 
 Implementation: [store](../crates/solor-core/examples/node_store/store.rs),
-[tests](../crates/solor-core/examples/node_store/tests.rs), and
-[measurement harness](../crates/solor-core/examples/node_store/measure.rs).
+[tests](../crates/solor-core/examples/node_store/tests.rs),
+[scalar measurements](../crates/solor-core/examples/node_store/measure.rs), and
+[heterogeneous workloads](../crates/solor-core/examples/node_store/workload.rs).
 
 ## Access contract
 
@@ -124,11 +125,71 @@ per-node cost. Both variants already pay for individually boxed payloads; this
 comparison does not evaluate alternatives to boxing. Probe code and diagnostic
 logs are local artifacts, not project dependencies.
 
+## Heterogeneous workloads
+
+The workload fixture contains 10,101 nodes: a root, 100 branches, and 100 leaves
+per branch. Branches, scalar leaves, and leaves containing a 16-word block have
+different payload sizes and behavior implementations behind `dyn Body`. Each
+invocation begins with node-specific computation, calls children, combines their
+returned values in order, and finishes by updating the parent's output.
+
+The direct reference splits parent execution around recursive calls, releasing
+and then reacquiring its payload borrow. Both variants invoke the same `begin`
+and `finish` methods and produce identical outputs and execution counts. This
+reference requires a fixed, externally controlled traversal; it cannot replace
+the loan contract for arbitrary behavior that holds its own state while deciding
+when to call children. It is a cost reference, not a competing public API.
+
+Two work levels use one or eight rounds of integer arithmetic per leaf. These
+are synthetic execution loads, not text measurement, layout, or rendering.
+The fresh fixture is compared with a reused fixture where half the leaves are
+removed and recreated in reverse order within each branch. Both compared stores
+receive the same edits. This tests one controlled reuse pattern, not arbitrary
+heap fragmentation or prolonged application churn.
+
+Each workload executes either the whole tree or explicit jobs targeting one or
+ten branches. A job is a subtree root supplied by the benchmark; there is no
+dirty discovery, deduplication, or dependency propagation. Unselected nodes,
+including ancestors of selected roots, retain their previous outputs. A focused
+test verifies result equivalence and untouched outputs for fresh and reused
+fixtures. Runtime assertions also check every live node's output and total visit
+count outside timing.
+
+The harness uses 100 warmup batches, seven alternating samples, and approximately
+two million node invocations per variant per sample. Three release runs gave the
+following ranges of per-run medians, in microseconds per batch:
+
+| Storage and work | Nodes executed | Split direct reference | Scoped loan |
+| --- | --- | --- | --- |
+| Fresh, light | 101 | 0.82–0.86 | 1.35–1.44 |
+| Fresh, light | 1,010 | 8.78–9.09 | 14.20–14.71 |
+| Fresh, light | 10,101 | 97.0–97.8 | 150.2–153.6 |
+| Fresh, compute | 101 | 4.17–4.23 | 4.59–4.67 |
+| Fresh, compute | 1,010 | 42.08–42.22 | 46.36–46.71 |
+| Fresh, compute | 10,101 | 427.2–428.2 | 469.8–473.5 |
+| Reused, light | 10,101 | 100.7–109.3 | 159.6–162.9 |
+| Reused, compute | 10,101 | 442.3–444.9 | 485.9–488.4 |
+
+For fresh whole-tree work, the added cost is about 55–57% with light computation
+and 10–11% with heavier computation. The smaller percentage does not eliminate
+the mechanism's cost. Repeated access to selected subtrees is cache-friendly;
+these timings do not establish cold-cache latency. All measured execution
+intervals had zero observed allocator calls using the same external probe and
+positive control described above. Construction, edits, job selection, and
+verification are outside those intervals.
+
+These measurements do not isolate map lookup, validation, dispatch, and guard
+restoration costs individually. They provide no evidence that changing the map
+would improve the complete workload. The store implementation retains its
+identity, reentry, depth, and failure checks.
+
 ## Next decision
 
 The results support retaining this access layer as a candidate without replacing
 `SlotMap`. They do not establish that its overhead is acceptable for the final
-framework. The next design question is whether restricted contexts can express
-the container and leaf execution in the [node model](node-execution.md), including
-layout outputs and failure propagation. Review that contract before introducing
-public behavior traits or integrating this example into `Runtime`.
+framework. Selected-subtree execution scales with supplied work in this fixture,
+but does not establish correct incremental layout. The separate
+[layout contract experiment](layout-contract.md) tests restricted contexts,
+ancestor invalidation, and failure-safe publication in a narrow sizing domain.
+The broader [node model](node-execution.md) still needs review before introducing
+public behavior traits or integrating these examples into `Runtime`.
