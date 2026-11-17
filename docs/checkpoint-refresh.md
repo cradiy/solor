@@ -6,7 +6,9 @@ The private selective audit supports refreshing a checkpoint from a currently
 valid measurement or published layout. The purpose is to avoid rebuilding the
 child/read index when only queries, allocations, or consumed outputs change.
 Normal invalidation, audit selection, and atomic geometry publication are unchanged.
-Speculative layout is still discarded and may execute again during reconciliation.
+Standalone audits discard speculative layout and may execute it again during
+reconciliation. The separate [shared-attempt path](shared-layout-attempt.md)
+adopts matching staged subtrees within one complete update.
 
 `Scene::refresh_selective_dependencies(checkpoint, target)` keeps the existing
 owner and applies the same result-validity gates as capture. It returns `false`
@@ -39,8 +41,7 @@ versus incomplete evidence, and rejected refresh after a layout error or panic.
 Foreign-scene and unavailable-request failures retain the original evidence.
 The existing 384-step mixed workload now exercises refresh and compares audit
 verdicts and complete geometry with linear auditing and forced recomputation in
-both cache-capacity variants. The workspace has 69 passing tests, including 43
-layout-contract tests.
+both cache-capacity variants.
 
 ## Complete-path measurements
 
@@ -110,7 +111,7 @@ cargo run --release -p solor-core --example layout_cost_three --offline
 cargo run --release -p solor-core --example layout_cost_one --offline
 ```
 
-Keep same-order refresh in the explicit experiment. The next unresolved boundary
-is reusing validated descendant layout work without losing atomic publication or
-executing that work again. Normal layout remains the default, and propagation
-pruning remains outside this milestone.
+Keep same-order refresh in the explicit experiment. The
+[shared-attempt experiment](shared-layout-attempt.md) measures descendant layout
+reuse while preserving atomic publication. Normal layout remains the default,
+and propagation pruning remains outside this milestone.

@@ -14,6 +14,9 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 #[path = "selective_tests.rs"]
 mod selective_tests;
 
+#[path = "shared_attempt_tests.rs"]
+mod shared_attempt_tests;
+
 #[test]
 fn validation_separates_measurements_from_final_baseline_and_content() {
     let initial = LayoutOutput {

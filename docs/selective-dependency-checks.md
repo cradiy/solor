@@ -60,7 +60,7 @@ declared inputs and child results.
 
 ## Publication and correctness
 
-The audit discards speculative geometry and leaves pending layout work intact.
+The standalone audit discards speculative geometry and leaves pending layout work intact.
 Even a subsequent check that selects zero reads cannot clear an internal child
 movement. Normal layout still publishes that movement atomically. This preserves
 changes but does not reuse speculative geometry: some layout bodies execute twice.
@@ -71,6 +71,10 @@ expiry and cursor advancement, independent checkpoints, incomplete evidence,
 owner mutation, foreign handles, and ordered error/panic recovery. A 384-step
 mixed workload compares both audit verdicts and complete geometry with linear
 validation and cache-disabled recomputation, using both cache capacities.
+
+[Shared attempts](shared-layout-attempt.md) instead combine root audits and normal
+layout in one update, adopting matching subtrees and committing checkpoint cursors
+only after complete success. They remain a separate explicit path.
 
 ## Full-recapture reference measurements
 
@@ -152,6 +156,7 @@ target runs the same correctness and complete-update workloads.
 
 The measured decision is to keep normal layout as the default. Same-order
 [checkpoint refresh](checkpoint-refresh.md) addresses redundant index rebuilding;
-speculative layout work still executes again during reconciliation. Any candidate must
+the [shared-attempt path](shared-layout-attempt.md) addresses repeated subtree
+layout. Any candidate must
 retain failure atomicity and be measured across stable edits, changed results,
 batch updates, and resizing rather than only the favorable stable-label case.

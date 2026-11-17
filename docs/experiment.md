@@ -45,7 +45,9 @@ The [selective-check experiment](selective-dependency-checks.md) routes bounded
 edit history through a checkpoint-local child/read index. Stable local audits
 visit fewer reads. [Checkpoint refresh](checkpoint-refresh.md) reuses an index
 when the ordered child reads match, reducing replacement costs for changed
-results and resizing. Reconciliation still repeats speculative layout work.
+results and resizing. The [shared layout attempt](shared-layout-attempt.md) lets
+normal layout adopt completed audit subtrees within one update. Only adopted
+drafts publish after root success; failed attempts retain both checkpoint cursors.
 The audit remains opt-in and is not selected for automatic runtime validation.
 The [node execution model draft](node-execution.md) remains the broader proposal.
 
@@ -77,9 +79,11 @@ retain exact queries and execution order, reject missing edit history, and keep
 pending descendant changes when an audit cursor advances. Complete update costs
 must include checkpoint replacement as well as repeated layout work. Index reuse
 requires an unchanged child sequence and valid evidence. Refresh must preserve
-old evidence on rejection. These checks do
-not validate real text, pixel output, or a complete incremental layout
-system.
+old evidence on rejection. Shared attempts must reject mismatched allocations,
+discard obsolete drafts, preserve internal movement, and leave geometry and
+checkpoint cursors unchanged after failure. Staged results cannot survive into
+another update. These checks do not validate real text, pixel output, or a
+complete incremental layout system.
 
 ## Candidate investigations
 

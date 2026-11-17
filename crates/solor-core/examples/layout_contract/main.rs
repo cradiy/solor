@@ -86,6 +86,10 @@ fn validate_dependency_results() {
         .capture_selective_dependencies(root, allocated)
         .unwrap()
         .unwrap();
+    let mut selected_measure = scene
+        .capture_selective_dependencies(root, measured)
+        .unwrap()
+        .unwrap();
     let published = scene.snapshot();
     scene
         .edit_layout::<Drawing>(child, |leaf| leaf.size.width = 21)
@@ -105,7 +109,24 @@ fn validate_dependency_results() {
     println!(
         "dependency audit: measurement={measurement:?}, layout={placement:?}; geometry unpublished"
     );
-    scene.run(Query::Exact(10), None, false).unwrap();
+    let result = scene
+        .run_validated(
+            Query::Exact(10),
+            Size {
+                width: 10,
+                height: 5,
+            },
+            &mut selected_measure,
+            &mut selective,
+        )
+        .unwrap();
+    assert_eq!(result.published, 2);
+    assert_eq!(result.reused_layouts, 1);
+    assert_eq!(result.checks[1].outcome, CheckOutcome::Changed);
+    println!(
+        "shared attempt: {} adopted subtree, {} published entries",
+        result.reused_layouts, result.published
+    );
     let incremental = scene.snapshot();
     assert!(
         scene

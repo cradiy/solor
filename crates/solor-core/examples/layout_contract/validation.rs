@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{
     AccessError, Attempt, Context, Entry, LayoutError, NodeId, Query, Read, ReadSet, Result, Scene,
-    Scratch, Size, layout, measure,
+    Scratch, Size, layout, layout_root, measure, publish_layout,
 };
 
 pub const MAX_TRACKED_EDITS: usize = 256;
@@ -88,6 +88,13 @@ pub struct CheckReport {
     pub staged_geometry: usize,
 }
 
+#[derive(Debug)]
+pub struct ValidatedRun {
+    pub published: usize,
+    pub checks: [CheckReport; 2],
+    pub reused_layouts: usize,
+}
+
 impl Scene {
     pub fn capture_selective_dependencies(
         &mut self,
@@ -155,8 +162,111 @@ impl Scene {
         checkpoint: &mut SelectiveCheckpoint,
         target: CheckTarget,
     ) -> Result<CheckReport> {
-        if !self.can_check(&checkpoint.evidence, target)? {
+        let Some(selected) = self.select_reads(checkpoint, target)? else {
             return Ok(CheckReport::empty(CheckOutcome::Unverifiable));
+        };
+        let revision = self
+            .changes
+            .as_ref()
+            .expect("capture enables change tracking")
+            .revision;
+        let owner = checkpoint.evidence.owner;
+        let report = if selected.is_empty() {
+            CheckReport::empty(CheckOutcome::Unchanged)
+        } else {
+            self.invalidate(owner)?;
+            let attempt = Attempt(&mut self.scratch);
+            self.store.execute(owner, |_entry, access| {
+                Ok(check_reads(
+                    access,
+                    selected
+                        .iter()
+                        .map(|&index| &checkpoint.evidence.reads.reads[index]),
+                    attempt.0,
+                ))
+            })??
+        };
+        if report.outcome == CheckOutcome::Unchanged {
+            checkpoint.revision = revision;
+        }
+        Ok(report)
+    }
+
+    /// Root audits and normal layout share one unpublished attempt with no input edits.
+    pub fn run_validated(
+        &mut self,
+        query: Query,
+        assigned: Size,
+        measurement: &mut SelectiveCheckpoint,
+        placement: &mut SelectiveCheckpoint,
+    ) -> Result<ValidatedRun> {
+        let root = self.root();
+        if measurement.evidence.owner != root || placement.evidence.owner != root {
+            return Err(LayoutError::InvalidCheckpointOwner);
+        }
+        let selected = [
+            self.select_reads(measurement, CheckTarget::Measure(query))?,
+            self.select_reads(placement, CheckTarget::Layout(assigned))?,
+        ];
+        let revision = self
+            .changes
+            .as_ref()
+            .expect("capture enables change tracking")
+            .revision;
+        let mut checks = selected.each_ref().map(|indices| {
+            CheckReport::empty(if indices.is_some() {
+                CheckOutcome::Unchanged
+            } else {
+                CheckOutcome::Unverifiable
+            })
+        });
+        let (published, reused_layouts) = if selected.iter().flatten().all(Vec::is_empty) {
+            (self.run(query, Some(assigned), false)?, 0)
+        } else {
+            self.invalidate(root)?;
+            let attempt = Attempt(&mut self.scratch);
+            let reuse = attempt.0.reuse.get_or_insert_with(Default::default);
+            reuse.active = true;
+            reuse.auditing = true;
+            for (index, checkpoint) in [&*measurement, &*placement].iter().enumerate() {
+                if let Some(indices) = &selected[index] {
+                    checks[index] = self.store.execute(root, |_entry, access| {
+                        Ok(check_reads(
+                            access,
+                            indices.iter().map(|&i| &checkpoint.evidence.reads.reads[i]),
+                            attempt.0,
+                        ))
+                    })??;
+                }
+            }
+            attempt.0.reuse.as_mut().unwrap().auditing = false;
+            layout_root(&mut self.store, attempt.0, query, Some(assigned), false)?;
+            let published = publish_layout(&mut self.store, attempt.0);
+            let hits = attempt.0.reuse.as_ref().unwrap().hits;
+            self.pending = false;
+            self.request = Some((query, Some(assigned)));
+            (published, hits)
+        };
+        // No checkpoint cursor commits unless the entire update succeeds.
+        for (checkpoint, report) in [measurement, placement].into_iter().zip(checks) {
+            if report.outcome == CheckOutcome::Unchanged {
+                checkpoint.revision = revision;
+            }
+        }
+        Ok(ValidatedRun {
+            published,
+            checks,
+            reused_layouts,
+        })
+    }
+
+    fn select_reads(
+        &self,
+        checkpoint: &SelectiveCheckpoint,
+        target: CheckTarget,
+    ) -> Result<Option<Vec<usize>>> {
+        if !self.can_check(&checkpoint.evidence, target)? {
+            return Ok(None);
         }
         let changes = self
             .changes
@@ -164,9 +274,8 @@ impl Scene {
             .expect("capture enables change tracking");
         let elapsed = changes.revision - checkpoint.revision;
         if elapsed > changes.edits.len() as u64 {
-            return Ok(CheckReport::empty(CheckOutcome::Unverifiable));
+            return Ok(None);
         }
-        let revision = changes.revision;
         let owner = checkpoint.evidence.owner;
         let mut children = HashSet::new();
         for &node in changes
@@ -193,27 +302,7 @@ impl Scene {
         }
         // Hash iteration order must not change query eviction or failure order.
         selected.sort_unstable();
-        let report = if selected.is_empty() {
-            CheckReport::empty(CheckOutcome::Unchanged)
-        } else {
-            self.invalidate(owner)?;
-            let attempt = Attempt(&mut self.scratch);
-            self.store.execute(owner, |_entry, access| {
-                Ok(check_reads(
-                    access,
-                    selected
-                        .iter()
-                        .map(|&index| &checkpoint.evidence.reads.reads[index]),
-                    attempt.0,
-                ))
-            })??
-        };
-        // Only successful equality extends the evidence to the current edit cursor.
-        // Changed results, errors and unwinds must retain the earlier cursor.
-        if report.outcome == CheckOutcome::Unchanged {
-            checkpoint.revision = revision;
-        }
-        Ok(report)
+        Ok(Some(selected))
     }
 
     fn can_check(&self, checkpoint: &Checkpoint, target: CheckTarget) -> Result<bool> {

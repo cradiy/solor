@@ -6,6 +6,7 @@ enum Mode {
     Plain,
     Linear,
     Selective,
+    Shared,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -16,7 +17,7 @@ enum Update {
     Resize,
 }
 
-const MODES: [Mode; 3] = [Mode::Plain, Mode::Linear, Mode::Selective];
+const MODES: [Mode; 4] = [Mode::Plain, Mode::Linear, Mode::Selective, Mode::Shared];
 const UPDATES: [Update; 4] = [
     Update::StableOne,
     Update::StableBatch,
@@ -37,6 +38,7 @@ struct Runner {
     reads: usize,
     staged: usize,
     refreshes: usize,
+    reused: usize,
 }
 
 fn targets(width: u32) -> (CheckTarget, CheckTarget, Size) {
@@ -66,6 +68,7 @@ impl Runner {
             reads: 0,
             staged: 0,
             refreshes: 0,
+            reused: 0,
         };
         runner.capture(96);
         runner
@@ -86,7 +89,7 @@ impl Runner {
                 scene.capture_dependencies(root, measure).unwrap().unwrap(),
                 scene.capture_dependencies(root, layout).unwrap().unwrap(),
             ),
-            Mode::Selective => Evidence::Selective(
+            Mode::Selective | Mode::Shared => Evidence::Selective(
                 scene
                     .capture_selective_dependencies(root, measure)
                     .unwrap()
@@ -127,12 +130,20 @@ impl Runner {
         }
         let (measure, layout, assigned) = targets(width);
         let scene = &mut self.fixture.scene;
+        let shared = matches!(self.mode, Mode::Shared);
         let reports = match &mut self.evidence {
             Evidence::None => None,
             Evidence::Linear(a, b) => Some([
                 scene.check_dependencies(a, measure).unwrap(),
                 scene.check_dependencies(b, layout).unwrap(),
             ]),
+            Evidence::Selective(a, b) if shared => {
+                let report = scene
+                    .run_validated(Query::Exact(width), assigned, a, b)
+                    .unwrap();
+                self.reused += report.reused_layouts;
+                Some(report.checks)
+            }
             Evidence::Selective(a, b) => Some([
                 scene.check_selective_dependencies(a, measure).unwrap(),
                 scene.check_selective_dependencies(b, layout).unwrap(),
@@ -142,9 +153,11 @@ impl Runner {
             self.reads += reports.iter().map(|r| r.checked_reads).sum::<usize>();
             self.staged += reports.iter().map(|r| r.staged_geometry).sum::<usize>();
         }
-        scene
-            .run(Query::Exact(width), Some(assigned), force)
-            .unwrap();
+        if !shared {
+            scene
+                .run(Query::Exact(width), Some(assigned), force)
+                .unwrap();
+        }
         let outcomes = reports.map(|reports| reports.map(|r| r.outcome));
         if outcomes.is_some_and(|outcomes| outcomes.iter().any(|&o| o != CheckOutcome::Unchanged)) {
             self.capture(width);
@@ -157,11 +170,13 @@ impl Runner {
 pub(super) fn verify() {
     let mut linear = Runner::new(12, Mode::Linear);
     let mut selective = Runner::new(12, Mode::Selective);
+    let mut shared = Runner::new(12, Mode::Shared);
     let mut reference = Runner::new(12, Mode::Plain);
     for step in 0..384 {
         let update = UPDATES[(step / 5) % UPDATES.len()];
         let expected = linear.step(update, step, false);
         assert_eq!(selective.step(update, step, false), expected);
+        assert_eq!(shared.step(update, step, false), expected);
         reference.step(update, step, true);
         assert_eq!(
             linear.fixture.scene.snapshot(),
@@ -169,6 +184,10 @@ pub(super) fn verify() {
         );
         assert_eq!(
             selective.fixture.scene.snapshot(),
+            reference.fixture.scene.snapshot()
+        );
+        assert_eq!(
+            shared.fixture.scene.snapshot(),
             reference.fixture.scene.snapshot()
         );
     }
@@ -181,14 +200,20 @@ fn measure_selection(rows: usize, update: Update) {
             runner.step(update, step, false);
         }
     }
-    let before = runners
-        .each_ref()
-        .map(|r| (r.fixture.scene.counts(), r.reads, r.staged, r.refreshes));
+    let before = runners.each_ref().map(|r| {
+        (
+            r.fixture.scene.counts(),
+            r.reads,
+            r.staged,
+            r.refreshes,
+            r.reused,
+        )
+    });
     let iterations = if rows == 100 { 300 } else { 30 };
-    let mut samples = [[Duration::ZERO; 3]; SAMPLES];
+    let mut samples = [[Duration::ZERO; MODES.len()]; SAMPLES];
     for (sample, times) in samples.iter_mut().enumerate() {
-        for offset in 0..3 {
-            let mode = (sample + offset) % 3;
+        for offset in 0..MODES.len() {
+            let mode = (sample + offset) % MODES.len();
             let start = Instant::now();
             for step in 0..iterations {
                 black_box(runners[mode].step(update, 30 + sample * iterations + step, false));
@@ -204,9 +229,9 @@ fn measure_selection(rows: usize, update: Update) {
         let ns = |time: Duration| time.as_secs_f64() * 1e9 / iterations as f64;
         let total = (iterations * SAMPLES) as f64;
         let after = runner.fixture.scene.counts();
-        let (counts, reads, staged, refreshes) = before[index];
+        let (counts, reads, staged, refreshes, reused) = before[index];
         println!(
-            "selection/{rows}/{update:?}/{:?}: median_ns={:.1} range_ns=[{:.1},{:.1}] reads={:.1} staged={:.1} measures={:.1} layouts={:.1} refreshes={:.1}",
+            "selection/{rows}/{update:?}/{:?}: median_ns={:.1} range_ns=[{:.1},{:.1}] reads={:.1} staged={:.1} measures={:.1} layouts={:.1} refreshes={:.1} reused={:.1}",
             runner.mode,
             ns(times[3]),
             ns(times[0]),
@@ -216,6 +241,7 @@ fn measure_selection(rows: usize, update: Update) {
             (after.measures - counts.measures) as f64 / total,
             (after.layouts - counts.layouts) as f64 / total,
             (runner.refreshes - refreshes) as f64 / total,
+            (runner.reused - reused) as f64 / total,
         );
     }
 }

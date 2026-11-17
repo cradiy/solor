@@ -128,3 +128,5 @@ The [selective-check experiment](selective-dependency-checks.md) indexes capture
 reads and routes bounded edit history to affected children. It measures full
 updates, including checkpoint replacement, while retaining normal reconciliation
 for atomic publication. It is not selected for automatic runtime validation.
+The [shared-attempt experiment](shared-layout-attempt.md) combines root audits
+with normal layout so adopted subtree results can publish in the same update.

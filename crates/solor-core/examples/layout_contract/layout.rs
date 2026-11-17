@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 
 use solor_core::tree::NodeId;
@@ -10,6 +11,10 @@ const _: () = assert!(MEASUREMENT_CACHE_SLOTS > 0);
 
 #[path = "validation.rs"]
 pub mod validation;
+
+#[cfg(test)]
+#[path = "staged_allocation_tests.rs"]
+mod staged_allocation_tests;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayoutError {
@@ -25,6 +30,7 @@ pub enum LayoutError {
     FailedChildOperation,
     StructureLocked,
     RevisionExhausted,
+    InvalidCheckpointOwner,
     #[cfg(test)]
     Injected,
 }
@@ -362,6 +368,34 @@ struct ChildState {
 struct Scratch {
     draft: Vec<Draft>,
     children: Vec<ChildState>,
+    reuse: Option<StagedLayouts>,
+}
+
+#[derive(Default)]
+struct StagedLayouts {
+    active: bool,
+    auditing: bool,
+    candidates: HashMap<NodeId, std::ops::Range<usize>>,
+    live: Vec<bool>,
+    hits: usize,
+}
+
+impl Scratch {
+    fn record_draft(&mut self, position: usize, subtree_start: Option<usize>) {
+        let Some(reuse) = self.reuse.as_mut().filter(|reuse| reuse.active) else {
+            return;
+        };
+        debug_assert_eq!(reuse.live.len(), position);
+        reuse.live.push(!reuse.auditing);
+        if reuse.auditing
+            && let Some(start) = subtree_start
+        {
+            // Audit execution never reuses staged work, so each subtree is contiguous.
+            reuse
+                .candidates
+                .insert(self.draft[position].node, start..position + 1);
+        }
+    }
 }
 
 // Discard unpublished data on every exit, including unwinding, while retaining capacity.
@@ -371,6 +405,13 @@ impl Drop for Attempt<'_> {
     fn drop(&mut self) {
         self.0.draft.clear();
         self.0.children.clear();
+        if let Some(reuse) = &mut self.0.reuse {
+            reuse.active = false;
+            reuse.auditing = false;
+            reuse.candidates.clear();
+            reuse.live.clear();
+            reuse.hits = 0;
+        }
     }
 }
 
@@ -466,6 +507,27 @@ fn layout(
     force: bool,
 ) -> Result<(usize, LayoutOutput)> {
     if !force
+        && entry.layout_dirty
+        && let Some(reuse) = scratch
+            .reuse
+            .as_mut()
+            .filter(|reuse| reuse.active && !reuse.auditing)
+        && let Some(range) = reuse.candidates.get(&access.current())
+        && scratch.draft[range.end - 1].geometry.metrics.size == assigned
+    {
+        reuse.hits += 1;
+        reuse.live[range.clone()].fill(true);
+        let position = range.end - 1;
+        let geometry = scratch.draft[position].geometry;
+        return Ok((
+            position,
+            LayoutOutput {
+                baseline: geometry.metrics.baseline,
+                content: geometry.content,
+            },
+        ));
+    }
+    if !force
         && !entry.layout_dirty
         && entry
             .geometry
@@ -480,6 +542,7 @@ fn layout(
             geometry,
             reads: None,
         });
+        scratch.record_draft(position, None);
         return Ok((
             position,
             LayoutOutput {
@@ -488,6 +551,7 @@ fn layout(
             },
         ));
     }
+    let subtree_start = scratch.draft.len();
     entry.layout_dirty = true;
     entry.counts.layouts += 1;
     let children_start = scratch.children.len();
@@ -525,7 +589,64 @@ fn layout(
             content: output.content,
         },
     });
+    cx.scratch.record_draft(position, Some(subtree_start));
     Ok((position, output))
+}
+
+fn layout_root(
+    store: &mut NodeStore<Entry>,
+    scratch: &mut Scratch,
+    query: Query,
+    assigned: Option<Size>,
+    force: bool,
+) -> Result<usize> {
+    let root = store.root();
+    let metrics = store.execute(root, |entry, access| {
+        Ok(measure(entry, access, query, force))
+    })??;
+    let (position, _) = store.execute(root, |entry, access| {
+        Ok(layout(
+            entry,
+            access,
+            assigned.unwrap_or(metrics.size),
+            scratch,
+            force,
+        ))
+    })??;
+    scratch.draft[position].geometry.origin = Origin::default();
+    Ok(position)
+}
+
+fn publish_layout(store: &mut NodeStore<Entry>, scratch: &mut Scratch) -> usize {
+    fn publish(store: &mut NodeStore<Entry>, change: &mut Draft) -> usize {
+        let entry = store
+            .get_mut(change.node)
+            .expect("layout cannot remove nodes");
+        let changed = usize::from(entry.geometry != Some(change.geometry));
+        if changed != 0 {
+            entry.geometry = Some(change.geometry);
+        }
+        entry.layout_dirty = false;
+        if let Some(reads) = change.reads.take() {
+            entry.set_layout_reads(reads);
+        }
+        changed
+    }
+    if let Some(reuse) = scratch.reuse.as_ref().filter(|reuse| reuse.active) {
+        scratch
+            .draft
+            .iter_mut()
+            .zip(&reuse.live)
+            .filter(|(_, live)| **live)
+            .map(|(draft, _)| publish(store, draft))
+            .sum()
+    } else {
+        scratch
+            .draft
+            .iter_mut()
+            .map(|draft| publish(store, draft))
+            .sum()
+    }
 }
 
 pub struct Scene {
@@ -569,6 +690,16 @@ impl Scene {
                 self.scratch.children.capacity(),
             ),
         ]
+    }
+
+    #[cfg(test)]
+    pub fn staged_usage(&self) -> [(usize, usize); 2] {
+        self.scratch.reuse.as_ref().map_or([(0, 0); 2], |reuse| {
+            [
+                (reuse.candidates.len(), reuse.candidates.capacity()),
+                (reuse.live.len(), reuse.live.capacity()),
+            ]
+        })
     }
 
     pub fn append(&mut self, parent: NodeId, body: impl LayoutNode) -> Result<NodeId> {
@@ -630,35 +761,8 @@ impl Scene {
         }
         self.pending = true;
         let attempt = Attempt(&mut self.scratch);
-        let root = self.store.root();
-        let metrics = self.store.execute(root, |entry, access| {
-            Ok(measure(entry, access, query, force))
-        })??;
-        let (position, _) = self.store.execute(root, |entry, access| {
-            Ok(layout(
-                entry,
-                access,
-                assigned.unwrap_or(metrics.size),
-                attempt.0,
-                force,
-            ))
-        })??;
-        attempt.0.draft[position].geometry.origin = Origin::default();
-        let mut published = 0;
-        for change in &mut attempt.0.draft {
-            let entry = self
-                .store
-                .get_mut(change.node)
-                .expect("layout cannot remove nodes");
-            if entry.geometry != Some(change.geometry) {
-                published += 1;
-                entry.geometry = Some(change.geometry);
-            }
-            entry.layout_dirty = false;
-            if let Some(reads) = change.reads.take() {
-                entry.set_layout_reads(reads);
-            }
-        }
+        layout_root(&mut self.store, attempt.0, query, assigned, force)?;
+        let published = publish_layout(&mut self.store, attempt.0);
         self.request = Some((query, assigned));
         self.pending = false;
         Ok(published)

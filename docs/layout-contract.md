@@ -145,7 +145,7 @@ cargo run -p solor-core --example layout_contract --offline
 cargo test -p solor-core --example layout_contract --offline
 ```
 
-Forty-three focused tests include a 256-step vertical comparison and a 384-step row
+Forty-eight focused tests include a 256-step vertical comparison and a 384-step row
 comparison with all measurement and layout caches bypassed. The reference uses
 the same fixture algorithms, so known-value assertions independently check
 wrapping height, baseline, sibling origins, final allocations, and content extent.
@@ -173,3 +173,5 @@ The [result-validation experiment](dependency-validation.md) audits those record
 without pruning ancestors or publishing speculative child geometry.
 The [selective-check experiment](selective-dependency-checks.md) compares indexed
 checks with linear replay and normal layout across complete updates.
+The [shared-attempt experiment](shared-layout-attempt.md) adopts audited subtree
+layouts within one update and publishes only drafts used by normal layout.
