@@ -192,6 +192,7 @@ fn errors_and_panics_preserve_publication_and_retry_incomplete_work() {
                 Fault::Panic => assert!(outcome.is_err()),
             }
             assert_eq!(scene.snapshot(), before);
+            assert!(scene.scratch_usage().iter().all(|&(len, _)| len == 0));
             assert!(scene.is_pending());
             // Remove only the fault injector: retry must rely on retained invalidity.
             scene.body_mut::<Drawing>(ids.drawing).unwrap().fault = None;
@@ -435,10 +436,68 @@ fn caught_child_errors_and_panics_still_abort_the_attempt() {
                 Err(LayoutError::FailedChildOperation)
             );
             assert_eq!(scene.snapshot(), vec![None, None]);
+            assert!(scene.scratch_usage().iter().all(|&(len, _)| len == 0));
             assert!(scene.is_pending());
             scene.body_mut::<Drawing>(child).unwrap().fault = None;
             assert_eq!(scene.run(Query::Exact(10), None, false), Ok(2));
             assert!(!scene.is_pending());
         }
     }
+}
+
+#[test]
+fn scratch_growth_unwinding_and_release_preserve_layout_state() {
+    let mut scene = Scene::new(Column { padding: 1, gap: 1 });
+    let root = scene.root();
+    // The wide child grows the shared stack while its parent still owns a range.
+    for width in [128, 2] {
+        let branch = scene.append(root, Column { padding: 1, gap: 1 }).unwrap();
+        for _ in 0..width {
+            scene.append(branch, Drawing::new(5, 5)).unwrap();
+        }
+    }
+    let last = scene.append(root, Drawing::new(5, 5)).unwrap();
+    scene.run(Query::Exact(30), None, false).unwrap();
+    let expected = scene.snapshot();
+    let capacity = scene.scratch_usage();
+    assert!(capacity.iter().all(|&(len, cap)| len == 0 && cap > 0));
+
+    for fault in [Fault::Error, Fault::Panic, Fault::Error, Fault::Panic] {
+        scene
+            .edit_layout::<Drawing>(last, |drawing| {
+                drawing.fault = Some((Phase::Layout, fault));
+            })
+            .unwrap();
+        let outcome = catch_unwind(AssertUnwindSafe(|| scene.run(Query::Exact(30), None, true)));
+        match fault {
+            Fault::Error => assert_eq!(outcome.unwrap(), Err(LayoutError::Injected)),
+            Fault::Panic => assert!(outcome.is_err()),
+        }
+        assert_eq!(scene.snapshot(), expected);
+        assert_eq!(scene.scratch_usage(), capacity);
+        // Reclaim even after failure; pending work and dirty entries must survive.
+        scene.release_scratch();
+        assert!(scene.is_pending());
+        assert_eq!(scene.scratch_usage(), [(0, 0); 2]);
+        scene.body_mut::<Drawing>(last).unwrap().fault = None;
+        scene.run(Query::Exact(30), None, false).unwrap();
+        assert_eq!(scene.snapshot(), expected);
+        assert_eq!(scene.scratch_usage(), capacity);
+    }
+
+    let counts = scene.counts();
+    scene.release_scratch();
+    assert_eq!(scene.run(Query::Exact(30), None, false), Ok(0));
+    assert_eq!(scene.scratch_usage(), [(0, 0); 2]);
+    assert_eq!(scene.counts(), counts);
+    assert_eq!(scene.snapshot(), expected);
+    // A later real edit must rebuild scratch and publish the new geometry.
+    scene
+        .edit_layout::<Drawing>(last, |drawing| drawing.size.height = 9)
+        .unwrap();
+    scene.run(Query::Exact(30), None, false).unwrap();
+    let updated = scene.snapshot();
+    assert_ne!(updated, expected);
+    scene.run(Query::Exact(30), None, true).unwrap();
+    assert_eq!(scene.snapshot(), updated);
 }

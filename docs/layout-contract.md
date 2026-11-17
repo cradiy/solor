@@ -124,7 +124,11 @@ bodies, and changed geometry entries at publication. They establish execution
 locality, not frame-time performance. A staged entry with unchanged geometry can
 complete layout without being counted as changed publication.
 The journal and placement validation use scratch storage proportional to visited
-work. No whole-tree geometry clone is required by a normal layout attempt.
+work. Scene-owned buffers retain capacity across attempts and clear active entries
+on every exit. `release_scratch` reclaims capacity without invalidating geometry
+or cached measurements. See [scratch reuse](layout-scratch.md) for lifetime rules
+and the measured memory tradeoff. No whole-tree geometry clone is required by a
+normal layout attempt.
 
 ## Implementation and validation
 
@@ -141,7 +145,7 @@ cargo run -p solor-core --example layout_contract --offline
 cargo test -p solor-core --example layout_contract --offline
 ```
 
-Eighteen focused tests include a 256-step vertical comparison and a 384-step row
+Nineteen focused tests include a 256-step vertical comparison and a 384-step row
 comparison with all measurement and layout caches bypassed. The reference uses
 the same fixture algorithms, so known-value assertions independently check
 wrapping height, baseline, sibling origins, final allocations, and content extent.

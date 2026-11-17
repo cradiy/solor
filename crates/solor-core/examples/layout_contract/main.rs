@@ -51,5 +51,9 @@ fn main() {
     assert_eq!(incremental.snapshot(), reference.snapshot());
     assert_eq!(incremental.counts(), before);
     println!("ink edit: no measurement or layout; geometry matches full recomputation");
+    incremental.release_scratch();
+    assert_eq!(incremental.run(Query::Exact(100), None, false), Ok(0));
+    assert_eq!(incremental.snapshot(), reference.snapshot());
+    println!("scratch released: clean layout and published geometry remain valid");
     negotiation::run();
 }

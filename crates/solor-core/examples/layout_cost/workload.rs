@@ -224,6 +224,25 @@ pub fn run() {
         drop(fixture);
         println!("end destruction/{rows}");
     }
+    // Run reclamation probes after timing so they cannot change its allocator history.
+    println!("begin reclaimable/2500");
+    let mut fixture = Fixture::new(2_500);
+    println!("end reclaimable/2500");
+    println!("begin release/2500");
+    fixture.scene.release_scratch();
+    println!("end release/2500");
+    println!("begin released-clean/2500");
+    assert_eq!(fixture.step(Change::Clean, 0, false), 0);
+    println!("end released-clean/2500");
+    println!("begin rebuild/2500");
+    black_box(fixture.step(Change::OneLabel, 1, false));
+    println!("end rebuild/2500");
+    println!("begin release-rebuilt/2500");
+    fixture.scene.release_scratch();
+    println!("end release-rebuilt/2500");
+    println!("begin reclaimed-destruction/2500");
+    drop(fixture);
+    println!("end reclaimed-destruction/2500");
 }
 
 #[cfg(test)]

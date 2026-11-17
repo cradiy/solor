@@ -46,6 +46,10 @@ costs; any optimization needs its own paired comparison and preserved invariants
 
 ## Measurements
 
+This cache-capacity comparison uses the fresh-scratch baseline at `29569b5`.
+The current engine's separate [scratch reuse measurements](layout-scratch.md)
+cover retained temporary capacity and explicit reclamation.
+
 Release measurements used Rust 1.100.0 on Linux x86-64 with an AMD Ryzen AI 7 H
 350. Six uninstrumented runs used the order one/three, three/one, one/three.
 Each table cell reports the median of three run medians, followed by their range.
@@ -133,10 +137,10 @@ implementation visits every row regardless of whether its geometry changes.
 An allocated-height update similarly issues 2,501 cached queries, executes only
 the root layout, and publishes one changed entry.
 
-The source also creates a fresh publication journal per attempt and a child-state
-vector per executing container. Temporary storage reuse is a bounded next
-experiment: compare the same workloads against this baseline, preserve failure
-atomicity, and account for retained capacity as well as allocation reduction.
+This baseline creates a fresh publication journal per attempt and a child-state
+vector per executing container. The [scratch reuse experiment](layout-scratch.md)
+compares the same workloads, including failure atomicity, retained capacity,
+and allocation reduction.
 Reducing traversal requires a separate decision about container invalidation and
 placement dependencies. Neither finding calls for changing the backing map or
 publishing the prototype as a UI API.

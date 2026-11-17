@@ -234,12 +234,34 @@ struct ChildState {
     placed: bool,
 }
 
+#[derive(Default)]
+struct Scratch {
+    draft: Vec<Draft>,
+    children: Vec<ChildState>,
+}
+
+// Discard unpublished data on every exit, including unwinding, while retaining capacity.
+struct Attempt<'a>(&'a mut Scratch);
+
+impl Drop for Attempt<'_> {
+    fn drop(&mut self) {
+        self.0.draft.clear();
+        self.0.children.clear();
+    }
+}
+
 pub struct LayoutContext<'a, 'store> {
     access: &'a mut Context<'store, Entry>,
-    draft: &'a mut Vec<Draft>,
-    children: Vec<ChildState>,
+    scratch: &'a mut Scratch,
+    children_start: usize,
     force: bool,
     failed: bool,
+}
+
+impl Drop for LayoutContext<'_, '_> {
+    fn drop(&mut self) {
+        self.scratch.children.truncate(self.children_start);
+    }
 }
 
 impl LayoutContext<'_, '_> {
@@ -267,8 +289,7 @@ impl LayoutContext<'_, '_> {
             return Err(LayoutError::FailedChildOperation);
         }
         self.failed = true;
-        let child = self
-            .children
+        let child = self.scratch.children[self.children_start..]
             .get_mut(index)
             .ok_or(LayoutError::MissingChild(index))?;
         if child.draft.is_some() {
@@ -279,9 +300,10 @@ impl LayoutContext<'_, '_> {
             .child(index)
             .ok_or(LayoutError::MissingChild(index))?;
         let (position, output) = self.access.execute_child(id, |entry, access| {
-            Ok(layout(entry, access, assigned, self.draft, self.force))
+            Ok(layout(entry, access, assigned, self.scratch, self.force))
         })??;
-        child.draft = Some(position);
+        // Recursive growth may relocate the vector; retain indexes, never references.
+        self.scratch.children[self.children_start + index].draft = Some(position);
         self.failed = false;
         Ok(output)
     }
@@ -291,15 +313,14 @@ impl LayoutContext<'_, '_> {
             return Err(LayoutError::FailedChildOperation);
         }
         self.failed = true;
-        let child = self
-            .children
+        let child = self.scratch.children[self.children_start..]
             .get_mut(index)
             .ok_or(LayoutError::MissingChild(index))?;
         if child.placed {
             return Err(LayoutError::DuplicatePlacement(index));
         }
         let position = child.draft.ok_or(LayoutError::MissingLayout(index))?;
-        self.draft[position].geometry.origin = origin;
+        self.scratch.draft[position].geometry.origin = origin;
         child.placed = true;
         self.failed = false;
         Ok(())
@@ -310,7 +331,7 @@ fn layout(
     entry: &mut Entry,
     access: &mut Context<'_, Entry>,
     assigned: Size,
-    draft: &mut Vec<Draft>,
+    scratch: &mut Scratch,
     force: bool,
 ) -> Result<(usize, LayoutOutput)> {
     if !force
@@ -322,8 +343,8 @@ fn layout(
         let geometry = entry
             .geometry
             .expect("layout reuse requires published geometry");
-        let position = draft.len();
-        draft.push(Draft {
+        let position = scratch.draft.len();
+        scratch.draft.push(Draft {
             node: access.current(),
             geometry,
         });
@@ -337,11 +358,14 @@ fn layout(
     }
     entry.layout_dirty = true;
     entry.counts.layouts += 1;
-    let children = vec![ChildState::default(); access.child_count()];
+    let children_start = scratch.children.len();
+    scratch
+        .children
+        .resize(children_start + access.child_count(), ChildState::default());
     let mut cx = LayoutContext {
         access,
-        draft,
-        children,
+        scratch,
+        children_start,
         force,
         failed: false,
     };
@@ -349,11 +373,14 @@ fn layout(
     if cx.failed {
         return Err(LayoutError::FailedChildOperation);
     }
-    if cx.children.iter().any(|child| !child.placed) {
+    if cx.scratch.children[children_start..]
+        .iter()
+        .any(|child| !child.placed)
+    {
         return Err(LayoutError::UnplacedChildren);
     }
-    let position = cx.draft.len();
-    cx.draft.push(Draft {
+    let position = cx.scratch.draft.len();
+    cx.scratch.draft.push(Draft {
         node: cx.access.current(),
         geometry: Geometry {
             metrics: Metrics {
@@ -369,6 +396,7 @@ fn layout(
 
 pub struct Scene {
     store: NodeStore<Entry>,
+    scratch: Scratch,
     nodes: Vec<NodeId>,
     pending: bool,
     request: Option<(Query, Option<Size>)>,
@@ -380,6 +408,7 @@ impl Scene {
         let nodes = vec![store.root()];
         Self {
             store,
+            scratch: Scratch::default(),
             nodes,
             pending: true,
             request: None,
@@ -388,6 +417,22 @@ impl Scene {
 
     pub fn root(&self) -> NodeId {
         self.store.root()
+    }
+
+    /// Release temporary capacity without invalidating measurements or published geometry.
+    pub fn release_scratch(&mut self) {
+        self.scratch = Scratch::default();
+    }
+
+    #[cfg(test)]
+    pub fn scratch_usage(&self) -> [(usize, usize); 2] {
+        [
+            (self.scratch.draft.len(), self.scratch.draft.capacity()),
+            (
+                self.scratch.children.len(),
+                self.scratch.children.capacity(),
+            ),
+        ]
     }
 
     pub fn append(&mut self, parent: NodeId, body: impl LayoutNode) -> Result<NodeId> {
@@ -439,23 +484,23 @@ impl Scene {
             return Ok(0);
         }
         self.pending = true;
+        let attempt = Attempt(&mut self.scratch);
         let root = self.store.root();
         let metrics = self.store.execute(root, |entry, access| {
             Ok(measure(entry, access, query, force))
         })??;
-        let mut draft = Vec::new();
         let (position, _) = self.store.execute(root, |entry, access| {
             Ok(layout(
                 entry,
                 access,
                 assigned.unwrap_or(metrics.size),
-                &mut draft,
+                attempt.0,
                 force,
             ))
         })??;
-        draft[position].geometry.origin = Origin::default();
+        attempt.0.draft[position].geometry.origin = Origin::default();
         let mut published = 0;
-        for change in draft {
+        for change in &attempt.0.draft {
             let entry = self
                 .store
                 .get_mut(change.node)

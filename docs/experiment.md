@@ -19,9 +19,12 @@ final allocation distinct from measurement, child layout outputs before placemen
 and bounded multi-query caching. A synthetic icon/label/button row exercises
 wrapping, baseline alignment, and content overflow while retaining conservative
 ancestor invalidation and publication only after a complete successful layout.
-The current [layout cost experiment](layout-cost.md) measures the complete
+The [layout cost experiment](layout-cost.md) measures the complete
 headless update path with one and three inline cache slots, including local
 edits, batch edits, width changes, temporary allocation, and live fixture storage.
+The current [scratch reuse experiment](layout-scratch.md) uses scene-owned
+publication and child-state buffers, with cleanup on every exit and explicit
+capacity reclamation. It compares complete updates with the fresh-scratch baseline.
 The [node execution model draft](node-execution.md) remains the broader proposal.
 
 The following are outside this milestone:
@@ -35,9 +38,10 @@ The following are outside this milestone:
 - Selecting a rendering backend or committing to a complete framework design.
 
 Acceptance requires preserved sizing, locality, and failure guarantees; matching
-geometry and publication counts across cache capacities; repeated sequential CPU
-measurements; and separate allocation measurements with a positive control.
-Stop at a measured cache tradeoff and identification of remaining costs. These
+geometry and work counts; repeated sequential CPU measurements; and separate
+allocation measurements with a positive control. Scratch must remain empty after
+errors and panics, and reclamation must preserve clean requests and pending retries.
+Stop at the measured allocation/retention tradeoff and remaining costs. These
 checks do not validate real text, pixel output, or a complete incremental layout
 system.
 
