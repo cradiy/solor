@@ -86,14 +86,20 @@ placement, invalidation of old checkpoints and agreement with full layout
 and rasterization across widths. A 1,024-row variant compares full and
 viewport-limited drawing commands for the same retained layout. Acceptance
 includes partially visible rows, resize, hit testing and pixel replay of a
-held frame. The viewport is anchored at the top and the frame keeps complete
-scene geometry.
+held frame. The viewport is anchored at the top and the frame keeps geometry
+for every logical row, including rows below the viewport.
 
 For a host-assigned viewport, the disclosure root can lay out its children
 directly at the given size. Compare edit-through-snapshot time against a
 preferred-size query followed by the same allocation. Require agreement with
 forced layout and full rasterization, and verify that a subsequent preferred-size
 request still measures the root after an edit.
+
+For a fixed run of rows following the disclosure, compare moving one parent
+with placing each row separately. Require stable row identities and local
+positions during a toggle, agreement with forced flat layout across wrap
+widths, and lower long-list edit-through-snapshot cost. Measure width changes
+separately. This experiment groups the known suffix of one disclosure list.
 
 The [node execution model draft](node-execution.md) remains the broader proposal.
 

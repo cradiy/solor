@@ -128,7 +128,7 @@ before rasterization and native presentation.
 
 The byte counts exclude paragraph allocations, layout storage, and window
 buffers. The three-row control retained all three commands and took 0.12–0.13
-µs for snapshot collection in both paths. Layout still visits the column's
+µs for snapshot collection in both paths. The flat layout visits the column's
 children, and copying the complete geometry still takes work proportional to
 the total node count. This experiment uses a viewport anchored at the top.
 
@@ -150,7 +150,7 @@ when the corresponding query succeeds.
 
 The `measure_snapshot_collection` command above also compares these two root
 requests with the same viewport-limited commands and complete geometry.
-The three strategies rotate execution order by batch. Times below are medians
+The strategies rotate execution order by batch. Times below are medians
 of five release-process medians, in microseconds per edit through snapshot
 replacement. Brackets give the range of process medians.
 
@@ -164,3 +164,39 @@ measurements overlap. Placement and geometry collection still visit the
 flat column’s rows on an edit. The comparison ends before rasterization or
 compositor submission. Offscreen tests compare host-sized frames against
 forced, measured layout and uncached rasterization across edits and resizes.
+
+## Moving the rows after a disclosure
+
+When two or more labels follow the disclosure, a column holds those labels at
+group-local positions. The group receives the same inner width as the flat
+list so wrapping uses the original constraint. Opening the detail moves the
+group's origin. At the same width its children keep their identities, layout
+and shaped paragraphs. The frame stores each tail row in list coordinates
+and includes rows outside the viewport. The group itself is private to layout.
+
+```sh
+cargo test --release --offline --example text_window disclosure_layout::viewport_tests::measure -- --ignored --nocapture --test-threads=1
+```
+
+Both columns below use the host allocation. Each entry is the median of five
+release-process medians, in microseconds from edit or resize through snapshot
+replacement. Each process warms up for one batch and measures seven batches.
+The edit workload rotates strategies and toggles the second row 80 times per
+batch at 240 by 160. The resize workload alternates strategy order and uses
+20 frames per batch, switching between widths of 84 and 240 at height 160.
+Its tail alternates short labels and wrapping bilingual text.
+
+| Workload | Flat rows | Grouped tail |
+| --- | ---: | ---: |
+| Toggle, 4 rows | 17.55 | 17.45 |
+| Toggle, 1,024 rows | 75.14 | 22.49 |
+| Resize, 1,024 rows, warmed widths | 63.41 | 61.42 |
+
+For long-list toggles, process medians ranged from 74.12–76.00 µs flat and
+22.25–23.51 µs grouped. Converting group-local positions back to list
+coordinates increased snapshot collection from 2.08 to 3.76 µs. Total cost
+fell because the parent could move all 1,022 following rows without querying
+or placing them individually. On resize both hierarchies revisit the rows.
+Their process medians overlapped (58.28–65.32 µs flat, 58.50–63.97 µs
+grouped). The four-row edit ranges also overlapped. These timings end before
+rasterization and presentation.

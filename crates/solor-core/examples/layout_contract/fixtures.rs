@@ -26,6 +26,50 @@ impl Column {
             }
         })
     }
+
+    /// A stretched child receives the column's inner width. Content bounds
+    /// still describe the measured children and their reported overflow.
+    pub fn layout_rows(
+        &self,
+        cx: &mut LayoutContext<'_, '_>,
+        assigned: Size,
+        stretch: Option<usize>,
+    ) -> Result<LayoutOutput> {
+        let inset = add(self.padding, self.padding)?;
+        let inner_width = assigned.width.saturating_sub(inset);
+        let query = Query::AtMost(inner_width);
+        let mut y = self.padding;
+        let mut content = Size {
+            width: inset,
+            height: self.padding,
+        };
+        let mut baseline = None;
+        for index in 0..cx.child_count() {
+            if index > 0 {
+                y = add(y, self.gap)?;
+            }
+            let child = cx.measure_child(index, query)?;
+            let mut size = child.size;
+            if stretch == Some(index) {
+                size.width = inner_width;
+            }
+            let output = cx.layout_child(index, size)?;
+            cx.place_child(index, Origin { x: self.padding, y })?;
+            if index == 0 {
+                baseline = output.baseline.map(|value| add(value, y)).transpose()?;
+            }
+            content.width = content.width.max(add(
+                add(self.padding, child.size.width.max(output.content.width))?,
+                self.padding,
+            )?);
+            content.height = content
+                .height
+                .max(add(y, child.size.height.max(output.content.height))?);
+            y = add(y, child.size.height)?;
+        }
+        content.height = add(content.height.max(y), self.padding)?;
+        Ok(LayoutOutput { baseline, content })
+    }
 }
 
 impl LayoutNode for Column {
@@ -55,34 +99,7 @@ impl LayoutNode for Column {
     }
 
     fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {
-        let query = self.child_query(Query::Exact(assigned.width))?;
-        let mut y = self.padding;
-        let mut content = Size {
-            width: add(self.padding, self.padding)?,
-            height: self.padding,
-        };
-        let mut baseline = None;
-        for index in 0..cx.child_count() {
-            if index > 0 {
-                y = add(y, self.gap)?;
-            }
-            let child = cx.measure_child(index, query)?;
-            let output = cx.layout_child(index, child.size)?;
-            cx.place_child(index, Origin { x: self.padding, y })?;
-            if index == 0 {
-                baseline = output.baseline.map(|value| add(value, y)).transpose()?;
-            }
-            content.width = content.width.max(add(
-                add(self.padding, child.size.width.max(output.content.width))?,
-                self.padding,
-            )?);
-            content.height = content
-                .height
-                .max(add(y, child.size.height.max(output.content.height))?);
-            y = add(y, child.size.height)?;
-        }
-        content.height = add(content.height.max(y), self.padding)?;
-        Ok(LayoutOutput { baseline, content })
+        self.layout_rows(cx, assigned, None)
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

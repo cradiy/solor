@@ -71,6 +71,7 @@ fn viewport_frames_match_full_draws_through_edges_resizes_and_edits() {
         (240, 40, true),
         (132, 158, true),
         (132, 158, false),
+        (13, 185, true),
         (240, 2, false),
         (240, 160, false),
     ] {
@@ -83,7 +84,8 @@ fn viewport_frames_match_full_draws_through_edges_resizes_and_edits() {
         }
         let size = Size { width, height };
         let frame = list.frame(size, false).unwrap();
-        let mut oracle = DisclosureLayout::new(BEFORE, &tail).unwrap();
+        let mut oracle =
+            DisclosureLayout::with_engine(BEFORE, &tail, Engine::new(), false).unwrap();
         if open {
             oracle.set_detail("Hide details", Some(DETAIL)).unwrap();
         }
@@ -92,7 +94,15 @@ fn viewport_frames_match_full_draws_through_edges_resizes_and_edits() {
             .run(Query::Exact(width), Some(size), true)
             .unwrap();
         let full = oracle.collect_frame(0, u32::MAX).unwrap();
-        assert_eq!(frame.geometry, full.geometry);
+        assert_eq!(
+            frame.geometry,
+            oracle
+                .scene
+                .snapshot()
+                .into_iter()
+                .collect::<Option<Vec<_>>>()
+                .unwrap()
+        );
         assert_eq!(
             frame.draws.len(),
             full.draws
@@ -100,7 +110,10 @@ fn viewport_frames_match_full_draws_through_edges_resizes_and_edits() {
                 .filter(|draw| draw.origin.y < height)
                 .count()
         );
-        assert_eq!(list.published_title().is_some(), height > 29);
+        assert_eq!(
+            list.published_title().is_some(),
+            full.draws[BEFORE.len()].origin.y < height
+        );
         let physical = Size {
             width: (width * 3).div_ceil(2),
             height: (height * 3).div_ceil(2),
@@ -135,20 +148,52 @@ fn viewport_frames_match_full_draws_through_edges_resizes_and_edits() {
 }
 
 #[test]
+fn moving_the_tail_keeps_row_measurements_and_local_positions() {
+    let mut list = DisclosureLayout::new(BEFORE, &["Short", DETAIL, "Last"]).unwrap();
+    let size = Size {
+        width: 132,
+        height: 300,
+    };
+    let group = list.tail_group.unwrap();
+    let closed = list.frame(size, false).unwrap();
+    let group_y = list.geometry(group).unwrap().origin.y;
+    let rows = list
+        .after
+        .iter()
+        .map(|&id| (id, list.geometry(id).unwrap(), list.scene.node_counts(id)))
+        .collect::<Vec<_>>();
+    list.set_detail("Hide details", Some(DETAIL)).unwrap();
+    let open = list.frame(size, false).unwrap();
+    assert!(list.geometry(group).unwrap().origin.y > group_y);
+    for (id, local, counts) in rows {
+        assert_eq!(list.geometry(id).unwrap(), local);
+        assert_eq!(list.scene.node_counts(id), counts);
+        let before = closed.draws.iter().find(|draw| draw.node == id).unwrap();
+        let after = open.draws.iter().find(|draw| draw.node == id).unwrap();
+        assert_eq!(
+            after.origin.y - before.origin.y,
+            list.geometry(group).unwrap().origin.y - group_y
+        );
+        assert!(Rc::ptr_eq(&before.paragraph, &after.paragraph));
+    }
+}
+
+#[test]
 #[ignore = "release timing experiment"]
 fn measure_snapshot_collection() {
     use std::{hint::black_box, time::Instant};
 
-    for row_count in [3, 1024] {
+    for row_count in [3, 4, 1024] {
         let labels: Vec<_> = (3..=row_count).map(|n| format!("Item {n}")).collect();
         let tail: Vec<_> = labels.iter().map(String::as_str).collect();
         let size = Size {
             width: 240,
             height: 160,
         };
-        let bottoms = [u32::MAX, size.height, size.height];
-        let mut lists = bottoms.map(|_| {
-            let mut list = DisclosureLayout::new(BEFORE, &tail).unwrap();
+        let bottoms = [u32::MAX, size.height, size.height, size.height];
+        let mut lists = [false, false, false, tail.len() > 1].map(|grouped| {
+            let mut list =
+                DisclosureLayout::with_engine(BEFORE, &tail, Engine::new(), grouped).unwrap();
             list.frame(size, false).unwrap();
             list
         });
@@ -167,7 +212,7 @@ fn measure_snapshot_collection() {
                         open.then_some(DETAIL),
                     )
                     .unwrap();
-                    if mode == 2 {
+                    if mode >= 2 {
                         list.scene.run_assigned(size, false).unwrap();
                     } else {
                         list.scene
@@ -194,8 +239,20 @@ fn measure_snapshot_collection() {
                 .unwrap()
                 .same_content(lists[2].published.as_ref().unwrap())
         );
+        assert!(
+            lists[2]
+                .published
+                .as_ref()
+                .unwrap()
+                .same_content(lists[3].published.as_ref().unwrap())
+        );
         for (i, stages) in samples.into_iter().enumerate() {
-            let root = if i == 2 { "assigned" } else { "measured" };
+            let root = [
+                "measured flat",
+                "measured flat",
+                "assigned flat",
+                "assigned grouped",
+            ][i];
             let frame = lists[i].published.as_ref().unwrap();
             for (stage, mut samples) in ["snapshot", "edit through snapshot"]
                 .into_iter()
@@ -210,5 +267,48 @@ fn measure_snapshot_collection() {
                 );
             }
         }
+    }
+}
+
+#[test]
+#[ignore = "release timing experiment"]
+fn measure_tail_resize() {
+    use std::{hint::black_box, time::Instant};
+
+    let tail = ["Short", DETAIL].repeat(511);
+    let mut lists = [false, true].map(|grouped| {
+        DisclosureLayout::with_engine(BEFORE, &tail, Engine::new(), grouped).unwrap()
+    });
+    let mut samples = [Vec::new(), Vec::new()];
+    for batch in 0..8 {
+        for offset in 0..2 {
+            let mode = (batch + offset) % 2;
+            let start = Instant::now();
+            for step in 0..20 {
+                let width = if step % 2 == 0 { 84 } else { 240 };
+                black_box(
+                    lists[mode]
+                        .frame(Size { width, height: 160 }, false)
+                        .unwrap(),
+                );
+            }
+            if batch > 0 {
+                samples[mode].push(start.elapsed().as_secs_f64() * 1e6 / 20.0);
+            }
+        }
+        assert!(
+            lists[0]
+                .published
+                .as_ref()
+                .unwrap()
+                .same_content(lists[1].published.as_ref().unwrap())
+        );
+    }
+    for (name, mut times) in ["flat", "grouped"].into_iter().zip(samples) {
+        times.sort_by(f64::total_cmp);
+        eprintln!(
+            "1024 rows, {name} resize through snapshot: {:.2} us",
+            times[3]
+        );
     }
 }

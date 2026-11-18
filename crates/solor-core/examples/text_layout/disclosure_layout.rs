@@ -1,14 +1,50 @@
 //! Layout for a title and optional detail in an ordered column of labels.
-use std::rc::Rc;
+use std::{any::Any, rc::Rc};
 
 use solor_core::tree::NodeId;
 
 use crate::{
     fixtures::Column,
     frame::{Frame, STYLE, TextDraw},
-    layout::{Geometry, LayoutError, Origin, Query, Result, Scene, Size},
+    layout::{
+        Geometry, LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext, Metrics,
+        Origin, Query, Result, Scene, Size,
+    },
     text::{Engine, FONT, SharedEngine, Text},
 };
+
+/// Keep the tail's wrapping constraint identical to that of flat siblings.
+struct GroupedList {
+    column: Column,
+    tail_index: usize,
+}
+
+impl LayoutNode for GroupedList {
+    fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
+        self.column.measure(cx, query)
+    }
+
+    fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {
+        self.column.layout_rows(cx, assigned, Some(self.tail_index))
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+fn translated(origin: Origin, parent: Origin) -> Result<Origin> {
+    Ok(Origin {
+        x: parent
+            .x
+            .checked_add(origin.x)
+            .ok_or(LayoutError::InvalidSize)?,
+        y: parent
+            .y
+            .checked_add(origin.y)
+            .ok_or(LayoutError::InvalidSize)?,
+    })
+}
 
 pub struct DisclosureLayout {
     scene: Scene,
@@ -17,6 +53,7 @@ pub struct DisclosureLayout {
     item: NodeId,
     title: NodeId,
     detail: Option<NodeId>,
+    tail_group: Option<NodeId>,
     after: Vec<NodeId>,
     published: Option<Rc<Frame>>,
     viewport: Option<Size>,
@@ -25,11 +62,24 @@ pub struct DisclosureLayout {
 
 impl DisclosureLayout {
     pub fn new(before: &[&str], after: &[&str]) -> Result<Self> {
-        Self::with_engine(before, after, Engine::new())
+        Self::with_engine(before, after, Engine::new(), after.len() > 1)
     }
 
-    fn with_engine(before: &[&str], after: &[&str], engine: SharedEngine) -> Result<Self> {
-        let mut scene = Scene::new(Column { padding: 2, gap: 3 });
+    fn with_engine(
+        before: &[&str],
+        after: &[&str],
+        engine: SharedEngine,
+        group_tail: bool,
+    ) -> Result<Self> {
+        let column = Column { padding: 2, gap: 3 };
+        let mut scene = if group_tail {
+            Scene::new(GroupedList {
+                column,
+                tail_index: before.len() + 1,
+            })
+        } else {
+            Scene::new(column)
+        };
         let root = scene.root();
         let label = |scene: &mut Scene, parent, value| {
             scene.append(parent, Text::new(engine.clone(), value, STYLE, true)?)
@@ -40,9 +90,12 @@ impl DisclosureLayout {
             .collect::<Result<Vec<_>>>()?;
         let item = scene.append(root, Column { padding: 0, gap: 3 })?;
         let title = label(&mut scene, item, "Show details")?;
+        let tail_group = group_tail
+            .then(|| scene.append(root, Column { padding: 0, gap: 3 }))
+            .transpose()?;
         let after = after
             .iter()
-            .map(|value| label(&mut scene, root, *value))
+            .map(|value| label(&mut scene, tail_group.unwrap_or(root), *value))
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             scene,
@@ -51,6 +104,7 @@ impl DisclosureLayout {
             item,
             title,
             detail: None,
+            tail_group,
             after,
             published: None,
             viewport: None,
@@ -114,6 +168,10 @@ impl DisclosureLayout {
 
     fn collect_frame(&mut self, revision: u64, bottom: u32) -> Result<Frame> {
         let item_origin = self.geometry(self.item)?.origin;
+        let tail_origin = match self.tail_group {
+            Some(group) => self.geometry(group)?.origin,
+            None => Origin::default(),
+        };
         let top_level = |id: &NodeId| (*id, Origin::default());
         let rows = self
             .before
@@ -125,27 +183,15 @@ impl DisclosureLayout {
                     .flatten()
                     .map(|id| (id, item_origin)),
             )
-            .chain(self.after.iter().map(top_level));
+            .chain(self.after.iter().map(|&id| (id, tail_origin)));
         let estimated_rows = bottom.div_ceil(u32::from(STYLE.line_height)) as usize + 1;
         let mut draws =
             Vec::with_capacity(estimated_rows.min(self.before.len() + self.after.len() + 2));
         for (node, parent_origin) in rows {
-            let geometry = self
-                .scene
-                .geometry(node)
-                .ok_or(LayoutError::MissingLayout(0))?;
+            let geometry = self.geometry(node)?;
             let allocated = geometry.metrics.size;
-            let origin = Origin {
-                x: parent_origin
-                    .x
-                    .checked_add(geometry.origin.x)
-                    .ok_or(LayoutError::InvalidSize)?,
-                y: parent_origin
-                    .y
-                    .checked_add(geometry.origin.y)
-                    .ok_or(LayoutError::InvalidSize)?,
-            };
-            // Both columns place rows top-to-bottom and clip ink to each allocation.
+            let origin = translated(geometry.origin, parent_origin)?;
+            // Rows are ordered top-to-bottom and clipped to their allocations.
             if origin.y >= bottom {
                 break;
             }
@@ -166,18 +212,40 @@ impl DisclosureLayout {
                 color,
             });
         }
-        let geometry = self
-            .scene
-            .snapshot()
-            .into_iter()
-            .collect::<Option<Vec<_>>>()
-            .ok_or(LayoutError::MissingLayout(0))?;
         Ok(Frame {
             revision,
             draws,
-            geometry,
+            geometry: self.snapshot_geometry(tail_origin)?,
             font: FONT,
         })
+    }
+
+    fn snapshot_geometry(&self, tail_origin: Origin) -> Result<Vec<Geometry>> {
+        if self.tail_group.is_none() {
+            return self
+                .scene
+                .snapshot()
+                .into_iter()
+                .collect::<Option<_>>()
+                .ok_or(LayoutError::MissingLayout(0));
+        }
+        // Publish the same logical nodes and coordinate spaces for either hierarchy.
+        let mut geometry = Vec::with_capacity(
+            3 + self.before.len() + self.after.len() + usize::from(self.detail.is_some()),
+        );
+        geometry.push(self.geometry(self.scene.root())?);
+        for &node in self.before.iter().chain([&self.item, &self.title]) {
+            geometry.push(self.geometry(node)?);
+        }
+        for &node in &self.after {
+            let mut row = self.geometry(node)?;
+            row.origin = translated(row.origin, tail_origin)?;
+            geometry.push(row);
+        }
+        if let Some(detail) = self.detail {
+            geometry.push(self.geometry(detail)?);
+        }
+        Ok(geometry)
     }
 }
 
@@ -299,9 +367,13 @@ mod tests {
                 for step in 0..80 {
                     let open = step % 2 == 0;
                     if mode == 1 {
-                        let mut fresh =
-                            DisclosureLayout::with_engine(BEFORE, AFTER, list.engine.clone())
-                                .unwrap();
+                        let mut fresh = DisclosureLayout::with_engine(
+                            BEFORE,
+                            AFTER,
+                            list.engine.clone(),
+                            false,
+                        )
+                        .unwrap();
                         if open {
                             fresh.set_detail("Hide details", Some(DETAIL)).unwrap();
                         }
