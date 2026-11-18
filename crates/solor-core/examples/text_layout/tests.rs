@@ -37,7 +37,7 @@ fn fixed_font_has_real_variable_advances_cjk_wrap_and_line_baselines() {
 #[test]
 fn query_modes_share_only_compatible_paragraphs_and_allocation_is_authoritative() {
     let engine = Engine::new();
-    let mut text = Text::new(Rc::clone(&engine), SAMPLE, STYLE, true).unwrap();
+    let text = Text::new(Rc::clone(&engine), SAMPLE, STYLE, true).unwrap();
     let bounded = text.resolve(Query::AtMost(100)).unwrap();
     let exact = text.resolve(Query::Exact(100)).unwrap();
     assert!(Rc::ptr_eq(&bounded, &exact));
@@ -119,7 +119,7 @@ fn missing_glyph_failure_retains_published_geometry_and_retries() {
         .unwrap();
     assert!(matches!(
         scene.run(Query::Exact(100), None, false),
-        Err(LayoutError::TextUnavailable)
+        Err(LayoutError::Node("glyph unavailable"))
     ));
     assert_eq!(scene.snapshot(), before);
     assert!(scene.is_pending());
@@ -161,9 +161,10 @@ fn mixed_updates_match_fresh_text_buffers_and_forced_layout() {
     crate::workload::verify();
 }
 
+#[cfg(feature = "layout-audit")]
 #[test]
 fn equal_geometry_still_produces_new_glyphs_when_parent_layout_is_skipped() {
-    use crate::fixtures::Column;
+    use crate::column::Column;
     use crate::layout::validation::CheckTarget;
     let mut scene = Scene::new(Column { padding: 2, gap: 3 });
     let root = scene.root();
@@ -176,7 +177,7 @@ fn equal_geometry_still_produces_new_glyphs_when_parent_layout_is_skipped() {
     };
     scene.run(Query::Exact(100), Some(assigned), false).unwrap();
     let old = scene
-        .body_mut::<Text>(child)
+        .body::<Text>(child)
         .unwrap()
         .resolve(Query::Exact(96))
         .unwrap();
@@ -203,7 +204,7 @@ fn equal_geometry_still_produces_new_glyphs_when_parent_layout_is_skipped() {
     assert!(report.skipped_parent_layout);
     assert_eq!(scene.snapshot(), geometry);
     let current = scene
-        .body_mut::<Text>(child)
+        .body::<Text>(child)
         .unwrap()
         .resolve(Query::Exact(96))
         .unwrap();

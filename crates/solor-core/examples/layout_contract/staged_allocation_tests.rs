@@ -26,8 +26,8 @@ fn changed_allocation_discards_old_parent_and_reuses_only_matching_descendants()
         .edit_layout::<Wrapping>(text, |leaf| leaf.units = 30)
         .unwrap();
     scene.edit_layout::<Drawing>(drawing, |_| {}).unwrap();
-    let before_text = scene.node_counts(text).layouts;
-    let before_drawing = scene.node_counts(drawing).layouts;
+    let before_text = scene.node_counts(text).unwrap().layouts;
+    let before_drawing = scene.node_counts(drawing).unwrap().layouts;
     let assigned = Size {
         width: 10,
         height: 100,
@@ -55,8 +55,11 @@ fn changed_allocation_discards_old_parent_and_reuses_only_matching_descendants()
         assert_eq!(attempt.0.reuse.as_ref().unwrap().hits, 1);
         assert_eq!(publish_layout(&mut scene.store, attempt.0), 3);
     }
-    assert_eq!(scene.node_counts(text).layouts, before_text + 2);
-    assert_eq!(scene.node_counts(drawing).layouts, before_drawing + 1);
+    assert_eq!(scene.node_counts(text).unwrap().layouts, before_text + 2);
+    assert_eq!(
+        scene.node_counts(drawing).unwrap().layouts,
+        before_drawing + 1
+    );
     assert_eq!(scene.geometry(drawing).unwrap().origin.y, 3);
     assert_eq!(
         scene.geometry(text).unwrap().metrics.size,

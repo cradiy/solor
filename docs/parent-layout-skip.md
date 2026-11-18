@@ -152,9 +152,9 @@ stable updates allocation-free or proportional only to changed nodes.
 
 ```sh
 cargo test --workspace --tests --examples --offline
-cargo run --release -p solor-core --example layout_contract --offline
-cargo run --release -p solor-core --example layout_cost_three --offline
-cargo run --release -p solor-core --example layout_cost_one --offline
+cargo run --release -p solor-core --example layout_contract --features layout-audit --offline
+cargo run --release -p solor-core --example layout_cost_three --features layout-audit --offline
+cargo run --release -p solor-core --example layout_cost_one --features layout-audit --offline
 ```
 
 Allocation markers after timing delimit construction, warmed updates, retained

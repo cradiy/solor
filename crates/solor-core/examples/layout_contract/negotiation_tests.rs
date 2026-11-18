@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use super::fixtures::Wrapping;
 use super::layout::{
     LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext, Metrics, Origin, Query,
@@ -250,8 +248,8 @@ fn repeated_queries_are_reused_when_only_the_rows_allocated_height_changes() {
     let (mut scene, ids) = fixture();
     scene.run(Query::Exact(80), None, false).unwrap();
     let before = scene.counts();
-    let label = scene.node_counts(ids.label);
-    let button = scene.node_counts(ids.button);
+    let label = scene.node_counts(ids.label).unwrap();
+    let button = scene.node_counts(ids.button).unwrap();
     assert_eq!(
         scene.run(
             Query::Exact(80),
@@ -270,8 +268,11 @@ fn repeated_queries_are_reused_when_only_the_rows_allocated_height_changes() {
         after.queries - before.queries,
         after.cache_hits - before.cache_hits
     );
-    assert_eq!(scene.node_counts(ids.label).layouts, label.layouts);
-    assert_eq!(scene.node_counts(ids.button).layouts, button.layouts);
+    assert_eq!(scene.node_counts(ids.label).unwrap().layouts, label.layouts);
+    assert_eq!(
+        scene.node_counts(ids.button).unwrap().layouts,
+        button.layouts
+    );
     assert_eq!(
         scene.geometry(scene.root()).unwrap().metrics.baseline,
         Some(18)
@@ -353,9 +354,6 @@ impl LayoutNode for InvalidMeasurement {
     }
     fn layout(&mut self, _cx: &mut LayoutContext<'_, '_>, _assigned: Size) -> Result<LayoutOutput> {
         panic!("invalid measurement must not reach layout")
-    }
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }
 

@@ -5,6 +5,9 @@ edition.workspace = true
 publish.workspace = true
 description = "Core data structures for the Solor GUI experiment"
 
+[features]
+layout-audit = []
+
 [dependencies]
 slotmap.workspace = true
 
@@ -26,14 +29,17 @@ path = "examples/node_store/main.rs"
 
 [[example]]
 name = "layout_contract"
+required-features = ["layout-audit"]
 path = "examples/layout_contract/main.rs"
 
 [[example]]
 name = "layout_cost_one"
+required-features = ["layout-audit"]
 path = "examples/layout_cost/one.rs"
 
 [[example]]
 name = "layout_cost_three"
+required-features = ["layout-audit"]
 path = "examples/layout_cost/three.rs"
 
 [[example]]

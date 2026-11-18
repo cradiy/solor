@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use solor_core::tree::NodeId;
 
-use crate::fixtures::Column;
+use crate::column::Column;
 use crate::layout::{Query, Scene, Size};
 use crate::text::{Engine, SharedEngine, Style, Text};
 
@@ -90,14 +90,14 @@ impl Fixture {
 
     pub fn cache_usage(&mut self) -> (usize, usize) {
         self.labels.iter().fold((0, 0), |(entries, bytes), &id| {
-            let (n, b) = self.scene.body_mut::<Text>(id).unwrap().cache_usage();
+            let (n, b) = self.scene.body::<Text>(id).unwrap().cache_usage();
             (entries + n, bytes + b)
         })
     }
 
     pub fn release(&mut self) {
         for &id in &self.labels {
-            self.scene.body_mut::<Text>(id).unwrap().release_cache();
+            self.scene.body::<Text>(id).unwrap().release_cache();
         }
         self.scene.release_scratch();
     }
@@ -116,13 +116,13 @@ pub fn verify() {
             let query = Query::Exact(geometry[index + 1].unwrap().metrics.size.width);
             let a = cached
                 .scene
-                .body_mut::<Text>(a)
+                .body::<Text>(a)
                 .unwrap()
                 .resolve(query)
                 .unwrap();
             let b = reference
                 .scene
-                .body_mut::<Text>(b)
+                .body::<Text>(b)
                 .unwrap()
                 .resolve(query)
                 .unwrap();
@@ -146,7 +146,7 @@ fn median(mut times: [Duration; 7], iterations: u32) -> f64 {
 pub fn run() {
     let cold = std::array::from_fn(|_| {
         let start = Instant::now();
-        let mut text = Text::new(Engine::new(), SAMPLE, STYLE, true).unwrap();
+        let text = Text::new(Engine::new(), SAMPLE, STYLE, true).unwrap();
         black_box(text.resolve(Query::Exact(240)).unwrap());
         start.elapsed()
     });

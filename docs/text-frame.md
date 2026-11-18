@@ -21,7 +21,7 @@ before any incremental command-list design.
 
 ## State and publication boundary
 
-`Presentation` owns the private layout scene. Its externally presented state is
+`Presentation` owns a core layout scene. Its externally presented state is
 only `current()`, an optional `Rc<Frame>`. Input edits can advance internal layout
 and text caches without changing that frame. Each successful publication replaces
 one complete frame and increments its checked revision.

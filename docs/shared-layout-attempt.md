@@ -139,9 +139,9 @@ rounding. The figures are neither RSS/PSS nor peak memory.
 
 ```sh
 cargo test --workspace --tests --examples --offline
-cargo run --release -p solor-core --example layout_contract --offline
-cargo run --release -p solor-core --example layout_cost_three --offline
-cargo run --release -p solor-core --example layout_cost_one --offline
+cargo run --release -p solor-core --example layout_contract --features layout-audit --offline
+cargo run --release -p solor-core --example layout_cost_three --features layout-audit --offline
+cargo run --release -p solor-core --example layout_cost_one --features layout-audit --offline
 ```
 
 Keep shared attempts as an explicit experiment: repeated subtree layout is

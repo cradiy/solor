@@ -20,11 +20,11 @@ fn at(surface: &Surface, x: usize, y: usize) -> &[u8] {
 #[test]
 fn same_geometry_replaces_only_target_ink_and_old_snapshot_replays() {
     let mut view = Presentation::new(2, "中文", true);
-    let old = view.update(SIZE, Mode::Pruned).unwrap().frame;
+    let old = view.update(SIZE, crate::frame::INCREMENTAL).unwrap().frame;
     let before = render(&old);
     view.set_content(0, "文字").unwrap();
-    let new = view.update(SIZE, Mode::Pruned).unwrap();
-    assert!(new.skipped_parent);
+    let new = view.update(SIZE, crate::frame::INCREMENTAL).unwrap();
+    assert_eq!(new.skipped_parent, cfg!(feature = "layout-audit"));
     assert_eq!(old.geometry, new.frame.geometry);
     drop(view);
     let after = render(&new.frame);
@@ -44,9 +44,9 @@ fn same_geometry_replaces_only_target_ink_and_old_snapshot_replays() {
 #[test]
 fn motion_and_scissor_match_translation_and_crop_of_complete_pixels() {
     let mut view = Presentation::new(1, "宽度 Hello", true);
-    let before = render(&view.update(SIZE, Mode::Pruned).unwrap().frame);
+    let before = render(&view.update(SIZE, crate::frame::INCREMENTAL).unwrap().frame);
     view.set_shift(0, 9).unwrap();
-    let frame = view.update(SIZE, Mode::Pruned).unwrap().frame;
+    let frame = view.update(SIZE, crate::frame::INCREMENTAL).unwrap().frame;
     let shifted = render(&frame);
     let clip = Clip {
         left: 15,
@@ -154,7 +154,7 @@ fn cached_masks_match_every_frame_through_style_motion_color_and_eviction() {
             },
         )
         .unwrap();
-        let frame = view.update(SIZE, Mode::Pruned).unwrap().frame;
+        let frame = view.update(SIZE, crate::frame::INCREMENTAL).unwrap().frame;
         let clip = Clip {
             left: i64::from(i / 2),
             top: 0,
@@ -277,7 +277,7 @@ fn retained_pixels_match_every_edit_and_replay_across_viewports() {
                 )
                 .unwrap(),
         }
-        let frame = view.update(size, Mode::Pruned).unwrap().frame;
+        let frame = view.update(size, crate::frame::INCREMENTAL).unwrap().frame;
         retained
             .update(frame.clone(), size, clip, &mut masks)
             .unwrap();

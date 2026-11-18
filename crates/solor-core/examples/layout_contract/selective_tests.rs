@@ -249,14 +249,14 @@ fn sparse_checks_keep_internal_movement_and_deduplicate_changed_branches() {
         .edit_layout::<MovingChild>(parent, |node| node.x = 7)
         .unwrap();
     scene.edit_layout::<Drawing>(leaf, |_| {}).unwrap();
-    let unrelated = scene.node_counts(children[0].0);
+    let unrelated = scene.node_counts(children[0].0).unwrap();
     let report = scene
         .check_selective_dependencies(&mut checkpoint, target)
         .unwrap();
     assert_eq!(report.outcome, CheckOutcome::Unchanged);
     assert_eq!(report.checked_reads, 2);
     assert_eq!(report.staged_geometry, 2);
-    assert_eq!(scene.node_counts(children[0].0), unrelated);
+    assert_eq!(scene.node_counts(children[0].0).unwrap(), unrelated);
     assert_eq!(scene.snapshot(), original);
     assert_eq!(scene.published_layout_reads(root), reads);
     // Advancing the audit cursor must not clear the pending internal movement.
@@ -405,15 +405,15 @@ fn selective_failures_keep_cursor_and_publication_for_retry() {
                 .edit_layout::<Drawing>(b, |leaf| leaf.fault = Some((phase, fault)))
                 .unwrap();
             scene.edit_layout::<Drawing>(a, |_| {}).unwrap();
-            let layouts = scene.node_counts(a).layouts;
+            let layouts = scene.node_counts(a).unwrap().layouts;
             let result = catch_unwind(AssertUnwindSafe(|| {
                 scene.check_selective_dependencies(&mut checkpoint, target)
             }));
             match fault {
-                Fault::Error => assert_eq!(result.unwrap(), Err(LayoutError::Injected)),
+                Fault::Error => assert_eq!(result.unwrap(), Err(LayoutError::Node("injected"))),
                 Fault::Panic => assert!(result.is_err()),
             }
-            assert_eq!(scene.node_counts(a).layouts, layouts + 1);
+            assert_eq!(scene.node_counts(a).unwrap().layouts, layouts + 1);
             assert_eq!(scene.snapshot(), before);
             assert_eq!(scene.published_layout_reads(root), reads);
             assert!(scene.scratch_usage().iter().all(|&(len, _)| len == 0));

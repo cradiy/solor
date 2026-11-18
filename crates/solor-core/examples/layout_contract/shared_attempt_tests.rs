@@ -29,7 +29,7 @@ fn shared_attempt_publishes_internal_movement_without_repeating_subtree_layout()
     scene.run(query, Some(assigned), false).unwrap();
     let [mut measurement, mut placement] = checkpoints(&mut scene, query, assigned);
     for x in [7, 9, 2] {
-        let before = scene.node_counts(container);
+        let before = scene.node_counts(container).unwrap();
         scene
             .edit_layout::<MovingChild>(container, |node| node.x = x)
             .unwrap();
@@ -42,7 +42,10 @@ fn shared_attempt_publishes_internal_movement_without_repeating_subtree_layout()
         );
         assert_eq!(report.published, 1);
         assert_eq!(report.reused_layouts, 1);
-        assert_eq!(scene.node_counts(container).layouts, before.layouts + 1);
+        assert_eq!(
+            scene.node_counts(container).unwrap().layouts,
+            before.layouts + 1
+        );
         assert_eq!(scene.geometry(child).unwrap().origin.x, x);
         assert!(scene.scratch_usage().iter().all(|&(len, _)| len == 0));
         assert!(scene.staged_usage().iter().all(|&(len, _)| len == 0));
@@ -96,15 +99,18 @@ fn errors_and_panics_in_audit_or_after_adoption_preserve_both_cursors() {
             scene
                 .edit_layout::<Drawing>(b, |leaf| leaf.fault = Some((Phase::Layout, fault)))
                 .unwrap();
-            let before = scene.node_counts(a).layouts;
+            let before = scene.node_counts(a).unwrap().layouts;
             let result = catch_unwind(AssertUnwindSafe(|| {
                 scene.run_validated(query, assigned, &mut measurement, &mut placement)
             }));
             match fault {
-                Fault::Error => assert!(matches!(result.unwrap(), Err(LayoutError::Injected))),
+                Fault::Error => assert!(matches!(
+                    result.unwrap(),
+                    Err(LayoutError::Node("injected"))
+                )),
                 Fault::Panic => assert!(result.is_err()),
             }
-            assert_eq!(scene.node_counts(a).layouts, before + 1);
+            assert_eq!(scene.node_counts(a).unwrap().layouts, before + 1);
             assert_eq!(scene.snapshot(), snapshot);
             assert_eq!(scene.published_layout_reads(root), root_reads);
             assert_eq!(scene.published_layout_reads(a), child_reads);
@@ -118,7 +124,7 @@ fn errors_and_panics_in_audit_or_after_adoption_preserve_both_cursors() {
                 .unwrap();
             assert_eq!(retry.checks[0].checked_reads, 2);
             assert!(retry.checks[1].checked_reads >= 2);
-            assert_eq!(scene.node_counts(a).layouts, before + 2);
+            assert_eq!(scene.node_counts(a).unwrap().layouts, before + 2);
             assert!(retry.reused_layouts >= 1);
             let incremental = scene.snapshot();
             scene.run(query, Some(assigned), true).unwrap();

@@ -8,6 +8,7 @@ use crate::{
 const BEFORE: &[&str] = &["Previous item"];
 const DETAIL: &str = "Hello 世界！Rust GUI 123";
 
+#[cfg(feature = "layout-audit")]
 #[test]
 fn assigned_root_only_publishes_measurement_evidence_when_queried() {
     use crate::layout::validation::CheckTarget;
@@ -27,9 +28,12 @@ fn assigned_root_only_publishes_measurement_evidence_when_queried() {
             )
             .unwrap();
         }
-        let previous = list.scene.node_counts(root);
+        let previous = list.scene.node_counts(root).unwrap();
         let frame = list.frame(size, 0, false).unwrap();
-        assert_eq!(list.scene.node_counts(root).queries, previous.queries);
+        assert_eq!(
+            list.scene.node_counts(root).unwrap().queries,
+            previous.queries
+        );
         assert!(
             list.scene
                 .capture_dependencies(root, CheckTarget::Measure(query))
@@ -45,7 +49,10 @@ fn assigned_root_only_publishes_measurement_evidence_when_queried() {
 
         // The allocation is identical, but a caller now needs a preferred size.
         assert_eq!(list.scene.run(query, Some(size), false).unwrap(), 0);
-        assert_eq!(list.scene.node_counts(root).measures, previous.measures + 1);
+        assert_eq!(
+            list.scene.node_counts(root).unwrap().measures,
+            previous.measures + 1
+        );
         assert!(
             list.scene
                 .capture_dependencies(root, CheckTarget::Measure(query))
@@ -160,14 +167,20 @@ fn moving_the_tail_keeps_row_measurements_and_local_positions() {
     let rows = list
         .after
         .iter()
-        .map(|&id| (id, list.geometry(id).unwrap(), list.scene.node_counts(id)))
+        .map(|&id| {
+            (
+                id,
+                list.geometry(id).unwrap(),
+                list.scene.node_counts(id).unwrap(),
+            )
+        })
         .collect::<Vec<_>>();
     list.set_detail("Hide details", Some(DETAIL)).unwrap();
     let open = list.frame(size, 0, false).unwrap();
     assert!(list.geometry(group).unwrap().origin.y > group_y);
     for (id, local, counts) in rows {
         assert_eq!(list.geometry(id).unwrap(), local);
-        assert_eq!(list.scene.node_counts(id), counts);
+        assert_eq!(list.scene.node_counts(id).unwrap(), counts);
         let before = closed.draws.iter().find(|draw| draw.node == id).unwrap();
         let after = open.draws.iter().find(|draw| draw.node == id).unwrap();
         assert_eq!(

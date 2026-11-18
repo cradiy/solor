@@ -16,7 +16,7 @@ valid. Content extent can exceed the allocation. General two-axis constraints,
 min-content sizing, flex distribution, transforms, and pixel damage remain outside
 the experiment. Arithmetic overflow and invalid metrics are explicit errors.
 
-## Ownership and candidate interface
+## Ownership and library interface
 
 | Owner | Data |
 | --- | --- |
@@ -26,14 +26,14 @@ the experiment. Arithmetic overflow and invalid metrics are explicit errors.
 | Layout attempt | Unpublished geometry, final child outputs, and placement validation |
 | Scene coordinator | Pending layout, last successful root query/allocation, and publication boundary |
 
-The experiment uses these private interfaces:
+Node implementations provide both callbacks through `solor_core::layout::LayoutNode`.
 
 ```rust,ignore
 trait LayoutNode {
     fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query)
-        -> Result<Metrics, LayoutError>;
+        -> Result<Metrics>;
     fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size)
-        -> Result<LayoutOutput, LayoutError>;
+        -> Result<LayoutOutput>;
 }
 ```
 
@@ -132,23 +132,40 @@ normal layout attempt.
 
 ## Implementation and validation
 
-The private [execution code](../crates/solor-core/examples/layout_contract/layout.rs)
-uses the core library’s node store. The
+The [library solver](../crates/solor-core/src/layout/engine.rs) backs the text,
+frame, pixel and Wayland examples. `Scene::run` measures the root and uses its
+preferred size or the caller's allocation. `Scene::run_assigned` arranges it
+directly. `Scene::geometry` reads the last successful result in parent-local
+coordinates. `edit_layout` checks the handle and concrete type before marking the
+node and its ancestors dirty. `body` provides shared access for drawing.
+
+The default build uses three measurement slots per node. The optional
+`layout-audit` feature adds dependency recording, checkpoints and explicit
+validated/pruned execution. The historical audit and cache-size fixtures compile
+the same solver at their selected capacity. The
 [fixtures](../crates/solor-core/examples/layout_contract/fixtures.rs) implement
 the three behaviors, and the
 [tests](../crates/solor-core/examples/layout_contract/tests.rs) cover the acceptance
 cases. Construction-time append closes after the first successful layout.
 The [disclosure fixture](disclosure.md) explicitly mounts a new child or
 unmounts a leaf between updates. These operations invalidate layout and
-measurement up the parent chain and advance the scene's topology revision.
+measurement up the parent chain and invalidate outstanding audit checkpoints when recording is enabled.
 Layout callbacks cannot edit the tree.
 
 ```sh
-cargo run -p solor-core --example layout_contract --offline
-cargo test -p solor-core --example layout_contract --offline
+cargo test -p solor-core --test layout --offline
+cargo run -p solor-core --example layout_contract --features layout-audit --offline
+cargo test -p solor-core --example layout_contract --features layout-audit --offline
 ```
 
-Fifty-four focused tests include a 256-step vertical comparison and a 384-step row
+The default-feature library integration test fails the second child after staging
+a height change in the first. It checks the prior snapshot, retries at the same
+allocation, and compares the result with forced recomputation. A release build
+of the default-feature Wayland window exercised the 1,024-row disclosure at
+150% scale. All 23 submitted buffers matched the full raster reference, through
+scrolling to offset 27,429 and back, opening the detail, and closing it.
+
+Fifty-four focused tests in the audit fixture include a 256-step vertical comparison and a 384-step row
 comparison with all measurement and layout caches bypassed. The reference uses
 the same fixture algorithms, so known-value assertions independently check
 wrapping height, baseline, sibling origins, final allocations, and content extent.
@@ -162,9 +179,8 @@ snapshot and retry successfully, including a failure after an earlier subtree ha
 finished its layout but has not been published. These results validate the narrow
 contract, not real font metrics or rendered output.
 
-The milestone ends at these checks. Public API selection, layout algorithms for
-real controls, actual font measurement, topology edits during updates, and
-integration with signals remain separate decisions.
+The core owns the layout execution contract. Container policies, font shaping and
+connections between application signals and layout edits belong to their callers.
 
 The [layout cost experiment](layout-cost.md) measures the same execution path
 with larger fixtures, including invalidation, scratch allocation, and publication.

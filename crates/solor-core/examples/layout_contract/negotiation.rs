@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use solor_core::tree::NodeId;
 
 use super::fixtures::{Drawing, Wrapping};
@@ -63,10 +61,6 @@ impl LayoutNode for Button {
                 height: assigned.height.max(natural.height),
             },
         })
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }
 
@@ -190,10 +184,6 @@ impl LayoutNode for Row {
             baseline: Some(add(top, baseline)?),
             content,
         })
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }
 

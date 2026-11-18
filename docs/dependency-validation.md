@@ -121,9 +121,9 @@ measure an optimized validation-and-pruning path or establish a speedup.
 
 ```sh
 cargo test --workspace --tests --examples --offline
-cargo run --release -p solor-core --example layout_contract --offline
-cargo run --release -p solor-core --example layout_cost_one --offline
-cargo run --release -p solor-core --example layout_cost_three --offline
+cargo run --release -p solor-core --example layout_contract --features layout-audit --offline
+cargo run --release -p solor-core --example layout_cost_one --features layout-audit --offline
+cargo run --release -p solor-core --example layout_cost_three --features layout-audit --offline
 ```
 
 The [selective-check experiment](selective-dependency-checks.md) indexes captured

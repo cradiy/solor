@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -153,7 +152,7 @@ impl Engine {
             for glyph in run.glyphs {
                 // Missing glyphs are errors, never silent evidence of CJK support.
                 if glyph.glyph_id == 0 || glyph.font_id != self.face {
-                    return Err(LayoutError::TextUnavailable);
+                    return Err(LayoutError::Node("glyph unavailable"));
                 }
                 glyphs.push(Glyph {
                     start: glyph.start,
@@ -199,7 +198,7 @@ pub struct Text {
     engine: SharedEngine,
     content: String,
     style: Style,
-    cache: VecDeque<Cached>,
+    cache: RefCell<VecDeque<Cached>>,
     cache_enabled: bool,
 }
 
@@ -218,7 +217,7 @@ impl Text {
             engine,
             content: content.into(),
             style,
-            cache: VecDeque::new(),
+            cache: RefCell::default(),
             cache_enabled,
         })
     }
@@ -247,23 +246,23 @@ impl Text {
         self.style
     }
 
-    pub fn release_cache(&mut self) {
-        self.cache = VecDeque::new();
+    pub fn release_cache(&self) {
+        *self.cache.borrow_mut() = VecDeque::new();
     }
 
     pub fn cache_usage(&self) -> (usize, usize) {
+        let cache = self.cache.borrow();
         (
-            self.cache.len(),
-            self.cache.capacity() * std::mem::size_of::<Cached>()
-                + self
-                    .cache
+            cache.len(),
+            cache.capacity() * std::mem::size_of::<Cached>()
+                + cache
                     .iter()
                     .map(|c| c.paragraph.retained_bytes())
                     .sum::<usize>(),
         )
     }
 
-    pub fn resolve(&mut self, query: Query) -> Result<Rc<Paragraph>> {
+    pub fn resolve(&self, query: Query) -> Result<Rc<Paragraph>> {
         let width = match query {
             Query::Natural => None,
             Query::AtMost(w) | Query::Exact(w) => Some(w),
@@ -273,16 +272,17 @@ impl Text {
         }
         let mut engine = self.engine.borrow_mut();
         engine.counts.requests += 1;
-        if let Some(cached) = self.cache.iter().find(|c| c.width == width) {
+        let mut cache = self.cache.borrow_mut();
+        if let Some(cached) = cache.iter().find(|c| c.width == width) {
             engine.counts.hits += 1;
             return Ok(Rc::clone(&cached.paragraph));
         }
         let paragraph = Rc::new(engine.shape(&self.content, self.style, width)?);
         if self.cache_enabled {
-            if self.cache.len() == CACHE_SLOTS {
-                self.cache.pop_front();
+            if cache.len() == CACHE_SLOTS {
+                cache.pop_front();
             }
-            self.cache.push_back(Cached {
+            cache.push_back(Cached {
                 width,
                 paragraph: Rc::clone(&paragraph),
             });
@@ -302,9 +302,5 @@ impl LayoutNode for Text {
             baseline: paragraph.baseline,
             content: paragraph.content,
         })
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }

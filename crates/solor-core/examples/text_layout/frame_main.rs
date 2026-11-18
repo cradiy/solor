@@ -1,12 +1,9 @@
 //! Atomic text drawing snapshots over the private headless layout experiment.
-const MEASUREMENT_CACHE_SLOTS: usize = 3;
 
 #[allow(dead_code)]
-#[path = "../layout_contract/fixtures.rs"]
-mod fixtures;
-#[allow(dead_code)]
-#[path = "../layout_contract/layout.rs"]
-mod layout;
+#[path = "../layout_contract/column.rs"]
+mod column;
+use solor_core::layout;
 #[allow(dead_code)]
 mod text;
 

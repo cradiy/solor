@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use super::fixtures::{Column, Drawing, Wrapping};
 use super::fixtures::{Fault, Phase};
 use super::layout::validation::{CheckOutcome, CheckTarget};
@@ -243,7 +241,7 @@ fn failed_validation_discards_staging_and_preserves_retry() {
                 scene.check_dependencies(&checkpoint, target)
             }));
             match fault {
-                Fault::Error => assert_eq!(result.unwrap(), Err(LayoutError::Injected)),
+                Fault::Error => assert_eq!(result.unwrap(), Err(LayoutError::Node("injected"))),
                 Fault::Panic => assert!(result.is_err()),
             }
             assert_eq!(scene.snapshot(), before);
@@ -285,9 +283,9 @@ fn records_belong_to_each_query_and_survive_child_cache_eviction() {
         scene.measurement_reads(root, Query::Natural),
         Some(natural.clone())
     );
-    let count = scene.node_counts(root).measures;
+    let count = scene.node_counts(root).unwrap().measures;
     scene.probe(root, Query::Natural).unwrap();
-    assert_eq!(scene.node_counts(root).measures, count);
+    assert_eq!(scene.node_counts(root).unwrap().measures, count);
     assert_eq!(
         scene.measurement_reads(root, Query::Natural),
         Some(natural.clone())
@@ -306,7 +304,7 @@ fn records_belong_to_each_query_and_survive_child_cache_eviction() {
         Some(narrow)
     );
     scene.run(Query::Exact(80), None, false).unwrap();
-    let label_count = scene.node_counts(ids.label).layouts;
+    let label_count = scene.node_counts(ids.label).unwrap().layouts;
     scene
         .run(
             Query::Exact(80),
@@ -317,7 +315,7 @@ fn records_belong_to_each_query_and_survive_child_cache_eviction() {
             false,
         )
         .unwrap();
-    assert_eq!(scene.node_counts(ids.label).layouts, label_count);
+    assert_eq!(scene.node_counts(ids.label).unwrap().layouts, label_count);
     let reads = scene.published_layout_reads(root).unwrap();
     assert!(reads.complete);
     assert_eq!(
@@ -377,7 +375,7 @@ impl LayoutNode for ReadingParent {
             result = cx.measure_child(self.selected, query)?;
         }
         match self.fault {
-            Some(Fault::Error) => return Err(LayoutError::Injected),
+            Some(Fault::Error) => return Err(LayoutError::Node("injected")),
             Some(Fault::Panic) => panic!("intentional recording failure"),
             None => {}
         }
@@ -400,10 +398,6 @@ impl LayoutNode for ReadingParent {
             baseline: None,
             content: assigned,
         })
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }
 
@@ -439,13 +433,16 @@ fn conditional_reads_replace_old_edges_and_cache_hits_are_recorded() {
         measurement_nodes(&scene.published_layout_reads(root).unwrap()),
         vec![children[0]]
     );
-    let child_measures = scene.node_counts(children[1]).measures;
+    let child_measures = scene.node_counts(children[1]).unwrap().measures;
     scene.probe(children[1], Query::Natural).unwrap();
     scene
         .edit_layout::<ReadingParent>(root, |parent| parent.selected = 1)
         .unwrap();
     scene.run(Query::Natural, None, false).unwrap();
-    assert_eq!(scene.node_counts(children[1]).measures, child_measures + 1);
+    assert_eq!(
+        scene.node_counts(children[1]).unwrap().measures,
+        child_measures + 1
+    );
     assert_eq!(
         measurement_nodes(&scene.measurement_reads(root, Query::Natural).unwrap()),
         vec![children[1]]
@@ -475,7 +472,7 @@ fn failed_measurements_never_expose_partial_records_and_retry_replaces_them() {
             .unwrap();
         let outcome = catch_unwind(AssertUnwindSafe(|| scene.run(Query::Natural, None, false)));
         match fault {
-            Fault::Error => assert_eq!(outcome.unwrap(), Err(LayoutError::Injected)),
+            Fault::Error => assert_eq!(outcome.unwrap(), Err(LayoutError::Node("injected"))),
             Fault::Panic => assert!(outcome.is_err()),
         }
         assert!(scene.measurement_reads(root, Query::Natural).is_none());
@@ -521,7 +518,7 @@ fn later_failure_does_not_publish_an_earlier_subtrees_new_dependency_record() {
             scene.run(Query::Exact(100), None, false)
         }));
         match fault {
-            Fault::Error => assert_eq!(outcome.unwrap(), Err(LayoutError::Injected)),
+            Fault::Error => assert_eq!(outcome.unwrap(), Err(LayoutError::Node("injected"))),
             Fault::Panic => assert!(outcome.is_err()),
         }
         assert_eq!(scene.snapshot(), published);
@@ -647,10 +644,6 @@ impl LayoutNode for OutputLeaf {
     fn layout(&mut self, _cx: &mut LayoutContext<'_, '_>, _assigned: Size) -> Result<LayoutOutput> {
         Ok(self.0)
     }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
 }
 
 #[test]
@@ -725,10 +718,6 @@ impl LayoutNode for MovingChild {
             baseline: None,
             content: assigned,
         })
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }
 

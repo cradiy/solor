@@ -12,10 +12,11 @@ const SIZE: Size = Size {
 #[test]
 fn same_size_text_change_publishes_new_glyphs_while_parent_is_skipped() {
     let mut view = Presentation::new(2, "中文", true);
-    let old = view.update(SIZE, Mode::Pruned).unwrap().frame;
+    let old = view.update(SIZE, crate::frame::INCREMENTAL).unwrap().frame;
     view.set_content(0, "文字").unwrap();
-    let update = view.update(SIZE, Mode::Pruned).unwrap();
-    assert!(update.published && update.skipped_parent);
+    let update = view.update(SIZE, crate::frame::INCREMENTAL).unwrap();
+    assert!(update.published);
+    assert_eq!(update.skipped_parent, cfg!(feature = "layout-audit"));
     assert_eq!(update.resolved, 1);
     assert_eq!(old.geometry, update.frame.geometry);
     assert_eq!(old.draws[0].node, update.frame.draws[0].node);
@@ -29,7 +30,7 @@ fn same_size_text_change_publishes_new_glyphs_while_parent_is_skipped() {
         &old.draws[1].paragraph,
         &update.frame.draws[1].paragraph
     ));
-    let clean = view.update(SIZE, Mode::Pruned).unwrap();
+    let clean = view.update(SIZE, crate::frame::INCREMENTAL).unwrap();
     assert!(!clean.published);
     assert!(Rc::ptr_eq(&clean.frame, &update.frame));
 }
@@ -60,13 +61,13 @@ fn color_only_update_does_not_execute_layout_or_text_resolution() {
 #[test]
 fn subtree_motion_updates_absolute_origin_and_retains_immutable_paragraph() {
     let mut view = Presentation::new(2, "中文", true);
-    let old = view.update(SIZE, Mode::Pruned).unwrap().frame;
+    let old = view.update(SIZE, crate::frame::INCREMENTAL).unwrap().frame;
     let shapes = view.shape_count();
     assert_eq!(old.draws[1].origin.x, 2);
     assert_eq!(old.draws[1].origin.y, 29);
     view.set_shift(1, 9).unwrap();
-    let update = view.update(SIZE, Mode::Pruned).unwrap();
-    assert!(update.skipped_parent);
+    let update = view.update(SIZE, crate::frame::INCREMENTAL).unwrap();
+    assert_eq!(update.skipped_parent, cfg!(feature = "layout-audit"));
     assert_eq!(update.resolved, 0);
     assert_eq!(view.shape_count(), shapes);
     assert_eq!(update.frame.draws[1].origin.x, 11);
@@ -92,14 +93,19 @@ fn preparation_failure_preserves_entire_frame_and_retries_after_layout_succeeded
         Fault::Panic(1),
     ] {
         let mut view = Presentation::new(2, "中文", true);
-        let old = view.update(SIZE, Mode::Pruned).unwrap().frame;
+        let old = view.update(SIZE, crate::frame::INCREMENTAL).unwrap().frame;
         view.set_content(0, "文字").unwrap();
         view.set_shift(1, 7).unwrap();
         view.set_color(1, [255, 0, 0, 255]).unwrap();
         view.fault = Some(fault);
-        let result = catch_unwind(AssertUnwindSafe(|| view.update(SIZE, Mode::Pruned)));
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            view.update(SIZE, crate::frame::INCREMENTAL)
+        }));
         match fault {
-            Fault::Error(_) => assert!(matches!(result.unwrap(), Err(LayoutError::Injected))),
+            Fault::Error(_) => assert!(matches!(
+                result.unwrap(),
+                Err(LayoutError::Node("injected"))
+            )),
             Fault::Panic(_) => assert!(result.is_err()),
         }
         assert!(Rc::ptr_eq(&old, &view.current().unwrap()));
@@ -108,7 +114,7 @@ fn preparation_failure_preserves_entire_frame_and_retries_after_layout_succeeded
         assert_eq!(old.draws[1].color, [20, 30, 40, 255]);
         let counts = view.layout_counts();
         view.fault = None;
-        let retry = view.update(SIZE, Mode::Pruned).unwrap();
+        let retry = view.update(SIZE, crate::frame::INCREMENTAL).unwrap();
         assert_eq!(view.layout_counts(), counts);
         assert_eq!(retry.frame.revision, old.revision + 1);
         assert_eq!(retry.frame.draws[0].paragraph.text, "文字");
@@ -131,7 +137,7 @@ fn missing_glyph_keeps_the_old_frame_even_after_another_input_changed() {
     view.set_content(1, "🦀").unwrap();
     assert!(matches!(
         view.update(SIZE, Mode::Normal),
-        Err(LayoutError::TextUnavailable)
+        Err(LayoutError::Node("glyph unavailable"))
     ));
     assert!(Rc::ptr_eq(&old, &view.current().unwrap()));
     view.set_content(1, "文字").unwrap();
@@ -152,7 +158,7 @@ fn resize_failure_keeps_old_allocation_and_owned_frames_outlive_caches_and_scene
     view.fault = Some(Fault::Error(0));
     assert!(matches!(
         view.update(narrow, Mode::Normal),
-        Err(LayoutError::Injected)
+        Err(LayoutError::Node("injected"))
     ));
     assert!(Rc::ptr_eq(&old, &view.current().unwrap()));
     view.fault = None;
@@ -182,7 +188,7 @@ fn first_preparation_failure_has_no_frame_and_can_publish_on_retry() {
     view.fault = Some(Fault::Error(0));
     assert!(matches!(
         view.update(SIZE, Mode::Normal),
-        Err(LayoutError::Injected)
+        Err(LayoutError::Node("injected"))
     ));
     assert!(view.current().is_none());
     let counts = view.layout_counts();

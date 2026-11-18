@@ -36,9 +36,6 @@ impl LayoutNode for OverflowLayout {
         }
         Column { padding: 0, gap: 0 }.layout(cx, assigned)
     }
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
 }
 
 #[test]
@@ -52,7 +49,7 @@ fn incomplete_layout_evidence_cannot_skip_when_measurement_dependencies_are_equa
     };
     scene.run(Query::Exact(100), Some(assigned), false).unwrap();
     let [mut measurement, mut placement] = checkpoints(&mut scene, assigned);
-    let before = scene.node_counts(root).layouts;
+    let before = scene.node_counts(root).unwrap().layouts;
     scene.edit_layout::<Drawing>(child, |_| {}).unwrap();
     let report = scene
         .run_pruned(
@@ -65,7 +62,7 @@ fn incomplete_layout_evidence_cannot_skip_when_measurement_dependencies_are_equa
     assert_eq!(report.checks[0].outcome, CheckOutcome::Unchanged);
     assert_eq!(report.checks[1].outcome, CheckOutcome::Unverifiable);
     assert!(!report.skipped_parent_layout);
-    assert_eq!(scene.node_counts(root).layouts, before + 1);
+    assert_eq!(scene.node_counts(root).unwrap().layouts, before + 1);
     let snapshot = scene.snapshot();
     scene.run(Query::Exact(100), Some(assigned), true).unwrap();
     assert_eq!(scene.snapshot(), snapshot);
@@ -89,7 +86,7 @@ fn skipping_parent_preserves_nonzero_placement_and_new_internal_movement() {
     let parent_geometry = scene.geometry(parent);
     assert_eq!(parent_geometry.unwrap().origin, Origin { x: 3, y: 14 });
     for x in [7, 9, 2] {
-        let before = scene.node_counts(root);
+        let before = scene.node_counts(root).unwrap();
         scene
             .edit_layout::<MovingChild>(parent, |node| node.x = x)
             .unwrap();
@@ -105,8 +102,11 @@ fn skipping_parent_preserves_nonzero_placement_and_new_internal_movement() {
             )
             .unwrap();
         assert!(report.skipped_parent_layout);
-        assert_eq!(scene.node_counts(root).layouts, before.layouts);
-        assert_eq!(scene.node_counts(root).measures, before.measures + 1);
+        assert_eq!(scene.node_counts(root).unwrap().layouts, before.layouts);
+        assert_eq!(
+            scene.node_counts(root).unwrap().measures,
+            before.measures + 1
+        );
         assert_eq!(scene.geometry(root), root_geometry);
         assert_eq!(scene.geometry(parent), parent_geometry);
         assert_eq!(scene.geometry(child).unwrap().origin.x, x);
@@ -181,7 +181,7 @@ fn historical_equality_cannot_reuse_a_different_published_parent() {
     scene
         .edit_layout::<MovingChild>(parent, |node| node.x = 9)
         .unwrap();
-    let before = scene.node_counts(root).layouts;
+    let before = scene.node_counts(root).unwrap().layouts;
     let report = scene
         .run_pruned(
             Query::Exact(100),
@@ -195,7 +195,7 @@ fn historical_equality_cannot_reuse_a_different_published_parent() {
         [CheckOutcome::Unchanged; 2]
     );
     assert!(!report.skipped_parent_layout);
-    assert_eq!(scene.node_counts(root).layouts, before + 1);
+    assert_eq!(scene.node_counts(root).unwrap().layouts, before + 1);
     assert_eq!(scene.geometry(root), original);
     assert_eq!(scene.geometry(parent).unwrap().origin.y, 14);
     assert_eq!(scene.geometry(child).unwrap().origin.x, 9);
@@ -309,7 +309,7 @@ fn failure_after_equal_audits_does_not_commit_parent_or_cursors() {
         let [mut measurement, mut placement] = checkpoints(&mut scene, assigned);
         let snapshot = scene.snapshot();
         let reads = scene.published_layout_reads(root);
-        let before = scene.node_counts(root).layouts;
+        let before = scene.node_counts(root).unwrap().layouts;
         scene.edit_layout::<Drawing>(children[0], |_| {}).unwrap();
         scene.body_mut::<ReadingParent>(root).unwrap().fault = Some(fault);
         let result = catch_unwind(AssertUnwindSafe(|| {
@@ -321,7 +321,10 @@ fn failure_after_equal_audits_does_not_commit_parent_or_cursors() {
             )
         }));
         match fault {
-            Fault::Error => assert!(matches!(result.unwrap(), Err(LayoutError::Injected))),
+            Fault::Error => assert!(matches!(
+                result.unwrap(),
+                Err(LayoutError::Node("injected"))
+            )),
             Fault::Panic => assert!(result.is_err()),
         }
         assert_eq!(scene.snapshot(), snapshot);
@@ -340,7 +343,7 @@ fn failure_after_equal_audits_does_not_commit_parent_or_cursors() {
         assert!(retry.skipped_parent_layout);
         assert_eq!(retry.checks[0].checked_reads, 1);
         assert_eq!(retry.checks[1].checked_reads, 2);
-        assert_eq!(scene.node_counts(root).layouts, before);
+        assert_eq!(scene.node_counts(root).unwrap().layouts, before);
         assert_eq!(scene.snapshot(), snapshot);
         assert!(!scene.is_pending());
     }

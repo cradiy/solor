@@ -10,7 +10,10 @@ and support for custom rendering and animation.
 The core library provides a [persistent node tree](node-tree.md),
 [scoped execution of node payloads](node-store-experiment.md), and
 [explicit state-to-node updates](state-updates.md) with typed signals,
-deduplicated pending work, and lifecycle cleanup.
+deduplicated pending work, and lifecycle cleanup. Its [layout module](layout-contract.md) owns measurement,
+child allocation and atomic publication of local geometry. The Linux window uses
+this module with default features. Dependency recording and checkpoint-based
+pruning are opt-in through `layout-audit`.
 
 The [access experiment](node-store-experiment.md) records scoped payload borrowing,
 failure behavior, and measured costs for scalar and heterogeneous workloads.

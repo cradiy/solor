@@ -131,6 +131,6 @@ The separate [layout cost experiment](layout-cost.md) measures this tradeoff
 with identical fixtures compiled at one and three inline slots.
 
 ```sh
-cargo run --release -p solor-core --example layout_contract --offline
-cargo test -p solor-core --example layout_contract --offline
+cargo run --release -p solor-core --example layout_contract --features layout-audit --offline
+cargo test -p solor-core --example layout_contract --features layout-audit --offline
 ```

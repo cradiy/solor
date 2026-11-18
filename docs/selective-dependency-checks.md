@@ -146,8 +146,8 @@ small differences can reflect allocator rounding.
 
 ```sh
 cargo test --workspace --tests --examples --offline
-cargo run --release -p solor-core --example layout_cost_three --offline
-cargo run --release -p solor-core --example layout_cost_one --offline
+cargo run --release -p solor-core --example layout_cost_three --features layout-audit --offline
+cargo run --release -p solor-core --example layout_cost_one --features layout-audit --offline
 ```
 
 `selection-storage`, `selection-update`, `selection-warmed`, `selection-release`,

@@ -1,10 +1,10 @@
 //! Layout for a title and optional detail in an ordered column of labels.
-use std::{any::Any, rc::Rc};
+use std::rc::Rc;
 
 use solor_core::tree::NodeId;
 
 use crate::{
-    fixtures::Column,
+    column::Column,
     frame::{Frame, STYLE, TextDraw},
     layout::{
         Geometry, LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext, Metrics,
@@ -26,10 +26,6 @@ impl LayoutNode for GroupedList {
 
     fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {
         self.column.layout_rows(cx, assigned, Some(self.tail_index))
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }
 
@@ -210,7 +206,7 @@ impl DisclosureLayout {
             }
             let paragraph = self
                 .scene
-                .body_mut::<Text>(node)?
+                .body::<Text>(node)?
                 .resolve(Query::Exact(allocated.width))?;
             let color = if Some(node) == self.detail {
                 [27, 85, 148, 255]
@@ -270,6 +266,7 @@ mod viewport_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "layout-audit")]
     use crate::layout::validation::{CheckOutcome, CheckTarget};
     use crate::{
         damage::RetainedPixels,
@@ -302,7 +299,7 @@ mod tests {
             for step in 0..6 {
                 let open = step % 2 == 0;
                 let neighbors = [closed.draws[0].node, closed.draws[2].node];
-                let counts = neighbors.map(|id| list.scene.node_counts(id));
+                let counts = neighbors.map(|id| list.scene.node_counts(id).unwrap());
                 let title = if open { "Hide details" } else { "Show details" };
                 list.set_detail(title, open.then_some(DETAIL)).unwrap();
                 let frame = list.frame(size, 0, false).unwrap();
@@ -324,7 +321,7 @@ mod tests {
                 for (i, draw) in [&frame.draws[0], last].into_iter().enumerate() {
                     assert_eq!(draw.node, neighbors[i]);
                     assert!(Rc::ptr_eq(&draw.paragraph, &closed.draws[i * 2].paragraph));
-                    let now = list.scene.node_counts(draw.node);
+                    let now = list.scene.node_counts(draw.node).unwrap();
                     assert_eq!(
                         (now.measures, now.layouts),
                         (counts[i].measures, counts[i].layouts)
@@ -423,6 +420,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "layout-audit")]
     #[test]
     fn topology_edits_reject_old_checkpoints_and_keep_last_frame_on_failure() {
         let size = Size {

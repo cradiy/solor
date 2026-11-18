@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use super::fixtures::{Column, Drawing, Fault, Ids, Phase, Wrapping, nested};
@@ -55,7 +54,7 @@ fn known_wrapping_dimensions_baselines_and_sibling_positions() {
     scene.run(Query::Exact(12), None, false).unwrap();
     assert_eq!(scene.geometry(root).unwrap().metrics.size.height, 36);
     assert_eq!(scene.geometry(drawing).unwrap().origin.y, 30);
-    assert_eq!(scene.node_counts(drawing).layouts, 1);
+    assert_eq!(scene.node_counts(drawing).unwrap().layouts, 1);
     assert_eq!(
         scene.append(root, Drawing::new(1, 1)),
         Err(LayoutError::StructureLocked)
@@ -68,8 +67,8 @@ fn text_edit_moves_siblings_without_executing_unrelated_subtree_bodies() {
     let (mut reference, reference_ids) = nested();
     scene.run(Query::Exact(100), None, false).unwrap();
     let before = scene.counts();
-    let right = scene.node_counts(ids.right);
-    let drawing = scene.node_counts(ids.drawing);
+    let right = scene.node_counts(ids.right).unwrap();
+    let drawing = scene.node_counts(ids.drawing).unwrap();
     let right_origin = scene.geometry(ids.right).unwrap().origin;
     scene
         .edit_layout::<Wrapping>(ids.text, |text| text.units = 100)
@@ -80,10 +79,19 @@ fn text_edit_moves_siblings_without_executing_unrelated_subtree_bodies() {
     scene.run(Query::Exact(100), None, false).unwrap();
     reference.run(Query::Exact(100), None, true).unwrap();
     assert_eq!(scene.snapshot(), reference.snapshot());
-    assert_eq!(scene.node_counts(ids.right).measures, right.measures);
-    assert_eq!(scene.node_counts(ids.right).layouts, right.layouts);
-    assert_eq!(scene.node_counts(ids.drawing).measures, drawing.measures);
-    assert_eq!(scene.node_counts(ids.drawing).layouts, drawing.layouts);
+    assert_eq!(
+        scene.node_counts(ids.right).unwrap().measures,
+        right.measures
+    );
+    assert_eq!(scene.node_counts(ids.right).unwrap().layouts, right.layouts);
+    assert_eq!(
+        scene.node_counts(ids.drawing).unwrap().measures,
+        drawing.measures
+    );
+    assert_eq!(
+        scene.node_counts(ids.drawing).unwrap().layouts,
+        drawing.layouts
+    );
     assert!(scene.geometry(ids.right).unwrap().origin.y > right_origin.y);
     assert_eq!(scene.counts().measures - before.measures, 3);
     assert_eq!(scene.counts().layouts - before.layouts, 3);
@@ -108,7 +116,8 @@ fn baseline_only_changes_reach_ancestors_even_when_sizes_match() {
     let (mut scene, ids) = nested();
     scene.run(Query::Exact(100), None, false).unwrap();
     let before = scene.snapshot();
-    let measured = [scene.root(), ids.left, ids.text].map(|id| scene.node_counts(id).measures);
+    let measured =
+        [scene.root(), ids.left, ids.text].map(|id| scene.node_counts(id).unwrap().measures);
     scene
         .edit_layout::<Wrapping>(ids.text, |text| text.ascent -= 1)
         .unwrap();
@@ -118,8 +127,8 @@ fn baseline_only_changes_reach_ancestors_even_when_sizes_match() {
         assert_eq!(old.unwrap().origin, new.unwrap().origin);
     }
     for (id, previous) in [scene.root(), ids.left, ids.text].into_iter().zip(measured) {
-        assert!(scene.node_counts(id).measures > previous);
-        assert_eq!(scene.node_counts(id).layouts, 2);
+        assert!(scene.node_counts(id).unwrap().measures > previous);
+        assert_eq!(scene.node_counts(id).unwrap().layouts, 2);
     }
     assert_eq!(
         scene.geometry(scene.root()).unwrap().metrics.baseline,
@@ -188,7 +197,7 @@ fn errors_and_panics_preserve_publication_and_retry_incomplete_work() {
                 scene.run(Query::Exact(100), None, false)
             }));
             match fault {
-                Fault::Error => assert_eq!(outcome.unwrap(), Err(LayoutError::Injected)),
+                Fault::Error => assert_eq!(outcome.unwrap(), Err(LayoutError::Node("injected"))),
                 Fault::Panic => assert!(outcome.is_err()),
             }
             assert_eq!(scene.snapshot(), before);
@@ -267,7 +276,7 @@ fn later_branch_failure_does_not_complete_an_unpublished_subtree() {
         .unwrap();
     assert_eq!(
         scene.run(Query::Exact(100), None, false),
-        Err(LayoutError::Injected)
+        Err(LayoutError::Node("injected"))
     );
     assert_eq!(scene.snapshot(), before);
     scene.body_mut::<Drawing>(last).unwrap().fault = None;
@@ -362,10 +371,6 @@ impl LayoutNode for InvalidParent {
         }
         Ok(output)
     }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
 }
 
 #[test]
@@ -415,10 +420,6 @@ impl LayoutNode for CatchingParent {
             baseline: None,
             content: assigned,
         })
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }
 
@@ -471,7 +472,7 @@ fn scratch_growth_unwinding_and_release_preserve_layout_state() {
             .unwrap();
         let outcome = catch_unwind(AssertUnwindSafe(|| scene.run(Query::Exact(30), None, true)));
         match fault {
-            Fault::Error => assert_eq!(outcome.unwrap(), Err(LayoutError::Injected)),
+            Fault::Error => assert_eq!(outcome.unwrap(), Err(LayoutError::Node("injected"))),
             Fault::Panic => assert!(outcome.is_err()),
         }
         assert_eq!(scene.snapshot(), expected);

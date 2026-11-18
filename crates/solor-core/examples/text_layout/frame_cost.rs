@@ -43,13 +43,19 @@ fn change(view: &mut Presentation, rows: usize, kind: usize, step: usize) -> Siz
 }
 
 pub fn verify() {
+    verify_mode(Mode::Normal);
+    #[cfg(feature = "layout-audit")]
+    verify_mode(Mode::Pruned);
+}
+
+fn verify_mode(mode: Mode) {
     let mut incremental = Presentation::new(8, SAMPLE, true);
     let mut reference = Presentation::new(8, SAMPLE, false);
     for step in 0..96 {
         let kind = (step / 3) % 5;
         let size = change(&mut incremental, 8, kind, step);
         change(&mut reference, 8, kind, step);
-        let actual = incremental.update(size, Mode::Pruned).unwrap();
+        let actual = incremental.update(size, mode).unwrap();
         let expected = reference.update(size, Mode::Forced).unwrap();
         assert!(
             actual.frame.same_content(&expected.frame),

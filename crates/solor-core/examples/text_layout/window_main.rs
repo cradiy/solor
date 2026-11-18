@@ -2,27 +2,23 @@
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 #[allow(dead_code)]
+#[path = "../layout_contract/column.rs"]
+mod column;
+#[allow(dead_code)]
 mod damage;
 mod disclosure;
 mod disclosure_layout;
-#[allow(dead_code)]
-#[path = "../layout_contract/fixtures.rs"]
-mod fixtures;
 #[allow(dead_code)]
 mod frame;
 #[allow(dead_code)]
 mod glyph_masks;
 mod input;
-#[allow(dead_code)]
-#[path = "../layout_contract/layout.rs"]
-mod layout;
+use solor_core::layout;
 #[allow(dead_code)]
 mod pixels;
 #[allow(dead_code)]
 mod text;
 mod window_content;
-
-const MEASUREMENT_CACHE_SLOTS: usize = 3;
 
 #[cfg(target_os = "linux")]
 mod wayland;

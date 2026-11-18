@@ -2,7 +2,10 @@
 
 const MEASUREMENT_CACHE_SLOTS: usize = 3;
 
+mod column;
+use solor_core::{node_store, tree};
 mod fixtures;
+#[allow(dead_code, reason = "the fixture exercises a subset of the layout API")]
 mod layout;
 mod negotiation;
 

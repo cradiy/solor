@@ -1,16 +1,13 @@
 //! Fixed-font CPU text raster experiment. PNG goes to stdout; timings go to stderr.
-const MEASUREMENT_CACHE_SLOTS: usize = 3;
+#[allow(dead_code)]
+#[path = "../layout_contract/column.rs"]
+mod column;
 mod damage;
 mod damage_cost;
 #[allow(dead_code)]
-#[path = "../layout_contract/fixtures.rs"]
-mod fixtures;
-#[allow(dead_code)]
 mod frame;
 mod glyph_masks;
-#[allow(dead_code)]
-#[path = "../layout_contract/layout.rs"]
-mod layout;
+use solor_core::layout;
 mod mask_cost;
 mod pixels;
 #[cfg(test)]

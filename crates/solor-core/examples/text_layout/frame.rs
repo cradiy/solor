@@ -1,9 +1,9 @@
-use std::any::Any;
 use std::rc::Rc;
 
 use solor_core::tree::NodeId;
 
-use crate::fixtures::Column;
+use crate::column::Column;
+#[cfg(feature = "layout-audit")]
 use crate::layout::validation::{CheckTarget, SelectiveCheckpoint};
 use crate::layout::{
     Counts, Geometry, LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext,
@@ -65,9 +65,6 @@ impl LayoutNode for Shift {
             },
         })
     }
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
 }
 
 #[derive(Debug)]
@@ -122,9 +119,16 @@ struct Row {
 #[derive(Clone, Copy)]
 pub enum Mode {
     Normal,
+    #[cfg(feature = "layout-audit")]
     Pruned,
     Forced,
 }
+
+// Run the same frame and pixel assertions for both library configurations.
+#[cfg(all(test, feature = "layout-audit"))]
+pub const INCREMENTAL: Mode = Mode::Pruned;
+#[cfg(all(test, not(feature = "layout-audit")))]
+pub const INCREMENTAL: Mode = Mode::Normal;
 
 pub struct Report {
     pub frame: Rc<Frame>,
@@ -148,6 +152,7 @@ pub struct Presentation {
     frame: Option<Rc<Frame>>,
     request: Option<Size>,
     pending: bool,
+    #[cfg(feature = "layout-audit")]
     checks: Option<[SelectiveCheckpoint; 2]>,
     #[cfg(test)]
     pub fault: Option<Fault>,
@@ -190,6 +195,7 @@ impl Presentation {
             frame: None,
             request: None,
             pending: true,
+            #[cfg(feature = "layout-audit")]
             checks: None,
             #[cfg(test)]
             fault: None,
@@ -259,22 +265,16 @@ impl Presentation {
 
     fn layout(&mut self, size: Size, mode: Mode) -> Result<bool> {
         let query = Query::Exact(size.width);
-        let skipped = if matches!(mode, Mode::Pruned) {
-            if let Some([measure, placement]) = &mut self.checks {
+        #[cfg(feature = "layout-audit")]
+        if matches!(mode, Mode::Pruned) {
+            let skipped = if let Some([measure, placement]) = &mut self.checks {
                 self.scene
                     .run_pruned(query, size, measure, placement)?
                     .skipped_parent_layout
             } else {
                 self.scene.run(query, Some(size), false)?;
                 false
-            }
-        } else {
-            self.scene
-                .run(query, Some(size), matches!(mode, Mode::Forced))?;
-            false
-        };
-        // These checkpoints describe internal layout, not the externally presented frame.
-        if matches!(mode, Mode::Pruned) {
+            };
             let targets = [CheckTarget::Measure(query), CheckTarget::Layout(size)];
             if let Some(checks) = &mut self.checks {
                 for (check, target) in checks.iter_mut().zip(targets) {
@@ -293,8 +293,11 @@ impl Presentation {
                         .ok_or(LayoutError::InvalidCheckpointOwner)?,
                 ]);
             }
+            return Ok(skipped);
         }
-        Ok(skipped)
+        self.scene
+            .run(query, Some(size), matches!(mode, Mode::Forced))?;
+        Ok(false)
     }
 
     pub fn update(&mut self, size: Size, mode: Mode) -> Result<Report> {
@@ -336,7 +339,7 @@ impl Presentation {
             } else {
                 resolved += 1;
                 self.scene
-                    .body_mut::<Text>(row.text)?
+                    .body::<Text>(row.text)?
                     .resolve(Query::Exact(text.metrics.size.width))?
             };
             if paragraph.content != text.content || paragraph.baseline != text.metrics.baseline {
@@ -351,7 +354,7 @@ impl Presentation {
             });
             #[cfg(test)]
             match self.fault {
-                Some(Fault::Error(at)) if at == index => return Err(LayoutError::Injected),
+                Some(Fault::Error(at)) if at == index => return Err(LayoutError::Node("injected")),
                 Some(Fault::Panic(at)) if at == index => {
                     panic!("injected drawing preparation failure")
                 }
@@ -387,10 +390,7 @@ impl Presentation {
 
     pub fn release_caches(&mut self) {
         for row in &self.rows {
-            self.scene
-                .body_mut::<Text>(row.text)
-                .unwrap()
-                .release_cache();
+            self.scene.body::<Text>(row.text).unwrap().release_cache();
         }
         self.scene.release_scratch();
     }
