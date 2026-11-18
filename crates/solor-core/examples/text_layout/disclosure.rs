@@ -102,6 +102,11 @@ impl Disclosure {
         false
     }
 
+    /// Largest vertical offset of the last successfully published viewport.
+    pub fn max_scroll_y(&self) -> u32 {
+        self.layout.max_scroll_y
+    }
+
     pub fn frame(&mut self, size: Size, scroll_y: u32) -> Result<Rc<Frame>> {
         if self.mounted != self.detail {
             let labels = self.labels.tree();

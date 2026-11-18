@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         wayland::run(
             "Solor disclosure",
             "solor.disclosure",
-            Content::Disclosure(Box::new(row)),
+            Content::disclosure(row),
         )
     } else {
         let text = Content::text()

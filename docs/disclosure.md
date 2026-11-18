@@ -215,7 +215,19 @@ Rasterization rounds the scaled scroll offset once and crops in device pixels.
 Damage uses the old and new device offsets. Hit testing looks up the title by
 node identity in the published commands and clips its translated bounds to the
 logical viewport. Scrolling the title fully out of view cancels a pending press.
-The Wayland host currently requests offset zero.
+
+In the Wayland long-list window, scroll vertically with the pointer over the
+surface. The host uses the signed distance from the vertical axis event in
+logical units. On version 5 it sums the distance per seat until the pointer
+frame ends. On older pointer versions each axis event supplies its distance
+directly. A wheel click can carry both distance and discrete step metadata;
+the distance alone determines movement. Leaving the surface or losing the
+pointer discards any uncompleted axis frame.
+
+The host keeps the fractional position between events and requests a frame
+when its rounded offset changes. The last published content extent bounds
+the position, including after a resize. At either end, further outward input
+leaves the window idle. The submission log reports the applied `scroll_y`.
 
 ```sh
 cargo test --release --offline --example text_window measure_scroll_positions -- --ignored --nocapture
@@ -243,3 +255,14 @@ search over the existing ordered row geometry before adding a separate index.
 An independent flat list supplies a full uncached document raster at 150%
 scale. Tests compare cropped bytes with the retained surface after partial-row
 scrolls, resizes, expansion and collapse, and replay a held scrolled frame.
+
+On Niri at 150%, a compositor virtual pointer drove a 132 by 220 logical
+window with 1,024 collapsed rows. A discrete wheel step paired with distance
+15 moved the list by 15. Two quarter-unit inputs moved the rounded offset by
+one and twelve successive eight-unit inputs added 96. The list stopped at
+27,429 and reversed to 27,428 on the first negative unit. Further outward
+input at either edge and a horizontal axis event produced no extra commits.
+A click at the scrolled-away title's old location left the list unchanged.
+After returning to the top, two clicks opened and closed the detail.
+All 23 submitted shared buffers matched uncached redraws; the window closed
+normally. This run exercised compositor-delivered events from a virtual device.

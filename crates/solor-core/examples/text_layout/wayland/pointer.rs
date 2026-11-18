@@ -12,11 +12,13 @@ pub(super) struct Seat {
     seat: wl_seat::WlSeat,
     pointer: Option<wl_pointer::WlPointer>,
     position: Option<Point>,
+    pending_axis_y: f64,
 }
 
 impl Seat {
     fn release_pointer(&mut self) {
         self.position = None;
+        self.pending_axis_y = 0.0;
         if let Some(pointer) = self.pointer.take()
             && pointer.version() >= 3
         {
@@ -39,6 +41,7 @@ impl Window {
                 seat: registry.bind(name, version.min(5), qh, name),
                 pointer: None,
                 position: None,
+                pending_axis_y: 0.0,
             });
         }
     }
@@ -137,6 +140,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
             }
             wl_pointer::Event::Leave { .. } => {
                 seat.position = None;
+                seat.pending_axis_y = 0.0;
                 PointerEvent::Cancel(id)
             }
             wl_pointer::Event::Motion {
@@ -150,6 +154,25 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
                 };
                 seat.position = Some(p);
                 PointerEvent::Move(id, p)
+            }
+            wl_pointer::Event::Axis {
+                axis: WEnum::Value(wl_pointer::Axis::VerticalScroll),
+                value,
+                ..
+            } if seat.position.is_some() => {
+                if pointer.version() >= 5 {
+                    seat.pending_axis_y += value;
+                } else {
+                    state.dirty |= state.view.scroll_by(value);
+                }
+                return;
+            }
+            wl_pointer::Event::Frame => {
+                let delta = std::mem::take(&mut seat.pending_axis_y);
+                if delta != 0.0 {
+                    state.dirty |= state.view.scroll_by(delta);
+                }
+                return;
             }
             // Linux evdev BTN_LEFT. Wayland surface coordinates are already logical.
             wl_pointer::Event::Button {

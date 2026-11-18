@@ -57,6 +57,7 @@ pub struct DisclosureLayout {
     after: Vec<NodeId>,
     published: Option<Rc<Frame>>,
     viewport: Option<Size>,
+    pub(super) max_scroll_y: u32,
     dirty: bool,
 }
 
@@ -108,6 +109,7 @@ impl DisclosureLayout {
             after,
             published: None,
             viewport: None,
+            max_scroll_y: 0,
             dirty: true,
         })
     }
@@ -149,7 +151,8 @@ impl DisclosureLayout {
     pub fn frame(&mut self, size: Size, requested_y: u32, force: bool) -> Result<Rc<Frame>> {
         self.scene.run_assigned(size, force)?;
         let content_height = self.geometry(self.scene.root())?.content.height;
-        let top = requested_y.min(content_height.saturating_sub(size.height));
+        let max_scroll_y = content_height.saturating_sub(size.height);
+        let top = requested_y.min(max_scroll_y);
         if !force
             && !self.dirty
             && self.viewport == Some(size)
@@ -167,6 +170,7 @@ impl DisclosureLayout {
         let frame = Rc::new(self.collect_frame(revision, top, size.height)?);
         self.published = Some(frame.clone());
         self.viewport = Some(size);
+        self.max_scroll_y = max_scroll_y;
         self.dirty = false;
         Ok(frame)
     }

@@ -200,7 +200,7 @@ impl Window {
         self.dirty = false;
         self.commits += 1;
         eprintln!(
-            "commit={} edit={} size={}x{} buffer={}x{} scale_120={} slot={} reuse={} audited={} rows={} upload_bytes={} upload_us={} elapsed_us={}",
+            "commit={} edit={} size={}x{} buffer={}x{} scale_120={} slot={} reuse={} audited={} rows={} scroll_y={} upload_bytes={} upload_us={} elapsed_us={}",
             self.commits,
             self.view.edit(),
             self.size.width,
@@ -212,6 +212,7 @@ impl Window {
             reuse,
             self.audit,
             frame.draws.len(),
+            frame.scroll_y,
             uploaded,
             upload_us,
             self.start.elapsed().as_micros()

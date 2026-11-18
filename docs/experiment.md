@@ -105,7 +105,11 @@ The scrolling experiment takes an absolute logical offset on the disclosure
 frame request. Require agreement with a crop of the full document at partially
 visible rows, hit testing against the published viewport and stable measurement
 and layout counts for scroll-only frames. Compare snapshot time at the start,
-middle and end of the same list. Native scrolling input is outside this step.
+middle and end of the same list. The Linux host maps focused vertical pointer
+axis input to that offset. Native acceptance covers repeated movement, fractional
+accumulation, idle commits at both bounds, reverse input at the bottom,
+title activation after returning to the top, and shared-buffer pixel agreement.
+Horizontal scrolling and kinetic scrolling are outside this experiment.
 
 The [node execution model draft](node-execution.md) remains the broader proposal.
 
