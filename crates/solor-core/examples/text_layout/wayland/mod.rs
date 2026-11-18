@@ -41,8 +41,53 @@ struct Window {
     waiting: bool,
     closed: bool,
     commits: usize,
-    audit: bool,
+    audit: Option<DamageAudit>,
     start: Instant,
+}
+
+/// The compositor may keep any pixel outside the reported buffer damage.
+#[derive(Default)]
+struct DamageAudit {
+    previous: Option<Surface>,
+}
+
+impl DamageAudit {
+    fn check(&mut self, current: Surface, damage: Option<Clip>) -> io::Result<()> {
+        let canvas = Clip::canvas(current.size);
+        if damage.is_some_and(|area| area.empty() || area.intersect(canvas) != area) {
+            return Err(io::Error::other("damage outside the submitted buffer"));
+        }
+        if damage != Some(canvas) {
+            let previous = self
+                .previous
+                .as_ref()
+                .filter(|old| old.size == current.size)
+                .ok_or_else(|| io::Error::other("new target requires full damage"))?;
+            let stride = current.size.width as usize * 4;
+            for (y, (old, new)) in previous
+                .rgba
+                .chunks_exact(stride)
+                .zip(current.rgba.chunks_exact(stride))
+                .enumerate()
+            {
+                let matches = match damage {
+                    Some(area) if (area.top..area.bottom).contains(&(y as i64)) => {
+                        let left = area.left as usize * 4;
+                        let right = area.right as usize * 4;
+                        old[..left] == new[..left] && old[right..] == new[right..]
+                    }
+                    _ => old == new,
+                };
+                if !matches {
+                    return Err(io::Error::other(
+                        "changed pixel outside reported buffer damage",
+                    ));
+                }
+            }
+        }
+        self.previous = Some(current);
+        Ok(())
+    }
 }
 
 fn buffer_size(scale_120: u32, logical: Size) -> io::Result<Size> {
@@ -107,7 +152,7 @@ pub(super) fn run(title: &str, app_id: &str, view: Content) -> Result<(), Box<dy
         waiting: false,
         closed: false,
         commits: 0,
-        audit: std::env::var_os("SOLOR_VERIFY_SHM").is_some(),
+        audit: std::env::var_os("SOLOR_VERIFY_SHM").map(|_| DamageAudit::default()),
         start,
     };
     if window.view.accepts_pointer() {
@@ -182,14 +227,22 @@ impl Window {
         let pixels = self.pixels.as_ref().expect("prepared retained pixels");
         let uploaded = slot.upload(pixels.surface())?;
         let upload_us = upload_start.elapsed().as_micros();
-        if self.audit {
-            slot.verify(&Surface::raster(&frame, size, clip, (0, 0), scale, None)?)?;
+        if let Some(audit) = &mut self.audit {
+            let oracle = Surface::raster(&frame, size, clip, (0, 0), scale, None)?;
+            slot.verify(&oracle)?;
+            audit.check(oracle, damage)?;
         }
         self.viewport
             .set_destination(self.size.width as i32, self.size.height as i32);
         self.surface.attach(Some(&slot.handle), 0, 0);
-        self.surface
-            .damage_buffer(0, 0, size.width as i32, size.height as i32);
+        if let Some(area) = damage {
+            self.surface.damage_buffer(
+                area.left as i32,
+                area.top as i32,
+                (area.right - area.left) as i32,
+                (area.bottom - area.top) as i32,
+            );
+        }
         if self.view.wants_frame_callback() {
             self.surface.frame(qh, ());
             self.waiting = true;
@@ -210,7 +263,7 @@ impl Window {
             self.scale_120,
             index,
             reuse,
-            self.audit,
+            self.audit.is_some(),
             frame.draws.len(),
             frame.scroll_y,
             uploaded,
@@ -337,10 +390,49 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for Window {
         if let xdg_surface::Event::Configure { serial } = event {
             surface.ack_configure(serial);
             state.configured = true;
-            if let Some(size) = state.pending_size.take() {
-                state.dirty |= size != state.size;
+            if let Some(size) = state.pending_size.take()
+                && size != state.size
+            {
                 state.size = size;
+                state.pixels = None;
+                state.dirty = true;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audit_preserves_pixels_outside_the_surface_damage() {
+        let size = Size {
+            width: 5,
+            height: 3,
+        };
+        let image = |edits: &[(usize, usize)]| {
+            let mut rgba = vec![255; 5 * 3 * 4];
+            for &(x, y) in edits {
+                rgba[(5 * y + x) * 4] = 0;
+            }
+            Surface { size, rgba }
+        };
+        let region = Clip {
+            left: 1,
+            top: 1,
+            right: 4,
+            bottom: 2,
+        };
+        let mut audit = DamageAudit::default();
+        assert!(audit.check(image(&[]), None).is_err());
+        audit.check(image(&[]), Some(Clip::canvas(size))).unwrap();
+        for outside in [(0, 1), (4, 1), (2, 0), (2, 2)] {
+            assert!(audit.check(image(&[outside]), Some(region)).is_err());
+        }
+        let inside = [(1, 1), (3, 1)];
+        audit.check(image(&inside), Some(region)).unwrap();
+        audit.check(image(&inside), None).unwrap();
+        assert!(audit.check(image(&[]), None).is_err());
     }
 }

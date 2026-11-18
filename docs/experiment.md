@@ -78,7 +78,9 @@ physical pixels, idle commits and normal close. Record client PSS and shared
 buffer sizes separately. The partial upload experiment tracks missed scanlines
 per shared file. Compare bytes and conversion/write time with full uploads
 under identical content and compositor damage, and verify the complete file
-after edits and resizing.
+after edits and resizing. The window reports surface damage in physical buffer
+coordinates. Check that a new target reports full damage, local edits cover
+every changed pixel, and a slot can be repaired independently of that rectangle.
 The [disclosure experiment](disclosure.md) connects primary pointer activation,
 explicit state bindings and conditional detail lifetime to the CPU window.
 Acceptance covers logical hit testing, cancellation, frame requests, repeated

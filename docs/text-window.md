@@ -12,6 +12,7 @@ The [disclosure mode](disclosure.md) uses the same window for pointer-driven upd
 window waits for events. Resize it to reflow the text or use the compositor's
 close action to exit. Set `SOLOR_VERIFY_SHM=1` to read each submitted file back
 before attaching it and compare every pixel with an uncached full redraw.
+The audit also compares consecutive full redraws outside the reported damage.
 
 Layout uses logical units. The surface uses the compositor's preferred scale
 in 120ths to size the physical buffer and rasterize each glyph outline. At
@@ -27,8 +28,27 @@ releases a slot, the client can convert and write the entire band in contiguous
 chunks of native-endian XRGB8888. New files start with all rows pending. The
 band is cleared after all writes succeed. Its bounds can include unchanged
 rows between distant edits and unchanged columns on every affected row.
-The surface still reports full-buffer damage to the compositor. The core
-library has no Wayland dependency.
+The window sends the retained rasterizer's physical rectangle through
+`wl_surface.damage_buffer`. The rectangle uses the current buffer’s coordinates and
+bounds the pixel changes since the preceding surface commit. A slot can need more scanlines repaired than the rectangle
+reported to the compositor. A new logical size or scale damages the full
+target. A prepared frame with no pixel damage can still attach a repaired
+slot and commit without a damage request.
+
+## Surface damage verification
+
+On Niri at 150%, the release two-row window started with a 1244 by 1481
+physical buffer. The eight alternating edits sent rectangles of 258 by 36
+and 353 by 36 pixels. The first edit populated a second shared file in full.
+Each later edit repaired a 77-scanline band in a reused file. All 12 buffer
+readbacks, including three resizes, matched uncached rasterization.
+
+A separate native run used a temporary frame-callback driver to edit an open
+disclosure. The Wayland trace reported a 278 by 36 rectangle for a color edit
+and 278 by 113 after adding a text line. Two writes that restored the previous
+label before the next frame produced no damage request. That commit repaired
+562,288 bytes in the alternating slot. All eight readbacks matched full redraws,
+and all pixels outside each reported rectangle matched the preceding redraw.
 
 ## Full upload baseline
 
