@@ -81,6 +81,8 @@ under identical content and compositor damage, and verify the complete file
 after edits and resizing. The window reports surface damage in physical buffer
 coordinates. Check that a new target reports full damage, local edits cover
 every changed pixel, and a slot can be repaired independently of that rectangle.
+For empty damage, verify zero shared-file writes, progress of scheduled frame
+callbacks, wakeup on input, and correct pixels on the next buffer submission.
 The [disclosure experiment](disclosure.md) connects primary pointer activation,
 explicit state bindings and conditional detail lifetime to the CPU window.
 Acceptance covers logical hit testing, cancellation, frame requests, repeated

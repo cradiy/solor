@@ -30,10 +30,17 @@ band is cleared after all writes succeed. Its bounds can include unchanged
 rows between distant edits and unchanged columns on every affected row.
 The window sends the retained rasterizer's physical rectangle through
 `wl_surface.damage_buffer`. The rectangle uses the current buffer’s coordinates and
-bounds the pixel changes since the preceding surface commit. A slot can need more scanlines repaired than the rectangle
-reported to the compositor. A new logical size or scale damages the full
-target. A prepared frame with no pixel damage can still attach a repaired
-slot and commit without a damage request.
+bounds the pixel changes since the preceding surface commit. A slot can need
+more scanlines repaired than the rectangle reported to the compositor. A new
+logical size or scale damages the full target.
+
+When the retained rasterizer returns an empty damage region, the window keeps
+the current buffer attached and preserves the pending rows in each slot. An
+event-driven disclosure then waits for input. If another application update
+needs a frame callback, the window requests it and commits the callback alone.
+The next visible change repairs the selected file before attaching it. The
+`commit=` log counts buffer submissions. With auditing enabled, even skipped
+updates are checked against an uncached full raster.
 
 ## Surface damage verification
 
@@ -43,12 +50,21 @@ and 353 by 36 pixels. The first edit populated a second shared file in full.
 Each later edit repaired a 77-scanline band in a reused file. All 12 buffer
 readbacks, including three resizes, matched uncached rasterization.
 
-A separate native run used a temporary frame-callback driver to edit an open
-disclosure. The Wayland trace reported a 278 by 36 rectangle for a color edit
-and 278 by 113 after adding a text line. Two writes that restored the previous
-label before the next frame produced no damage request. That commit repaired
-562,288 bytes in the alternating slot. All eight readbacks matched full redraws,
-and all pixels outside each reported rectangle matched the preceding redraw.
+In the disclosure fixture, a color edit reported a 278 by 36 rectangle and
+adding a line reported 278 by 113. The temporary native driver restored the
+bound label before presentation twice, first with another edit scheduled and
+then with the window idle. The protocol trace showed only a frame request
+and commit in the first case, and no surface request in the second. The next
+callback recolored the label. A real pointer click woke the idle window and
+collapsed the detail. All submitted buffers, including resizes, passed the
+full-raster check.
+
+Two paired release runs against `38dfb11` used the same driver, with run
+order reversed for the second pair. At 1244 by 1481 physical pixels, both
+empty updates wrote zero bytes. The baseline wrote 562,288 and 358,272 bytes
+respectively. From initial mapping through the click, including deferred
+repairs, shared-file writes totaled 16,624,816 bytes versus 17,341,360 bytes
+in each pair. These figures measure client writes to the shared files.
 
 ## Full upload baseline
 

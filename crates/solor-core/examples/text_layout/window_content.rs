@@ -70,11 +70,11 @@ impl Content {
         }
     }
 
-    pub fn wants_frame_callback(&self) -> bool {
-        matches!(
-            self,
-            Self::Disclosure { .. } | Self::Text { edit: 0..8, .. }
-        )
+    pub fn wants_frame_callback(&self, has_damage: bool) -> bool {
+        match self {
+            Self::Text { edit, .. } => *edit < 8,
+            Self::Disclosure { .. } => has_damage,
+        }
     }
 
     pub fn frame_ready(&mut self) -> bool {
@@ -116,6 +116,45 @@ impl Content {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unchanged_frame_keeps_scheduled_edits_running_and_allows_disclosure_to_idle() {
+        let size = Size {
+            width: 240,
+            height: 120,
+        };
+        let mut text = Content::text().unwrap();
+        if let Content::Text { view, .. } = &mut text {
+            view.set_content(0, ROWS[0][1]).unwrap();
+        }
+        let clip = crate::pixels::Clip::canvas(size);
+        let mut masks = crate::glyph_masks::GlyphMasks::new(64, 32 * 1024);
+        let mut pixels =
+            crate::damage::RetainedPixels::new(text.frame(size).unwrap(), size, clip, &mut masks)
+                .unwrap();
+        assert!(text.frame_ready());
+        let damage = pixels
+            .update(text.frame(size).unwrap(), size, clip, &mut masks)
+            .unwrap();
+        assert!(damage.is_none());
+        assert!(text.wants_frame_callback(damage.is_some()));
+        assert!(text.frame_ready());
+        assert!(
+            pixels
+                .update(text.frame(size).unwrap(), size, clip, &mut masks)
+                .unwrap()
+                .is_some()
+        );
+
+        let mut disclosure = Content::disclosure(Disclosure::new(&[], &[]).unwrap());
+        let closed = disclosure.frame(size).unwrap();
+        assert!(!disclosure.wants_frame_callback(false));
+        let inside = crate::input::Point { x: 6.0, y: 10.0 };
+        disclosure.pointer(PointerEvent::Down(1, inside));
+        assert!(disclosure.pointer(PointerEvent::Up(1, inside)));
+        assert!(!closed.same_content(&disclosure.frame(size).unwrap()));
+        assert!(disclosure.wants_frame_callback(true));
+    }
 
     #[test]
     fn fractional_scroll_coalesces_and_clamps_after_resize() {

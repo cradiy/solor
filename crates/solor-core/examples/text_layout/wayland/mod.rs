@@ -209,10 +209,23 @@ impl Window {
             }
         };
 
-        if let Some(area) = damage {
-            for slot in self.slots.iter_mut().flatten().filter(|s| s.size == size) {
-                slot.invalidate(area);
+        let oracle = || Surface::raster(&frame, size, clip, (0, 0), scale, None);
+        let callback = self.view.wants_frame_callback(damage.is_some());
+        let Some(area) = damage else {
+            if let Some(audit) = &mut self.audit {
+                audit.check(oracle()?, None)?;
             }
+            if callback {
+                // A frame request takes effect at commit, even with no new buffer.
+                self.surface.frame(qh, ());
+                self.surface.commit();
+                self.waiting = true;
+            }
+            self.dirty = false;
+            return Ok(());
+        };
+        for slot in self.slots.iter_mut().flatten().filter(|s| s.size == size) {
+            slot.invalidate(area);
         }
         let reuse = self.slots[index]
             .as_ref()
@@ -228,22 +241,20 @@ impl Window {
         let uploaded = slot.upload(pixels.surface())?;
         let upload_us = upload_start.elapsed().as_micros();
         if let Some(audit) = &mut self.audit {
-            let oracle = Surface::raster(&frame, size, clip, (0, 0), scale, None)?;
+            let oracle = oracle()?;
             slot.verify(&oracle)?;
             audit.check(oracle, damage)?;
         }
         self.viewport
             .set_destination(self.size.width as i32, self.size.height as i32);
         self.surface.attach(Some(&slot.handle), 0, 0);
-        if let Some(area) = damage {
-            self.surface.damage_buffer(
-                area.left as i32,
-                area.top as i32,
-                (area.right - area.left) as i32,
-                (area.bottom - area.top) as i32,
-            );
-        }
-        if self.view.wants_frame_callback() {
+        self.surface.damage_buffer(
+            area.left as i32,
+            area.top as i32,
+            (area.right - area.left) as i32,
+            (area.bottom - area.top) as i32,
+        );
+        if callback {
             self.surface.frame(qh, ());
             self.waiting = true;
         }
