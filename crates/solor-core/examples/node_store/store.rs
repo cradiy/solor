@@ -72,6 +72,11 @@ impl<T: ?Sized> NodeStore<T> {
         self.tree.parent(node)
     }
 
+    #[allow(dead_code, reason = "used by the live layout experiment")]
+    pub fn child_count(&self, node: NodeId) -> Result<usize, TreeError> {
+        Ok(self.tree.children(node)?.len())
+    }
+
     pub fn append(&mut self, parent: NodeId, body: Box<T>) -> Result<NodeId, TreeError> {
         self.tree.append(
             parent,

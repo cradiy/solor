@@ -7,7 +7,8 @@ Run the two-row CPU text fixture in a Linux Wayland session with
 cargo run --offline --release --example text_window
 ```
 
-Eight frame callbacks drive alternating edits. Once the edits finish, the
+The default workload uses eight frame callbacks to drive alternating edits.
+The [disclosure mode](disclosure.md) uses the same window for pointer-driven updates. Once the edits finish, the
 window waits for events. Resize it to reflow the text or use the compositor's
 close action to exit. Set `SOLOR_VERIFY_SHM=1` to read each submitted file back
 before attaching it and compare every pixel with an uncached full redraw.

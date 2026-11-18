@@ -1,13 +1,12 @@
 mod buffer;
+mod pointer;
 
 use std::{error::Error, io, time::Instant};
 
 use wayland_client::{
     Connection, Dispatch, QueueHandle, delegate_noop,
-    globals::{GlobalListContents, registry_queue_init},
-    protocol::{
-        wl_buffer, wl_callback, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface,
-    },
+    globals::registry_queue_init,
+    protocol::{wl_buffer, wl_callback, wl_compositor, wl_shm, wl_shm_pool, wl_surface},
 };
 use wayland_protocols::wp::{
     fractional_scale::v1::client::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1},
@@ -17,27 +16,22 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 
 use crate::{
     damage::RetainedPixels,
-    frame::{Mode, Presentation},
     glyph_masks::GlyphMasks,
     layout::{LayoutError, Size},
     pixels::{Clip, RasterScale, Surface},
+    window_content::Content,
 };
 use buffer::Buffer;
 
-const ROWS: [[&str; 2]; 2] = [
-    ["Solor 中文排版", "Solor 文字换行与基线。"],
-    ["Hello 世界！Rust GUI 123", "Hello 世界！测试界面宽度改变。"],
-];
-const EDITS: usize = 8;
-
 struct Window {
     viewport: wp_viewport::WpViewport,
-    scale: RasterScale,
+    scale_120: u32,
     surface: wl_surface::WlSurface,
     shm: wl_shm::WlShm,
     slots: [Option<Buffer>; 2],
     next_slot: usize,
-    view: Presentation,
+    view: Content,
+    seats: Vec<pointer::Seat>,
     pixels: Option<RetainedPixels>,
     masks: GlyphMasks,
     size: Size,
@@ -46,23 +40,21 @@ struct Window {
     dirty: bool,
     waiting: bool,
     closed: bool,
-    advance: bool,
-    edit: usize,
     commits: usize,
     audit: bool,
     start: Instant,
 }
 
-fn buffer_size(scale: RasterScale, logical: Size) -> io::Result<Size> {
+fn buffer_size(scale_120: u32, logical: Size) -> io::Result<Size> {
     let dimension = |n: u32| {
-        u32::try_from(((u64::from(n) * u64::from(scale.0) + 60) / 120).max(1))
+        u32::try_from(((u64::from(n) * u64::from(scale_120) + 60) / 120).max(1))
             .map_err(|_| io::Error::other("scaled dimension out of range"))
     };
     let size = Size {
         width: dimension(logical.width)?,
         height: dimension(logical.height)?,
     };
-    if scale.0 == 0 || u64::from(size.width) * u64::from(size.height) > 4 * 1024 * 1024 {
+    if scale_120 == 0 || u64::from(size.width) * u64::from(size.height) > 4 * 1024 * 1024 {
         return Err(io::Error::other(
             "scale or buffer size outside raster budget",
         ));
@@ -74,7 +66,7 @@ fn layout_error(error: LayoutError) -> io::Error {
     io::Error::other(format!("fixture layout: {error:?}"))
 }
 
-pub(super) fn run() -> Result<(), Box<dyn Error>> {
+pub(super) fn run(title: &str, app_id: &str, view: Content) -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
     let connection = Connection::connect_to_env()?;
     let (globals, mut queue) = registry_queue_init::<Window>(&connection)?;
@@ -90,22 +82,19 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let fractional = manager.get_fractional_scale(&surface, &qh, ());
     let role = shell.get_xdg_surface(&surface, &qh, ());
     let top = role.get_toplevel(&qh, ());
-    top.set_title("Solor text window".into());
-    top.set_app_id("solor.text-window".into());
+    top.set_title(title.into());
+    top.set_app_id(app_id.into());
     surface.commit();
 
-    let mut view = Presentation::new(2, ROWS[0][0], true);
-    view.set_content(1, ROWS[1][0]).map_err(layout_error)?;
-    view.set_color(1, [27, 85, 148, 255])
-        .map_err(layout_error)?;
     let mut window = Window {
         viewport,
-        scale: RasterScale::ONE,
+        scale_120: 120,
         surface,
         shm,
         slots: [None, None],
         next_slot: 0,
         view,
+        seats: Vec::new(),
         pixels: None,
         masks: GlyphMasks::new(64, 32 * 1024),
         size: Size {
@@ -117,12 +106,17 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         dirty: true,
         waiting: false,
         closed: false,
-        advance: false,
-        edit: 0,
         commits: 0,
         audit: std::env::var_os("SOLOR_VERIFY_SHM").is_some(),
         start,
     };
+    if window.view.accepts_pointer() {
+        for global in globals.contents().clone_list() {
+            if global.interface == "wl_seat" {
+                window.add_seat(globals.registry(), global.name, global.version, &qh);
+            }
+        }
+    }
     loop {
         queue.blocking_dispatch(&mut window)?;
         if window.closed {
@@ -152,20 +146,9 @@ impl Window {
         else {
             return Ok(());
         };
-        let size = buffer_size(self.scale, self.size)?;
-        if self.advance {
-            self.advance = false;
-            self.edit += 1;
-            let row = (self.edit - 1) % 2;
-            self.view
-                .set_content(row, ROWS[row][((self.edit - 1) / 2 + 1) % 2])
-                .map_err(layout_error)?;
-        }
-        let frame = self
-            .view
-            .update(self.size, Mode::Normal)
-            .map_err(layout_error)?
-            .frame;
+        let size = buffer_size(self.scale_120, self.size)?;
+        let scale = RasterScale(f64::from(self.scale_120) / 120.0);
+        let frame = self.view.frame(self.size).map_err(layout_error)?;
         let clip = Clip::canvas(size);
         let damage = match &mut self.pixels {
             Some(pixels) => pixels.update(frame.clone(), size, clip, &mut self.masks)?,
@@ -174,7 +157,7 @@ impl Window {
                     frame.clone(),
                     size,
                     clip,
-                    self.scale,
+                    scale,
                     &mut self.masks,
                 )?);
                 Some(clip)
@@ -200,21 +183,14 @@ impl Window {
         let uploaded = slot.upload(pixels.surface())?;
         let upload_us = upload_start.elapsed().as_micros();
         if self.audit {
-            slot.verify(&Surface::raster(
-                &frame,
-                size,
-                clip,
-                (0, 0),
-                self.scale,
-                None,
-            )?)?;
+            slot.verify(&Surface::raster(&frame, size, clip, (0, 0), scale, None)?)?;
         }
         self.viewport
             .set_destination(self.size.width as i32, self.size.height as i32);
         self.surface.attach(Some(&slot.handle), 0, 0);
         self.surface
             .damage_buffer(0, 0, size.width as i32, size.height as i32);
-        if self.edit < EDITS {
+        if self.view.wants_frame_callback() {
             self.surface.frame(qh, ());
             self.waiting = true;
         }
@@ -224,17 +200,18 @@ impl Window {
         self.dirty = false;
         self.commits += 1;
         eprintln!(
-            "commit={} edit={} size={}x{} buffer={}x{} scale_120={} slot={} reuse={} audited={} upload_bytes={} upload_us={} elapsed_us={}",
+            "commit={} edit={} size={}x{} buffer={}x{} scale_120={} slot={} reuse={} audited={} rows={} upload_bytes={} upload_us={} elapsed_us={}",
             self.commits,
-            self.edit,
+            self.view.edit(),
             self.size.width,
             self.size.height,
             size.width,
             size.height,
-            self.scale.0,
+            self.scale_120,
             index,
             reuse,
             self.audit,
+            frame.draws.len(),
             uploaded,
             upload_us,
             self.start.elapsed().as_micros()
@@ -257,9 +234,9 @@ impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ()> for Window {
         _: &QueueHandle<Self>,
     ) {
         if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event
-            && state.scale != RasterScale(scale)
+            && state.scale_120 != scale
         {
-            state.scale = RasterScale(scale);
+            state.scale_120 = scale;
             state.pixels = None;
             state.dirty = true;
         }
@@ -271,18 +248,6 @@ delegate_noop!(Window: ignore wl_surface::WlSurface);
 delegate_noop!(Window: ignore wl_shm::WlShm);
 delegate_noop!(Window: ignore wl_shm_pool::WlShmPool);
 
-impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Window {
-    fn event(
-        _: &mut Self,
-        _: &wl_registry::WlRegistry,
-        _: wl_registry::Event,
-        _: &GlobalListContents,
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
 impl Dispatch<wl_callback::WlCallback, ()> for Window {
     fn event(
         state: &mut Self,
@@ -293,8 +258,7 @@ impl Dispatch<wl_callback::WlCallback, ()> for Window {
         _: &QueueHandle<Self>,
     ) {
         state.waiting = false;
-        state.advance = true;
-        state.dirty = true;
+        state.dirty |= state.view.frame_ready();
     }
 }
 

@@ -17,12 +17,14 @@ panics. Stop at that contract before integrating propagation pruning.
 
 `Scene::capture_dependencies(owner, target)` returns an owned `Checkpoint` for
 one currently valid result. `CheckTarget` is either `Measure(Query)` or
-`Layout(Size)`. Capture requires the first successful layout, which locks topology.
+`Layout(Size)`. Capture requires a successful layout.
 A dirty result, absent measurement-cache entry, or different published allocation
 returns `None`. Invalid or foreign handles return an error.
 
 A checkpoint copies that result's direct-child reads and retains its owner,
-request, and owner-input revision. Later cache eviction does not destroy this
+request, owner-input revision and scene topology revision. Mounting or
+unmounting invalidates old evidence before any recorded child handle is
+followed. Later cache eviction does not destroy this
 evidence. Callers own its lifetime; capture is explicit and does not run on the
 normal update path. A complete empty record remains distinct from an incomplete
 record whose buffer was discarded at the recording limit.

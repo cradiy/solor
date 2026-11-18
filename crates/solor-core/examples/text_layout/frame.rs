@@ -322,7 +322,7 @@ impl Presentation {
         for (index, row) in self.rows.iter().enumerate() {
             let group = geometry[1 + index * 2];
             let text = geometry[2 + index * 2];
-            let old = self.frame.as_ref().map(|f| &f.draws[index]);
+            let old = self.frame.as_ref().and_then(|f| f.draws.get(index));
             let paragraph = if !matches!(mode, Mode::Forced)
                 && !row.text_dirty
                 && let Some(old) = old

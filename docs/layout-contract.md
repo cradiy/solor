@@ -137,8 +137,11 @@ uses the existing scoped access prototype. The
 [fixtures](../crates/solor-core/examples/layout_contract/fixtures.rs) implement
 the three behaviors, and the
 [tests](../crates/solor-core/examples/layout_contract/tests.rs) cover the acceptance
-cases. Nodes can be appended for fixture construction; topology is locked after
-the first successful layout. Layout updates do not add or remove nodes.
+cases. Construction-time append closes after the first successful layout.
+The [disclosure fixture](disclosure.md) explicitly mounts a new child or
+unmounts a leaf between updates. These operations invalidate layout and
+measurement up the parent chain and advance the scene's topology revision.
+Layout callbacks cannot edit the tree.
 
 ```sh
 cargo run -p solor-core --example layout_contract --offline

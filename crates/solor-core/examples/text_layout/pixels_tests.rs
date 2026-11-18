@@ -379,7 +379,7 @@ fn fractional_scale_matches_a_native_size_glyph_with_a_warm_one_x_cache() {
         physical,
         Clip::canvas(physical),
         (0, 0),
-        RasterScale(180),
+        RasterScale(1.5),
         Some(&mut masks),
     )
     .unwrap();

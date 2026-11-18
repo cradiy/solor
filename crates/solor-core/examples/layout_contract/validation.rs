@@ -66,13 +66,14 @@ pub enum CheckTarget {
     Layout(Size),
 }
 
-/// Owned evidence captured from one valid result after topology is locked.
+/// Owned evidence captured for one result and one topology revision.
 pub struct Checkpoint {
     owner: NodeId,
     input_revision: u64,
     target: CheckTarget,
     reads: ReadSet,
     publication: Option<u64>,
+    topology_revision: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,6 +149,7 @@ impl Scene {
             checkpoint.next = next;
         }
         checkpoint.evidence.reads.complete = current.complete;
+        checkpoint.evidence.topology_revision = self.topology_revision;
         checkpoint.evidence.input_revision = current.input_revision;
         checkpoint.evidence.target = target;
         checkpoint.evidence.publication = Some(self.publication);
@@ -383,6 +385,9 @@ impl Scene {
     }
 
     fn can_check(&self, checkpoint: &Checkpoint, target: CheckTarget) -> Result<bool> {
+        if checkpoint.topology_revision != self.topology_revision {
+            return Ok(false);
+        }
         let entry = self.store.get(checkpoint.owner)?;
         Ok(checkpoint.target == target
             && checkpoint.input_revision == entry.input_revision
@@ -405,6 +410,7 @@ impl Scene {
                     complete: current.complete,
                 },
                 publication: Some(self.publication),
+                topology_revision: self.topology_revision,
             }))
     }
 

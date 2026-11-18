@@ -41,15 +41,15 @@ impl Clip {
     }
 }
 
-/// Device pixels per logical unit, expressed in 120ths.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RasterScale(pub u32);
+/// Device pixels per logical unit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RasterScale(pub f64);
 
 impl RasterScale {
-    pub const ONE: Self = Self(120);
+    pub const ONE: Self = Self(1.0);
 
     fn edge(self, logical: f64) -> i64 {
-        (logical * (f64::from(self.0) / 120.0)).round() as i64
+        (logical * self.0).round() as i64
     }
 
     pub fn bounds(self, draw: &TextDraw) -> Clip {
@@ -141,7 +141,7 @@ impl Surface {
                 continue;
             }
             let em = f32::from(draw.paragraph.style.size);
-            let factor = scale.0 as f32 / 120.0;
+            let factor = scale.0 as f32;
             let device_em = em * factor;
             let mut scaler = context.builder(font).size(device_em).hint(false).build();
             for line in &draw.paragraph.lines {

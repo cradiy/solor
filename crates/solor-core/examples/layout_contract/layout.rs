@@ -659,6 +659,7 @@ pub struct Scene {
     request: Option<(Query, Option<Size>)>,
     changes: Option<validation::ChangeLog>,
     publication: u64,
+    topology_revision: u64,
 }
 
 impl Scene {
@@ -673,6 +674,7 @@ impl Scene {
             request: None,
             changes: None,
             publication: 0,
+            topology_revision: 0,
         }
     }
 
@@ -710,6 +712,10 @@ impl Scene {
         if self.request.is_some() {
             return Err(LayoutError::StructureLocked);
         }
+        self.append_entry(parent, body)
+    }
+
+    fn append_entry(&mut self, parent: NodeId, body: impl LayoutNode) -> Result<NodeId> {
         self.invalidate(parent)?;
         let node = self
             .store
@@ -717,6 +723,42 @@ impl Scene {
             .map_err(AccessError::from)?;
         self.nodes.push(node);
         Ok(node)
+    }
+
+    /// Mount a child at the end of its parent's ordered children.
+    #[allow(dead_code, reason = "used by the disclosure fixture")]
+    pub fn mount(&mut self, parent: NodeId, body: impl LayoutNode) -> Result<NodeId> {
+        let revision = self
+            .topology_revision
+            .checked_add(1)
+            .ok_or(LayoutError::RevisionExhausted)?;
+        self.store.get(parent)?;
+        let node = self.append_entry(parent, body)?;
+        self.topology_revision = revision;
+        Ok(node)
+    }
+
+    #[allow(dead_code, reason = "used by the disclosure fixture")]
+    pub fn unmount_leaf(&mut self, node: NodeId) -> Result<()> {
+        let parent =
+            self.store
+                .parent(node)
+                .map_err(AccessError::from)?
+                .ok_or(AccessError::Tree(
+                    solor_core::tree::TreeError::CannotRemoveRoot,
+                ))?;
+        if self.store.child_count(node).map_err(AccessError::from)? != 0 {
+            return Err(LayoutError::UnexpectedChildCount);
+        }
+        let revision = self
+            .topology_revision
+            .checked_add(1)
+            .ok_or(LayoutError::RevisionExhausted)?;
+        self.invalidate(parent)?;
+        self.topology_revision = revision;
+        self.nodes.retain(|&id| id != node);
+        self.store.remove_subtree(node).map_err(AccessError::from)?;
+        Ok(())
     }
 
     fn invalidate(&mut self, node: NodeId) -> Result<()> {
@@ -857,9 +899,9 @@ impl Scene {
         self.store.get(id).unwrap().counts
     }
 
-    #[cfg(test)]
+    #[allow(dead_code, reason = "used by tests and the disclosure fixture")]
     pub fn geometry(&self, id: NodeId) -> Option<Geometry> {
-        self.store.get(id).unwrap().geometry
+        self.store.get(id).ok()?.geometry
     }
 
     #[cfg(test)]

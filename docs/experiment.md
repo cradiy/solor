@@ -75,6 +75,19 @@ buffer sizes separately. The partial upload experiment tracks missed scanlines
 per shared file. Compare bytes and conversion/write time with full uploads
 under identical content and compositor damage, and verify the complete file
 after edits and resizing.
+The [disclosure experiment](disclosure.md) connects primary pointer activation,
+explicit state bindings and conditional detail lifetime to the CPU window.
+Acceptance covers logical hit testing, cancellation, frame requests, repeated
+mount and removal, and complete pixel agreement. The component and input
+contract remain private to the example. Its three-item list mounts the middle
+item's detail between frames. Acceptance requires stable surviving layout
+handles, cached neighbor layout under unchanged allocation, correct downstream
+placement, invalidation of old checkpoints and agreement with full layout
+and rasterization across widths. A 1,024-row variant compares full and
+viewport-limited drawing commands for the same retained layout. Acceptance
+includes partially visible rows, resize, hit testing and pixel replay of a
+held frame. The viewport is anchored at the top and the frame keeps complete
+scene geometry.
 The [node execution model draft](node-execution.md) remains the broader proposal.
 
 The following are outside this milestone:
@@ -84,8 +97,8 @@ The following are outside this milestone:
 - Derived signals, automatic dependency tracking, and multi-source bindings.
 - Integration with signal callbacks, recursive dependency pruning, general paint
   invalidation, and general pixel damage tracking.
-- General layout algorithms, font fallback, rich text, GPU rendering, input, and a general window abstraction.
-- Widgets, showcase applications, and application-level performance comparisons.
+- General layout algorithms, font fallback, rich text, GPU rendering, general input routing, and a general window abstraction.
+- A public widget API, showcase applications, and application-level performance comparisons.
 - Selecting a rendering backend or committing to a complete framework design.
 
 Acceptance requires independent per-query records, cache-hit observations,
