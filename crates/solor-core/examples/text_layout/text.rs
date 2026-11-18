@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Shaping, Wrap, fontdb};
+use smol_str::SmolStr;
 
 use crate::layout::{
     LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext, Metrics, Query, Result,
@@ -59,7 +60,7 @@ pub struct Line {
 /// Owned immutable layout data; no borrowed Buffer or FontSystem state.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Paragraph {
-    pub text: String,
+    pub text: SmolStr,
     pub style: Style,
     pub lines: Vec<Line>,
     pub content: Size,
@@ -77,10 +78,9 @@ impl Paragraph {
         }
     }
 
-    // Payload capacity only: excludes allocator rounding, Rc headers and engine internals.
+    // The source backing is shared with the node and adds no cache-owned allocation.
     pub fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
-            + self.text.capacity()
             + self.lines.capacity() * std::mem::size_of::<Line>()
             + self
                 .lines
@@ -130,7 +130,7 @@ impl Engine {
         }))
     }
 
-    fn shape(&mut self, text: &str, style: Style, width: Option<u32>) -> Result<Paragraph> {
+    fn shape(&mut self, text: &SmolStr, style: Style, width: Option<u32>) -> Result<Paragraph> {
         let mut buffer = Buffer::new_empty(cosmic_text::Metrics::new(
             f32::from(style.size),
             f32::from(style.line_height),
@@ -180,7 +180,7 @@ impl Engine {
         }
         let baseline = lines.first().map(|l| extent(l.baseline)).transpose()?;
         Ok(Paragraph {
-            text: text.into(),
+            text: text.clone(),
             style,
             lines,
             content,
@@ -196,7 +196,7 @@ struct Cached {
 
 pub struct Text {
     engine: SharedEngine,
-    content: String,
+    content: SmolStr,
     style: Style,
     cache: RefCell<VecDeque<Cached>>,
     cache_enabled: bool,
@@ -205,12 +205,12 @@ pub struct Text {
 impl Text {
     pub fn new(
         engine: SharedEngine,
-        content: &str,
+        content: impl AsRef<str> + Into<SmolStr>,
         style: Style,
         cache_enabled: bool,
     ) -> Result<Self> {
         style.validate()?;
-        if content.len() > MAX_TEXT_BYTES {
+        if content.as_ref().len() > MAX_TEXT_BYTES {
             return Err(LayoutError::InvalidSize);
         }
         Ok(Self {
@@ -226,11 +226,11 @@ impl Text {
         &self.content
     }
 
-    pub fn set_content(&mut self, content: &str) -> Result<()> {
-        if content.len() > MAX_TEXT_BYTES {
+    pub fn set_content(&mut self, content: impl AsRef<str> + Into<SmolStr>) -> Result<()> {
+        if content.as_ref().len() > MAX_TEXT_BYTES {
             return Err(LayoutError::InvalidSize);
         }
-        if self.content() != content {
+        if self.content() != content.as_ref() {
             self.content = content.into();
             self.release_cache();
         }

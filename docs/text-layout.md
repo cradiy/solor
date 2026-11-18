@@ -88,7 +88,38 @@ separate checks for advances, wrapping, and cluster byte ranges. The workspace
 includes these text tests; the text target passes eight tests, including the
 existing staged-allocation test.
 
+## Shared source text
+
+The private text node and each width-specific paragraph hold a `SmolStr`.
+Passing a clone of the same long source to both nodes preserves its backing.
+Converting two independent borrowed strings constructs two independent values.
+Each paragraph owns its line and glyph vectors. Replacing a node's text or
+dropping the node leaves previously returned paragraphs readable.
+
+The release test holds two nodes and all four paragraphs live at once. Its
+1,152-byte dynamic source wraps at widths 96 and 240. The String baseline
+had six distinct source addresses among those objects. With a shared source,
+both nodes and all four paragraphs point to the original source bytes. Four
+shaping calls still run, and the narrower paragraphs contain more lines.
+
+A Linux allocator probe counted calls while constructing and dropping 1,024
+text nodes per label. The engine and dynamic input were prepared before the
+markers. All three release processes per representation gave these counts.
+
+| Input | String calls | String requested bytes | SmolStr calls | SmolStr requested bytes |
+| --- | ---: | ---: | ---: | ---: |
+| `Audio settings`, 14 UTF-8 bytes | 1,024 | 14,336 | 0 | 0 |
+| `设备`, 6 UTF-8 bytes, borrowed from a String | 1,024 | 6,144 | 0 | 0 |
+
+The measured loop contains no layout, shaping or window operations. Run
+`cargo test --release --offline --example text_layout shared_source_across_nodes_and_widths`
+for the sharing check. An external allocator profiler can count between the
+`begin short-label/` and `end short-label/` markers emitted by
+`cargo test --release --offline --example text_layout short_label_allocations -- --ignored --nocapture --test-threads=1`.
+
 ## CPU measurement
+
+The following CPU and retained-heap measurements use the String baseline.
 
 The release example compares cached and uncached paragraph results in the same
 binary. Both paths retain normal framework metric/layout caching and share fonts
@@ -189,7 +220,7 @@ cargo run --release -p solor-core --example text_layout --offline
 
 The executable verifies the mixed-update oracle before printing CPU samples and
 allocation markers. `cache_payload_bytes` counts owned paragraph/vector capacities;
-it excludes allocator rounding, reference-count headers, and engine internals.
+it excludes shared source backing, allocator rounding, reference-count headers, and engine internals.
 Allocator markers separately delimit engine creation/destruction, fixture warmup,
 a local edit, two blocks of 1,000 mixed updates, cache/scratch release, and final
 destruction. They report allocation traffic and retained usable heap, not RSS/PSS

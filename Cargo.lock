@@ -409,6 +409,7 @@ dependencies = [
  "png",
  "rustix",
  "slotmap",
+ "smol_str",
  "swash",
  "wayland-client",
  "wayland-protocols",

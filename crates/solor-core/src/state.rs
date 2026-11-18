@@ -14,11 +14,24 @@ new_key_type! {
     struct BindingKey;
 }
 
-/// A typed, non-owning signal handle. Dropping it does not remove the signal.
-pub struct Signal<S> {
+/// Runtime-local identity for tracking and disposing signals of different types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SignalId {
     owner: NodeId,
     key: SignalKey,
+}
+
+/// A typed, non-owning signal handle. Dropping it does not remove the signal.
+pub struct Signal<S> {
+    id: SignalId,
     marker: PhantomData<fn(S) -> S>,
+}
+
+impl<S> Signal<S> {
+    /// Returns the identity without granting untyped access to the stored value.
+    pub fn id(self) -> SignalId {
+        self.id
+    }
 }
 
 impl<S> Copy for Signal<S> {}
@@ -32,8 +45,8 @@ impl<S> Clone for Signal<S> {
 impl<S> fmt::Debug for Signal<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Signal")
-            .field("owner", &self.owner)
-            .field("key", &self.key)
+            .field("owner", &self.id.owner)
+            .field("key", &self.id.key)
             .finish()
     }
 }
@@ -199,14 +212,16 @@ impl<N> Runtime<N> {
             bindings: Vec::new(),
         });
         Signal {
-            owner: self.tree.root(),
-            key,
+            id: SignalId {
+                owner: self.tree.root(),
+                key,
+            },
             marker: PhantomData,
         }
     }
 
     pub fn read<S: 'static>(&self, signal: Signal<S>) -> Result<&S, StateError> {
-        self.signal(signal)?
+        self.signal(signal.id)?
             .value
             .downcast_ref()
             .ok_or(StateError::InvalidSignal)
@@ -221,8 +236,8 @@ impl<N> Runtime<N> {
         signal: Signal<S>,
         value: S,
     ) -> Result<bool, StateError> {
-        self.signal(signal)?;
-        let entry = &mut self.signals[signal.key];
+        self.signal(signal.id)?;
+        let entry = &mut self.signals[signal.id.key];
         let stored = entry
             .value
             .downcast_mut::<S>()
@@ -245,16 +260,16 @@ impl<N> Runtime<N> {
         node: NodeId,
         mut apply: impl FnMut(&S, &mut N) + 'static,
     ) -> Result<BindingId, StateError> {
-        self.signal(signal)?;
+        self.signal(signal.id)?;
         if self.tree.get(node).is_none() {
             return Err(TreeError::InvalidNode(node).into());
         }
 
-        let signal_bindings = &mut self.signals[signal.key].bindings;
+        let signal_bindings = &mut self.signals[signal.id.key].bindings;
         let node_bindings = self.bindings.by_node.entry(node).or_default();
         let key = self.bindings.entries.insert(Binding {
             node,
-            signal: signal.key,
+            signal: signal.id.key,
             signal_index: signal_bindings.len(),
             node_index: node_bindings.len(),
             pending_index: None,
@@ -291,11 +306,16 @@ impl<N> Runtime<N> {
 
     /// Removes a signal and all its bindings, including queued applications.
     pub fn remove_signal<S: 'static>(&mut self, signal: Signal<S>) -> Result<(), StateError> {
-        self.signal(signal)?;
-        while let Some(&key) = self.signals[signal.key].bindings.last() {
+        self.remove_signal_by_id(signal.id)
+    }
+
+    /// Removes a signal by identity, including its bindings and pending work.
+    pub fn remove_signal_by_id(&mut self, id: SignalId) -> Result<(), StateError> {
+        self.signal(id)?;
+        while let Some(&key) = self.signals[id.key].bindings.last() {
             self.bindings.remove(key, &mut self.signals);
         }
-        self.signals.remove(signal.key);
+        self.signals.remove(id.key);
         Ok(())
     }
 
@@ -331,12 +351,10 @@ impl<N> Runtime<N> {
         self.signals.len()
     }
 
-    fn signal<S>(&self, signal: Signal<S>) -> Result<&SignalEntry, StateError> {
-        if signal.owner != self.tree.root() {
+    fn signal(&self, id: SignalId) -> Result<&SignalEntry, StateError> {
+        if id.owner != self.tree.root() {
             return Err(StateError::InvalidSignal);
         }
-        self.signals
-            .get(signal.key)
-            .ok_or(StateError::InvalidSignal)
+        self.signals.get(id.key).ok_or(StateError::InvalidSignal)
     }
 }

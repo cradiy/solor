@@ -143,7 +143,7 @@ fn rejected_input_preserves_text_and_cached_result() {
         Err(LayoutError::InvalidSize)
     );
     assert_eq!(
-        text.set_content(&"a".repeat(MAX_TEXT_BYTES + 1)),
+        text.set_content("a".repeat(MAX_TEXT_BYTES + 1)),
         Err(LayoutError::InvalidSize)
     );
     assert!(matches!(
@@ -211,4 +211,44 @@ fn equal_geometry_still_produces_new_glyphs_when_parent_layout_is_skipped() {
     assert_ne!(old.lines[0].glyphs[0].id, current.lines[0].glyphs[0].id);
     assert_eq!(old.text, "中文");
     assert_eq!(current.text, "文字");
+}
+
+#[test]
+#[ignore = "allocation markers for an external profiler"]
+fn short_label_allocations() {
+    let engine = Engine::new();
+    let dynamic = String::from("设备");
+    for (name, label) in [("literal", "Audio settings"), ("utf8", dynamic.as_str())] {
+        println!("begin short-label/{name}");
+        for _ in 0..1024 {
+            let node = Text::new(engine.clone(), std::hint::black_box(label), STYLE, true).unwrap();
+            std::hint::black_box(node);
+        }
+        println!("end short-label/{name}");
+    }
+}
+
+#[test]
+fn shared_source_across_nodes_and_widths() {
+    let engine = Engine::new();
+    let source = smol_str::SmolStr::from(SAMPLE.repeat(16));
+    let mut first = Text::new(engine.clone(), source.clone(), STYLE, true).unwrap();
+    let second = Text::new(engine.clone(), source.clone(), STYLE, true).unwrap();
+    let paragraphs = [&first, &second].map(|node| {
+        assert_eq!(node.content().as_ptr(), source.as_ptr());
+        [96, 240].map(|width| node.resolve(Query::Exact(width)).unwrap())
+    });
+    assert_eq!(engine.borrow().counts.shapes, 4);
+    for [narrow, wide] in &paragraphs {
+        assert!(narrow.lines.len() > wide.lines.len());
+        assert_eq!(narrow.text.as_ptr(), source.as_ptr());
+        assert_eq!(wide.text.as_ptr(), source.as_ptr());
+    }
+
+    let replacement = smol_str::SmolStr::from(CHANGED.repeat(16));
+    first.set_content(replacement.clone()).unwrap();
+    assert_eq!(first.content().as_ptr(), replacement.as_ptr());
+    assert_eq!(second.content().as_ptr(), source.as_ptr());
+    drop((source, first, second, engine));
+    assert_eq!(paragraphs[0][0].text, SAMPLE.repeat(16));
 }

@@ -141,6 +141,12 @@ injects an upload failure after rasterization. It checks hit targets, binding
 delivery and submitted bytes through retry, resize and replacement with an
 identical-looking mount.
 
+The private [component authoring fixture](component-api.md#lifecycle-checks)
+tests initialization during mount, immediate event writes, conditional text
+nodes at the next update boundary, and signal ownership across remounts.
+The [shared source text experiment](text-layout.md#shared-source-text) checks
+source identity across nodes and widths and measures short-label construction.
+
 The following are outside this milestone:
 
 - Publishing a node behavior API or UI property facade, or replacing the backing map.

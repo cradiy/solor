@@ -4,6 +4,8 @@
 #[allow(dead_code)]
 #[path = "../layout_contract/column.rs"]
 mod column;
+#[cfg(test)]
+mod component_authoring;
 #[allow(dead_code)]
 mod damage;
 mod disclosure;

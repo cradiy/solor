@@ -11,7 +11,10 @@ methods so subtree removal can release bindings before dropping node payloads.
 Signals live until explicitly removed or the runtime is dropped. Copying or
 dropping a signal or binding handle does not change ownership.
 
-Typed signal handles include the runtime's root identity. Stale and foreign
+Each typed signal handle carries a `SignalId` containing the runtime's root
+identity and a generational slot key. A scope can collect IDs from mixed
+`Signal<T>` handles via `id()` and dispose them with `remove_signal_by_id`.
+Reads, writes and bindings use typed handles. Stale and foreign
 handles are rejected. Signal and binding generations have the same finite-wrap
 limitation as the [node tree](node-tree.md).
 

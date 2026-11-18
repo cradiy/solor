@@ -50,7 +50,7 @@ impl Fixture {
             0 => {
                 self.scene
                     .edit_layout::<Text>(node, |t| {
-                        t.set_content(&format!("{SAMPLE} {}", step % 10)).unwrap()
+                        t.set_content(format!("{SAMPLE} {}", step % 10)).unwrap()
                     })
                     .unwrap();
             }
