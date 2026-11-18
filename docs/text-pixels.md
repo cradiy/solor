@@ -16,7 +16,7 @@ of this fixture. Fractional device scale, transparent targets and native window
 presentation require separate evaluation.
 
 Each draw creates one surface (1 through 4,194,304 pixels), a scale context and
-one reusable scratch mask. All visible commands rasterize their glyphs anew.
+one reusable scratch mask. The uncached path rasterizes each visible command’s glyphs anew.
 The 256 by 244 timing surface occupies 249,856 bytes before rasterizer scratch.
 Repeated redraws can be performed after the layout scene and its caches are dropped.
 
@@ -47,6 +47,94 @@ Peak RSS for the executable including both workloads and PNG output was
 process runtime. Raster time dominates the eight-row fixture even when only
 one label changes. These figures provide a full-redraw baseline for future
 comparisons on the same viewport and text.
+
+## Reusing glyph masks
+
+The renderer can retain outline masks across frames. The fixture uses face zero,
+integer-pixel origins, unhinted outlines and scale one. Within an immutable font
+byte slice, glyph ID and pixel size identify the mask and its bearings. Binding
+a different font slice drops the entries. Position, clip, color and opacity
+apply during compositing. Every update still paints a fresh white surface.
+
+The experimental FIFO uses at most 64 entries and 32 KiB of mask data capacity.
+The entry limit also bounds metadata for empty glyphs. Oversized masks are drawn
+from scratch. A later small mask can still enter the cache. Release drops the
+entry queue and its backing allocations. The byte budget covers retained mask
+arrays only. Queue metadata, the frame surface and temporary Swash allocations
+have separate lifetimes.
+
+Pixel comparisons cover 24 mixed updates with size changes, movement, clipping,
+color, eviction and replay after dropping the scene. A separate test exercises
+the byte budget, oversized scratch reuse, font rebinding and a failing miss.
+The cached PNG also matches the committed baseline experiment’s sample byte for
+byte.
+
+The table reports edit through finished RGBA output in microseconds. Both modes
+edit the same first label, publish a snapshot and redraw the whole 256 by 244
+surface. Ten warmup edits precede seven batches of ten measured edits. The
+order alternates each batch. Values are medians of three release process medians.
+
+| Workload | Uncached | Cached | Hits / misses across 70 edits |
+| --- | ---: | ---: | ---: |
+| 1 row, warm | 85.80 | 29.09 | 1,120 / 0 |
+| 8 rows, warm | 296.11 | 60.54 | 10,430 / 0 |
+| 1 row, release before each draw | 47.81 | 44.81 | 210 / 910 |
+| 8 rows, 4-entry budget | 311.78 | 293.84 | 1,085 / 9,345 |
+
+The warmed eight-row case retained 17 masks with 2,773 bytes of pixel-array
+capacity. Its cached process medians ranged from 59.66 to 61.94 µs and its
+uncached medians from 293.06 to 303.98 µs. Single-row timings varied more
+(17.56–36.43 µs cached and 55.30–87.30 µs uncached). Cold frames still reuse
+repeated letters within one draw. The four-entry case measures frequent eviction.
+The repetitive corpus establishes a benefit for recurring glyphs with these
+raster settings. Selecting the cache budget for broader text needs a larger corpus.
+
+## Redrawing a damaged rectangle
+
+The retained path holds one surface and the frame that produced it. It compares
+ordered commands in the two snapshots. A change of node, color, origin,
+allocation or paragraph handle includes both old and new visible allocations
+in a single bounding rectangle. The renderer clips all text ink to these
+allocations, which makes them conservative pixel bounds. Identical frame handles
+allow a constant-time skip. A size, scissor or font change triggers a fresh
+full-surface render.
+
+The rectangle starts white in a temporary RGBA patch. All current commands
+intersecting it draw in their original order, including unchanged translucent
+layers. After successful preparation, the renderer copies patch rows to the
+retained surface and installs the new frame. A preparation error leaves both
+previous pixels and frame in place. The surface is borrowed from the presenter.
+Its previous frame handle becomes available for release on successful update.
+
+The eight-row comparison uses the same 64-entry, 32 KiB glyph-mask policy for
+both paths. Both edit the scene, publish the frame and produce current pixels.
+The full path allocates and redraws a complete surface every call. The retained
+path includes comparison, patch allocation, clear, rasterization and row copies.
+Each release process warms up for ten updates and alternates path order across
+seven batches of ten edits. Values are medians of three process medians in µs.
+The last column counts RGBA pixel locations prepared per update.
+
+| Update | Full | Retained | Prepared pixels |
+| --- | ---: | ---: | ---: |
+| One row changes text | 64.94 | 20.82 | 4,776 |
+| One row moves 12 pixels | 49.72 | 7.50 | 5,064 |
+| First and last rows change color | 47.95 | 49.99 | 42,387 |
+| Width alternates 192 / 256 | 39.30 | 39.39 | 54,656 (mean) |
+| Same snapshot submitted again | 46.76 | 0.01 | 0 |
+
+For text edits, process medians ranged from 64.61–65.41 µs full and
+20.65–21.01 µs retained. The retained 256 by 244 surface owns 249,856 bytes of
+pixel data. The single-row text patch uses another 19,104 bytes and the spread
+edit uses 169,548 bytes. Scratch lives for one update. Resizing prepares the new
+surface while the old surface is still available. These byte counts cover RGBA
+payloads only. The idle comparison models repeated presentation requests.
+
+Fifty-six mixed updates compare every RGBA byte with uncached full redraws,
+including clips, resize, transparent text, movement, and font-size changes.
+Replaying an older frame after scene destruction, failed resize and overlapping
+commands in different orders also have focused checks. Local edits benefit in
+this fixture. Widely separated edits expose the extra raster and copy cost of
+the single bounding rectangle. Keep this as the baseline for localized updates.
 
 ## Reproduce
 

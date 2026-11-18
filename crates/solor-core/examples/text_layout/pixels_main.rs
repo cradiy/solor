@@ -1,13 +1,17 @@
 //! Fixed-font CPU text raster experiment. PNG goes to stdout; timings go to stderr.
 const MEASUREMENT_CACHE_SLOTS: usize = 3;
+mod damage;
+mod damage_cost;
 #[allow(dead_code)]
 #[path = "../layout_contract/fixtures.rs"]
 mod fixtures;
 #[allow(dead_code)]
 mod frame;
+mod glyph_masks;
 #[allow(dead_code)]
 #[path = "../layout_contract/layout.rs"]
 mod layout;
+mod mask_cost;
 mod pixels;
 #[cfg(test)]
 mod pixels_tests;
@@ -24,6 +28,8 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    mask_cost::run()?;
+    damage_cost::run()?;
     let size = Size {
         width: 256,
         height: 244,
@@ -71,7 +77,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     view.set_color(1, [27, 85, 148, 255]).unwrap();
     let frame = view.update(size, Mode::Normal).unwrap().frame;
     drop(view);
-    let image = Surface::draw(&frame, size, Clip::canvas(size))?;
+    let mut cache = glyph_masks::GlyphMasks::new(64, 32 * 1024);
+    let image = Surface::draw_cached(&frame, size, Clip::canvas(size), &mut cache)?;
     let mut encoder = png::Encoder::new(std::io::stdout().lock(), size.width, size.height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);

@@ -5,10 +5,11 @@ use swash::scale::image::Image;
 use swash::scale::{Render, ScaleContext, Source};
 
 use crate::frame::Frame;
+use crate::glyph_masks::GlyphMasks;
 use crate::layout::Size;
 
 /// Half-open destination coordinates, in device pixels at scale 1.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Clip {
     pub left: i64,
     pub top: i64,
@@ -26,7 +27,7 @@ impl Clip {
         }
     }
 
-    fn intersect(self, other: Self) -> Self {
+    pub fn intersect(self, other: Self) -> Self {
         Self {
             left: self.left.max(other.left),
             top: self.top.max(other.top),
@@ -35,7 +36,7 @@ impl Clip {
         }
     }
 
-    fn empty(self) -> bool {
+    pub fn empty(self) -> bool {
         self.left >= self.right || self.top >= self.bottom
     }
 }
@@ -47,6 +48,40 @@ pub struct Surface {
 
 impl Surface {
     pub fn draw(frame: &Frame, size: Size, clip: Clip) -> Result<Self> {
+        Self::raster(frame, size, clip, (0, 0), None)
+    }
+
+    pub fn draw_cached(
+        frame: &Frame,
+        size: Size,
+        clip: Clip,
+        cache: &mut GlyphMasks,
+    ) -> Result<Self> {
+        Self::raster(frame, size, clip, (0, 0), Some(cache))
+    }
+
+    /// The caller supplies a nonempty region inside the validated destination.
+    pub(super) fn patch(frame: &Frame, area: Clip, cache: &mut GlyphMasks) -> Result<Self> {
+        let size = Size {
+            width: (area.right - area.left) as u32,
+            height: (area.bottom - area.top) as u32,
+        };
+        Self::raster(
+            frame,
+            size,
+            Clip::canvas(size),
+            (area.left, area.top),
+            Some(cache),
+        )
+    }
+
+    fn raster(
+        frame: &Frame,
+        size: Size,
+        clip: Clip,
+        origin: (i64, i64),
+        mut cache: Option<&mut GlyphMasks>,
+    ) -> Result<Self> {
         let pixels = u64::from(size.width) * u64::from(size.height);
         if pixels == 0 || pixels > 4 * 1024 * 1024 {
             return Err(Error::other("surface requires 1 to 4194304 pixels"));
@@ -57,13 +92,16 @@ impl Surface {
         };
         let font =
             FontRef::from_index(frame.font, 0).ok_or_else(|| Error::other("invalid frame font"))?;
+        if let Some(cache) = cache.as_deref_mut() {
+            cache.bind(frame.font);
+        }
         let mut context = ScaleContext::new();
-        let mut mask = Image::new();
+        let mut scratch = Image::new();
         let renderer = Render::new(&[Source::Outline]);
         let viewport = Clip::canvas(size).intersect(clip);
         for draw in &frame.draws {
-            let left = i64::from(draw.origin.x);
-            let top = i64::from(draw.origin.y);
+            let left = i64::from(draw.origin.x) - origin.0;
+            let top = i64::from(draw.origin.y) - origin.1;
             let bounds = viewport.intersect(Clip {
                 left,
                 top,
@@ -77,16 +115,32 @@ impl Surface {
             let mut scaler = context.builder(font).size(em).hint(false).build();
             for line in &draw.paragraph.lines {
                 for glyph in &line.glyphs {
-                    mask.clear();
-                    if !renderer.render_into(&mut scaler, glyph.id, &mut mask) {
-                        return Err(Error::other("glyph outline unavailable"));
-                    }
+                    let mut rasterize = |mask: &mut Image| {
+                        mask.clear();
+                        if renderer.render_into(&mut scaler, glyph.id, mask) {
+                            Ok(())
+                        } else {
+                            Err(Error::other("glyph outline unavailable"))
+                        }
+                    };
+                    let mask = match cache.as_deref_mut() {
+                        Some(cache) => cache.resolve(
+                            draw.paragraph.style.size,
+                            glyph.id,
+                            &mut scratch,
+                            rasterize,
+                        )?,
+                        None => {
+                            rasterize(&mut scratch)?;
+                            &scratch
+                        }
+                    };
                     let x = left
                         + (glyph.x + em * glyph.x_offset).round() as i64
                         + i64::from(mask.placement.left);
                     let y = top + (line.baseline + glyph.y - em * glyph.y_offset).round() as i64
                         - i64::from(mask.placement.top);
-                    surface.composite(&mask, x, y, bounds, draw.color);
+                    surface.composite(mask, x, y, bounds, draw.color);
                 }
             }
         }
