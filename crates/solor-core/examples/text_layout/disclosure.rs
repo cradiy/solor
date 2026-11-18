@@ -323,7 +323,7 @@ mod tests {
         assert!(row.set_detail(text, ink).unwrap());
         let painted = row.frame(size, 0).unwrap();
         assert_eq!(row.layout.layout_counts(), reflow);
-        assert_eq!(painted.geometry, wrapped.geometry);
+        assert!(Rc::ptr_eq(&painted.geometry, &wrapped.geometry));
         assert_eq!(painted.draws[2].node, wrapped.draws[2].node);
         assert_eq!(painted.draws[2].color, ink);
         assert_eq!(wrapped.draws[2].color, DETAIL_COLOR);

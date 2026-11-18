@@ -18,7 +18,7 @@ fn same_size_text_change_publishes_new_glyphs_while_parent_is_skipped() {
     assert!(update.published);
     assert_eq!(update.skipped_parent, cfg!(feature = "layout-audit"));
     assert_eq!(update.resolved, 1);
-    assert_eq!(old.geometry, update.frame.geometry);
+    assert!(Rc::ptr_eq(&old.geometry, &update.frame.geometry));
     assert_eq!(old.draws[0].node, update.frame.draws[0].node);
     assert_eq!(old.draws[0].paragraph.text, "中文");
     assert_eq!(update.frame.draws[0].paragraph.text, "文字");
@@ -47,7 +47,7 @@ fn color_only_update_does_not_execute_layout_or_text_resolution() {
     assert_eq!(update.resolved, 0);
     assert_eq!(view.layout_counts(), counts);
     assert_eq!(view.shape_count(), shapes);
-    assert_eq!(update.frame.geometry, old.geometry);
+    assert!(Rc::ptr_eq(&update.frame.geometry, &old.geometry));
     assert_eq!(old.draws[1].color, [20, 30, 40, 255]);
     assert_eq!(update.frame.draws[1].color, [80, 40, 20, 128]);
     assert!(Rc::ptr_eq(

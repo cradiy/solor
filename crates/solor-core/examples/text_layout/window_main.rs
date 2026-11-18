@@ -13,6 +13,8 @@ mod frame;
 #[allow(dead_code)]
 mod glyph_masks;
 mod input;
+#[cfg(test)]
+mod lifecycle_tests;
 use solor_core::layout;
 #[allow(dead_code)]
 mod pixels;

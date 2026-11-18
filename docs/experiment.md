@@ -11,7 +11,8 @@ The core library provides a [persistent node tree](node-tree.md),
 [scoped execution of node payloads](node-store-experiment.md), and
 [explicit state-to-node updates](state-updates.md) with typed signals,
 deduplicated pending work, and lifecycle cleanup. Its [layout module](layout-contract.md) owns measurement,
-child allocation and atomic publication of local geometry. The Linux window uses
+child allocation, atomic publication of local geometry and on-demand sharing
+of completed geometry across frames. The Linux window uses
 this module with default features. Dependency recording and checkpoint-based
 pruning are opt-in through `layout-audit`.
 
@@ -125,7 +126,11 @@ accumulation, idle commits at both bounds, reverse input at the bottom,
 title activation after returning to the top, and shared-buffer pixel agreement.
 Horizontal scrolling and kinetic scrolling are outside this experiment.
 
-The [node execution model draft](node-execution.md) remains the broader proposal.
+The [component lifecycle fixture](node-execution.md#headless-lifecycle-evidence)
+exercises one scope owning two sibling leaves. Acceptance covers cancellation
+before binding delivery, press retirement across a failed frame and remount,
+retained pixel replay, and cleanup on scope disposal. Frame acceptance is
+simulated in one window. The public component model remains a proposal.
 
 The following are outside this milestone:
 

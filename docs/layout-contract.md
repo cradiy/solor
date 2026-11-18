@@ -139,6 +139,25 @@ directly. `Scene::geometry` reads the last successful result in parent-local
 coordinates. `edit_layout` checks the handle and concrete type before marking the
 node and its ancestors dirty. `body` provides shared access for drawing.
 
+After a successful layout, `Scene::shared_snapshot` returns an owned, immutable
+slice of local geometry in surviving insertion order. Positions refer to that
+snapshot's topology. Use `Scene::geometry(id)` for a live node lookup.
+Construction, pending edits and failed attempts return no current shared
+snapshot. A consumer holding an earlier slice can keep reading it throughout
+an update and after the scene is dropped.
+
+The first request collects the slice. Repeated requests, including after a
+forced layout with equal geometry, clone the handle. Changing any published
+geometry or mounting or removing a node invalidates the cached slice. Removing
+a zero-height leaf can leave the layout change count at zero and still change
+the snapshot's membership. The scene retains at most one shared slice.
+
+In a release allocation probe with 1,024 leaves, 100 warmed alternating height
+edits and assigned layouts without snapshot requests made zero heap allocations.
+The first request for the 1,025 entries made one allocation of 32,816 bytes.
+The next 100 requests made zero allocations. The probe counted allocator
+requests and detected its one-allocation, 123-byte positive control.
+
 The default build uses three measurement slots per node. The optional
 `layout-audit` feature adds dependency recording, checkpoints and explicit
 validated/pruned execution. The historical audit and cache-size fixtures compile

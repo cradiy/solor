@@ -192,8 +192,7 @@ impl DisclosureLayout {
             .map_or(0, |f| f.revision)
             .checked_add(1)
             .ok_or(LayoutError::RevisionExhausted)?;
-        let frame =
-            Rc::new(self.collect_frame(revision, top, size.height, previous.map(Rc::as_ref))?);
+        let frame = Rc::new(self.collect_frame(revision, top, size.height)?);
         self.published = Some(frame.clone());
         self.viewport = Some(size);
         self.max_scroll_y = max_scroll_y;
@@ -201,27 +200,29 @@ impl DisclosureLayout {
         Ok(frame)
     }
 
-    fn collect_frame(
-        &self,
-        revision: u64,
-        top: u32,
-        height: u32,
-        previous: Option<&Frame>,
-    ) -> Result<Frame> {
-        let geometry = match previous {
-            Some(frame) => frame.geometry.clone(),
-            None => Rc::new(self.snapshot_geometry()?),
-        };
-        // Snapshot order is root, preceding rows, item, title, following rows, optional detail.
+    fn collect_frame(&mut self, revision: u64, top: u32, height: u32) -> Result<Frame> {
+        let geometry = self
+            .scene
+            .shared_snapshot()
+            .ok_or(LayoutError::MissingLayout(0))?;
+        // Insertion order: root, preceding rows, item, title, optional group, tail rows, optional detail.
         let (before, item_and_rest) = geometry[1..].split_at(self.before.len());
         let item_origin = item_and_rest[0].origin;
-        let (after, detail) = item_and_rest[2..].split_at(self.after.len());
+        let mut tail = &item_and_rest[2..];
+        let tail_origin = if self.tail_group.is_some() {
+            let (group, children) = tail.split_first().expect("mounted tail group");
+            tail = children;
+            group.origin
+        } else {
+            Origin::default()
+        };
+        let (after, detail) = tail.split_at(self.after.len());
         let item_rows = std::iter::once((self.title, &item_and_rest[1]))
             .chain(self.detail.into_iter().zip(detail))
             .map(|(id, row)| (id, row, item_origin));
-        let rows = rows_from_offset(&self.before, before, top)
+        let rows = rows_from_offset(&self.before, before, Origin::default(), top)
             .chain(item_rows)
-            .chain(rows_from_offset(&self.after, after, top));
+            .chain(rows_from_offset(&self.after, after, tail_origin, top));
         let bottom = top.saturating_add(height);
         let estimated_rows = height.div_ceil(u32::from(STYLE.line_height)) as usize + 1;
         let mut draws =
@@ -261,52 +262,27 @@ impl DisclosureLayout {
             font: FONT,
         })
     }
-
-    fn snapshot_geometry(&self) -> Result<Vec<Geometry>> {
-        let Some(group) = self.tail_group else {
-            return self
-                .scene
-                .snapshot()
-                .into_iter()
-                .collect::<Option<_>>()
-                .ok_or(LayoutError::MissingLayout(0));
-        };
-        let tail_origin = self.geometry(group)?.origin;
-        // Publish the same logical nodes and coordinate spaces for either hierarchy.
-        let mut geometry = Vec::with_capacity(
-            3 + self.before.len() + self.after.len() + usize::from(self.detail.is_some()),
-        );
-        geometry.push(self.geometry(self.scene.root())?);
-        for &node in self.before.iter().chain([&self.item, &self.title]) {
-            geometry.push(self.geometry(node)?);
-        }
-        for &node in &self.after {
-            let mut row = self.geometry(node)?;
-            row.origin = translated(row.origin, tail_origin)?;
-            geometry.push(row);
-        }
-        if let Some(detail) = self.detail {
-            geometry.push(self.geometry(detail)?);
-        }
-        Ok(geometry)
-    }
 }
 
-/// Both runs of sibling labels are sorted by their document-space bottom edges.
+/// Both runs of sibling labels are sorted by their parent-local bottom edges.
 fn rows_from_offset<'a>(
     nodes: &'a [NodeId],
     geometry: &'a [Geometry],
+    parent: Origin,
     top: u32,
 ) -> impl Iterator<Item = (NodeId, &'a Geometry, Origin)> {
-    let start = if top == 0 {
+    let local_top = top.saturating_sub(parent.y);
+    let start = if local_top == 0 {
         0
     } else {
-        geometry.partition_point(|row| row.origin.y.saturating_add(row.metrics.size.height) <= top)
+        geometry.partition_point(|row| {
+            row.origin.y.saturating_add(row.metrics.size.height) <= local_top
+        })
     };
     nodes[start..]
         .iter()
         .zip(&geometry[start..])
-        .map(|(&id, row)| (id, row, Origin::default()))
+        .map(move |(&id, row)| (id, row, parent))
 }
 
 #[cfg(test)]

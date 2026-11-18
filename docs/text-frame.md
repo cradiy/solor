@@ -29,7 +29,7 @@ one complete frame and increments its checked revision.
 An update performs these steps under exclusive access:
 
 1. Run normal, root-pruned, or forced layout using the requested allocation.
-2. Collect the resulting node geometry in the fixture's stable topology order.
+2. Request the scene's shared geometry in the fixture's stable topology order.
 3. Prepare every text command with an absolute origin, allocated size, current
    color, and the paragraph for that allocation. Check its logical content extent
    and baseline against the corresponding geometry.
@@ -64,11 +64,11 @@ node's text cache. Width changes resolve the matching paragraph; final allocatio
 is authoritative.
 
 The fixed fixture's command order is row order. Absolute text origins add root,
-group, and text-local origins with checked arithmetic. Each frame retains a full
-geometry vector and a full command vector, so collection remains linear in node
-count even for one color change. Glyph arrays are shared through paragraph handles,
-not copied for every color or position change. Clean updates return the same frame
-handle without rebuilding either vector.
+group, and text-local origins with checked arithmetic. Frames share the scene's
+immutable geometry slice while membership and geometry are unchanged. A color
+edit rebuilds the full command vector and shares the existing paragraphs. Its
+command preparation remains linear in the row count. Clean updates return the
+same frame handle.
 
 The bundled font has static lifetime. Paragraphs and frame vectors have owned
 lifetimes independent of the layout scene and font engine. Replacing the current
@@ -138,12 +138,20 @@ acceptable for this complete-snapshot baseline, but scales with the full fixture
 These numbers exclude rasterization and must not be compared directly to the
 unshifted topology in the earlier text experiment.
 
+Four paired release processes compared the same color workload against
+`1ec7331`, alternating execution order. At 64 rows the median frame time
+fell from 1.10 to 0.53 µs, and at 512 rows from 9.26 to 4.06 µs.
+The 512-row process medians ranged from 8.29 to 11.68 µs and 4.04 to
+4.19 µs respectively. A separate allocator probe on a warmed 64-row color
+edit counted four allocations requesting 7,320 bytes at the baseline and
+two requesting 3,160 bytes with shared scene geometry.
+
 ## Storage and reclamation
 
 The following allocation measurements describe the complete-snapshot baseline
-with an inline vector header. Current frames use a reference-counted geometry
-vector so the disclosure can share it between scroll offsets. Per-frame capacity
-reporting includes the vector header and payload once for each reported frame.
+with an inline vector header. Current per-frame shallow storage counts the
+geometry slice payload once per reported frame, even when frames share it.
+It excludes reference counts and allocator overhead.
 
 An independent allocator probe passes its Rust positive control (one 123-byte
 request, 136 usable bytes). A 64-row frame's geometry and command payload is

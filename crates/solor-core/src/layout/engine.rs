@@ -6,6 +6,7 @@ use std::any::Any;
 #[cfg(feature = "layout-audit")]
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
+use std::rc::Rc;
 
 use super::node_store::{AccessError, Context, NodeStore};
 use super::tree::NodeId;
@@ -729,6 +730,7 @@ pub struct Scene {
     store: NodeStore<Entry>,
     scratch: Scratch,
     nodes: Vec<NodeId>,
+    shared_geometry: Option<Rc<[Geometry]>>,
     pending: bool,
     request: Option<RootRequest>,
     #[cfg(feature = "layout-audit")]
@@ -748,6 +750,7 @@ impl Scene {
             store,
             scratch: Scratch::default(),
             nodes,
+            shared_geometry: None,
             pending: true,
             request: None,
             #[cfg(feature = "layout-audit")]
@@ -783,6 +786,7 @@ impl Scene {
             .append(parent, Box::new(Entry::new(body)))
             .map_err(AccessError::from)?;
         self.nodes.push(node);
+        self.shared_geometry = None;
         Ok(node)
     }
 
@@ -820,6 +824,7 @@ impl Scene {
         {
             self.topology_revision = revision;
         }
+        self.shared_geometry = None;
         self.nodes.retain(|&id| id != node);
         self.store.remove_subtree(node).map_err(AccessError::from)?;
         Ok(())
@@ -898,13 +903,44 @@ impl Scene {
         let attempt = Attempt(&mut self.scratch);
         layout_root(&mut self.store, attempt.0, request, force)?;
         let published = publish_layout(&mut self.store, attempt.0);
-        self.request = Some(request);
-        self.pending = false;
+        drop(attempt);
+        self.finish_layout(request, published);
         #[cfg(feature = "layout-audit")]
         {
             self.publication = publication;
         }
         Ok(published)
+    }
+
+    fn finish_layout(&mut self, request: RootRequest, changed: usize) {
+        if changed != 0 {
+            self.shared_geometry = None;
+        }
+        self.request = Some(request);
+        self.pending = false;
+    }
+
+    /// Share the completed layout in surviving insertion order, in parent-local coordinates.
+    /// Returns `None` before the first layout or while an update is pending.
+    /// The first request copies the geometry. Further requests share that allocation
+    /// until geometry or membership changes. Held snapshots survive edits and scene drop.
+    pub fn shared_snapshot(&mut self) -> Option<Rc<[Geometry]>> {
+        if self.pending {
+            return None;
+        }
+        let geometry = self.shared_geometry.get_or_insert_with(|| {
+            self.nodes
+                .iter()
+                .map(|&id| {
+                    self.store
+                        .get(id)
+                        .expect("live layout node")
+                        .geometry
+                        .expect("completed layout")
+                })
+                .collect()
+        });
+        Some(Rc::clone(geometry))
     }
 
     /// Copy the last published local geometry in surviving insertion order.

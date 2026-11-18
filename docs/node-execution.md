@@ -2,16 +2,14 @@
 
 ## Status and scope
 
-This is a proposed execution contract, not an implemented UI API. The implemented
-core provides a persistent tree and explicit signal bindings. No node behavior
-trait, layout system, paint recorder, or rendering backend is selected by this
-draft.
+This draft proposes how components participate in the GUI runtime. The core
+already provides a persistent tree, scoped node execution, explicit signal
+bindings, and transactional layout. The Linux disclosure example connects these
+pieces with private state and input handling. Component ownership and event
+delivery across structural edits are design proposals.
 
-An isolated [node-store access experiment](node-store-experiment.md) implements
-scoped payload loans over the existing tree. A separate
-[layout contract experiment](layout-contract.md) validates a narrow sizing domain,
-conservative invalidation, and geometry publication. Neither example selects the
-public node API or implements the full stage and lifecycle contracts proposed here.
+See the [node store](node-store-experiment.md), [layout contract](layout-contract.md)
+and [disclosure interaction](disclosure.md) for the implemented boundaries.
 
 The proposed direction is a persistent tree of heterogeneous nodes, with explicit
 mutation and framework-controlled execution stages. Validate the contract with a
@@ -40,9 +38,8 @@ property struct is required to contain every node's state.
 
 The node store owns payload lifetime. A copied handle does not keep a node alive.
 Removing a node cancels its node-targeted bindings. A shared application signal or
-image resource is not destroyed merely because one consumer is removed. Component
-scope disposal and shared signal ownership need a separate contract; the existing
-runtime's explicit signal removal remains its current behavior.
+image resource is not destroyed merely because one consumer is removed. The lifecycle proposal below defines ownership at mount and disposal. The
+existing state runtime uses explicit signal removal.
 
 ## Stage contracts
 
@@ -225,29 +222,100 @@ a reason to study its contract, not to replace Solor's storage immediately.
 
 ## Lifecycle and component integration
 
-Structural updates occur at an update boundary. Creation attaches identity and
-topology before scheduling node execution. Removal cancels targeted work and
-subscriptions, releases focus or capture when supported, updates parent
-dependencies, and removes the node from the scene while retaining any resources
-required by outstanding output.
+### Component ownership and node identity
 
-Dynamic lists require a separate identity policy: preserving a logical item should
-preserve its node where appropriate, while deletion must invalidate old handles.
-The current append/remove tree API does not implement reconciliation or moving
-nodes. Those operations should not be simulated by exposing mutable topology to
-arbitrary callbacks.
+The proposed unit of lifetime is a **mounted component scope**. A scope can
+install several sibling nodes under an existing container and own their
+bindings. A pure composition helper can create nodes in its caller's scope.
+A component contributes a container node when it needs to arrange children,
+clip drawing, or provide an input target of its own. Grouping two siblings
+under one owner adds no measurement callback or hit region.
 
-Explicit signals may continue to drive typed node mutations. Their ownership and
-the component scope model must be resolved before adding automatic effects or
-multi-window shared state. Floem's documented use of effects to deliver updates
-through a view identity is a relevant example of separating reactive notification
-from view mutation; it does not settle Solor's public component API.
-[Floem View updates](https://lapce.dev/floem/floem/view/trait.View.html)
+Each mounted node has one owning scope and one position in the visual tree.
+The visual parent determines layout and paint order. The scope determines
+which registrations and child scopes end together. Removing an optional node
+cancels work targeting that node while its owner's other nodes remain live.
+Disposing the scope removes all its contributions, including sibling roots.
+A signal supplied by a parent remains usable by surviving subscribers. A
+signal created for the scope's own lifetime is released on disposal.
 
-Masonry's phase-specific contexts also provide a reference for limiting access
-and mutation during traversal. Solor's proposed stage boundaries need their own
-tests rather than assuming identical behavior.
-[Masonry pass system](https://docs.rs/masonry_core/latest/masonry_core/doc/internals_01_pass_system/index.html)
+Flutter gives widget composition and render objects different roles. React
+Fragments group siblings without introducing a wrapper element. These examples motivate grouping by lifetime independently of visual
+geometry. [Inside Flutter](https://docs.flutter.dev/resources/inside-flutter#separation-of-the-element-and-renderobject-trees)
+and [React Fragments](https://react.dev/reference/react/Fragment).
+
+### Applying the contract to Solor
+
+Today the disclosure binds a label in `Runtime<Label>` and separately mounts a
+text leaf in `Scene`. Each store issues tree-local handles. The example tracks
+the mounted detail and synchronizes the two during frame preparation. Its press
+state stores a pointer ID because the title is its only interactive target.
+[Disclosure implementation](../crates/solor-core/examples/text_layout/disclosure.rs)
+
+The proposal gives each interactive visual node one identity for the lifetime
+of that mount. Bindings that update it, input sequences and published hit
+records refer to that identity. A geometry slice position can change after a
+removal and cannot identify an event recipient. Keep the state and layout
+stores in place for the first validation. Where their handles differ, the
+mount owns the association and retires it when detached. The validation should
+establish whether this association is sufficient before changing either store.
+
+### Removing a pressed child
+
+Consider one scope owning a persistent label and an optional interactive leaf.
+Both subscribe to a parent-owned signal. The leaf has a pending update and a
+pointer is held down over it.
+
+1. On press, hit-test the frame the host has accepted as current for that
+   window. Record the pointer identity and the leaf's live mount identity.
+   A frame still being prepared has no authority over input.
+2. A callback requests removal. Apply it at the update boundary after active
+   callbacks return, before running queued bindings for removed targets.
+   Retire the leaf as an input recipient and clear its press. Cancel its
+   bindings and pending work, detach it from layout, then release its payload.
+   Input dispatch cannot interleave these steps. The label keeps its identity
+   and its queued update still runs.
+3. The next frame fails during drawing preparation. The previous frame retains
+   its geometry and drawing resources and can still be replayed. Its hit record
+   refers to the retired identity. A fresh press there yields no target for
+   that hit, even if a live sibling now lies underneath. A release from the
+   canceled sequence produces no activation. Rendering failure leaves the
+   removal in effect and frame preparation pending for retry.
+4. Remount a leaf at the same coordinates, even in the same storage slot. It
+   receives a fresh identity. After the host accepts the replacement frame,
+   a new press can reach it. A release belonging to the original press cannot
+   activate it, whether it arrives before or after that frame.
+
+Flutter likewise associates pointer moves and releases with the down hit test.
+Solor's proposed live-identity check and removal behavior are explicit choices
+for this runtime. [Flutter pointer dispatch](https://api.flutter.dev/flutter/gestures/GestureBinding/handlePointerEvent.html)
+
+### Headless lifecycle evidence
+
+The [lifecycle fixture](../crates/solor-core/examples/text_layout/lifecycle_tests.rs)
+mounts two overlapping text leaves under one layout parent. Each mount pairs its
+visual handle with a state handle and binding. Both leaves subscribe to a
+parent-owned color signal. Input resolves the frontmost hit in the accepted
+frame, then checks that mount's live membership.
+
+The removal test queues a color change for both leaves, retires the pressed
+leaf, and injects a drawing error after layout. The delivery log records one
+drop for the retired payload and one binding invocation for its sibling. The
+previous frame replays to identical RGBA bytes after failure and after teardown.
+Retry uses the updated color. A prepared frame takes over hit testing only
+when the simulated host accepts it. Releasing the original press on either
+side of accepting a same-position replacement produces zero actions. A fresh
+press and release delivers one action to the replacement.
+
+Across 32 whole-scope disposals the test checks both payload drops, empty
+membership and press state, zero bindings and queued work, and continued
+access to the shared signal. These are live object counts. The fixture uses a
+two-entry linear lookup and a simulated acceptance boundary. Lookup cost at
+scale, native input timing, nested scopes, focus, and keyed moves remain open.
+
+```sh
+cargo test --offline --example text_window lifecycle_tests
+```
 
 ## Validation before implementation expands
 
@@ -264,7 +332,7 @@ These examples do not yet justify a public `Ui` facade.
 | Layout consistency | Compare incremental geometry with a cache-disabled full recomputation after the same edits |
 | Cache keys | Change width, content, font revision, and baseline inputs independently; compare results |
 | Locality | Count measurement, placement, and paint-recording work separately; do not infer it from binding counts |
-| Removal | Prove no stale callbacks or scene references survive; validate deferred resource lifetime separately |
+| Removal | Reject delivery to retired targets and retain the resources required by held frames |
 | Resource cost | Measure resident storage, allocations, cache growth, and cleanup under repeated edits |
 
 Geometry agreement is not visual acceptance. Pixel output, clipping, overlap,

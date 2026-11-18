@@ -189,14 +189,15 @@ When two or more labels follow the disclosure, a column holds those labels at
 group-local positions. The group receives the same inner width as the flat
 list so wrapping uses the original constraint. Opening the detail moves the
 group's origin. At the same width its children keep their identities, layout
-and shaped paragraphs. The frame stores each tail row in list coordinates
-and includes rows outside the viewport. The group itself is private to layout.
+and shaped paragraphs. The frame retains parent-local geometry
+for the group and all rows, including those outside the viewport. Visible
+commands add the group origin to their row origins.
 
 ```sh
 cargo test --release --offline --example text_window disclosure_layout::viewport_tests::measure -- --ignored --nocapture --test-threads=1
 ```
 
-Both columns below use the host allocation. Each entry is the median of five
+The measurements below use the host allocation and copy tail geometry into list coordinates. Each entry is the median of five
 release-process medians, in microseconds from edit or resize through snapshot
 replacement. Each process warms up for one batch and measures seven batches.
 The edit workload rotates strategies and toggles the second row 80 times per
@@ -227,7 +228,7 @@ the viewport height, with a minimum of zero. A resize or detail edit uses the
 new extent. Equal effective offsets reuse the published frame when the size and
 content are unchanged.
 
-The snapshot retains document-space geometry and emits text commands for rows
+The snapshot retains parent-local geometry and emits document-space text commands for rows
 intersecting the half-open visible interval. Both edge rows can be partial.
 Rasterization rounds the scaled scroll offset once and crops in device pixels.
 Damage uses the old and new device offsets. Hit testing looks up the title by
@@ -251,19 +252,20 @@ leaves the window idle. The submission log reports the applied `scroll_y`.
 cargo test --release --offline --example text_window measure_scroll_positions -- --ignored --nocapture
 ```
 
-Frames at different scroll offsets share one immutable geometry vector when
-the viewport and content are unchanged. A content edit, resize or forced frame
-builds fresh geometry. Holding an earlier frame keeps its geometry and drawing
-commands alive. Each frame still owns its visible commands.
+Frames at different scroll offsets share the immutable slice from
+`Scene::shared_snapshot`. A paint-only edit also reuses it. Geometry and
+membership changes replace the slice on its next request. Holding an earlier
+frame keeps its geometry and drawing commands alive.
 
 The labels before and after the disclosure form two ordered runs. Their bottom
 edges are monotonic in document coordinates, including when text wraps. For
-each run, a binary search skips rows ending at or above the viewport top.
+each run, a binary search in parent-local coordinates skips rows ending at or
+above the viewport top.
 Drawing stops at the viewport bottom. The title and optional detail retain
 their coordinates relative to the disclosure item. The search reads the same
 geometry vector retained by the frame and requires no separate row index.
 
-The release fixture uses a warmed 1,024-row list and a 240 by 160 viewport.
+The example-local sharing measurements below use a warmed 1,024-row list and a 240 by 160 viewport.
 It alternates between adjacent offsets at each position, rotates position
 order by batch and verifies unchanged layout counters. Each process runs one
 warmup batch and seven measured batches of 200 frames per position. The table

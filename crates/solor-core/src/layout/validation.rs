@@ -320,8 +320,8 @@ impl Scene {
                 }
                 let published = publish_layout(&mut self.store, attempt.0);
                 let hits = attempt.0.reuse.as_ref().unwrap().hits;
-                self.pending = false;
-                self.request = Some(request);
+                drop(attempt);
+                self.finish_layout(request, published);
                 self.publication = publication;
                 (published, hits, skipped)
             };

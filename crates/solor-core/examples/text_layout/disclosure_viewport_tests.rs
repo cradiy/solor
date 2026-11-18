@@ -8,6 +8,26 @@ use crate::{
 const BEFORE: &[&str] = &["Previous item"];
 const DETAIL: &str = "Hello 世界！Rust GUI 123";
 
+// The independent oracle has a flat tail. Compare every logical row, including offscreen rows.
+fn flat_geometry(list: &DisclosureLayout, frame: &Frame) -> Vec<Geometry> {
+    let mut rows = frame.geometry.to_vec();
+    if list.tail_group.is_some() {
+        let index = 3 + list.before.len();
+        let group = rows.remove(index);
+        for row in &mut rows[index..index + list.after.len()] {
+            row.origin = translated(row.origin, group.origin).unwrap();
+        }
+    }
+    rows
+}
+
+fn assert_matches_flat(grouped: &DisclosureLayout, flat: &DisclosureLayout) {
+    let frame = grouped.published.as_ref().unwrap();
+    let reference = flat.published.as_ref().unwrap();
+    assert_eq!(flat_geometry(grouped, frame), reference.geometry.as_ref());
+    assert!(frame.same_drawing(reference));
+}
+
 #[cfg(feature = "layout-audit")]
 #[test]
 fn assigned_root_only_publishes_measurement_evidence_when_queried() {
@@ -59,7 +79,7 @@ fn assigned_root_only_publishes_measurement_evidence_when_queried() {
                 .unwrap()
                 .is_some()
         );
-        assert!(frame.same_content(&list.collect_frame(0, 0, size.height, None).unwrap()));
+        assert!(frame.same_content(&list.collect_frame(0, 0, size.height).unwrap()));
     }
 }
 
@@ -100,9 +120,9 @@ fn viewport_frames_match_full_draws_through_edges_resizes_and_edits() {
             .scene
             .run(Query::Exact(width), Some(size), true)
             .unwrap();
-        let full = oracle.collect_frame(0, 0, u32::MAX, None).unwrap();
+        let full = oracle.collect_frame(0, 0, u32::MAX).unwrap();
         assert_eq!(
-            *frame.geometry,
+            flat_geometry(&list, &frame),
             oracle
                 .scene
                 .snapshot()
@@ -233,7 +253,7 @@ fn measure_snapshot_collection() {
                             .unwrap();
                     }
                     let laid_out = Instant::now();
-                    let frame = Rc::new(list.collect_frame(step, 0, bottom, None).unwrap());
+                    let frame = Rc::new(list.collect_frame(step, 0, bottom).unwrap());
                     list.published = Some(black_box(frame));
                     elapsed[0] += laid_out.elapsed().as_secs_f64();
                     elapsed[1] += start.elapsed().as_secs_f64();
@@ -252,13 +272,7 @@ fn measure_snapshot_collection() {
                 .unwrap()
                 .same_content(lists[2].published.as_ref().unwrap())
         );
-        assert!(
-            lists[2]
-                .published
-                .as_ref()
-                .unwrap()
-                .same_content(lists[3].published.as_ref().unwrap())
-        );
+        assert_matches_flat(&lists[3], &lists[2]);
         for (i, stages) in samples.into_iter().enumerate() {
             let root = [
                 "measured flat",
@@ -309,13 +323,7 @@ fn measure_tail_resize() {
                 samples[mode].push(start.elapsed().as_secs_f64() * 1e6 / 20.0);
             }
         }
-        assert!(
-            lists[0]
-                .published
-                .as_ref()
-                .unwrap()
-                .same_content(lists[1].published.as_ref().unwrap())
-        );
+        assert_matches_flat(&lists[1], &lists[0]);
     }
     for (name, mut times) in ["flat", "grouped"].into_iter().zip(samples) {
         times.sort_by(f64::total_cmp);
@@ -395,7 +403,7 @@ fn scrolled_frames_match_crops_of_the_full_document() {
         flat.scene
             .run(Query::Exact(width), Some(size), true)
             .unwrap();
-        let full = flat.collect_frame(0, 0, u32::MAX, None).unwrap();
+        let full = flat.collect_frame(0, 0, u32::MAX).unwrap();
         let content_height = full.geometry[0].content.height;
         let max_scroll = content_height.saturating_sub(height);
         let physical = Size {
@@ -414,7 +422,7 @@ fn scrolled_frames_match_crops_of_the_full_document() {
             let frame = list.frame(size, request, false).unwrap();
             let top = request.min(max_scroll);
             assert_eq!(frame.scroll_y, top);
-            assert_eq!(frame.geometry, full.geometry);
+            assert_eq!(flat_geometry(&list, &frame), full.geometry.as_ref());
             assert_eq!(
                 frame.draws.iter().map(|d| d.origin).collect::<Vec<_>>(),
                 full.draws

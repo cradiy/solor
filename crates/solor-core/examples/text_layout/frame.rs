@@ -83,16 +83,19 @@ pub struct Frame {
     /// Logical distance from the document top to the viewport top.
     pub scroll_y: u32,
     pub font: &'static [u8],
-    pub geometry: Rc<Vec<Geometry>>,
+    pub geometry: Rc<[Geometry]>,
     pub draws: Vec<TextDraw>,
 }
 
 impl Frame {
     /// Independent fixtures have different NodeIds; compare all visual inputs instead.
     pub fn same_content(&self, other: &Self) -> bool {
+        self.geometry == other.geometry && self.same_drawing(other)
+    }
+
+    pub fn same_drawing(&self, other: &Self) -> bool {
         self.scroll_y == other.scroll_y
             && self.font == other.font
-            && self.geometry == other.geometry
             && self.draws.len() == other.draws.len()
             && self.draws.iter().zip(&other.draws).all(|(a, b)| {
                 a.origin == b.origin
@@ -104,8 +107,7 @@ impl Frame {
 
     pub fn shallow_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
-            + std::mem::size_of::<Vec<Geometry>>()
-            + self.geometry.capacity() * std::mem::size_of::<Geometry>()
+            + std::mem::size_of_val(self.geometry.as_ref())
             + self.draws.capacity() * std::mem::size_of::<TextDraw>()
     }
 }
@@ -320,9 +322,7 @@ impl Presentation {
         let skipped_parent = self.layout(size, mode)?;
         let geometry = self
             .scene
-            .snapshot()
-            .into_iter()
-            .collect::<Option<Vec<_>>>()
+            .shared_snapshot()
             .ok_or(LayoutError::MissingLayout(0))?;
         let mut draws = Vec::with_capacity(self.rows.len());
         let mut resolved = 0;
@@ -366,7 +366,7 @@ impl Presentation {
             revision,
             scroll_y: 0,
             font: FONT,
-            geometry: Rc::new(geometry),
+            geometry,
             draws,
         });
         // No callbacks or fallible preparation after this publication point.

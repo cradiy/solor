@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use solor_core::layout::{
     LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext, Metrics, Origin, Query,
     Result, Scene, Size,
@@ -89,6 +91,7 @@ fn late_child_failure_preserves_geometry_and_same_allocation_retries() -> Result
     assert_eq!(scene.run_assigned(viewport, false)?, 3);
     assert_eq!(scene.node_counts(root)?.measures, 0);
     let original = scene.snapshot();
+    let held = scene.shared_snapshot().unwrap();
     assert_eq!(
         scene.edit_layout::<Leaf>(root, |_| unreachable!()),
         Err(LayoutError::WrongNodeType)
@@ -103,16 +106,63 @@ fn late_child_failure_preserves_geometry_and_same_allocation_retries() -> Result
     );
     assert_eq!(scene.snapshot(), original);
     assert!(scene.is_pending());
+    assert!(scene.shared_snapshot().is_none());
 
     assert_eq!(scene.run_assigned(viewport, false)?, 3);
     assert_eq!(scene.geometry(first).unwrap().metrics.size.height, 11);
     assert_eq!(scene.geometry(second).unwrap().origin.y, 11);
     assert_eq!(scene.geometry(root).unwrap().content.height, 14);
     assert_eq!(scene.geometry(root).unwrap().metrics.size, viewport);
+    let updated = scene.shared_snapshot().unwrap();
+    assert_eq!(held[2].origin.y, 5);
+    assert_eq!(updated[2].origin.y, 11);
     let counts = scene.counts();
     assert_eq!(scene.run_assigned(viewport, false)?, 0);
     assert_eq!(scene.counts(), counts);
     assert_eq!(scene.run(Query::Exact(24), Some(viewport), true)?, 0);
     assert_eq!(scene.node_counts(root)?.measures, 1);
+    assert!(Rc::ptr_eq(&updated, &scene.shared_snapshot().unwrap()));
+    Ok(())
+}
+
+#[test]
+fn removing_a_zero_height_leaf_changes_membership_without_moving_any_node() -> Result<()> {
+    let mut scene = Scene::new(Rows);
+    assert!(scene.shared_snapshot().is_none());
+    let size = Size {
+        width: 10,
+        height: 10,
+    };
+    let leaf = scene.mount(
+        scene.root(),
+        Leaf {
+            height: 0,
+            fail_once: false,
+        },
+    )?;
+    scene.run_assigned(size, false)?;
+    let held = scene.shared_snapshot().unwrap();
+    scene.unmount_leaf(leaf)?;
+    assert!(scene.shared_snapshot().is_none());
+    assert_eq!(scene.run_assigned(size, false)?, 0);
+    let remaining = scene.shared_snapshot().unwrap();
+    assert_eq!(remaining.as_ref(), &held[..1]);
+
+    let replacement = scene.mount(
+        scene.root(),
+        Leaf {
+            height: 0,
+            fail_once: true,
+        },
+    )?;
+    assert_ne!(replacement, leaf);
+    assert!(scene.run_assigned(size, false).is_err());
+    assert!(scene.shared_snapshot().is_none());
+    scene.run_assigned(size, false)?;
+    let remounted = scene.shared_snapshot().unwrap();
+    drop(scene);
+    assert_eq!(held.len(), 2);
+    assert_eq!(remounted, held);
+    assert!(!Rc::ptr_eq(&remounted, &held));
     Ok(())
 }
