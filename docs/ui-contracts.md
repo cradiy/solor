@@ -1,0 +1,57 @@
+# UI interface design
+
+A settings page and an audio meter can share one retained tree. A device rename
+can change wrapping and move the rows below it. A level sample can change the
+meter's fill while its bounds and its siblings stay fixed. The contract for
+each property must identify who owns it, which descendants inherit it, which
+stage consumes it, and how a host learns about the resulting work.
+
+## Implemented boundaries
+
+| Interface | Current behavior |
+| --- | --- |
+| Composition and ownership | A component renders once per attachment. A conditional owns its branch. Retiring a node releases its subscriptions and local signals. The host owns application signals. |
+| Box layout | Lengths in logical pixels, rems and percentage box sizes resolve to floating-point geometry. Every primitive receives the same border-box sizing and per-edge padding. Content layout, painting and child origins use the inner bounds. A column applies the gap between children. |
+| Style refinements | Later declarations override individual specified fields. Text size, line height and color propagate into fixed and conditional descendants. Each element resolves its own box and background at mount. |
+| Text | A fixed or signal-bound label owns a shared string and caches shaped paragraphs by width. Updating bound text keeps the element ID. A changed label schedules layout and local paint. |
+| Fill | A straight-alpha sRGB color has named channels. Every gradient shares an ordered, variable-length stop sequence. Four geometries sample it in sRGB or Oklab. Backgrounds and custom fills carry the same fill value. Equal offsets describe hard edges. Rounded fills use the assigned dimensions. |
+| Paint scheduling | A paint subscription samples the latest value when recording. Repeated writes coalesce. A fill signal can replace solid or gradient paint. Explicit local recording acknowledges the node only after successful recording. |
+| Platform boundary | Core provides tree, state and layout. The UI library adds element authoring, shaping and local commands. The Linux example owns its window, input and pixel buffers. |
+
+## Contracts to establish next
+
+| Priority and capability | Required behavior and acceptance case |
+| --- | --- |
+| 1. Frame composition, clipping and hit testing | Compose parent-local coordinates, scale, clips and sibling order into one accepted frame. Move a rounded card over another target, fail one submission, then retry. Pixels and click targets must agree with the last accepted frame. Old bounds must be repaired when a wrapped label moves its siblings. |
+| 2. Sizing, placement and scrolling | Define min/max sizing, margins and per-edge borders. Specify row and column alignment, stretch, grow/shrink and overflow. Validate a long label between a fixed icon and an action at narrow and wide widths. Scrolling must share the visual clip and hit-test transform. |
+| 3. Input and state-dependent styles | Establish pointer and touch capture, cancellation, propagation, keyboard focus, tab order and actions. Define precedence for hover, press, focus and disabled states, including removing an override. Validate a pressed element that moves, loses capture or unmounts before release. |
+| 4. Text, editing and semantics | Define font selection and fallback, weight, alignment, wrapping/truncation, decoration, editable ranges, composition, caret bounds and accessibility actions. A bilingual field must expose the same selection to keyboard, IME and assistive input. Preserve explicit units when converting platform text ranges. |
+| 5. Paint and animation | Define border and shadow paint order, opacity of overlapping descendants, transformed and rounded clipping, and animation timing. A frame-clock repaint must stop on unmount. CPU replay must draw every gradient stop, preserve hard edges and match the declared interpolation. A GPU representation needs equivalent output and a resource lifetime through submission. |
+| 6. Large collections and resources | Define keyed identity, viewport materialization, scroll anchoring, image/font resource ownership and cancellation. Replace and reorder items while keeping focus on a surviving key. Late resource completion must not invalidate a recycled node. |
+
+Linux is the first presentation target. Geometry, semantic actions, text ranges
+and frame requests need platform-independent meanings for Web, macOS, Windows,
+Android and iOS. Native handles, buffer formats and backend resource indices
+belong in adapters. Grid, vector paths, custom shaders and 3D
+need concrete workloads before their public signatures are chosen.
+
+
+## Image fills and image elements
+
+A background image should paint within the element's assigned box. Loading a
+new frame or replacing a background should invalidate paint. A standalone
+image element also has an intrinsic size and aspect ratio. If layout used
+those metrics, discovering or changing them should invalidate measurement.
+
+Both uses should share a decoded image resource. A fill would carry a resource
+reference and placement parameters. Loading, decoding and caching belong to
+the resource owner. A paint command must retain its selected frame through
+submission. Changing the source or unmounting the element must detach its
+pending notification.
+
+The acceptance case is one wide image used both as a rounded cover background
+and as an auto-sized image. The background must keep its box, preserve the
+source aspect ratio and clip to the rounded destination. The image element
+must remeasure when its intrinsic dimensions arrive. A previously recorded
+frame must remain valid after either use changes its source. Image fills,
+image elements and image loading are future work.

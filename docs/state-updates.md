@@ -48,7 +48,7 @@ this for affected nodes only. Manual unbinding releases callback captures.
 | Operation | Runtime work, excluding user code |
 | --- | --- |
 | `read` | O(1), including a checked type-erased lookup |
-| `set` | Value comparison plus O(subscribers of the changed signal) |
+| `set` | Value comparison plus O(subscribers) on the first changed write after delivery, O(1) scheduling on subsequent writes before delivery |
 | `bind` | Amortized O(1), with callback allocation and index growth |
 | `unbind` | Expected O(1), including hash lookup and queue removal |
 | `flush` | O(pending bindings); no tree or signal-table scan |
@@ -57,7 +57,9 @@ this for affected nodes only. Manual unbinding releases callback captures.
 
 Signals and callbacks use boxed type erasure. Pending capacity is reserved when
 bindings are registered, so scheduling and flushing do not need queue allocations.
-User comparisons, values, callbacks, and destructors may still allocate. Storage
+A per-signal flag skips repeated subscriber walks once all bindings are queued.
+Delivery clears it before invoking the callback so a write after an interrupted
+flush can schedule every subscriber again. User comparisons, values, callbacks, and destructors may still allocate. Storage
 retains capacity at its high-water mark. Removing tasks removes queue entries
 immediately rather than accumulating dead entries until a future flush.
 

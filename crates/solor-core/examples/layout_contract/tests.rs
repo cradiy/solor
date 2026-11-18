@@ -1,3 +1,4 @@
+use solor_core::px;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use super::fixtures::{Column, Drawing, Fault, Ids, Phase, Wrapping, nested};
@@ -8,7 +9,7 @@ use super::layout::{
 
 #[test]
 fn known_wrapping_dimensions_baselines_and_sibling_positions() {
-    let mut scene = Scene::new(Column { padding: 2, gap: 3 });
+    let mut scene = Scene::new(Column::new(px(2.0), px(3.0)));
     let root = scene.root();
     let text = scene
         .append(
@@ -22,38 +23,47 @@ fn known_wrapping_dimensions_baselines_and_sibling_positions() {
         )
         .unwrap();
     let drawing = scene.append(root, Drawing::new(6, 4)).unwrap();
-    assert_eq!(scene.run(Query::Exact(12), None, false), Ok(3));
+    assert_eq!(scene.run(Query::Exact(px(12.0)), None, false), Ok(3));
     let root_geometry = scene.geometry(root).unwrap();
     assert_eq!(
         root_geometry.metrics,
         Metrics {
             size: Size {
-                width: 12,
-                height: 26
+                width: px(12.0),
+                height: px(26.0)
             },
-            baseline: Some(6)
+            baseline: Some(px(6.0))
         }
     );
     let text_geometry = scene.geometry(text).unwrap();
-    assert_eq!(text_geometry.origin, Origin { x: 2, y: 2 });
+    assert_eq!(
+        text_geometry.origin,
+        Origin {
+            x: px(2.0),
+            y: px(2.0)
+        }
+    );
     assert_eq!(
         text_geometry.metrics.size,
         Size {
-            width: 8,
-            height: 15
+            width: px(8.0),
+            height: px(15.0)
         }
     );
     assert_eq!(
         scene.geometry(drawing).unwrap().origin,
-        Origin { x: 2, y: 20 }
+        Origin {
+            x: px(2.0),
+            y: px(20.0)
+        }
     );
 
     scene
         .edit_layout::<Wrapping>(text, |text| text.units = 17)
         .unwrap();
-    scene.run(Query::Exact(12), None, false).unwrap();
-    assert_eq!(scene.geometry(root).unwrap().metrics.size.height, 36);
-    assert_eq!(scene.geometry(drawing).unwrap().origin.y, 30);
+    scene.run(Query::Exact(px(12.0)), None, false).unwrap();
+    assert_eq!(scene.geometry(root).unwrap().metrics.size.height, px(36.0));
+    assert_eq!(scene.geometry(drawing).unwrap().origin.y, px(30.0));
     assert_eq!(scene.node_counts(drawing).unwrap().layouts, 1);
     assert_eq!(
         scene.append(root, Drawing::new(1, 1)),
@@ -65,7 +75,7 @@ fn known_wrapping_dimensions_baselines_and_sibling_positions() {
 fn text_edit_moves_siblings_without_executing_unrelated_subtree_bodies() {
     let (mut scene, ids) = nested();
     let (mut reference, reference_ids) = nested();
-    scene.run(Query::Exact(100), None, false).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
     let before = scene.counts();
     let right = scene.node_counts(ids.right).unwrap();
     let drawing = scene.node_counts(ids.drawing).unwrap();
@@ -76,8 +86,8 @@ fn text_edit_moves_siblings_without_executing_unrelated_subtree_bodies() {
     reference
         .edit_layout::<Wrapping>(reference_ids.text, |text| text.units = 100)
         .unwrap();
-    scene.run(Query::Exact(100), None, false).unwrap();
-    reference.run(Query::Exact(100), None, true).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
+    reference.run(Query::Exact(px(100.0)), None, true).unwrap();
     assert_eq!(scene.snapshot(), reference.snapshot());
     assert_eq!(
         scene.node_counts(ids.right).unwrap().measures,
@@ -100,12 +110,12 @@ fn text_edit_moves_siblings_without_executing_unrelated_subtree_bodies() {
 #[test]
 fn ink_edits_and_clean_frames_do_no_layout_work() {
     let (mut scene, ids) = nested();
-    scene.run(Query::Exact(100), None, false).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
     let before = scene.counts();
     let geometry = scene.snapshot();
     scene.set_ink(ids.drawing, 0xff00ff).unwrap();
-    assert_eq!(scene.run(Query::Exact(100), None, false), Ok(0));
-    assert_eq!(scene.run(Query::Exact(100), None, false), Ok(0));
+    assert_eq!(scene.run(Query::Exact(px(100.0)), None, false), Ok(0));
+    assert_eq!(scene.run(Query::Exact(px(100.0)), None, false), Ok(0));
     assert_eq!(scene.counts(), before);
     assert_eq!(scene.snapshot(), geometry);
     assert!(!scene.is_pending());
@@ -114,14 +124,14 @@ fn ink_edits_and_clean_frames_do_no_layout_work() {
 #[test]
 fn baseline_only_changes_reach_ancestors_even_when_sizes_match() {
     let (mut scene, ids) = nested();
-    scene.run(Query::Exact(100), None, false).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
     let before = scene.snapshot();
     let measured =
         [scene.root(), ids.left, ids.text].map(|id| scene.node_counts(id).unwrap().measures);
     scene
         .edit_layout::<Wrapping>(ids.text, |text| text.ascent -= 1)
         .unwrap();
-    scene.run(Query::Exact(100), None, false).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
     for (old, new) in before.iter().zip(scene.snapshot()) {
         assert_eq!(old.unwrap().metrics.size, new.unwrap().metrics.size);
         assert_eq!(old.unwrap().origin, new.unwrap().origin);
@@ -132,7 +142,7 @@ fn baseline_only_changes_reach_ancestors_even_when_sizes_match() {
     }
     assert_eq!(
         scene.geometry(scene.root()).unwrap().metrics.baseline,
-        Some(12)
+        Some(px(12.0))
     );
 }
 
@@ -146,15 +156,15 @@ fn edit(scene: &mut Scene, ids: &Ids, step: u32) {
         }),
         2 => scene.edit_layout::<Drawing>(ids.drawing, |drawing| {
             drawing.size = Size {
-                width: 1 + step % 40,
-                height: step % 30,
+                width: px((1 + step % 40) as f32),
+                height: px((step % 30) as f32),
             }
         }),
         3 => scene.edit_layout::<Column>(ids.left, |column| {
-            column.padding = step % 4;
-            column.gap = step % 6;
+            column.padding = crate::column::Edges::all(px((step % 4) as f32));
+            column.gap = px((step % 6) as f32);
         }),
-        4 => scene.edit_layout::<Column>(ids.right, |column| column.gap = step % 9),
+        4 => scene.edit_layout::<Column>(ids.right, |column| column.gap = px((step % 9) as f32)),
         5 => scene.set_ink(ids.drawing, step),
         6 => Ok(()),
         _ => scene.edit_layout::<Wrapping>(ids.text, |text| {
@@ -172,8 +182,12 @@ fn mixed_edits_match_cache_disabled_recomputation_after_every_step() {
         edit(&mut scene, &ids, step);
         edit(&mut reference, &reference_ids, step);
         let width = 16 + ((step / 3) * 17) % 200;
-        scene.run(Query::Exact(width), None, false).unwrap();
-        reference.run(Query::Exact(width), None, true).unwrap();
+        scene
+            .run(Query::Exact(px(width as f32)), None, false)
+            .unwrap();
+        reference
+            .run(Query::Exact(px(width as f32)), None, true)
+            .unwrap();
         assert_eq!(scene.snapshot(), reference.snapshot(), "step {step}");
         assert!(!scene.is_pending());
     }
@@ -185,7 +199,7 @@ fn errors_and_panics_preserve_publication_and_retry_incomplete_work() {
         for fault in [Fault::Error, Fault::Panic] {
             let (mut scene, ids) = nested();
             let (mut reference, reference_ids) = nested();
-            scene.run(Query::Exact(100), None, false).unwrap();
+            scene.run(Query::Exact(px(100.0)), None, false).unwrap();
             let before = scene.snapshot();
             scene
                 .edit_layout::<Wrapping>(ids.text, |text| text.units = 100)
@@ -194,7 +208,7 @@ fn errors_and_panics_preserve_publication_and_retry_incomplete_work() {
                 .edit_layout::<Drawing>(ids.drawing, |drawing| drawing.fault = Some((phase, fault)))
                 .unwrap();
             let outcome = catch_unwind(AssertUnwindSafe(|| {
-                scene.run(Query::Exact(100), None, false)
+                scene.run(Query::Exact(px(100.0)), None, false)
             }));
             match fault {
                 Fault::Error => assert_eq!(outcome.unwrap(), Err(LayoutError::Node("injected"))),
@@ -205,11 +219,11 @@ fn errors_and_panics_preserve_publication_and_retry_incomplete_work() {
             assert!(scene.is_pending());
             // Remove only the fault injector: retry must rely on retained invalidity.
             scene.body_mut::<Drawing>(ids.drawing).unwrap().fault = None;
-            scene.run(Query::Exact(100), None, false).unwrap();
+            scene.run(Query::Exact(px(100.0)), None, false).unwrap();
             reference
                 .edit_layout::<Wrapping>(reference_ids.text, |text| text.units = 100)
                 .unwrap();
-            reference.run(Query::Exact(100), None, true).unwrap();
+            reference.run(Query::Exact(px(100.0)), None, true).unwrap();
             assert_eq!(scene.snapshot(), reference.snapshot());
             assert!(!scene.is_pending());
         }
@@ -220,7 +234,7 @@ fn errors_and_panics_preserve_publication_and_retry_incomplete_work() {
 fn interrupted_input_edit_invalidates_before_the_callback_runs() {
     let (mut scene, ids) = nested();
     let (mut reference, reference_ids) = nested();
-    scene.run(Query::Exact(100), None, false).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
     let before = scene.snapshot();
     assert!(
         catch_unwind(AssertUnwindSafe(|| {
@@ -233,20 +247,20 @@ fn interrupted_input_edit_invalidates_before_the_callback_runs() {
     );
     assert_eq!(scene.snapshot(), before);
     assert!(scene.is_pending());
-    scene.run(Query::Exact(100), None, false).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
     reference
         .edit_layout::<Wrapping>(reference_ids.text, |text| text.units = 100)
         .unwrap();
-    reference.run(Query::Exact(100), None, true).unwrap();
+    reference.run(Query::Exact(px(100.0)), None, true).unwrap();
     assert_eq!(scene.snapshot(), reference.snapshot());
 }
 
 #[test]
 fn later_branch_failure_does_not_complete_an_unpublished_subtree() {
     fn fixture() -> (Scene, solor_core::tree::NodeId, solor_core::tree::NodeId) {
-        let mut scene = Scene::new(Column { padding: 2, gap: 3 });
+        let mut scene = Scene::new(Column::new(px(2.0), px(3.0)));
         let root = scene.root();
-        let branch = scene.append(root, Column { padding: 1, gap: 1 }).unwrap();
+        let branch = scene.append(root, Column::new(px(1.0), px(1.0))).unwrap();
         let text = scene
             .append(
                 branch,
@@ -264,7 +278,7 @@ fn later_branch_failure_does_not_complete_an_unpublished_subtree() {
 
     let (mut scene, text, last) = fixture();
     let (mut reference, reference_text, _) = fixture();
-    scene.run(Query::Exact(100), None, false).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
     let before = scene.snapshot();
     scene
         .edit_layout::<Wrapping>(text, |text| text.units = 100)
@@ -275,36 +289,36 @@ fn later_branch_failure_does_not_complete_an_unpublished_subtree() {
         })
         .unwrap();
     assert_eq!(
-        scene.run(Query::Exact(100), None, false),
+        scene.run(Query::Exact(px(100.0)), None, false),
         Err(LayoutError::Node("injected"))
     );
     assert_eq!(scene.snapshot(), before);
     scene.body_mut::<Drawing>(last).unwrap().fault = None;
-    scene.run(Query::Exact(100), None, false).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
     reference
         .edit_layout::<Wrapping>(reference_text, |text| text.units = 100)
         .unwrap();
-    reference.run(Query::Exact(100), None, true).unwrap();
+    reference.run(Query::Exact(px(100.0)), None, true).unwrap();
     assert_eq!(scene.snapshot(), reference.snapshot());
 }
 
 #[test]
 fn invalid_inputs_and_overflow_preserve_geometry_and_allow_retry() {
     let (mut scene, ids) = nested();
-    scene.run(Query::Exact(100), None, false).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
     let before = scene.snapshot();
     scene
         .edit_layout::<Wrapping>(ids.text, |text| text.advance = 0)
         .unwrap();
     assert_eq!(
-        scene.run(Query::Exact(100), None, false),
+        scene.run(Query::Exact(px(100.0)), None, false),
         Err(LayoutError::InvalidSize)
     );
     assert_eq!(scene.snapshot(), before);
     scene
         .edit_layout::<Wrapping>(ids.text, |text| text.advance = 5)
         .unwrap();
-    scene.run(Query::Exact(100), None, false).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
     assert_eq!(scene.snapshot(), before);
 
     scene
@@ -314,7 +328,7 @@ fn invalid_inputs_and_overflow_preserve_geometry_and_allow_retry() {
         })
         .unwrap();
     assert_eq!(
-        scene.run(Query::Exact(100), None, false),
+        scene.run(Query::Exact(px(100.0)), None, false),
         Err(LayoutError::InvalidSize)
     );
     assert_eq!(scene.snapshot(), before);
@@ -325,7 +339,7 @@ fn invalid_inputs_and_overflow_preserve_geometry_and_allow_retry() {
             text.line_height = 10;
         })
         .unwrap();
-    scene.run(Query::Exact(100), None, false).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
     assert_eq!(scene.snapshot(), before);
 }
 
@@ -367,7 +381,7 @@ impl LayoutNode for InvalidParent {
             cx.place_child(0, Origin::default())?;
         }
         if matches!(self.0, Placement::InvalidMetrics) {
-            output.baseline = Some(output.content.height + 1);
+            output.baseline = Some(output.content.height + px(1.0));
         }
         Ok(output)
     }
@@ -385,11 +399,11 @@ fn invalid_child_placement_cannot_publish_a_partial_first_frame() {
         let mut scene = Scene::new(InvalidParent(mode));
         let root = scene.root();
         scene.append(root, Drawing::new(5, 5)).unwrap();
-        assert_eq!(scene.run(Query::Exact(10), None, false), Err(error));
+        assert_eq!(scene.run(Query::Exact(px(10.0)), None, false), Err(error));
         assert_eq!(scene.snapshot(), vec![None, None]);
         assert!(scene.is_pending());
         scene.body_mut::<InvalidParent>(root).unwrap().0 = Placement::Normal;
-        assert_eq!(scene.run(Query::Exact(10), None, false), Ok(2));
+        assert_eq!(scene.run(Query::Exact(px(10.0)), None, false), Ok(2));
         assert!(scene.snapshot().iter().all(Option::is_some));
     }
 }
@@ -403,8 +417,8 @@ impl LayoutNode for CatchingParent {
         }
         Ok(Metrics {
             size: Size {
-                width: query.resolve(5),
-                height: 5,
+                width: query.resolve(px(5.0)),
+                height: px(5.0),
             },
             baseline: None,
         })
@@ -433,7 +447,7 @@ fn caught_child_errors_and_panics_still_abort_the_attempt() {
             drawing.fault = Some((phase, fault));
             let child = scene.append(root, drawing).unwrap();
             assert_eq!(
-                scene.run(Query::Exact(10), None, false),
+                scene.run(Query::Exact(px(10.0)), None, false),
                 Err(LayoutError::FailedChildOperation)
             );
             assert_eq!(scene.snapshot(), vec![None, None]);
@@ -441,7 +455,7 @@ fn caught_child_errors_and_panics_still_abort_the_attempt() {
             assert!(scene.scratch_usage().iter().all(|&(len, _)| len == 0));
             assert!(scene.is_pending());
             scene.body_mut::<Drawing>(child).unwrap().fault = None;
-            assert_eq!(scene.run(Query::Exact(10), None, false), Ok(2));
+            assert_eq!(scene.run(Query::Exact(px(10.0)), None, false), Ok(2));
             assert!(!scene.is_pending());
         }
     }
@@ -449,17 +463,17 @@ fn caught_child_errors_and_panics_still_abort_the_attempt() {
 
 #[test]
 fn scratch_growth_unwinding_and_release_preserve_layout_state() {
-    let mut scene = Scene::new(Column { padding: 1, gap: 1 });
+    let mut scene = Scene::new(Column::new(px(1.0), px(1.0)));
     let root = scene.root();
     // The wide child grows the shared stack while its parent still owns a range.
     for width in [128, 2] {
-        let branch = scene.append(root, Column { padding: 1, gap: 1 }).unwrap();
+        let branch = scene.append(root, Column::new(px(1.0), px(1.0))).unwrap();
         for _ in 0..width {
             scene.append(branch, Drawing::new(5, 5)).unwrap();
         }
     }
     let last = scene.append(root, Drawing::new(5, 5)).unwrap();
-    scene.run(Query::Exact(30), None, false).unwrap();
+    scene.run(Query::Exact(px(30.0)), None, false).unwrap();
     let expected = scene.snapshot();
     let capacity = scene.scratch_usage();
     assert!(capacity.iter().all(|&(len, cap)| len == 0 && cap > 0));
@@ -470,7 +484,9 @@ fn scratch_growth_unwinding_and_release_preserve_layout_state() {
                 drawing.fault = Some((Phase::Layout, fault));
             })
             .unwrap();
-        let outcome = catch_unwind(AssertUnwindSafe(|| scene.run(Query::Exact(30), None, true)));
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            scene.run(Query::Exact(px(30.0)), None, true)
+        }));
         match fault {
             Fault::Error => assert_eq!(outcome.unwrap(), Err(LayoutError::Node("injected"))),
             Fault::Panic => assert!(outcome.is_err()),
@@ -482,24 +498,24 @@ fn scratch_growth_unwinding_and_release_preserve_layout_state() {
         assert!(scene.is_pending());
         assert_eq!(scene.scratch_usage(), [(0, 0); 2]);
         scene.body_mut::<Drawing>(last).unwrap().fault = None;
-        scene.run(Query::Exact(30), None, false).unwrap();
+        scene.run(Query::Exact(px(30.0)), None, false).unwrap();
         assert_eq!(scene.snapshot(), expected);
         assert_eq!(scene.scratch_usage(), capacity);
     }
 
     let counts = scene.counts();
     scene.release_scratch();
-    assert_eq!(scene.run(Query::Exact(30), None, false), Ok(0));
+    assert_eq!(scene.run(Query::Exact(px(30.0)), None, false), Ok(0));
     assert_eq!(scene.scratch_usage(), [(0, 0); 2]);
     assert_eq!(scene.counts(), counts);
     assert_eq!(scene.snapshot(), expected);
     // A later real edit must rebuild scratch and publish the new geometry.
     scene
-        .edit_layout::<Drawing>(last, |drawing| drawing.size.height = 9)
+        .edit_layout::<Drawing>(last, |drawing| drawing.size.height = px(9.0))
         .unwrap();
-    scene.run(Query::Exact(30), None, false).unwrap();
+    scene.run(Query::Exact(px(30.0)), None, false).unwrap();
     let updated = scene.snapshot();
     assert_ne!(updated, expected);
-    scene.run(Query::Exact(30), None, true).unwrap();
+    scene.run(Query::Exact(px(30.0)), None, true).unwrap();
     assert_eq!(scene.snapshot(), updated);
 }

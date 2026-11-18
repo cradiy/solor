@@ -1,9 +1,10 @@
 use super::super::fixtures::{Column, Drawing, Wrapping};
 use super::*;
+use solor_core::px;
 
 #[test]
 fn changed_allocation_discards_old_parent_and_reuses_only_matching_descendants() {
-    let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+    let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
     let root = scene.root();
     let text = scene
         .append(
@@ -18,10 +19,12 @@ fn changed_allocation_discards_old_parent_and_reuses_only_matching_descendants()
         .unwrap();
     let drawing = scene.append(root, Drawing::new(5, 5)).unwrap();
     let original = Size {
-        width: 100,
-        height: 100,
+        width: px(100.0),
+        height: px(100.0),
     };
-    scene.run(Query::Exact(100), Some(original), false).unwrap();
+    scene
+        .run(Query::Exact(px(100.0)), Some(original), false)
+        .unwrap();
     scene
         .edit_layout::<Wrapping>(text, |leaf| leaf.units = 30)
         .unwrap();
@@ -29,8 +32,8 @@ fn changed_allocation_discards_old_parent_and_reuses_only_matching_descendants()
     let before_text = scene.node_counts(text).unwrap().layouts;
     let before_drawing = scene.node_counts(drawing).unwrap().layouts;
     let assigned = Size {
-        width: 10,
-        height: 100,
+        width: px(10.0),
+        height: px(100.0),
     };
     {
         let attempt = Attempt(&mut scene.scratch);
@@ -40,7 +43,7 @@ fn changed_allocation_discards_old_parent_and_reuses_only_matching_descendants()
         layout_root(
             &mut scene.store,
             attempt.0,
-            RootRequest::Measure(Query::Exact(100), Some(original)),
+            RootRequest::Measure(Query::Exact(px(100.0)), Some(original)),
             false,
         )
         .unwrap();
@@ -48,7 +51,7 @@ fn changed_allocation_discards_old_parent_and_reuses_only_matching_descendants()
         layout_root(
             &mut scene.store,
             attempt.0,
-            RootRequest::Measure(Query::Exact(10), Some(assigned)),
+            RootRequest::Measure(Query::Exact(px(10.0)), Some(assigned)),
             false,
         )
         .unwrap();
@@ -60,16 +63,18 @@ fn changed_allocation_discards_old_parent_and_reuses_only_matching_descendants()
         scene.node_counts(drawing).unwrap().layouts,
         before_drawing + 1
     );
-    assert_eq!(scene.geometry(drawing).unwrap().origin.y, 3);
+    assert_eq!(scene.geometry(drawing).unwrap().origin.y, px(3.0));
     assert_eq!(
         scene.geometry(text).unwrap().metrics.size,
         Size {
-            width: 10,
-            height: 3
+            width: px(10.0),
+            height: px(3.0)
         }
     );
     let incremental = scene.snapshot();
-    scene.run(Query::Exact(10), Some(assigned), true).unwrap();
+    scene
+        .run(Query::Exact(px(10.0)), Some(assigned), true)
+        .unwrap();
     assert_eq!(scene.snapshot(), incremental);
     assert!(scene.staged_usage().iter().all(|&(len, _)| len == 0));
 }

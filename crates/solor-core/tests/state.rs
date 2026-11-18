@@ -1,3 +1,4 @@
+//! Signal ownership, binding and delivery behavior.
 use std::cell::Cell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
@@ -258,25 +259,33 @@ fn registration_and_cancellation_without_flushing_do_not_accumulate_tasks() {
 
 #[test]
 fn callback_panic_consumes_one_task_and_preserves_remaining_tasks() {
-    let mut runtime = Runtime::new(Payload::default());
-    let root = runtime.tree().root();
-    let signal = runtime.create_signal(1_usize);
-    let first_call = Rc::new(Cell::new(true));
-    for _ in 0..2 {
-        let first_call = first_call.clone();
-        runtime
-            .bind(signal, root, move |value, node| {
-                apply(value, node);
-                assert!(!first_call.replace(false), "intentional callback panic");
-            })
-            .unwrap();
+    for finish_pending in [false, true] {
+        let mut runtime = Runtime::new(Payload::default());
+        let root = runtime.tree().root();
+        let signal = runtime.create_signal(1_usize);
+        let first_call = Rc::new(Cell::new(true));
+        for _ in 0..2 {
+            let first_call = first_call.clone();
+            runtime
+                .bind(signal, root, move |value, node| {
+                    apply(value, node);
+                    assert!(!first_call.replace(false), "intentional callback panic");
+                })
+                .unwrap();
+        }
+        assert!(catch_unwind(AssertUnwindSafe(|| runtime.flush())).is_err());
+        assert_eq!(runtime.pending_count(), 1);
+        if finish_pending {
+            assert_eq!(runtime.flush(), 1);
+        }
+        runtime.set(signal, 2).unwrap();
+        assert_eq!(runtime.flush(), 2);
+        let payload = runtime.tree().get(root).unwrap();
+        assert_eq!(
+            (payload.calls, payload.value),
+            (3 + usize::from(finish_pending), 2)
+        );
     }
-    assert!(catch_unwind(AssertUnwindSafe(|| runtime.flush())).is_err());
-    assert_eq!(runtime.pending_count(), 1);
-    assert_eq!(runtime.flush(), 1);
-    assert_eq!(runtime.tree().get(root).unwrap().calls, 2);
-    runtime.set(signal, 2).unwrap();
-    assert_eq!(runtime.flush(), 2);
 }
 
 struct PanicOnDrop;

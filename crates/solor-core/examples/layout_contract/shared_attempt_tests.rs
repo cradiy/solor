@@ -1,5 +1,6 @@
 use super::*;
 use crate::layout::validation::{MAX_TRACKED_EDITS, SelectiveCheckpoint};
+use solor_core::px;
 
 fn checkpoints(scene: &mut Scene, query: Query, assigned: Size) -> [SelectiveCheckpoint; 2] {
     let root = scene.root();
@@ -17,14 +18,14 @@ fn checkpoints(scene: &mut Scene, query: Query, assigned: Size) -> [SelectiveChe
 
 #[test]
 fn shared_attempt_publishes_internal_movement_without_repeating_subtree_layout() {
-    let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+    let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
     let root = scene.root();
     let container = scene.append(root, MovingChild { x: 0 }).unwrap();
     let child = scene.append(container, Drawing::new(5, 5)).unwrap();
-    let query = Query::Exact(100);
+    let query = Query::Exact(px(100.0));
     let assigned = Size {
-        width: 100,
-        height: 20,
+        width: px(100.0),
+        height: px(20.0),
     };
     scene.run(query, Some(assigned), false).unwrap();
     let [mut measurement, mut placement] = checkpoints(&mut scene, query, assigned);
@@ -46,7 +47,7 @@ fn shared_attempt_publishes_internal_movement_without_repeating_subtree_layout()
             scene.node_counts(container).unwrap().layouts,
             before.layouts + 1
         );
-        assert_eq!(scene.geometry(child).unwrap().origin.x, x);
+        assert_eq!(scene.geometry(child).unwrap().origin.x, px(x as f32));
         assert!(scene.scratch_usage().iter().all(|&(len, _)| len == 0));
         assert!(scene.staged_usage().iter().all(|&(len, _)| len == 0));
         assert!(!scene.is_pending());
@@ -68,21 +69,21 @@ fn shared_attempt_publishes_internal_movement_without_repeating_subtree_layout()
 fn errors_and_panics_in_audit_or_after_adoption_preserve_both_cursors() {
     for stop_audit_early in [false, true] {
         for fault in [Fault::Error, Fault::Panic] {
-            let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+            let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
             let root = scene.root();
             let output = LayoutOutput {
                 baseline: None,
                 content: Size {
-                    width: 12,
-                    height: 10,
+                    width: px(12.0),
+                    height: px(10.0),
                 },
             };
             let a = scene.append(root, OutputLeaf(output)).unwrap();
             let b = scene.append(root, Drawing::new(5, 5)).unwrap();
-            let query = Query::Exact(100);
+            let query = Query::Exact(px(100.0));
             let assigned = Size {
-                width: 100,
-                height: 15,
+                width: px(100.0),
+                height: px(15.0),
             };
             scene.run(query, Some(assigned), false).unwrap();
             let [mut measurement, mut placement] = checkpoints(&mut scene, query, assigned);
@@ -92,7 +93,7 @@ fn errors_and_panics_in_audit_or_after_adoption_preserve_both_cursors() {
             scene
                 .edit_layout::<OutputLeaf>(a, |leaf| {
                     if stop_audit_early {
-                        leaf.0.content.width = 120;
+                        leaf.0.content.width = px(120.0);
                     }
                 })
                 .unwrap();
@@ -138,14 +139,14 @@ fn missing_history_and_new_requests_complete_normal_layout_without_stale_adoptio
     let (mut scene, children) = reading_fixture();
     let query = Query::Natural;
     let assigned = Size {
-        width: 5,
-        height: 5,
+        width: px(5.0),
+        height: px(5.0),
     };
     scene.run(query, Some(assigned), false).unwrap();
     let [mut measurement, mut placement] = checkpoints(&mut scene, query, assigned);
     for _ in 0..=MAX_TRACKED_EDITS {
         scene
-            .edit_layout::<Drawing>(children[0], |leaf| leaf.size.width += 1)
+            .edit_layout::<Drawing>(children[0], |leaf| leaf.size.width += px(1.0))
             .unwrap();
     }
     let report = scene
@@ -170,11 +171,16 @@ fn missing_history_and_new_requests_complete_normal_layout_without_stale_adoptio
             .unwrap()
     );
     let resized = Size {
-        width: 20,
-        height: 30,
+        width: px(20.0),
+        height: px(30.0),
     };
     let report = scene
-        .run_validated(Query::Exact(20), resized, &mut measurement, &mut placement)
+        .run_validated(
+            Query::Exact(px(20.0)),
+            resized,
+            &mut measurement,
+            &mut placement,
+        )
         .unwrap();
     assert_eq!(
         report.checks.map(|check| check.outcome),
@@ -182,7 +188,9 @@ fn missing_history_and_new_requests_complete_normal_layout_without_stale_adoptio
     );
     assert_eq!(report.reused_layouts, 0);
     let snapshot = scene.snapshot();
-    scene.run(Query::Exact(20), Some(resized), true).unwrap();
+    scene
+        .run(Query::Exact(px(20.0)), Some(resized), true)
+        .unwrap();
     assert_eq!(scene.snapshot(), snapshot);
 }
 
@@ -190,8 +198,8 @@ fn missing_history_and_new_requests_complete_normal_layout_without_stale_adoptio
 fn shared_attempt_rejects_non_root_and_foreign_checkpoints_before_work() {
     let (mut scene, children) = reading_fixture();
     let assigned = Size {
-        width: 5,
-        height: 5,
+        width: px(5.0),
+        height: px(5.0),
     };
     scene.run(Query::Natural, Some(assigned), false).unwrap();
     let [mut measurement, mut placement] = checkpoints(&mut scene, Query::Natural, assigned);

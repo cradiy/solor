@@ -1,22 +1,23 @@
 use super::*;
 use crate::layout::validation::MAX_TRACKED_EDITS;
+use solor_core::px;
 
 #[test]
 fn refreshing_equal_child_order_replaces_results_and_request() {
-    let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+    let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
     let root = scene.root();
     let child = scene.append(root, Drawing::new(20, 5)).unwrap();
-    scene.run(Query::Exact(10), None, false).unwrap();
+    scene.run(Query::Exact(px(10.0)), None, false).unwrap();
     let old = CheckTarget::Layout(Size {
-        width: 10,
-        height: 5,
+        width: px(10.0),
+        height: px(5.0),
     });
     let mut checkpoint = scene
         .capture_selective_dependencies(root, old)
         .unwrap()
         .unwrap();
     scene
-        .edit_layout::<Drawing>(child, |leaf| leaf.size.width = 21)
+        .edit_layout::<Drawing>(child, |leaf| leaf.size.width = px(21.0))
         .unwrap();
     assert_eq!(
         scene
@@ -25,10 +26,10 @@ fn refreshing_equal_child_order_replaces_results_and_request() {
             .outcome,
         CheckOutcome::Changed
     );
-    scene.run(Query::Exact(30), None, false).unwrap();
+    scene.run(Query::Exact(px(30.0)), None, false).unwrap();
     let current = CheckTarget::Layout(Size {
-        width: 30,
-        height: 5,
+        width: px(30.0),
+        height: px(5.0),
     });
     assert!(
         scene
@@ -50,7 +51,7 @@ fn refreshing_equal_child_order_replaces_results_and_request() {
     assert_eq!(report.checked_reads, 2);
     // Returning to the original value differs from the refreshed comparison value.
     scene
-        .edit_layout::<Drawing>(child, |leaf| leaf.size.width = 20)
+        .edit_layout::<Drawing>(child, |leaf| leaf.size.width = px(20.0))
         .unwrap();
     assert_eq!(
         scene
@@ -59,9 +60,9 @@ fn refreshing_equal_child_order_replaces_results_and_request() {
             .outcome,
         CheckOutcome::Changed
     );
-    scene.run(Query::Exact(30), None, false).unwrap();
+    scene.run(Query::Exact(px(30.0)), None, false).unwrap();
     let incremental = scene.snapshot();
-    scene.run(Query::Exact(30), None, true).unwrap();
+    scene.run(Query::Exact(px(30.0)), None, true).unwrap();
     assert_eq!(scene.snapshot(), incremental);
 }
 
@@ -94,7 +95,7 @@ fn refresh_rebuilds_conditional_reads_and_distinguishes_incomplete_from_empty() 
                 .unwrap()
         );
         scene
-            .edit_layout::<Drawing>(children[0], |leaf| leaf.size.width += 1)
+            .edit_layout::<Drawing>(children[0], |leaf| leaf.size.width += px(1.0))
             .unwrap();
         let report = scene
             .check_selective_dependencies(&mut checkpoint, target)
@@ -122,7 +123,7 @@ fn refresh_rebuilds_conditional_reads_and_distinguishes_incomplete_from_empty() 
         );
     }
     scene
-        .edit_layout::<Drawing>(children[1], |leaf| leaf.size.width += 1)
+        .edit_layout::<Drawing>(children[1], |leaf| leaf.size.width += px(1.0))
         .unwrap();
     assert_eq!(
         scene
@@ -150,8 +151,8 @@ fn rejected_refresh_preserves_evidence_and_cursor_through_failure() {
                 .refresh_selective_dependencies(
                     &mut checkpoint,
                     CheckTarget::Layout(Size {
-                        width: 90,
-                        height: 90
+                        width: px(90.0),
+                        height: px(90.0)
                     })
                 )
                 .unwrap()
@@ -206,15 +207,20 @@ fn indexed_reads_keep_query_identity_after_cache_eviction() {
         .capture_selective_dependencies(root, target)
         .unwrap()
         .unwrap();
-    let exact = scene.probe(ids.label, Query::Exact(18)).unwrap();
+    let exact = scene.probe(ids.label, Query::Exact(px(18.0))).unwrap();
     for width in [19, 20, 21, 22] {
-        scene.probe(root, Query::Exact(width)).unwrap();
-        scene.probe(ids.label, Query::Exact(width)).unwrap();
+        scene.probe(root, Query::Exact(px(width as f32))).unwrap();
+        scene
+            .probe(ids.label, Query::Exact(px(width as f32)))
+            .unwrap();
     }
     scene
         .edit_layout::<Wrapping>(ids.label, |label| label.units = 21)
         .unwrap();
-    assert_eq!(scene.probe(ids.label, Query::Exact(18)).unwrap(), exact);
+    assert_eq!(
+        scene.probe(ids.label, Query::Exact(px(18.0))).unwrap(),
+        exact
+    );
     assert_eq!(
         scene
             .check_selective_dependencies(&mut checkpoint, target)
@@ -223,12 +229,12 @@ fn indexed_reads_keep_query_identity_after_cache_eviction() {
         CheckOutcome::Changed
     );
     scene.run(Query::Natural, None, false).unwrap();
-    assert_eq!(scene.geometry(root).unwrap().metrics.size.width, 74);
+    assert_eq!(scene.geometry(root).unwrap().metrics.size.width, px(74.0));
 }
 
 #[test]
 fn sparse_checks_keep_internal_movement_and_deduplicate_changed_branches() {
-    let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+    let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
     let root = scene.root();
     let mut children = Vec::new();
     for _ in 0..100 {
@@ -236,7 +242,7 @@ fn sparse_checks_keep_internal_movement_and_deduplicate_changed_branches() {
         let leaf = scene.append(parent, Drawing::new(5, 5)).unwrap();
         children.push((parent, leaf));
     }
-    scene.run(Query::Exact(100), None, false).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
     let target = CheckTarget::Layout(scene.geometry(root).unwrap().metrics.size);
     let mut checkpoint = scene
         .capture_selective_dependencies(root, target)
@@ -268,16 +274,16 @@ fn sparse_checks_keep_internal_movement_and_deduplicate_changed_branches() {
         0
     );
     assert!(scene.is_pending());
-    scene.run(Query::Exact(100), None, false).unwrap();
-    assert_eq!(scene.geometry(leaf).unwrap().origin.x, 7);
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
+    assert_eq!(scene.geometry(leaf).unwrap().origin.x, px(7.0));
     let incremental = scene.snapshot();
-    scene.run(Query::Exact(100), None, true).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, true).unwrap();
     assert_eq!(scene.snapshot(), incremental);
 }
 
 #[test]
 fn unread_branches_and_other_subtrees_are_ignored_but_owner_edits_are_not() {
-    let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+    let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
     let root = scene.root();
     let owner = scene
         .append(
@@ -299,10 +305,10 @@ fn unread_branches_and_other_subtrees_are_ignored_but_owner_edits_are_not() {
         .unwrap()
         .unwrap();
     scene
-        .edit_layout::<Drawing>(outside, |leaf| leaf.size.width = 11)
+        .edit_layout::<Drawing>(outside, |leaf| leaf.size.width = px(11.0))
         .unwrap();
     scene
-        .edit_layout::<Drawing>(b, |leaf| leaf.size.width = 12)
+        .edit_layout::<Drawing>(b, |leaf| leaf.size.width = px(12.0))
         .unwrap();
     let report = scene
         .check_selective_dependencies(&mut checkpoint, target)
@@ -310,7 +316,7 @@ fn unread_branches_and_other_subtrees_are_ignored_but_owner_edits_are_not() {
     assert_eq!(report.outcome, CheckOutcome::Unchanged);
     assert_eq!(report.checked_reads, 0);
     scene
-        .edit_layout::<Drawing>(a, |leaf| leaf.size.width = 8)
+        .edit_layout::<Drawing>(a, |leaf| leaf.size.width = px(8.0))
         .unwrap();
     assert_eq!(
         scene
@@ -373,7 +379,7 @@ fn history_is_bounded_and_equality_can_advance_without_recapturing() {
     // Reclaiming layout scratch cannot erase edit history or an active cursor.
     scene.release_scratch();
     scene
-        .edit_layout::<Drawing>(children[0], |leaf| leaf.size.width = 6)
+        .edit_layout::<Drawing>(children[0], |leaf| leaf.size.width = px(6.0))
         .unwrap();
     assert_eq!(
         scene
@@ -388,7 +394,7 @@ fn history_is_bounded_and_equality_can_advance_without_recapturing() {
 fn selective_failures_keep_cursor_and_publication_for_retry() {
     for phase in [Phase::Measure, Phase::Layout] {
         for fault in [Fault::Error, Fault::Panic] {
-            let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+            let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
             let root = scene.root();
             let a = scene.append(root, Drawing::new(5, 5)).unwrap();
             let b = scene.append(root, Drawing::new(5, 5)).unwrap();
@@ -456,7 +462,7 @@ fn selective_gates_reject_incomplete_foreign_and_mismatched_evidence() {
         .unwrap();
     assert_eq!(
         scene
-            .check_selective_dependencies(&mut leaf, CheckTarget::Measure(Query::Exact(5)))
+            .check_selective_dependencies(&mut leaf, CheckTarget::Measure(Query::Exact(px(5.0))))
             .unwrap()
             .outcome,
         CheckOutcome::Unverifiable
@@ -471,7 +477,7 @@ fn selective_gates_reject_incomplete_foreign_and_mismatched_evidence() {
         catch_unwind(AssertUnwindSafe(|| {
             scene
                 .edit_layout::<Drawing>(children[0], |node| {
-                    node.size.width = 8;
+                    node.size.width = px(8.0);
                     panic!("interrupted tracked mutation");
                 })
                 .unwrap();

@@ -61,8 +61,11 @@ pub struct BindingId {
 /// A rejected operation. Invalid handles do not change runtime state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StateError {
+    /// The signal handle is stale or belongs to another runtime.
     InvalidSignal,
+    /// The binding is no longer live in this runtime.
     InvalidBinding,
+    /// The underlying tree rejected the node operation.
     Tree(TreeError),
 }
 
@@ -92,6 +95,8 @@ impl From<TreeError> for StateError {
 }
 
 struct SignalEntry {
+    // True only while every live subscriber is already pending.
+    all_queued: bool,
     value: Box<dyn Any>,
     bindings: Vec<BindingKey>,
 }
@@ -175,6 +180,7 @@ pub struct Runtime<N> {
 }
 
 impl<N> Runtime<N> {
+    /// Creates a runtime with one root node.
     pub fn new(root: N) -> Self {
         Self {
             tree: Tree::new(root),
@@ -188,6 +194,7 @@ impl<N> Runtime<N> {
         &self.tree
     }
 
+    /// Appends a state node beneath a live parent.
     pub fn append(&mut self, parent: NodeId, value: N) -> Result<NodeId, TreeError> {
         self.tree.append(parent, value)
     }
@@ -206,8 +213,10 @@ impl<N> Runtime<N> {
         })
     }
 
+    /// Stores an initial value and returns its typed handle.
     pub fn create_signal<S: 'static>(&mut self, value: S) -> Signal<S> {
         let key = self.signals.insert(SignalEntry {
+            all_queued: true,
             value: Box::new(value),
             bindings: Vec::new(),
         });
@@ -220,6 +229,7 @@ impl<N> Runtime<N> {
         }
     }
 
+    /// Borrows the current value of a live signal.
     pub fn read<S: 'static>(&self, signal: Signal<S>) -> Result<&S, StateError> {
         self.signal(signal.id)?
             .value
@@ -246,8 +256,11 @@ impl<N> Runtime<N> {
             return Ok(false);
         }
         let old = std::mem::replace(stored, value);
-        for &key in &entry.bindings {
-            self.bindings.queue(key);
+        if !entry.all_queued {
+            for &key in &entry.bindings {
+                self.bindings.queue(key);
+            }
+            entry.all_queued = true;
         }
         drop(old);
         Ok(true)
@@ -296,6 +309,7 @@ impl<N> Runtime<N> {
         })
     }
 
+    /// Removes a binding and cancels its pending delivery.
     pub fn unbind(&mut self, binding: BindingId) -> Result<(), StateError> {
         if binding.owner != self.tree.root() || !self.bindings.entries.contains_key(binding.key) {
             return Err(StateError::InvalidBinding);
@@ -328,7 +342,9 @@ impl<N> Runtime<N> {
         while let Some(key) = self.bindings.pending.pop() {
             let binding = &mut self.bindings.entries[key];
             binding.pending_index = None;
-            let value = &*self.signals[binding.signal].value;
+            let signal = &mut self.signals[binding.signal];
+            signal.all_queued = false;
+            let value = &*signal.value;
             let node = self
                 .tree
                 .get_mut(binding.node)
@@ -339,14 +355,17 @@ impl<N> Runtime<N> {
         applied
     }
 
+    /// Returns the number of pending updates tracked by the runtime.
     pub fn pending_count(&self) -> usize {
         self.bindings.pending.len()
     }
 
+    /// Returns the number of live signal bindings.
     pub fn binding_count(&self) -> usize {
         self.bindings.entries.len()
     }
 
+    /// Returns the number of live signals across all value types.
     pub fn signal_count(&self) -> usize {
         self.signals.len()
     }

@@ -34,7 +34,11 @@ impl Scene {
         entry
             .measure_cache
             .iter()
-            .position(|slot| slot.as_ref().is_some_and(|cached| cached.query == query))
+            .position(|slot| {
+                slot.as_ref().is_some_and(|cached| {
+                    cached.query == query && cached.containing_block == ContainingBlock::default()
+                })
+            })
             .map(|slot| {
                 entry
                     .records

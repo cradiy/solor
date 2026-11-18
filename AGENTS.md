@@ -17,7 +17,8 @@
 ## Architecture and dependencies
 
 - Keep crate boundaries aligned with concrete responsibilities.
-- Keep the core independent of window systems, renderers, and platform APIs.
+- Keep the core independent of UI, window systems, renderers, and platform APIs.
+  UI-dependent examples and tests belong to the UI crate.
 - Add crates only when an implemented responsibility needs a separate boundary.
   Do not create empty crates for a speculative architecture.
 - Keep development rules in this file, project motivation and ideas in the README,
@@ -43,6 +44,7 @@
 - Treat CPU cost, allocation behavior, and bounded memory as design constraints.
 - Define lifecycle, identity, invalidation, and resource ownership invariants
   before introducing mechanisms that depend on them.
+- Keep dedicated crate test files under `tests/`.
 - Validate important invariants and concrete failure cases with focused tests.
   Do not add placeholder tests or tests that merely repeat implementation details.
 - Measure relevant work, not just API invocation counts. Fewer render calls alone

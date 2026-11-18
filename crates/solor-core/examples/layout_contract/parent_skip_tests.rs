@@ -1,11 +1,12 @@
 use super::*;
 use crate::layout::validation::SelectiveCheckpoint;
+use solor_core::px;
 
 fn checkpoints(scene: &mut Scene, assigned: Size) -> [SelectiveCheckpoint; 2] {
     let root = scene.root();
     [
         scene
-            .capture_selective_dependencies(root, CheckTarget::Measure(Query::Exact(100)))
+            .capture_selective_dependencies(root, CheckTarget::Measure(Query::Exact(px(100.0))))
             .unwrap()
             .unwrap(),
         scene
@@ -16,7 +17,7 @@ fn checkpoints(scene: &mut Scene, assigned: Size) -> [SelectiveCheckpoint; 2] {
 }
 
 fn moving_fixture() -> (Scene, [solor_core::tree::NodeId; 3]) {
-    let mut scene = Scene::new(Column { padding: 3, gap: 4 });
+    let mut scene = Scene::new(Column::new(px(3.0), px(4.0)));
     let root = scene.root();
     let prefix = scene.append(root, Drawing::new(5, 7)).unwrap();
     let parent = scene.append(root, MovingChild { x: 0 }).unwrap();
@@ -28,13 +29,13 @@ struct OverflowLayout;
 
 impl LayoutNode for OverflowLayout {
     fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
-        Column { padding: 0, gap: 0 }.measure(cx, query)
+        Column::new(px(0.0), px(0.0)).measure(cx, query)
     }
     fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {
         for _ in 0..=MAX_RECORDED_READS {
             cx.measure_child(0, Query::Natural)?;
         }
-        Column { padding: 0, gap: 0 }.layout(cx, assigned)
+        Column::new(px(0.0), px(0.0)).layout(cx, assigned)
     }
 }
 
@@ -44,16 +45,18 @@ fn incomplete_layout_evidence_cannot_skip_when_measurement_dependencies_are_equa
     let root = scene.root();
     let child = scene.append(root, Drawing::new(5, 5)).unwrap();
     let assigned = Size {
-        width: 100,
-        height: 10,
+        width: px(100.0),
+        height: px(10.0),
     };
-    scene.run(Query::Exact(100), Some(assigned), false).unwrap();
+    scene
+        .run(Query::Exact(px(100.0)), Some(assigned), false)
+        .unwrap();
     let [mut measurement, mut placement] = checkpoints(&mut scene, assigned);
     let before = scene.node_counts(root).unwrap().layouts;
     scene.edit_layout::<Drawing>(child, |_| {}).unwrap();
     let report = scene
         .run_pruned(
-            Query::Exact(100),
+            Query::Exact(px(100.0)),
             assigned,
             &mut measurement,
             &mut placement,
@@ -64,7 +67,9 @@ fn incomplete_layout_evidence_cannot_skip_when_measurement_dependencies_are_equa
     assert!(!report.skipped_parent_layout);
     assert_eq!(scene.node_counts(root).unwrap().layouts, before + 1);
     let snapshot = scene.snapshot();
-    scene.run(Query::Exact(100), Some(assigned), true).unwrap();
+    scene
+        .run(Query::Exact(px(100.0)), Some(assigned), true)
+        .unwrap();
     assert_eq!(scene.snapshot(), snapshot);
 }
 
@@ -73,18 +78,26 @@ fn skipping_parent_preserves_nonzero_placement_and_new_internal_movement() {
     let (mut scene, [_, parent, child]) = moving_fixture();
     let (mut reference, [_, reference_parent, _]) = moving_fixture();
     let assigned = Size {
-        width: 100,
-        height: 80,
+        width: px(100.0),
+        height: px(80.0),
     };
-    scene.run(Query::Exact(100), Some(assigned), false).unwrap();
+    scene
+        .run(Query::Exact(px(100.0)), Some(assigned), false)
+        .unwrap();
     reference
-        .run(Query::Exact(100), Some(assigned), true)
+        .run(Query::Exact(px(100.0)), Some(assigned), true)
         .unwrap();
     let [mut measurement, mut placement] = checkpoints(&mut scene, assigned);
     let root = scene.root();
     let root_geometry = scene.geometry(root);
     let parent_geometry = scene.geometry(parent);
-    assert_eq!(parent_geometry.unwrap().origin, Origin { x: 3, y: 14 });
+    assert_eq!(
+        parent_geometry.unwrap().origin,
+        Origin {
+            x: px(3.0),
+            y: px(14.0)
+        }
+    );
     for x in [7, 9, 2] {
         let before = scene.node_counts(root).unwrap();
         scene
@@ -95,7 +108,7 @@ fn skipping_parent_preserves_nonzero_placement_and_new_internal_movement() {
             .unwrap();
         let report = scene
             .run_pruned(
-                Query::Exact(100),
+                Query::Exact(px(100.0)),
                 assigned,
                 &mut measurement,
                 &mut placement,
@@ -109,10 +122,10 @@ fn skipping_parent_preserves_nonzero_placement_and_new_internal_movement() {
         );
         assert_eq!(scene.geometry(root), root_geometry);
         assert_eq!(scene.geometry(parent), parent_geometry);
-        assert_eq!(scene.geometry(child).unwrap().origin.x, x);
+        assert_eq!(scene.geometry(child).unwrap().origin.x, px(x as f32));
         assert_eq!(report.published, 1);
         reference
-            .run(Query::Exact(100), Some(assigned), true)
+            .run(Query::Exact(px(100.0)), Some(assigned), true)
             .unwrap();
         assert_eq!(scene.snapshot(), reference.snapshot());
         assert!(scene.staged_usage().iter().all(|&(len, _)| len == 0));
@@ -125,10 +138,12 @@ fn skipping_parent_preserves_nonzero_placement_and_new_internal_movement() {
 fn standalone_audit_cannot_hide_unpublished_movement_from_a_later_pruned_run() {
     let (mut scene, [prefix, parent, child]) = moving_fixture();
     let assigned = Size {
-        width: 100,
-        height: 80,
+        width: px(100.0),
+        height: px(80.0),
     };
-    scene.run(Query::Exact(100), Some(assigned), false).unwrap();
+    scene
+        .run(Query::Exact(px(100.0)), Some(assigned), false)
+        .unwrap();
     let [mut measurement, mut placement] = checkpoints(&mut scene, assigned);
     scene
         .edit_layout::<MovingChild>(parent, |node| node.x = 9)
@@ -140,12 +155,12 @@ fn standalone_audit_cannot_hide_unpublished_movement_from_a_later_pruned_run() {
             .outcome,
         CheckOutcome::Unchanged
     );
-    assert_eq!(scene.geometry(child).unwrap().origin.x, 0);
+    assert_eq!(scene.geometry(child).unwrap().origin.x, px(0.0));
     // Select a different subtree after the audit advanced its cursor.
     scene.edit_layout::<Drawing>(prefix, |_| {}).unwrap();
     let report = scene
         .run_pruned(
-            Query::Exact(100),
+            Query::Exact(px(100.0)),
             assigned,
             &mut measurement,
             &mut placement,
@@ -153,9 +168,11 @@ fn standalone_audit_cannot_hide_unpublished_movement_from_a_later_pruned_run() {
         .unwrap();
     assert_eq!(report.checks[1].outcome, CheckOutcome::Unchanged);
     assert!(!report.skipped_parent_layout);
-    assert_eq!(scene.geometry(child).unwrap().origin.x, 9);
+    assert_eq!(scene.geometry(child).unwrap().origin.x, px(9.0));
     let snapshot = scene.snapshot();
-    scene.run(Query::Exact(100), Some(assigned), true).unwrap();
+    scene
+        .run(Query::Exact(px(100.0)), Some(assigned), true)
+        .unwrap();
     assert_eq!(scene.snapshot(), snapshot);
 }
 
@@ -163,20 +180,24 @@ fn standalone_audit_cannot_hide_unpublished_movement_from_a_later_pruned_run() {
 fn historical_equality_cannot_reuse_a_different_published_parent() {
     let (mut scene, [prefix, parent, child]) = moving_fixture();
     let assigned = Size {
-        width: 100,
-        height: 80,
+        width: px(100.0),
+        height: px(80.0),
     };
-    scene.run(Query::Exact(100), Some(assigned), false).unwrap();
+    scene
+        .run(Query::Exact(px(100.0)), Some(assigned), false)
+        .unwrap();
     let [mut measurement, mut placement] = checkpoints(&mut scene, assigned);
     let root = scene.root();
     let original = scene.geometry(root);
     scene
-        .edit_layout::<Drawing>(prefix, |node| node.size.height = 17)
+        .edit_layout::<Drawing>(prefix, |node| node.size.height = px(17.0))
         .unwrap();
-    scene.run(Query::Exact(100), Some(assigned), false).unwrap();
-    assert_eq!(scene.geometry(parent).unwrap().origin.y, 24);
     scene
-        .edit_layout::<Drawing>(prefix, |node| node.size.height = 7)
+        .run(Query::Exact(px(100.0)), Some(assigned), false)
+        .unwrap();
+    assert_eq!(scene.geometry(parent).unwrap().origin.y, px(24.0));
+    scene
+        .edit_layout::<Drawing>(prefix, |node| node.size.height = px(7.0))
         .unwrap();
     scene
         .edit_layout::<MovingChild>(parent, |node| node.x = 9)
@@ -184,7 +205,7 @@ fn historical_equality_cannot_reuse_a_different_published_parent() {
     let before = scene.node_counts(root).unwrap().layouts;
     let report = scene
         .run_pruned(
-            Query::Exact(100),
+            Query::Exact(px(100.0)),
             assigned,
             &mut measurement,
             &mut placement,
@@ -197,8 +218,8 @@ fn historical_equality_cannot_reuse_a_different_published_parent() {
     assert!(!report.skipped_parent_layout);
     assert_eq!(scene.node_counts(root).unwrap().layouts, before + 1);
     assert_eq!(scene.geometry(root), original);
-    assert_eq!(scene.geometry(parent).unwrap().origin.y, 14);
-    assert_eq!(scene.geometry(child).unwrap().origin.x, 9);
+    assert_eq!(scene.geometry(parent).unwrap().origin.y, px(14.0));
+    assert_eq!(scene.geometry(child).unwrap().origin.x, px(9.0));
     // Successful reconciliation anchors the still-equal evidence to this publication.
     scene
         .edit_layout::<MovingChild>(parent, |node| node.x = 2)
@@ -206,7 +227,7 @@ fn historical_equality_cannot_reuse_a_different_published_parent() {
     assert!(
         scene
             .run_pruned(
-                Query::Exact(100),
+                Query::Exact(px(100.0)),
                 assigned,
                 &mut measurement,
                 &mut placement
@@ -215,47 +236,51 @@ fn historical_equality_cannot_reuse_a_different_published_parent() {
             .skipped_parent_layout
     );
     let snapshot = scene.snapshot();
-    scene.run(Query::Exact(100), Some(assigned), true).unwrap();
+    scene
+        .run(Query::Exact(px(100.0)), Some(assigned), true)
+        .unwrap();
     assert_eq!(scene.snapshot(), snapshot);
 }
 
 #[test]
 fn changed_final_outputs_and_owner_inputs_execute_parent_layout() {
     let initial = LayoutOutput {
-        baseline: Some(4),
+        baseline: Some(px(4.0)),
         content: Size {
-            width: 12,
-            height: 10,
+            width: px(12.0),
+            height: px(10.0),
         },
     };
     for output in [
         LayoutOutput {
-            baseline: Some(8),
+            baseline: Some(px(8.0)),
             ..initial
         },
         LayoutOutput {
             content: Size {
-                width: 120,
-                height: 20,
+                width: px(120.0),
+                height: px(20.0),
             },
             ..initial
         },
     ] {
-        let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+        let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
         let root = scene.root();
         let child = scene.append(root, OutputLeaf(initial)).unwrap();
         let assigned = Size {
-            width: 100,
-            height: 30,
+            width: px(100.0),
+            height: px(30.0),
         };
-        scene.run(Query::Exact(100), Some(assigned), false).unwrap();
+        scene
+            .run(Query::Exact(px(100.0)), Some(assigned), false)
+            .unwrap();
         let [mut measurement, mut placement] = checkpoints(&mut scene, assigned);
         scene
             .edit_layout::<OutputLeaf>(child, |node| node.0 = output)
             .unwrap();
         let report = scene
             .run_pruned(
-                Query::Exact(100),
+                Query::Exact(px(100.0)),
                 assigned,
                 &mut measurement,
                 &mut placement,
@@ -271,18 +296,20 @@ fn changed_final_outputs_and_owner_inputs_execute_parent_layout() {
         scene
             .refresh_selective_dependencies(
                 &mut measurement,
-                CheckTarget::Measure(Query::Exact(100)),
+                CheckTarget::Measure(Query::Exact(px(100.0))),
             )
             .unwrap();
         scene
             .refresh_selective_dependencies(&mut placement, CheckTarget::Layout(assigned))
             .unwrap();
         scene
-            .edit_layout::<Column>(root, |node| node.padding = 2)
+            .edit_layout::<Column>(root, |node| {
+                node.padding = crate::column::Edges::all(px(2.0))
+            })
             .unwrap();
         let report = scene
             .run_pruned(
-                Query::Exact(100),
+                Query::Exact(px(100.0)),
                 assigned,
                 &mut measurement,
                 &mut placement,
@@ -291,7 +318,9 @@ fn changed_final_outputs_and_owner_inputs_execute_parent_layout() {
         assert_eq!(report.checks[1].outcome, CheckOutcome::Unverifiable);
         assert!(!report.skipped_parent_layout);
         let snapshot = scene.snapshot();
-        scene.run(Query::Exact(100), Some(assigned), true).unwrap();
+        scene
+            .run(Query::Exact(px(100.0)), Some(assigned), true)
+            .unwrap();
         assert_eq!(scene.snapshot(), snapshot);
     }
 }
@@ -302,10 +331,12 @@ fn failure_after_equal_audits_does_not_commit_parent_or_cursors() {
         let (mut scene, children) = reading_fixture();
         let root = scene.root();
         let assigned = Size {
-            width: 100,
-            height: 5,
+            width: px(100.0),
+            height: px(5.0),
         };
-        scene.run(Query::Exact(100), Some(assigned), false).unwrap();
+        scene
+            .run(Query::Exact(px(100.0)), Some(assigned), false)
+            .unwrap();
         let [mut measurement, mut placement] = checkpoints(&mut scene, assigned);
         let snapshot = scene.snapshot();
         let reads = scene.published_layout_reads(root);
@@ -314,7 +345,7 @@ fn failure_after_equal_audits_does_not_commit_parent_or_cursors() {
         scene.body_mut::<ReadingParent>(root).unwrap().fault = Some(fault);
         let result = catch_unwind(AssertUnwindSafe(|| {
             scene.run_pruned(
-                Query::Exact(100),
+                Query::Exact(px(100.0)),
                 assigned,
                 &mut measurement,
                 &mut placement,
@@ -334,7 +365,7 @@ fn failure_after_equal_audits_does_not_commit_parent_or_cursors() {
         scene.body_mut::<ReadingParent>(root).unwrap().fault = None;
         let retry = scene
             .run_pruned(
-                Query::Exact(100),
+                Query::Exact(px(100.0)),
                 assigned,
                 &mut measurement,
                 &mut placement,

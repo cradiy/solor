@@ -1,5 +1,6 @@
 #[cfg(feature = "layout-audit")]
 #[path = "validation.rs"]
+/// Dependency capture and verification for layout audits.
 pub mod validation;
 
 use std::any::Any;
@@ -11,27 +12,41 @@ use std::rc::Rc;
 use super::node_store::{AccessError, Context, NodeStore};
 use super::tree::NodeId;
 
-use super::MEASUREMENT_CACHE_SLOTS;
+use super::{MEASUREMENT_CACHE_SLOTS, Pixels};
 
 const _: () = assert!(MEASUREMENT_CACHE_SLOTS > 0);
 
+/// A failed tree operation, measurement, placement or publication.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayoutError {
+    /// The node store rejected an access.
     Access(AccessError),
+    /// A size, baseline or coordinate exceeded its allowed range.
     InvalidSize,
     /// A node could not produce its measurement or layout output.
     Node(&'static str),
+    /// The stored layout body has a different concrete type.
     WrongNodeType,
+    /// No direct child exists at the supplied index.
     MissingChild(usize),
+    /// The child already has a position in this layout pass.
     DuplicatePlacement(usize),
+    /// The child already has an allocation in this layout pass.
     DuplicateLayout(usize),
+    /// The child needs an allocation before it can be placed.
     MissingLayout(usize),
+    /// The layout body received an unexpected number of children.
     UnexpectedChildCount,
+    /// A layout body returned with children still awaiting placement.
     UnplacedChildren,
+    /// A previous operation on this context failed.
     FailedChildOperation,
+    /// The scene no longer accepts this construction operation.
     StructureLocked,
+    /// The revision counter cannot advance.
     RevisionExhausted,
     #[cfg(feature = "layout-audit")]
+    /// The checkpoint belongs to another node or scene.
     InvalidCheckpointOwner,
 }
 
@@ -72,17 +87,23 @@ impl From<AccessError> for LayoutError {
     }
 }
 
+/// Result of a fallible layout operation.
 pub type Result<T> = std::result::Result<T, LayoutError>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Width constraint for a preferred-size measurement.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Query {
+    /// Measure at the content's preferred width.
     Natural,
-    AtMost(u32),
-    Exact(u32),
+    /// Limit the preferred width to the supplied maximum.
+    AtMost(Pixels),
+    /// Measure at exactly the supplied width.
+    Exact(Pixels),
 }
 
 impl Query {
-    pub fn resolve(self, preferred: u32) -> u32 {
+    /// Applies this query to a preferred width.
+    pub fn resolve(self, preferred: Pixels) -> Pixels {
         match self {
             Self::Natural => preferred,
             Self::AtMost(limit) => preferred.min(limit),
@@ -90,7 +111,15 @@ impl Query {
         }
     }
 
-    fn accepts(self, width: u32) -> bool {
+    fn validate(self) -> Result<()> {
+        match self {
+            Self::Natural => Ok(()),
+            Self::Exact(v) | Self::AtMost(v) if v.is_extent() => Ok(()),
+            _ => Err(LayoutError::InvalidSize),
+        }
+    }
+
+    fn accepts(self, width: Pixels) -> bool {
         match self {
             Self::Natural => true,
             Self::AtMost(limit) => width <= limit,
@@ -99,51 +128,69 @@ impl Query {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Extent on both axes in logical pixels.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Size {
-    pub width: u32,
-    pub height: u32,
+    /// Horizontal extent.
+    pub width: Pixels,
+    /// Vertical extent.
+    pub height: Pixels,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Origin {
-    pub x: u32,
-    pub y: u32,
+/// Definite content dimensions of the containing block during measurement.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ContainingBlock {
+    /// Available inline dimension, when definite.
+    pub width: Option<Pixels>,
+    /// Available block dimension, when definite.
+    pub height: Option<Pixels>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Metrics {
-    pub size: Size,
-    pub baseline: Option<u32>,
-}
-
-impl Metrics {
-    fn validate(self) -> Result<Self> {
-        if self.baseline.is_some_and(|value| value > self.size.height) {
-            return Err(LayoutError::InvalidSize);
+impl Size {
+    fn validate(self) -> Result<()> {
+        if self.width.is_extent() && self.height.is_extent() {
+            Ok(())
+        } else {
+            Err(LayoutError::InvalidSize)
         }
-        Ok(self)
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Geometry {
-    pub metrics: Metrics,
-    pub origin: Origin,
-    pub content: Size,
+impl From<Size> for ContainingBlock {
+    fn from(size: Size) -> Self {
+        Self {
+            width: Some(size.width),
+            height: Some(size.height),
+        }
+    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LayoutOutput {
-    pub baseline: Option<u32>,
-    pub content: Size,
+/// Position relative to the parent's origin in layout units.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Origin {
+    /// Horizontal offset.
+    pub x: Pixels,
+    /// Vertical offset.
+    pub y: Pixels,
 }
 
-impl LayoutOutput {
-    fn validate(self) -> Result<Self> {
-        if self
-            .baseline
-            .is_some_and(|value| value > self.content.height)
+/// Measured or assigned size and its optional text baseline.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Metrics {
+    /// Box extent under the current constraint.
+    pub size: Size,
+    /// Baseline offset measured from the top of the box.
+    pub baseline: Option<Pixels>,
+}
+
+impl Metrics {
+    /// Checks a measurement before it is used to size an enclosing box.
+    pub fn validate_for(self, query: Query) -> Result<Self> {
+        self.size.validate()?;
+        if !query.accepts(self.size.width)
+            || self
+                .baseline
+                .is_some_and(|value| !value.is_extent() || value > self.size.height)
         {
             return Err(LayoutError::InvalidSize);
         }
@@ -151,18 +198,59 @@ impl LayoutOutput {
     }
 }
 
+/// Published geometry of a retained layout node.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Geometry {
+    /// Assigned dimensions and baseline.
+    pub metrics: Metrics,
+    /// Offset from the parent box.
+    pub origin: Origin,
+    /// Reported content extent, including overflow.
+    pub content: Size,
+}
+
+/// Content geometry returned after arranging children.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LayoutOutput {
+    /// Optional baseline relative to the content origin.
+    pub baseline: Option<Pixels>,
+    /// Extent occupied by content, including overflow.
+    pub content: Size,
+}
+
+impl LayoutOutput {
+    /// Checks that the baseline fits within the reported content.
+    pub fn validate(self) -> Result<Self> {
+        self.content.validate()?;
+        if self
+            .baseline
+            .is_some_and(|value| !value.is_extent() || value > self.content.height)
+        {
+            return Err(LayoutError::InvalidSize);
+        }
+        Ok(self)
+    }
+}
+
+/// Cumulative measurement and placement counters.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Counts {
+    /// Preferred-size queries including cache hits.
     pub queries: usize,
+    /// Queries satisfied from the measurement cache.
     pub cache_hits: usize,
+    /// Calls to a layout body's measurement method.
     pub measures: usize,
+    /// Calls to a layout body's placement method.
     pub layouts: usize,
 }
 
 /// Measures preferred dimensions and arranges direct children within an assigned size.
 /// A successful layout must lay out and place each child exactly once.
 pub trait LayoutNode: Any {
+    /// Measures preferred size and baseline under the given width constraint.
     fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics>;
+    /// Assigns each direct child its size and parent-local position.
     fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput>;
 }
 
@@ -171,11 +259,12 @@ pub trait LayoutNode: Any {
 pub(super) const MAX_RECORDED_READS: usize = 16_384;
 
 #[cfg(feature = "layout-audit")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Read {
     Measure {
         node: NodeId,
         query: Query,
+        containing_block: ContainingBlock,
         metrics: Metrics,
     },
     Layout {
@@ -186,7 +275,7 @@ pub enum Read {
 }
 
 #[cfg(feature = "layout-audit")]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ReadSet {
     pub reads: Vec<Read>,
     pub complete: bool,
@@ -222,6 +311,7 @@ impl ReadSet {
 }
 
 struct Measurement {
+    containing_block: ContainingBlock,
     query: Query,
     metrics: Metrics,
 }
@@ -311,7 +401,10 @@ impl Entry {
     }
 }
 
+/// Access to children during a preferred-size calculation.
 pub struct MeasureContext<'a, 'store> {
+    containing_block: ContainingBlock,
+    child_basis: ContainingBlock,
     access: &'a mut Context<'store, Entry>,
     #[cfg(feature = "layout-audit")]
     reads: &'a mut ReadSet,
@@ -320,10 +413,21 @@ pub struct MeasureContext<'a, 'store> {
 }
 
 impl MeasureContext<'_, '_> {
+    /// Returns the parent content dimensions available for this measurement.
+    pub fn containing_block(&self) -> ContainingBlock {
+        self.containing_block
+    }
+    /// Supplies this node's content dimensions for its children's preferred-size queries.
+    pub fn set_child_containing_block(&mut self, basis: ContainingBlock) {
+        self.child_basis = basis;
+    }
+
+    /// Returns the number of direct children in sibling order.
     pub fn child_count(&self) -> usize {
         self.access.child_count()
     }
 
+    /// Queries one child's preferred metrics under the supplied constraint.
     pub fn measure_child(&mut self, index: usize, query: Query) -> Result<Metrics> {
         if self.failed {
             return Err(LayoutError::FailedChildOperation);
@@ -334,11 +438,12 @@ impl MeasureContext<'_, '_> {
             .child(index)
             .ok_or(LayoutError::MissingChild(index))?;
         let metrics = self.access.execute_child(id, |entry, access| {
-            Ok(measure(entry, access, query, self.force))
+            Ok(measure(entry, access, query, self.child_basis, self.force))
         })??;
         #[cfg(feature = "layout-audit")]
         self.reads.push(Read::Measure {
             node: id,
+            containing_block: self.child_basis,
             query,
             metrics,
         });
@@ -351,8 +456,18 @@ fn measure(
     entry: &mut Entry,
     access: &mut Context<'_, Entry>,
     query: Query,
+    containing_block: ContainingBlock,
     force: bool,
 ) -> Result<Metrics> {
+    query.validate()?;
+    if containing_block
+        .width
+        .into_iter()
+        .chain(containing_block.height)
+        .any(|v| !v.is_extent())
+    {
+        return Err(LayoutError::InvalidSize);
+    }
     entry.counts.queries += 1;
     if entry.measure_dirty {
         entry.measure_cache.iter_mut().for_each(|slot| *slot = None);
@@ -365,7 +480,7 @@ fn measure(
         entry.replacement = 0;
     } else if !force {
         for cached in entry.measure_cache.iter().flatten() {
-            if cached.query == query {
+            if cached.query == query && cached.containing_block == containing_block {
                 entry.counts.cache_hits += 1;
                 return Ok(cached.metrics);
             }
@@ -376,29 +491,36 @@ fn measure(
     #[cfg(feature = "layout-audit")]
     let mut reads = ReadSet::default();
     let mut cx = MeasureContext {
+        containing_block,
+        child_basis: ContainingBlock::default(),
         access,
         #[cfg(feature = "layout-audit")]
         reads: &mut reads,
         force,
         failed: false,
     };
-    let metrics = entry.body.measure(&mut cx, query)?.validate()?;
+    let metrics = entry.body.measure(&mut cx, query)?.validate_for(query)?;
     if cx.failed {
         return Err(LayoutError::FailedChildOperation);
     }
-    if !query.accepts(metrics.size.width) {
-        return Err(LayoutError::InvalidSize);
-    }
-    if let Some(slot) = entry
-        .measure_cache
-        .iter()
-        .position(|slot| slot.as_ref().is_some_and(|cached| cached.query == query))
-    {
-        entry.measure_cache[slot] = Some(Measurement { query, metrics });
+    if let Some(slot) = entry.measure_cache.iter().position(|slot| {
+        slot.as_ref().is_some_and(|cached| {
+            cached.query == query && cached.containing_block == containing_block
+        })
+    }) {
+        entry.measure_cache[slot] = Some(Measurement {
+            query,
+            containing_block,
+            metrics,
+        });
         #[cfg(feature = "layout-audit")]
         entry.set_measurement_reads(slot, reads);
     } else {
-        entry.measure_cache[entry.replacement] = Some(Measurement { query, metrics });
+        entry.measure_cache[entry.replacement] = Some(Measurement {
+            query,
+            containing_block,
+            metrics,
+        });
         #[cfg(feature = "layout-audit")]
         entry.set_measurement_reads(entry.replacement, reads);
         entry.replacement = (entry.replacement + 1) % entry.measure_cache.len();
@@ -475,7 +597,9 @@ impl Drop for Attempt<'_> {
     }
 }
 
+/// Access to measurement and staged placement for the current node's children.
 pub struct LayoutContext<'a, 'store> {
+    child_basis: ContainingBlock,
     access: &'a mut Context<'store, Entry>,
     scratch: &'a mut Scratch,
     children_start: usize,
@@ -492,16 +616,25 @@ impl Drop for LayoutContext<'_, '_> {
 }
 
 impl LayoutContext<'_, '_> {
+    /// Sets the parent content dimensions for subsequent child measurements.
+    pub fn set_child_containing_block(&mut self, basis: ContainingBlock) {
+        self.child_basis = basis;
+    }
+
+    /// Returns the number of direct children to arrange.
     pub fn child_count(&self) -> usize {
         self.access.child_count()
     }
 
+    /// Queries a child's preferred metrics before assigning its box.
     pub fn measure_child(&mut self, index: usize, query: Query) -> Result<Metrics> {
         if self.failed {
             return Err(LayoutError::FailedChildOperation);
         }
         self.failed = true;
         let metrics = MeasureContext {
+            containing_block: ContainingBlock::default(),
+            child_basis: self.child_basis,
             access: self.access,
             #[cfg(feature = "layout-audit")]
             reads: &mut self.reads,
@@ -513,6 +646,7 @@ impl LayoutContext<'_, '_> {
         Ok(metrics)
     }
 
+    /// Arranges a child at the assigned size and returns its content extent.
     pub fn layout_child(&mut self, index: usize, assigned: Size) -> Result<LayoutOutput> {
         if self.failed {
             return Err(LayoutError::FailedChildOperation);
@@ -543,7 +677,31 @@ impl LayoutContext<'_, '_> {
         Ok(output)
     }
 
+    /// Translates the direct children placed by a content layout into its enclosing box.
+    pub fn offset_children(&mut self, by: Origin) -> Result<()> {
+        if self.failed {
+            return Err(LayoutError::FailedChildOperation);
+        }
+        self.failed = true;
+        for child in &self.scratch.children[self.children_start..] {
+            if !child.placed {
+                return Err(LayoutError::UnplacedChildren);
+            }
+            let position = child.draft.ok_or(LayoutError::UnplacedChildren)?;
+            let origin = &mut self.scratch.draft[position].geometry.origin;
+            origin.x = origin.x.checked_add(by.x).ok_or(LayoutError::InvalidSize)?;
+            origin.y = origin.y.checked_add(by.y).ok_or(LayoutError::InvalidSize)?;
+        }
+        self.failed = false;
+        Ok(())
+    }
+
+    /// Sets the origin of an already arranged child.
     pub fn place_child(&mut self, index: usize, origin: Origin) -> Result<()> {
+        if !origin.x.get().is_finite() || !origin.y.get().is_finite() {
+            self.failed = true;
+            return Err(LayoutError::InvalidSize);
+        }
         if self.failed {
             return Err(LayoutError::FailedChildOperation);
         }
@@ -569,6 +727,7 @@ fn layout(
     scratch: &mut Scratch,
     force: bool,
 ) -> Result<(usize, LayoutOutput)> {
+    assigned.validate()?;
     #[cfg(feature = "layout-audit")]
     if !force
         && entry.layout_dirty
@@ -626,6 +785,7 @@ fn layout(
         .children
         .resize(children_start + access.child_count(), ChildState::default());
     let mut cx = LayoutContext {
+        child_basis: ContainingBlock::default(),
         access,
         scratch,
         children_start,
@@ -663,7 +823,7 @@ fn layout(
     Ok((position, output))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum RootRequest {
     Measure(Query, Option<Size>),
     Assigned(Size),
@@ -679,7 +839,13 @@ fn layout_root(
     let size = match request {
         RootRequest::Measure(query, assigned) => {
             let metrics = store.execute(root, |entry, access| {
-                Ok(measure(entry, access, query, force))
+                Ok(measure(
+                    entry,
+                    access,
+                    query,
+                    ContainingBlock::default(),
+                    force,
+                ))
             })??;
             assigned.unwrap_or(metrics.size)
         }
@@ -762,6 +928,7 @@ impl Scene {
         }
     }
 
+    /// Returns the root node of this scene.
     pub fn root(&self) -> NodeId {
         self.store.root()
     }
@@ -769,6 +936,11 @@ impl Scene {
     /// Release temporary capacity without invalidating measurements or published geometry.
     pub fn release_scratch(&mut self) {
         self.scratch = Scratch::default();
+    }
+
+    /// Returns the live children in layout order.
+    pub fn children(&self, parent: NodeId) -> Result<impl ExactSizeIterator<Item = NodeId> + '_> {
+        Ok(self.store.children(parent).map_err(AccessError::from)?)
     }
 
     /// Append during construction, before the first successful root layout.
@@ -831,6 +1003,7 @@ impl Scene {
         Ok(node)
     }
 
+    /// Removes a childless node and invalidates its parent.
     pub fn unmount_leaf(&mut self, node: NodeId) -> Result<()> {
         self.remove_mounted(node, true)
     }
@@ -1018,6 +1191,7 @@ impl Scene {
             .collect()
     }
 
+    /// Sums the counters across live nodes.
     pub fn counts(&self) -> Counts {
         self.nodes.iter().fold(Counts::default(), |mut total, &id| {
             let counts = self.store.get(id).unwrap().counts;
@@ -1051,6 +1225,7 @@ impl Scene {
         stats
     }
 
+    /// Returns the counters for one live node.
     pub fn node_counts(&self, id: NodeId) -> Result<Counts> {
         Ok(self.store.get(id)?.counts)
     }
@@ -1060,6 +1235,7 @@ impl Scene {
         self.store.get(id).ok()?.geometry
     }
 
+    /// Reports whether layout publication is pending.
     pub fn is_pending(&self) -> bool {
         self.pending
     }
@@ -1067,7 +1243,13 @@ impl Scene {
     /// Query preferred metrics without publishing geometry.
     pub fn probe(&mut self, node: NodeId, query: Query) -> Result<Metrics> {
         self.store.execute(node, |entry, access| {
-            Ok(measure(entry, access, query, false))
+            Ok(measure(
+                entry,
+                access,
+                query,
+                ContainingBlock::default(),
+                false,
+            ))
         })?
     }
 }

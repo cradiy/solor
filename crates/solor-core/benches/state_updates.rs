@@ -1,3 +1,4 @@
+//! Signal dispatch and coalescing workloads.
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 

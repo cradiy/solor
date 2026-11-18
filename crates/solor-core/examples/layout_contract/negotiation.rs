@@ -1,4 +1,4 @@
-use solor_core::tree::NodeId;
+use solor_core::{Pixels, px, tree::NodeId};
 
 use super::fixtures::{Drawing, Wrapping};
 use super::layout::{
@@ -6,31 +6,27 @@ use super::layout::{
     Result, Scene, Size,
 };
 
-fn add(a: u32, b: u32) -> Result<u32> {
+fn add(a: Pixels, b: Pixels) -> Result<Pixels> {
     a.checked_add(b).ok_or(LayoutError::InvalidSize)
 }
 
 pub struct Button {
     pub units: u32,
-    pub advance: u32,
-    pub line_height: u32,
-    pub ascent: u32,
-    pub padding: u32,
+    pub advance: Pixels,
+    pub line_height: Pixels,
+    pub ascent: Pixels,
+    pub padding: Pixels,
 }
 
 impl Button {
     fn natural(&self) -> Result<Size> {
-        if self.advance == 0 || self.line_height == 0 || self.ascent > self.line_height {
+        if self.advance == px(0.0) || self.line_height == px(0.0) || self.ascent > self.line_height
+        {
             return Err(LayoutError::InvalidSize);
         }
         let inset = add(self.padding, self.padding)?;
         Ok(Size {
-            width: add(
-                self.units
-                    .checked_mul(self.advance)
-                    .ok_or(LayoutError::InvalidSize)?,
-                inset,
-            )?,
+            width: add(self.advance * self.units as f32, inset)?,
             height: add(self.line_height, inset)?,
         })
     }
@@ -52,7 +48,7 @@ impl LayoutNode for Button {
         let natural = self.natural()?;
         let y = add(
             self.padding,
-            assigned.height.saturating_sub(natural.height) / 2,
+            assigned.height.saturating_sub(natural.height) / 2.0,
         )?;
         Ok(LayoutOutput {
             baseline: Some(add(y, self.ascent)?),
@@ -65,22 +61,24 @@ impl LayoutNode for Button {
 }
 
 pub struct Row {
-    pub padding: u32,
-    pub gap: u32,
+    pub padding: Pixels,
+    pub gap: Pixels,
 }
 
 struct Plan {
-    width: u32,
+    width: Pixels,
     children: [Metrics; 3],
-    height: u32,
-    baseline: u32,
+    height: Pixels,
+    baseline: Pixels,
 }
 
-fn band(heights: [u32; 3], baselines: [Option<u32>; 3]) -> Result<(u32, u32)> {
-    let baseline = baselines[1].unwrap_or(0).max(baselines[2].unwrap_or(0));
+fn band(heights: [Pixels; 3], baselines: [Option<Pixels>; 3]) -> Result<(Pixels, Pixels)> {
+    let baseline = baselines[1]
+        .unwrap_or_default()
+        .max(baselines[2].unwrap_or_default());
     let descent = heights[1]
-        .saturating_sub(baselines[1].unwrap_or(0))
-        .max(heights[2].saturating_sub(baselines[2].unwrap_or(0)));
+        .saturating_sub(baselines[1].unwrap_or_default())
+        .max(heights[2].saturating_sub(baselines[2].unwrap_or_default()));
     Ok((heights[0].max(add(baseline, descent)?), baseline))
 }
 
@@ -153,13 +151,13 @@ impl LayoutNode for Row {
         let inset = add(self.padding, self.padding)?;
         let top = add(
             self.padding,
-            assigned.height.saturating_sub(add(height, inset)?) / 2,
+            assigned.height.saturating_sub(add(height, inset)?) / 2.0,
         )?;
         let mut x = self.padding;
         let mut content = Size::default();
         for index in 0..3 {
             let offset = if index == 0 || outputs[index].baseline.is_none() {
-                height.saturating_sub(heights[index]) / 2
+                height.saturating_sub(heights[index]) / 2.0
             } else {
                 baseline - outputs[index].baseline.unwrap()
             };
@@ -193,7 +191,10 @@ pub struct Ids {
 }
 
 pub fn fixture() -> (Scene, Ids) {
-    let mut scene = Scene::new(Row { padding: 2, gap: 3 });
+    let mut scene = Scene::new(Row {
+        padding: px(2.0),
+        gap: px(3.0),
+    });
     let root = scene.root();
     scene.append(root, Drawing::new(10, 10)).unwrap();
     let label = scene
@@ -212,10 +213,10 @@ pub fn fixture() -> (Scene, Ids) {
             root,
             Button {
                 units: 4,
-                advance: 2,
-                line_height: 6,
-                ascent: 4,
-                padding: 2,
+                advance: px(2.0),
+                line_height: px(6.0),
+                ascent: px(4.0),
+                padding: px(2.0),
             },
         )
         .unwrap();
@@ -232,8 +233,12 @@ pub fn run() {
         reference
             .edit_layout::<Button>(other.button, |button| button.units = units)
             .unwrap();
-        scene.run(Query::Exact(width), None, false).unwrap();
-        reference.run(Query::Exact(width), None, true).unwrap();
+        scene
+            .run(Query::Exact(px(width as f32)), None, false)
+            .unwrap();
+        reference
+            .run(Query::Exact(px(width as f32)), None, true)
+            .unwrap();
         assert_eq!(scene.snapshot(), reference.snapshot());
     }
     scene
@@ -247,8 +252,8 @@ pub fn run() {
         .run(
             Query::Natural,
             Some(Size {
-                width: 50,
-                height: 40,
+                width: px(50.0),
+                height: px(40.0),
             }),
             false,
         )
@@ -257,8 +262,8 @@ pub fn run() {
         .run(
             Query::Natural,
             Some(Size {
-                width: 50,
-                height: 40,
+                width: px(50.0),
+                height: px(40.0),
             }),
             true,
         )

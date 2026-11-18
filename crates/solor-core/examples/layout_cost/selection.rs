@@ -1,5 +1,6 @@
 use super::*;
 use crate::shared::layout::validation::{Checkpoint, SelectiveCheckpoint};
+use solor_core::px;
 
 #[derive(Clone, Copy, Debug)]
 enum Mode {
@@ -51,11 +52,11 @@ struct Runner {
 
 fn targets(width: u32) -> (CheckTarget, CheckTarget, Size) {
     let assigned = Size {
-        width,
-        height: 100_000,
+        width: px(width as f32),
+        height: px(100_000.0),
     };
     (
-        CheckTarget::Measure(Query::Exact(width)),
+        CheckTarget::Measure(Query::Exact(px(width as f32))),
         CheckTarget::Layout(assigned),
         assigned,
     )
@@ -67,7 +68,7 @@ impl Runner {
         fixture.prepare(Change::StableLabel);
         fixture
             .scene
-            .run(Query::Exact(96), Some(targets(96).2), false)
+            .run(Query::Exact(px(96.0)), Some(targets(96).2), false)
             .unwrap();
         let mut runner = Self {
             fixture,
@@ -149,11 +150,11 @@ impl Runner {
             Evidence::Selective(a, b) if shared => {
                 let report = if matches!(self.mode, Mode::Pruned) {
                     scene
-                        .run_pruned(Query::Exact(width), assigned, a, b)
+                        .run_pruned(Query::Exact(px(width as f32)), assigned, a, b)
                         .unwrap()
                 } else {
                     scene
-                        .run_validated(Query::Exact(width), assigned, a, b)
+                        .run_validated(Query::Exact(px(width as f32)), assigned, a, b)
                         .unwrap()
                 };
                 self.reused += report.reused_layouts;
@@ -171,7 +172,7 @@ impl Runner {
         }
         if !shared {
             scene
-                .run(Query::Exact(width), Some(assigned), force)
+                .run(Query::Exact(px(width as f32)), Some(assigned), force)
                 .unwrap();
         }
         let outcomes = reports.map(|reports| reports.map(|r| r.outcome));

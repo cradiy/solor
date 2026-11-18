@@ -1,3 +1,5 @@
+//! Measurement, placement and geometry publication cases.
+use solor_core::px;
 use std::rc::Rc;
 
 use solor_core::layout::{
@@ -22,11 +24,11 @@ impl LayoutNode for Rows {
     }
 
     fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {
-        let mut y = 0;
+        let mut y = px(0.0);
         for index in 0..cx.child_count() {
             let child = cx.measure_child(index, Query::Exact(assigned.width))?;
             cx.layout_child(index, child.size)?;
-            cx.place_child(index, Origin { x: 0, y })?;
+            cx.place_child(index, Origin { x: px(0.0), y })?;
             y += child.size.height;
         }
         Ok(LayoutOutput {
@@ -48,8 +50,8 @@ impl LayoutNode for Leaf {
     fn measure(&mut self, _: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
         Ok(Metrics {
             size: Size {
-                width: query.resolve(12),
-                height: self.height,
+                width: query.resolve(px(12.0)),
+                height: px(self.height as f32),
             },
             baseline: None,
         })
@@ -85,8 +87,8 @@ fn late_child_failure_preserves_geometry_and_same_allocation_retries() -> Result
         },
     )?;
     let viewport = Size {
-        width: 24,
-        height: 6,
+        width: px(24.0),
+        height: px(6.0),
     };
     assert_eq!(scene.run_assigned(viewport, false)?, 3);
     assert_eq!(scene.node_counts(root)?.measures, 0);
@@ -109,17 +111,17 @@ fn late_child_failure_preserves_geometry_and_same_allocation_retries() -> Result
     assert!(scene.shared_snapshot().is_none());
 
     assert_eq!(scene.run_assigned(viewport, false)?, 3);
-    assert_eq!(scene.geometry(first).unwrap().metrics.size.height, 11);
-    assert_eq!(scene.geometry(second).unwrap().origin.y, 11);
-    assert_eq!(scene.geometry(root).unwrap().content.height, 14);
+    assert_eq!(scene.geometry(first).unwrap().metrics.size.height, px(11.0));
+    assert_eq!(scene.geometry(second).unwrap().origin.y, px(11.0));
+    assert_eq!(scene.geometry(root).unwrap().content.height, px(14.0));
     assert_eq!(scene.geometry(root).unwrap().metrics.size, viewport);
     let updated = scene.shared_snapshot().unwrap();
-    assert_eq!(held[2].origin.y, 5);
-    assert_eq!(updated[2].origin.y, 11);
+    assert_eq!(held[2].origin.y, px(5.0));
+    assert_eq!(updated[2].origin.y, px(11.0));
     let counts = scene.counts();
     assert_eq!(scene.run_assigned(viewport, false)?, 0);
     assert_eq!(scene.counts(), counts);
-    assert_eq!(scene.run(Query::Exact(24), Some(viewport), true)?, 0);
+    assert_eq!(scene.run(Query::Exact(px(24.0)), Some(viewport), true)?, 0);
     assert_eq!(scene.node_counts(root)?.measures, 1);
     assert!(Rc::ptr_eq(&updated, &scene.shared_snapshot().unwrap()));
     Ok(())
@@ -130,8 +132,8 @@ fn removing_a_zero_height_leaf_changes_membership_without_moving_any_node() -> R
     let mut scene = Scene::new(Rows);
     assert!(scene.shared_snapshot().is_none());
     let size = Size {
-        width: 10,
-        height: 10,
+        width: px(10.0),
+        height: px(10.0),
     };
     let leaf = scene.mount(
         scene.root(),
@@ -178,8 +180,8 @@ fn indexed_mount_and_subtree_removal_preserve_sibling_handles_and_snapshot_lifet
     };
     let tail = scene.mount(root, leaf(5))?;
     let viewport = Size {
-        width: 32,
-        height: 64,
+        width: px(32.0),
+        height: px(64.0),
     };
     scene.run_assigned(viewport, false)?;
     let closed = scene.shared_snapshot().unwrap();
@@ -192,7 +194,7 @@ fn indexed_mount_and_subtree_removal_preserve_sibling_handles_and_snapshot_lifet
     assert!(scene.shared_snapshot().is_none());
     scene.run_assigned(viewport, false)?;
     let opened = scene.shared_snapshot().unwrap();
-    assert_eq!(scene.geometry(tail).unwrap().origin.y, 12);
+    assert_eq!(scene.geometry(tail).unwrap().origin.y, px(12.0));
     assert_eq!(opened.len(), 4);
     assert_eq!(
         scene.unmount_leaf(section),
@@ -204,7 +206,7 @@ fn indexed_mount_and_subtree_removal_preserve_sibling_handles_and_snapshot_lifet
     assert!(scene.geometry(section).is_none());
     assert!(scene.shared_snapshot().is_none());
     scene.run_assigned(viewport, false)?;
-    assert_eq!(scene.geometry(tail).unwrap().origin.y, 0);
+    assert_eq!(scene.geometry(tail).unwrap().origin.y, px(0.0));
     assert_eq!(scene.shared_snapshot().unwrap(), closed);
     assert_eq!(opened.len(), 4);
     Ok(())

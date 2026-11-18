@@ -7,6 +7,7 @@ use super::layout::{
 };
 use super::layout::{LayoutError, MAX_RECORDED_READS, Read, ReadSet};
 use super::negotiation::fixture;
+use solor_core::px;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 #[path = "selective_tests.rs"]
@@ -21,30 +22,30 @@ mod parent_skip_tests;
 #[test]
 fn validation_separates_measurements_from_final_baseline_and_content() {
     let initial = LayoutOutput {
-        baseline: Some(4),
+        baseline: Some(px(4.0)),
         content: Size {
-            width: 12,
-            height: 10,
+            width: px(12.0),
+            height: px(10.0),
         },
     };
     for output in [
         LayoutOutput {
-            baseline: Some(8),
+            baseline: Some(px(8.0)),
             ..initial
         },
         LayoutOutput {
             content: Size {
-                width: 120,
-                height: 20,
+                width: px(120.0),
+                height: px(20.0),
             },
             ..initial
         },
     ] {
-        let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+        let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
         let root = scene.root();
         let child = scene.append(root, OutputLeaf(initial)).unwrap();
-        scene.run(Query::Exact(100), None, false).unwrap();
-        let measured = CheckTarget::Measure(Query::Exact(100));
+        scene.run(Query::Exact(px(100.0)), None, false).unwrap();
+        let measured = CheckTarget::Measure(Query::Exact(px(100.0)));
         let allocated = CheckTarget::Layout(scene.geometry(root).unwrap().metrics.size);
         let measurement = scene.capture_dependencies(root, measured).unwrap().unwrap();
         let layout = scene
@@ -66,20 +67,20 @@ fn validation_separates_measurements_from_final_baseline_and_content() {
         assert_eq!(scene.snapshot(), before);
         assert_eq!(scene.published_layout_reads(root), reads);
         assert!(scene.is_pending());
-        scene.run(Query::Exact(100), None, false).unwrap();
+        scene.run(Query::Exact(px(100.0)), None, false).unwrap();
         let incremental = scene.snapshot();
-        scene.run(Query::Exact(100), None, true).unwrap();
+        scene.run(Query::Exact(px(100.0)), None, true).unwrap();
         assert_eq!(scene.snapshot(), incremental);
     }
 }
 
 #[test]
 fn unchanged_dependencies_do_not_publish_internal_movement() {
-    let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+    let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
     let root = scene.root();
     let container = scene.append(root, MovingChild { x: 0 }).unwrap();
     let child = scene.append(container, Drawing::new(5, 5)).unwrap();
-    scene.run(Query::Exact(100), None, false).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
     let target = CheckTarget::Layout(scene.geometry(root).unwrap().metrics.size);
     let checkpoint = scene.capture_dependencies(root, target).unwrap().unwrap();
     let before = scene.snapshot();
@@ -94,10 +95,10 @@ fn unchanged_dependencies_do_not_publish_internal_movement() {
     assert_eq!(scene.snapshot(), before);
     assert_eq!(scene.published_layout_reads(container), reads);
     assert!(scene.scratch_usage().iter().all(|&(len, _)| len == 0));
-    scene.run(Query::Exact(100), None, false).unwrap();
-    assert_eq!(scene.geometry(child).unwrap().origin.x, 7);
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
+    assert_eq!(scene.geometry(child).unwrap().origin.x, px(7.0));
     let incremental = scene.snapshot();
-    scene.run(Query::Exact(100), None, true).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, true).unwrap();
     assert_eq!(scene.snapshot(), incremental);
 }
 
@@ -108,10 +109,12 @@ fn checkpoints_replay_original_queries_after_cache_eviction() {
     scene.run(Query::Natural, None, false).unwrap();
     let target = CheckTarget::Measure(Query::Natural);
     let checkpoint = scene.capture_dependencies(root, target).unwrap().unwrap();
-    let exact = scene.probe(ids.label, Query::Exact(18)).unwrap();
+    let exact = scene.probe(ids.label, Query::Exact(px(18.0))).unwrap();
     for width in [19, 20, 21, 22] {
-        scene.probe(ids.label, Query::Exact(width)).unwrap();
-        scene.probe(root, Query::Exact(width)).unwrap();
+        scene
+            .probe(ids.label, Query::Exact(px(width as f32)))
+            .unwrap();
+        scene.probe(root, Query::Exact(px(width as f32))).unwrap();
     }
     assert!(scene.capture_dependencies(root, target).unwrap().is_none());
     assert_eq!(
@@ -124,7 +127,10 @@ fn checkpoints_replay_original_queries_after_cache_eviction() {
     scene
         .edit_layout::<Wrapping>(ids.label, |label| label.units = 21)
         .unwrap();
-    assert_eq!(scene.probe(ids.label, Query::Exact(18)).unwrap(), exact);
+    assert_eq!(
+        scene.probe(ids.label, Query::Exact(px(18.0))).unwrap(),
+        exact
+    );
     assert_eq!(
         scene
             .check_dependencies(&checkpoint, target)
@@ -133,7 +139,7 @@ fn checkpoints_replay_original_queries_after_cache_eviction() {
         CheckOutcome::Changed
     );
     scene.run(Query::Natural, None, false).unwrap();
-    assert_eq!(scene.geometry(root).unwrap().metrics.size.width, 74);
+    assert_eq!(scene.geometry(root).unwrap().metrics.size.width, px(74.0));
 }
 
 #[test]
@@ -154,10 +160,10 @@ fn validation_requires_matching_request_and_unchanged_owner_inputs() {
         CheckOutcome::Unchanged
     );
     for mismatch in [
-        CheckTarget::Measure(Query::Exact(5)),
+        CheckTarget::Measure(Query::Exact(px(5.0))),
         CheckTarget::Layout(Size {
-            width: 5,
-            height: 5,
+            width: px(5.0),
+            height: px(5.0),
         }),
     ] {
         assert_eq!(
@@ -173,7 +179,7 @@ fn validation_requires_matching_request_and_unchanged_owner_inputs() {
         catch_unwind(AssertUnwindSafe(|| {
             scene
                 .edit_layout::<Drawing>(root, |leaf| {
-                    leaf.size.width = 8;
+                    leaf.size.width = px(8.0);
                     panic!("interrupted owner mutation");
                 })
                 .unwrap();
@@ -189,7 +195,7 @@ fn validation_requires_matching_request_and_unchanged_owner_inputs() {
         CheckOutcome::Unverifiable
     );
     scene
-        .edit_layout::<Drawing>(root, |leaf| leaf.size.width = 5)
+        .edit_layout::<Drawing>(root, |leaf| leaf.size.width = px(5.0))
         .unwrap();
     scene.run(Query::Natural, None, false).unwrap();
     assert_eq!(
@@ -224,7 +230,7 @@ fn incomplete_evidence_never_validates_as_empty() {
 fn failed_validation_discards_staging_and_preserves_retry() {
     for phase in [Phase::Measure, Phase::Layout] {
         for fault in [Fault::Error, Fault::Panic] {
-            let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+            let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
             let root = scene.root();
             let first = scene.append(root, Drawing::new(5, 5)).unwrap();
             let second = scene.append(root, Drawing::new(5, 5)).unwrap();
@@ -274,11 +280,13 @@ fn records_belong_to_each_query_and_survive_child_cache_eviction() {
     assert!(natural.complete);
     assert_eq!(natural.reads.len(), 4);
     assert!(natural.reads.iter().any(|read| matches!(read,
-        Read::Measure { node, query: Query::Exact(40), .. } if *node == ids.label)));
-    scene.probe(root, Query::Exact(50)).unwrap();
-    let narrow = scene.measurement_reads(root, Query::Exact(50)).unwrap();
+        Read::Measure { node, query: Query::Exact(w), .. } if *w == px(40.0) && *node == ids.label)));
+    scene.probe(root, Query::Exact(px(50.0))).unwrap();
+    let narrow = scene
+        .measurement_reads(root, Query::Exact(px(50.0)))
+        .unwrap();
     assert!(narrow.reads.iter().any(|read| matches!(read,
-        Read::Measure { node, query: Query::Exact(18), .. } if *node == ids.label)));
+        Read::Measure { node, query: Query::Exact(w), .. } if *w == px(18.0) && *node == ids.label)));
     assert_eq!(
         scene.measurement_reads(root, Query::Natural),
         Some(natural.clone())
@@ -291,26 +299,28 @@ fn records_belong_to_each_query_and_survive_child_cache_eviction() {
         Some(natural.clone())
     );
     for width in [1, 2, 3, 4] {
-        scene.probe(ids.label, Query::Exact(width)).unwrap();
+        scene
+            .probe(ids.label, Query::Exact(px(width as f32)))
+            .unwrap();
     }
     assert!(scene.measurement_reads(ids.label, Query::Natural).is_none());
     assert_eq!(scene.measurement_reads(root, Query::Natural), Some(natural));
     // Parent eviction removes that result's evidence, not another query's evidence.
-    scene.probe(root, Query::AtMost(60)).unwrap();
-    scene.probe(root, Query::Exact(70)).unwrap();
+    scene.probe(root, Query::AtMost(px(60.0))).unwrap();
+    scene.probe(root, Query::Exact(px(70.0))).unwrap();
     assert!(scene.measurement_reads(root, Query::Natural).is_none());
     assert_eq!(
-        scene.measurement_reads(root, Query::Exact(50)),
+        scene.measurement_reads(root, Query::Exact(px(50.0))),
         Some(narrow)
     );
-    scene.run(Query::Exact(80), None, false).unwrap();
+    scene.run(Query::Exact(px(80.0)), None, false).unwrap();
     let label_count = scene.node_counts(ids.label).unwrap().layouts;
     scene
         .run(
-            Query::Exact(80),
+            Query::Exact(px(80.0)),
             Some(Size {
-                width: 80,
-                height: 34,
+                width: px(80.0),
+                height: px(34.0),
             }),
             false,
         )
@@ -344,11 +354,11 @@ fn records_belong_to_each_query_and_survive_child_cache_eviction() {
         },
     }));
     let before_release = scene.published_layout_reads(root);
-    let measured_before_release = scene.measurement_reads(root, Query::Exact(80));
+    let measured_before_release = scene.measurement_reads(root, Query::Exact(px(80.0)));
     scene.release_scratch();
     assert_eq!(scene.published_layout_reads(root), before_release);
     assert_eq!(
-        scene.measurement_reads(root, Query::Exact(80)),
+        scene.measurement_reads(root, Query::Exact(px(80.0))),
         measured_before_release
     );
 }
@@ -364,8 +374,8 @@ impl LayoutNode for ReadingParent {
         if self.repeats == 0 {
             return Ok(Metrics {
                 size: Size {
-                    width: query.resolve(5),
-                    height: 5,
+                    width: query.resolve(px(5.0)),
+                    height: px(5.0),
                 },
                 baseline: None,
             });
@@ -388,8 +398,8 @@ impl LayoutNode for ReadingParent {
             cx.layout_child(
                 index,
                 Size {
-                    width: 5,
-                    height: 5,
+                    width: px(5.0),
+                    height: px(5.0),
                 },
             )?;
             cx.place_child(index, Origin::default())?;
@@ -489,7 +499,7 @@ fn failed_measurements_never_expose_partial_records_and_retry_replaces_them() {
 #[test]
 fn later_failure_does_not_publish_an_earlier_subtrees_new_dependency_record() {
     for fault in [Fault::Error, Fault::Panic] {
-        let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+        let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
         let root = scene.root();
         let branch = scene
             .append(
@@ -504,7 +514,7 @@ fn later_failure_does_not_publish_an_earlier_subtrees_new_dependency_record() {
         scene.append(branch, Drawing::new(5, 5)).unwrap();
         let selected = scene.append(branch, Drawing::new(7, 5)).unwrap();
         let last = scene.append(root, Drawing::new(5, 5)).unwrap();
-        scene.run(Query::Exact(100), None, false).unwrap();
+        scene.run(Query::Exact(px(100.0)), None, false).unwrap();
         let published = scene.snapshot();
         let root_reads = scene.published_layout_reads(root);
         let branch_reads = scene.published_layout_reads(branch);
@@ -515,7 +525,7 @@ fn later_failure_does_not_publish_an_earlier_subtrees_new_dependency_record() {
             .edit_layout::<Drawing>(last, |drawing| drawing.fault = Some((Phase::Layout, fault)))
             .unwrap();
         let outcome = catch_unwind(AssertUnwindSafe(|| {
-            scene.run(Query::Exact(100), None, false)
+            scene.run(Query::Exact(px(100.0)), None, false)
         }));
         match fault {
             Fault::Error => assert_eq!(outcome.unwrap(), Err(LayoutError::Node("injected"))),
@@ -525,7 +535,7 @@ fn later_failure_does_not_publish_an_earlier_subtrees_new_dependency_record() {
         assert_eq!(scene.published_layout_reads(root), root_reads);
         assert_eq!(scene.published_layout_reads(branch), branch_reads);
         scene.body_mut::<Drawing>(last).unwrap().fault = None;
-        scene.run(Query::Exact(100), None, false).unwrap();
+        scene.run(Query::Exact(px(100.0)), None, false).unwrap();
         assert_eq!(
             measurement_nodes(&scene.published_layout_reads(branch).unwrap()),
             vec![selected]
@@ -608,20 +618,25 @@ fn equal_exact_metrics_do_not_cover_a_parents_natural_query() {
     scene.run(Query::Natural, None, false).unwrap();
     let root = scene.root();
     let before = scene.geometry(root).unwrap();
-    let exact = scene.probe(ids.label, Query::Exact(18)).unwrap();
-    assert_eq!(before.metrics.size.width, 72);
+    let exact = scene.probe(ids.label, Query::Exact(px(18.0))).unwrap();
+    assert_eq!(before.metrics.size.width, px(72.0));
     // Evict Natural from the three-slot measurement cache. It is still a
     // dependency of the parent's published sizing result.
     for width in [19, 20, 21, 22] {
-        scene.probe(ids.label, Query::Exact(width)).unwrap();
+        scene
+            .probe(ids.label, Query::Exact(px(width as f32)))
+            .unwrap();
     }
     scene
         .edit_layout::<Wrapping>(ids.label, |label| label.units = 21)
         .unwrap();
-    assert_eq!(scene.probe(ids.label, Query::Exact(18)).unwrap(), exact);
+    assert_eq!(
+        scene.probe(ids.label, Query::Exact(px(18.0))).unwrap(),
+        exact
+    );
     scene.run(Query::Natural, None, false).unwrap();
     let after = scene.geometry(root).unwrap();
-    assert_eq!(after.metrics.size.width, 74);
+    assert_eq!(after.metrics.size.width, px(74.0));
     assert_ne!(before, after);
     let incremental = scene.snapshot();
     scene.run(Query::Natural, None, true).unwrap();
@@ -634,10 +649,10 @@ impl LayoutNode for OutputLeaf {
     fn measure(&mut self, _cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
         Ok(Metrics {
             size: Size {
-                width: query.resolve(12),
-                height: 10,
+                width: query.resolve(px(12.0)),
+                height: px(10.0),
             },
-            baseline: Some(4),
+            baseline: Some(px(4.0)),
         })
     }
 
@@ -649,43 +664,46 @@ impl LayoutNode for OutputLeaf {
 #[test]
 fn equal_measurements_do_not_cover_final_baseline_or_content() {
     let initial = LayoutOutput {
-        baseline: Some(4),
+        baseline: Some(px(4.0)),
         content: Size {
-            width: 12,
-            height: 10,
+            width: px(12.0),
+            height: px(10.0),
         },
     };
     for output in [
         LayoutOutput {
-            baseline: Some(8),
+            baseline: Some(px(8.0)),
             ..initial
         },
         LayoutOutput {
             content: Size {
-                width: 120,
-                height: 20,
+                width: px(120.0),
+                height: px(20.0),
             },
             ..initial
         },
     ] {
-        let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+        let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
         let root = scene.root();
         let child = scene.append(root, OutputLeaf(initial)).unwrap();
-        scene.run(Query::Exact(100), None, false).unwrap();
+        scene.run(Query::Exact(px(100.0)), None, false).unwrap();
         let before = scene.geometry(root).unwrap();
-        let measured = scene.probe(root, Query::Exact(100)).unwrap();
+        let measured = scene.probe(root, Query::Exact(px(100.0))).unwrap();
         scene
             .edit_layout::<OutputLeaf>(child, |leaf| leaf.0 = output)
             .unwrap();
-        assert_eq!(scene.probe(root, Query::Exact(100)).unwrap(), measured);
-        scene.run(Query::Exact(100), None, false).unwrap();
+        assert_eq!(
+            scene.probe(root, Query::Exact(px(100.0))).unwrap(),
+            measured
+        );
+        scene.run(Query::Exact(px(100.0)), None, false).unwrap();
         let after = scene.geometry(root).unwrap();
         assert_eq!(after.metrics.size, before.metrics.size);
         assert_eq!(after.metrics.baseline, output.baseline);
         assert_eq!(after.content, output.content);
         assert_ne!(after, before);
         let incremental = scene.snapshot();
-        scene.run(Query::Exact(100), None, true).unwrap();
+        scene.run(Query::Exact(px(100.0)), None, true).unwrap();
         assert_eq!(scene.snapshot(), incremental);
     }
 }
@@ -698,8 +716,8 @@ impl LayoutNode for MovingChild {
     fn measure(&mut self, _cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
         Ok(Metrics {
             size: Size {
-                width: query.resolve(20),
-                height: 20,
+                width: query.resolve(px(20.0)),
+                height: px(20.0),
             },
             baseline: None,
         })
@@ -709,11 +727,17 @@ impl LayoutNode for MovingChild {
         cx.layout_child(
             0,
             Size {
-                width: 5,
-                height: 5,
+                width: px(5.0),
+                height: px(5.0),
             },
         )?;
-        cx.place_child(0, Origin { x: self.x, y: 0 })?;
+        cx.place_child(
+            0,
+            Origin {
+                x: px(self.x as f32),
+                y: px(0.0),
+            },
+        )?;
         Ok(LayoutOutput {
             baseline: None,
             content: assigned,
@@ -723,21 +747,27 @@ impl LayoutNode for MovingChild {
 
 #[test]
 fn stable_boundary_output_does_not_discard_internal_geometry_changes() {
-    let mut scene = Scene::new(Column { padding: 0, gap: 0 });
+    let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
     let root = scene.root();
     let container = scene.append(root, MovingChild { x: 0 }).unwrap();
     let child = scene.append(container, Drawing::new(5, 5)).unwrap();
-    scene.run(Query::Exact(100), None, false).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, false).unwrap();
     let root_before = scene.geometry(root);
     let boundary_before = scene.geometry(container);
     scene
         .edit_layout::<MovingChild>(container, |node| node.x = 7)
         .unwrap();
-    assert_eq!(scene.run(Query::Exact(100), None, false), Ok(1));
+    assert_eq!(scene.run(Query::Exact(px(100.0)), None, false), Ok(1));
     assert_eq!(scene.geometry(root), root_before);
     assert_eq!(scene.geometry(container), boundary_before);
-    assert_eq!(scene.geometry(child).unwrap().origin, Origin { x: 7, y: 0 });
+    assert_eq!(
+        scene.geometry(child).unwrap().origin,
+        Origin {
+            x: px(7.0),
+            y: px(0.0)
+        }
+    );
     let incremental = scene.snapshot();
-    scene.run(Query::Exact(100), None, true).unwrap();
+    scene.run(Query::Exact(px(100.0)), None, true).unwrap();
     assert_eq!(scene.snapshot(), incremental);
 }

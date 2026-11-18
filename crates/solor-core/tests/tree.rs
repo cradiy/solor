@@ -1,3 +1,4 @@
+//! Tree ownership, identity and structural edits.
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};

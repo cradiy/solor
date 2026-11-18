@@ -1,10 +1,12 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{
-    AccessError, Attempt, Context, Draft, Entry, LayoutError, NodeId, Query, Read, ReadSet, Result,
-    RootRequest, Scene, Scratch, Size, layout, layout_root, measure, publish_layout,
+    AccessError, Attempt, ContainingBlock, Context, Draft, Entry, LayoutError, NodeId, Query, Read,
+    ReadSet, Result, RootRequest, Scene, Scratch, Size, layout, layout_root, measure,
+    publish_layout,
 };
 
+/// Maximum number of recent edits retained for selective validation.
 pub const MAX_TRACKED_EDITS: usize = 256;
 const END: usize = usize::MAX;
 
@@ -60,9 +62,12 @@ impl Read {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Operation whose recorded child reads should be checked.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CheckTarget {
+    /// Preferred-size measurement for the supplied constraint.
     Measure(Query),
+    /// Child placement at the supplied size.
     Layout(Size),
 }
 
@@ -76,29 +81,43 @@ pub struct Checkpoint {
     topology_revision: u64,
 }
 
+/// Result of comparing recorded and current dependency outputs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CheckOutcome {
+    /// All verified reads still have the recorded values.
     Unchanged,
+    /// At least one child returned a different value.
     Changed,
+    /// The retained evidence cannot establish equivalence.
     Unverifiable,
 }
 
+/// Outcome and work performed by one dependency check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CheckReport {
+    /// Whether the recorded output can still be reused.
     pub outcome: CheckOutcome,
+    /// Number of recorded reads replayed.
     pub checked_reads: usize,
+    /// Number of geometry entries staged during verification.
     pub staged_geometry: usize,
 }
 
+/// Publication and dependency-check results for one audited run.
 #[derive(Debug)]
 pub struct ValidatedRun {
+    /// Number of nodes whose published geometry changed.
     pub published: usize,
+    /// Reports for measurement and placement in that order.
     pub checks: [CheckReport; 2],
+    /// Number of staged child layouts reused.
     pub reused_layouts: usize,
+    /// Whether verified child results permitted skipping parent placement.
     pub skipped_parent_layout: bool,
 }
 
 impl Scene {
+    /// Captures a checkpoint indexed by the child nodes it read.
     pub fn capture_selective_dependencies(
         &mut self,
         owner: NodeId,
@@ -285,7 +304,13 @@ impl Scene {
                 if skipped {
                     // Measurement remains conservative; it can fail before any publication.
                     self.store.execute(root, |entry, access| {
-                        Ok(measure(entry, access, query, false))
+                        Ok(measure(
+                            entry,
+                            access,
+                            query,
+                            ContainingBlock::default(),
+                            false,
+                        ))
                     })??;
                     let reuse = attempt.0.reuse.as_mut().unwrap();
                     for &index in selected[1]
@@ -395,6 +420,7 @@ impl Scene {
             && checkpoint.reads.complete)
     }
 
+    /// Captures retained child-read evidence for the given operation.
     pub fn capture_dependencies(
         &self,
         owner: NodeId,
@@ -429,11 +455,12 @@ impl Scene {
                 if entry.measure_dirty {
                     return Ok(None);
                 }
-                let Some(slot) = entry
-                    .measure_cache
-                    .iter()
-                    .position(|slot| slot.as_ref().is_some_and(|cached| cached.query == query))
-                else {
+                let Some(slot) = entry.measure_cache.iter().position(|slot| {
+                    slot.as_ref().is_some_and(|cached| {
+                        cached.query == query
+                            && cached.containing_block == ContainingBlock::default()
+                    })
+                }) else {
                     return Ok(None);
                 };
                 entry
@@ -508,9 +535,10 @@ fn check_reads<'a>(
                 node,
                 query,
                 metrics,
+                containing_block,
             } => {
                 let current = access.execute_child(node, |entry, child| {
-                    Ok(measure(entry, child, query, false))
+                    Ok(measure(entry, child, query, containing_block, false))
                 })??;
                 current == metrics
             }

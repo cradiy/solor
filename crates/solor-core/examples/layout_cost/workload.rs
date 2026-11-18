@@ -1,3 +1,4 @@
+use solor_core::px;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -52,17 +53,25 @@ impl Fixture {
                     .edit_layout::<Wrapping>(id, |label| label.units = 80)
                     .unwrap();
             }
-            self.scene.run(Query::Exact(96), None, false).unwrap();
+            self.scene.run(Query::Exact(px(96.0)), None, false).unwrap();
         }
     }
 
     fn new(rows: usize) -> Self {
-        let mut scene = Scene::new(Column { padding: 4, gap: 2 });
+        let mut scene = Scene::new(Column::new(px(4.0), px(2.0)));
         let root = scene.root();
         let mut labels = Vec::with_capacity(rows);
         let mut inks = Vec::with_capacity(rows);
         for index in 0..rows {
-            let row = scene.append(root, Row { padding: 2, gap: 3 }).unwrap();
+            let row = scene
+                .append(
+                    root,
+                    Row {
+                        padding: px(2.0),
+                        gap: px(3.0),
+                    },
+                )
+                .unwrap();
             inks.push(scene.append(row, Drawing::new(10, 10)).unwrap());
             labels.push(
                 scene
@@ -82,15 +91,15 @@ impl Fixture {
                     row,
                     Button {
                         units: 4 + index as u32 % 5,
-                        advance: 2,
-                        line_height: 6,
-                        ascent: 4,
-                        padding: 2,
+                        advance: px(2.0),
+                        line_height: px(6.0),
+                        ascent: px(4.0),
+                        padding: px(2.0),
                     },
                 )
                 .unwrap();
         }
-        scene.run(Query::Exact(96), None, false).unwrap();
+        scene.run(Query::Exact(px(96.0)), None, false).unwrap();
         Self {
             scene,
             labels,
@@ -137,13 +146,13 @@ impl Fixture {
             }
             Change::Height => {
                 assigned = Some(Size {
-                    width: 96,
-                    height: 100_000 + (step % 2) as u32,
+                    width: px(96.0),
+                    height: px(100_000.0 + (step % 2) as f32),
                 });
             }
         }
         self.scene
-            .run(Query::Exact(width), assigned, force)
+            .run(Query::Exact(px(width as f32)), assigned, force)
             .unwrap()
     }
 
@@ -156,13 +165,16 @@ impl Fixture {
                 for value in [
                     geometry.metrics.size.width,
                     geometry.metrics.size.height,
-                    geometry.metrics.baseline.unwrap_or(u32::MAX),
+                    geometry.metrics.baseline.unwrap_or(px(-1.0)),
                     geometry.origin.x,
                     geometry.origin.y,
                     geometry.content.width,
                     geometry.content.height,
                 ] {
-                    hash = hash.rotate_left(7).wrapping_add(u64::from(value)) ^ 0x9e3779b97f4a7c15;
+                    hash = hash
+                        .rotate_left(7)
+                        .wrapping_add(u64::from(value.get().to_bits()))
+                        ^ 0x9e3779b97f4a7c15;
                 }
                 hash
             })
@@ -199,7 +211,7 @@ fn verify_dependency_audit(rows: usize) {
     fixture.prepare(Change::StableLabel);
     let root = fixture.scene.root();
     let published = fixture.scene.snapshot();
-    let measured = CheckTarget::Measure(Query::Exact(96));
+    let measured = CheckTarget::Measure(Query::Exact(px(96.0)));
     let allocated = CheckTarget::Layout(published[0].unwrap().metrics.size);
     println!("begin dependency-checkpoints/{rows}");
     let measurement = fixture
@@ -243,9 +255,15 @@ fn verify_dependency_audit(rows: usize) {
         after.measures - before.measures,
         after.layouts - before.layouts,
     );
-    assert_eq!(fixture.scene.run(Query::Exact(96), None, false), Ok(0));
+    assert_eq!(
+        fixture.scene.run(Query::Exact(px(96.0)), None, false),
+        Ok(0)
+    );
     let incremental = fixture.scene.snapshot();
-    fixture.scene.run(Query::Exact(96), None, true).unwrap();
+    fixture
+        .scene
+        .run(Query::Exact(px(96.0)), None, true)
+        .unwrap();
     assert_eq!(fixture.scene.snapshot(), incremental);
     assert_eq!(incremental, published);
 }

@@ -8,10 +8,22 @@ use crate::tree::{NodeId, Tree, TreeError};
 /// A rejected node access or child invocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AccessError {
+    /// The underlying tree rejected the operation.
     Tree(TreeError),
+    /// The requested body is currently executing.
     ActiveNode(NodeId),
-    NotChild { parent: NodeId, node: NodeId },
-    DepthLimit { limit: usize },
+    /// The requested node is outside the current node's direct children.
+    NotChild {
+        /// Node attempting to execute a child.
+        parent: NodeId,
+        /// Requested child identity.
+        node: NodeId,
+    },
+    /// Executing another child would exceed the nesting limit.
+    DepthLimit {
+        /// Maximum supported execution depth.
+        limit: usize,
+    },
 }
 
 impl fmt::Display for AccessError {
@@ -38,8 +50,11 @@ impl From<TreeError> for AccessError {
 /// Execution state of a single payload. A successful invocation clears interruption.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
+    /// The body is available for execution.
     Ready,
+    /// The body is executing in an active context.
     Running,
+    /// Execution was interrupted before normal completion.
     Interrupted,
 }
 
@@ -84,22 +99,35 @@ impl<T: ?Sized> NodeStore<T> {
         }
     }
 
+    /// Returns the root node's identity.
     pub fn root(&self) -> NodeId {
         self.tree.root()
     }
 
+    /// Returns the number of live nodes, including the root.
     pub fn node_count(&self) -> usize {
         self.tree.node_count()
     }
 
+    /// Returns the parent of a live node, or none for the root.
     pub fn parent(&self, node: NodeId) -> Result<Option<NodeId>, TreeError> {
         self.tree.parent(node)
     }
 
+    /// Iterates over a node's direct children in sibling order.
+    pub fn children(
+        &self,
+        node: NodeId,
+    ) -> Result<impl ExactSizeIterator<Item = NodeId> + '_, TreeError> {
+        self.tree.children(node)
+    }
+
+    /// Returns the number of direct children of a live node.
     pub fn child_count(&self, node: NodeId) -> Result<usize, TreeError> {
         Ok(self.tree.children(node)?.len())
     }
 
+    /// Appends an owned body as the last child of a parent.
     pub fn append(&mut self, parent: NodeId, body: Box<T>) -> Result<NodeId, TreeError> {
         self.tree.append(
             parent,
@@ -127,10 +155,12 @@ impl<T: ?Sized> NodeStore<T> {
         )
     }
 
+    /// Removes a subtree and returns its live node count.
     pub fn remove_subtree(&mut self, node: NodeId) -> Result<usize, TreeError> {
         self.tree.remove_subtree(node)
     }
 
+    /// Reports whether the node is ready, running or interrupted.
     pub fn status(&self, node: NodeId) -> Result<Status, AccessError> {
         let slot = self.tree.get(node).ok_or(TreeError::InvalidNode(node))?;
         Ok(if slot.body.is_none() {
@@ -142,6 +172,7 @@ impl<T: ?Sized> NodeStore<T> {
         })
     }
 
+    /// Borrows the body of an accessible node.
     pub fn get(&self, node: NodeId) -> Result<&T, AccessError> {
         self.tree
             .get(node)
@@ -151,6 +182,7 @@ impl<T: ?Sized> NodeStore<T> {
             .ok_or(AccessError::ActiveNode(node))
     }
 
+    /// Mutably borrows the body of an accessible node.
     pub fn get_mut(&mut self, node: NodeId) -> Result<&mut T, AccessError> {
         self.tree
             .get_mut(node)
@@ -236,20 +268,24 @@ pub struct Context<'a, T: ?Sized> {
 }
 
 impl<T: ?Sized> Context<'_, T> {
+    /// Returns the identity of the currently executing node.
     pub fn current(&self) -> NodeId {
         self.current
     }
 
+    /// Returns the executing node's parent, if present.
     pub fn parent(&self) -> Option<NodeId> {
         self.store
             .parent(self.current)
             .expect("current node is live")
     }
 
+    /// Reads a node's execution status from this context.
     pub fn status(&self, node: NodeId) -> Result<Status, AccessError> {
         self.store.status(node)
     }
 
+    /// Returns the executing node's number of direct children.
     pub fn child_count(&self) -> usize {
         self.store
             .tree
@@ -258,6 +294,7 @@ impl<T: ?Sized> Context<'_, T> {
             .len()
     }
 
+    /// Looks up a direct child by its sibling index.
     pub fn child(&self, index: usize) -> Option<NodeId> {
         self.store
             .tree

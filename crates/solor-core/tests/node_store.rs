@@ -1,3 +1,4 @@
+//! Node-store execution and recovery cases.
 use std::cell::Cell;
 use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind};

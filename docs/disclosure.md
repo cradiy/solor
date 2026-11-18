@@ -222,7 +222,7 @@ rasterization and presentation.
 
 ## Vertical scrolling
 
-The disclosure takes an absolute vertical offset in whole logical units with
+The disclosure takes an absolute vertical offset in floating-point logical pixels with
 each frame request. It clamps the offset to the laid-out content height minus
 the viewport height, with a minimum of zero. A resize or detail edit uses the
 new extent. Equal effective offsets reuse the published frame when the size and
@@ -244,7 +244,7 @@ the distance alone determines movement. Leaving the surface or losing the
 pointer discards any uncompleted axis frame.
 
 The host keeps the fractional position between events and requests a frame
-when its rounded offset changes. The last published content extent bounds
+when its effective logical offset changes. The last published content extent bounds
 the position, including after a resize. At either end, further outward input
 leaves the window idle. The submission log reports the applied `scroll_y`.
 

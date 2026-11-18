@@ -3,13 +3,11 @@
 ## Scope and acceptance
 
 The private `text_layout` example integrates real font shaping and line layout
-with the existing headless measurement/allocation contract. It uses
-[cosmic-text 0.19.0](https://docs.rs/cosmic-text/0.19.0/cosmic_text/) as a development
-dependency with only its `std` feature enabled. Normal library dependencies remain
-unchanged. The experiment does not choose a framework-wide text engine or expose
-a widget API.
+with the core measurement and allocation contract. Its column and text nodes
+come from `solor-ui`. That crate uses [cosmic-text 0.19.0](https://docs.rs/cosmic-text/0.19.0/cosmic_text/)
+with only its `std` feature enabled. The core library itself has no text-engine dependency.
 
-One bundled [Noto Sans CJK SC subset](../crates/solor-core/examples/text_layout/fonts/README.md)
+One bundled [Noto Sans CJK SC subset](../crates/solor-ui/examples/text_layout/fonts/README.md)
 provides deterministic Latin/CJK fixtures. The database starts empty, loads only
 that face, and uses a fixed locale. Missing glyphs fail explicitly. This evaluates
 the included corpus, not arbitrary Unicode, font fallback, rich text, editing,
@@ -43,13 +41,12 @@ actual allocated width rather than reading whichever paragraph happened to be
 measured last. Natural, bounded, and exact requests can therefore interleave,
 including framework metric-cache hits that never execute the text callback.
 
-Internal line/glyph positions remain floating point. The existing prototype's
-integer sizes and first baseline round upward at the adapter boundary. Content
-extent represents logical line boxes, not ink bounds or damage bounds. Zero-width
-allocations can have overflowing glyphs; short height allocations preserve the
-full content extent. This adapter does not settle the framework's coordinate type.
+Line boxes, glyph positions, measured sizes and baselines retain fractional
+logical pixels. The content extent covers logical line boxes. Zero-width
+allocations can have overflowing glyphs. A short height allocation preserves
+the full content extent.
 
-Input limits are 4,096 UTF-8 bytes, font sizes 1 through 128, line heights from the
+Input limits are 4,096 UTF-8 bytes, positive font sizes through 128, line heights from the
 font size through 256, and finite widths through 1,048,576. A node retains at most
 three paragraphs. `release_cache` frees node cache storage, while caller-held
 paragraphs and the shared engine have their own lifetimes. The experiment neither
@@ -90,7 +87,7 @@ existing staged-allocation test.
 
 ## Shared source text
 
-The private text node and each width-specific paragraph hold a `SmolStr`.
+The retained text node and each width-specific paragraph hold a `SharedString`. Its current storage uses `SmolStr` internally.
 Passing a clone of the same long source to both nodes preserves its backing.
 Converting two independent borrowed strings constructs two independent values.
 Each paragraph owns its line and glyph vectors. Replacing a node's text or
@@ -157,7 +154,7 @@ uses a 25,780-byte font subset and is not a full-font startup estimate.
 
 Content/style edits execute two complete paragraph computations in both paths:
 the column first measures at a bounded width, then allocates the resulting
-integer content width, which differs in this fixture. Caching does not improve
+content width, which differs in this fixture. Caching does not improve
 those updates. After warmup, alternating widths replace 64 paragraph computations
 per update with 64 cache hits. Height-only updates require no text callbacks.
 Width churn still averages 82.88 computations with caching versus 86.71 without;
@@ -215,7 +212,7 @@ the [CPU text pixel experiment](text-pixels.md) checks clipping and raster outpu
 
 ```sh
 cargo test --workspace --tests --examples --offline
-cargo run --release -p solor-core --example text_layout --offline
+cargo run --release -p solor-ui --example text_layout --offline
 ```
 
 The executable verifies the mixed-update oracle before printing CPU samples and

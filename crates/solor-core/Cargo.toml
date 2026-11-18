@@ -11,12 +11,6 @@ layout-audit = []
 [dependencies]
 slotmap.workspace = true
 
-[dev-dependencies]
-smol_str = { version = "=0.3.7", default-features = false }
-swash = "=0.2.10"
-png = "0.18"
-cosmic-text = { version = "=0.19.0", default-features = false, features = ["std"] }
-
 [lints]
 workspace = true
 
@@ -42,24 +36,3 @@ path = "examples/layout_cost/one.rs"
 name = "layout_cost_three"
 required-features = ["layout-audit"]
 path = "examples/layout_cost/three.rs"
-
-[[example]]
-name = "text_layout"
-path = "examples/text_layout/main.rs"
-
-[[example]]
-name = "text_frame"
-path = "examples/text_layout/frame_main.rs"
-
-[[example]]
-name = "text_pixels"
-path = "examples/text_layout/pixels_main.rs"
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-rustix = { version = "1", features = ["fs"] }
-wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "staging"] }
-
-[[example]]
-name = "text_window"
-path = "examples/text_layout/window_main.rs"

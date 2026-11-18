@@ -1,3 +1,4 @@
+use solor_core::px;
 use solor_core::tree::NodeId;
 
 use super::layout::{
@@ -23,24 +24,27 @@ impl Wrapping {
             .units
             .checked_mul(self.advance)
             .ok_or(LayoutError::InvalidSize)?;
-        let width = query.resolve(natural);
-        let columns = (width / self.advance).max(1);
+        let width = query.resolve(px(natural as f32));
+        let columns = ((width.get() / self.advance as f32).floor() as u32).max(1);
         let lines = self.units.div_ceil(columns);
         let height = lines
             .checked_mul(self.line_height)
             .ok_or(LayoutError::InvalidSize)?;
         let content = Size {
-            width: self
+            width: px(self
                 .units
                 .min(columns)
                 .checked_mul(self.advance)
-                .ok_or(LayoutError::InvalidSize)?,
-            height,
+                .ok_or(LayoutError::InvalidSize)? as f32),
+            height: px(height as f32),
         };
         Ok((
             Metrics {
-                size: Size { width, height },
-                baseline: (lines > 0).then_some(self.ascent),
+                size: Size {
+                    width,
+                    height: px(height as f32),
+                },
+                baseline: (lines > 0).then_some(px(self.ascent as f32)),
             },
             content,
         ))
@@ -71,7 +75,10 @@ pub struct Drawing {
 impl Drawing {
     pub fn new(width: u32, height: u32) -> Self {
         Self {
-            size: Size { width, height },
+            size: Size {
+                width: px(width as f32),
+                height: px(height as f32),
+            },
             ink: 0,
             #[cfg(test)]
             fault: None,
@@ -146,9 +153,9 @@ pub struct Ids {
 }
 
 pub fn nested() -> (Scene, Ids) {
-    let mut scene = Scene::new(Column { padding: 4, gap: 2 });
+    let mut scene = Scene::new(Column::new(px(4.0), px(2.0)));
     let root = scene.root();
-    let left = scene.append(root, Column { padding: 2, gap: 3 }).unwrap();
+    let left = scene.append(root, Column::new(px(2.0), px(3.0))).unwrap();
     let text = scene
         .append(
             left,
@@ -161,7 +168,7 @@ pub fn nested() -> (Scene, Ids) {
         )
         .unwrap();
     let drawing = scene.append(left, Drawing::new(10, 4)).unwrap();
-    let right = scene.append(root, Column { padding: 2, gap: 3 }).unwrap();
+    let right = scene.append(root, Column::new(px(2.0), px(3.0))).unwrap();
     scene
         .append(
             right,

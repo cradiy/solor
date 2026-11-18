@@ -10,7 +10,7 @@ cell counts; it does not shape text. The drawing leaf has no renderer. The
 [size negotiation contract](size-negotiation.md) specifies the row and query rules.
 
 The sizing domain is deliberately narrow: natural, maximum, or exact width queries,
-content-dependent measured height, integer coordinates, and an optional first
+content-dependent measured height, floating-point logical coordinates, and an optional first
 baseline. Zero-width boxes and allocations different from measured sizes are
 valid. Content extent can exceed the allocation. General two-axis constraints,
 min-content sizing, flex distribution, transforms, and pixel damage remain outside

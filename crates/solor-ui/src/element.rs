@@ -1,0 +1,543 @@
+//! Composition, conversion at attachment, and retained element behavior.
+use anyhow::Context as _;
+use std::rc::Rc;
+
+use solor_core::layout::{LayoutNode, Origin, Query, Scene, Size};
+use solor_core::state::{Runtime, Signal, SignalId};
+use solor_core::tree::NodeId;
+
+use super::{Attachment, Context, Repaints, Result, SharedString, ViewId};
+use crate::Column;
+use crate::length::UnitResolver;
+use crate::style::{Background, TextStyleRefinement};
+use crate::text::{Paragraph, Text, TextStyle};
+use crate::{AbsoluteLength, Fill, Pixels, Rgba, Style, StyleRefinement, Styled, StyledBody, px};
+
+/// Builds an element declaration when a component is attached.
+pub trait Render {
+    /// Consumes the component and declares its retained element tree.
+    fn render(self, cx: &mut Context<'_>) -> impl IntoElement;
+}
+
+/// Converts a component or primitive into a single-use declaration.
+pub trait IntoElement {
+    /// Erases the declaration's concrete type for heterogeneous composition.
+    fn into_element(self) -> AnyElement;
+}
+
+impl<R: Render + 'static> IntoElement for R {
+    fn into_element(self) -> AnyElement {
+        AnyElement(Box::new(move |target, cx, units| {
+            let item = self.render(cx).into_element();
+            (item.0)(target, cx, units)
+        }))
+    }
+}
+
+/// Layout and local drawing behavior of a retained primitive.
+pub trait Element: LayoutNode {
+    /// Intrinsic defaults used before inherited typography and local refinements.
+    fn base_style(&self) -> Style {
+        Style::default()
+    }
+
+    /// Content-specific inputs such as font metrics. The framework handles the box and paint.
+    fn prepare_content(&mut self, _style: &Style) -> Result<()> {
+        Ok(())
+    }
+
+    /// Records this body's content after its background.
+    fn paint(&self, _cx: &mut PaintContext) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl Element for Column {
+    fn base_style(&self) -> Style {
+        Style {
+            padding: self.padding,
+            gap: self.gap,
+            ..Style::default()
+        }
+    }
+    fn prepare_content(&mut self, style: &Style) -> Result<()> {
+        self.padding = crate::Edges::all(px(0.0));
+        self.gap = style.gap;
+        Ok(())
+    }
+}
+
+impl Element for Text {
+    fn base_style(&self) -> Style {
+        let mut style = Style::default();
+        style.text.size = self.style().size;
+        style.text.line_height = self.style().line_height;
+        style
+    }
+    fn prepare_content(&mut self, style: &Style) -> Result<()> {
+        self.set_style(TextStyle {
+            size: style.text.size,
+            line_height: style.text.line_height,
+        })?;
+        Ok(())
+    }
+    fn paint(&self, cx: &mut PaintContext) -> Result<()> {
+        cx.commands.push(Draw::Text {
+            origin: cx.origin,
+            paragraph: self.resolve(Query::Exact(cx.size.width))?,
+            color: cx.text_color,
+        });
+        Ok(())
+    }
+}
+
+/// A recorded local drawing operation.
+#[derive(Debug, PartialEq)]
+pub enum Draw {
+    /// Fills a rounded rectangle.
+    Fill {
+        /// Upper-left corner in node-local coordinates.
+        origin: Origin,
+        /// Extent of the rectangle.
+        size: Size,
+        /// Color or gradient covering the rectangle.
+        fill: Fill,
+        /// Radius of the four corners in logical pixels.
+        radius: Pixels,
+    },
+    /// Draws a shaped paragraph.
+    Text {
+        /// Position of the paragraph in node-local coordinates.
+        origin: Origin,
+        /// Shaped text retained for this command.
+        paragraph: Rc<Paragraph>,
+        /// Foreground applied to the glyphs.
+        color: Rgba,
+    },
+}
+
+/// Local content bounds, inherited color and state access during recording.
+pub struct PaintContext<'a> {
+    origin: Origin,
+    /// Assigned content area after removing padding.
+    pub size: Size,
+    /// Resolved foreground color for this element.
+    pub text_color: Rgba,
+    commands: &'a mut Vec<Draw>,
+    state: &'a Runtime<()>,
+}
+
+impl PaintContext<'_> {
+    /// Samples the latest value when the caller records this node.
+    pub fn read<T: 'static>(&self, signal: Signal<T>) -> Result<&T> {
+        Ok(self.state.read(signal)?)
+    }
+
+    /// Records a rectangle at the content origin.
+    pub fn fill(&mut self, size: Size, fill: impl Into<Fill>) {
+        self.commands.push(Draw::Fill {
+            origin: self.origin,
+            size,
+            fill: fill.into(),
+            radius: px(0.0),
+        });
+    }
+}
+
+pub(super) type Click = Box<dyn Fn(&mut Context<'_>) -> Result<()>>;
+
+struct MountedBackground {
+    source: Background,
+    radius: Pixels,
+}
+
+pub(super) struct MountedNode {
+    pub(super) id: NodeId,
+    pub(super) offset: usize,
+    pub(super) text_style: TextStyleRefinement,
+    text_color: Rgba,
+    background: Option<Box<MountedBackground>>,
+    pub(super) binding_target: Option<NodeId>,
+    record: fn(&Scene, NodeId, &mut PaintContext) -> Result<()>,
+    pub(super) owned: Vec<SignalId>,
+    pub(super) click: Option<Click>,
+}
+
+impl MountedNode {
+    fn new<E: Element>(
+        id: NodeId,
+        click: Option<Click>,
+        text_style: TextStyleRefinement,
+        style: Style,
+    ) -> Self {
+        Self {
+            id,
+            offset: 0,
+            binding_target: None,
+            click,
+            text_style,
+            text_color: style.text.color,
+            background: style.background.map(|source| {
+                Box::new(MountedBackground {
+                    source,
+                    radius: style.corner_radius,
+                })
+            }),
+            owned: Vec::new(),
+            record: |scene, id, cx| {
+                let body = scene.body::<StyledBody<E>>(id)?;
+                cx.size = body.content_size(cx.size);
+                cx.origin = body.origin();
+                body.content.paint(cx)
+            },
+        }
+    }
+
+    pub(super) fn paint(
+        &self,
+        scene: &Scene,
+        state: &Runtime<()>,
+        commands: &mut Vec<Draw>,
+    ) -> Result<()> {
+        if scene.is_pending() {
+            anyhow::bail!("layout pending");
+        }
+        let geometry = scene.geometry(self.id).context("missing layout geometry")?;
+        let start = commands.len();
+        let size = geometry.metrics.size;
+        let mut cx = PaintContext {
+            origin: Origin::default(),
+            size,
+            text_color: self.text_color,
+            commands,
+            state,
+        };
+        if let Some(paint) = &self.background {
+            let fill = match &paint.source {
+                Background::Fixed(fill) => fill.clone(),
+                Background::Bound(signal) => cx.read(*signal)?.clone(),
+            };
+            let radius = px(paint
+                .radius
+                .get()
+                .min(size.width.min(size.height).get() * 0.5));
+            cx.commands.push(Draw::Fill {
+                origin: Origin::default(),
+                size,
+                fill,
+                radius,
+            });
+        }
+        let result = (self.record)(scene, self.id, &mut cx);
+        if result.is_err() {
+            commands.truncate(start);
+        }
+        result
+    }
+}
+
+pub(super) struct Installation {
+    pub node: MountedNode,
+    pub children: Vec<Child>,
+    pub watches: Vec<Watch>,
+}
+
+pub(super) type Watch =
+    Box<dyn FnOnce(&mut Attachment<'_>, NodeId, NodeId, &Repaints) -> Result<()>>;
+type Install = Box<dyn FnOnce(Target<'_>, &mut Context<'_>, UnitResolver) -> Result<Installation>>;
+
+enum Target<'a> {
+    Root(&'a mut Option<Scene>),
+    Child {
+        scene: &'a mut Scene,
+        parent: NodeId,
+        index: usize,
+        inherited: TextStyleRefinement,
+    },
+}
+
+/// Opaque, single-use declaration. Only the host can attach it.
+pub struct AnyElement(Install);
+
+impl AnyElement {
+    fn new<E: Element>(make: impl FnOnce(&mut Context<'_>) -> Result<Node<E>> + 'static) -> Self {
+        Self(Box::new(move |target, cx, units| {
+            let mut node = make(cx)?;
+            let inherited = match &target {
+                Target::Root(_) => TextStyleRefinement::default(),
+                Target::Child { inherited, .. } => *inherited,
+            };
+            let text = inherited.overlay(node.style.text);
+            let mut style = node.body.base_style();
+            inherited.apply(&mut style.text, units);
+            style.refine(&node.style, units);
+            if [
+                style.corner_radius,
+                style.gap,
+                style.text.size,
+                style.text.line_height,
+            ]
+            .iter()
+            .any(|v| !v.is_extent())
+            {
+                return Err(crate::layout::LayoutError::InvalidSize.into());
+            }
+            node.body.prepare_content(&style)?;
+            if let Some(Background::Bound(signal)) = style.background {
+                node = node.repaint_on(signal);
+            }
+            let body = StyledBody::new(node.body, &style, units)?;
+            let id = match target {
+                Target::Root(slot) => slot.insert(Scene::new(body)).root(),
+                Target::Child {
+                    scene,
+                    parent,
+                    index,
+                    ..
+                } => scene.mount_at(parent, index, body)?,
+            };
+            Ok(Installation {
+                node: MountedNode::new::<E>(id, node.click, text, style),
+                children: node.children,
+                watches: node.watches,
+            })
+        }))
+    }
+
+    pub(super) fn root(
+        self,
+        cx: &mut Context<'_>,
+        units: UnitResolver,
+    ) -> Result<(Scene, Installation)> {
+        let mut scene = None;
+        let installed = (self.0)(Target::Root(&mut scene), cx, units)?;
+        Ok((
+            scene.expect("successful root attachment creates a scene"),
+            installed,
+        ))
+    }
+
+    pub(super) fn attach(
+        self,
+        scene: &mut Scene,
+        parent: NodeId,
+        index: usize,
+        inherited: TextStyleRefinement,
+        units: UnitResolver,
+        cx: &mut Context<'_>,
+    ) -> Result<Installation> {
+        (self.0)(
+            Target::Child {
+                scene,
+                parent,
+                index,
+                inherited,
+            },
+            cx,
+            units,
+        )
+    }
+}
+
+impl IntoElement for AnyElement {
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+pub(super) type Factory = Box<dyn Fn() -> AnyElement>;
+
+pub(super) enum Child {
+    Fixed(AnyElement),
+    When(Signal<bool>, Factory),
+}
+
+/// A primitive and the children, handlers and styles to attach with it.
+pub struct Node<E> {
+    style: StyleRefinement,
+    watches: Vec<Watch>,
+    body: E,
+    children: Vec<Child>,
+    click: Option<Click>,
+}
+
+/// Wraps a custom layout body in the common element builder.
+pub fn element<E: Element>(body: E) -> Node<E> {
+    Node {
+        style: StyleRefinement::default(),
+        watches: Vec::new(),
+        body,
+        children: Vec::new(),
+        click: None,
+    }
+}
+
+impl<E> Styled for Node<E> {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style
+    }
+}
+
+impl<E: Element> IntoElement for Node<E> {
+    fn into_element(self) -> AnyElement {
+        AnyElement::new(move |_| Ok(self))
+    }
+}
+
+impl<E: Element> Node<E> {
+    /// Appends a child in declaration order.
+    pub fn child(mut self, child: impl IntoElement) -> Self {
+        self.children.push(Child::Fixed(child.into_element()));
+        self
+    }
+
+    /// Registers the handler invoked on a direct click.
+    pub fn on_click(mut self, click: impl Fn(&mut Context<'_>) -> Result<()> + 'static) -> Self {
+        self.click = Some(Box::new(click));
+        self
+    }
+
+    /// Requests local paint at the next flush when this signal changes.
+    pub fn repaint_on<T: 'static>(mut self, signal: Signal<T>) -> Self {
+        self.watches
+            .push(Box::new(move |cx, target, node, repaints| {
+                let repaints = Rc::clone(repaints);
+                cx.state.bind(signal, target, move |_, _| {
+                    repaints.borrow_mut().insert(node);
+                })?;
+                Ok(())
+            }));
+        self
+    }
+
+    /// Mounts the generated child while its boolean signal is true.
+    pub fn child_when<T: IntoElement>(
+        mut self,
+        open: Signal<bool>,
+        make: impl Fn() -> T + 'static,
+    ) -> Self {
+        self.children
+            .push(Child::When(open, Box::new(move || make().into_element())));
+        self
+    }
+}
+
+/// A fixed label or a retained label bound to application state.
+pub enum TextContent {
+    /// Text supplied at attachment.
+    Fixed(SharedString),
+    /// Text updated from the signal at flush.
+    Bound(Signal<SharedString>),
+}
+
+impl<T: Into<SharedString>> From<T> for TextContent {
+    fn from(value: T) -> Self {
+        Self::Fixed(value.into())
+    }
+}
+
+impl From<Signal<SharedString>> for TextContent {
+    fn from(value: Signal<SharedString>) -> Self {
+        Self::Bound(value)
+    }
+}
+
+struct Label {
+    content: TextContent,
+    style: StyleRefinement,
+}
+
+impl Styled for Label {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style
+    }
+}
+
+/// Declares a text leaf that uses the view's font engine.
+pub fn text(content: impl Into<TextContent>) -> impl IntoElement + Styled {
+    Label {
+        content: content.into(),
+        style: StyleRefinement::default(),
+    }
+}
+
+impl IntoElement for Label {
+    fn into_element(self) -> AnyElement {
+        AnyElement::new(move |cx| {
+            let (initial, source) = match self.content {
+                TextContent::Fixed(value) => (value, None),
+                TextContent::Bound(signal) => (cx.read(signal)?.clone(), Some(signal)),
+            };
+            let mut node = element(Text::new(
+                Rc::clone(cx.engine.context("text requires a font")?),
+                initial,
+                TextStyle {
+                    size: px(16.0),
+                    line_height: px(24.0),
+                },
+                true,
+            )?);
+            node.style = self.style;
+            if let Some(signal) = source {
+                node.watches.push(Box::new(move |cx, target, id, repaints| {
+                    let pending = Rc::clone(cx.labels);
+                    let view = ViewId(cx.scope);
+                    cx.state.bind(signal, target, move |_, _| {
+                        pending.borrow_mut().insert((view, id), signal);
+                    })?;
+                    repaints.borrow_mut().insert(id);
+                    Ok(())
+                }));
+            }
+            Ok(node)
+        })
+    }
+}
+
+/// A general-purpose container declaration.
+pub struct Div {
+    style: StyleRefinement,
+}
+
+/// Creates a container with default style.
+pub fn div() -> Div {
+    Div {
+        style: StyleRefinement::default(),
+    }
+}
+
+impl Styled for Div {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style
+    }
+}
+
+impl Div {
+    /// Sets all four padding edges of the container.
+    pub fn padding(self, padding: impl Into<AbsoluteLength>) -> Self {
+        Styled::padding(self, padding)
+    }
+
+    /// Arranges children vertically in declaration order.
+    pub fn column(self) -> Node<Column> {
+        element(Column::new(px(0.0), px(0.0))).with_style(&self.style)
+    }
+
+    /// Adds a child using column layout.
+    pub fn child(self, child: impl IntoElement) -> Node<Column> {
+        self.column().child(child)
+    }
+}
+
+impl IntoElement for Div {
+    fn into_element(self) -> AnyElement {
+        self.column().into_element()
+    }
+}
+
+impl Node<Column> {
+    /// Sets the space between adjacent column children.
+    pub fn gap(self, gap: impl Into<AbsoluteLength>) -> Self {
+        Styled::gap(self, gap)
+    }
+}

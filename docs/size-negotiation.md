@@ -18,8 +18,8 @@ Width queries have three explicit meanings:
 Zero is a valid allocation. Natural is a separate variant, not a sentinel integer
 or infinity in arithmetic. Heights remain content-driven during measurement.
 The caller may allocate a different finite width or height for final layout.
-General two-axis constraints, min-content sizing, fractional coordinates, and
-negative origins remain outside this experiment.
+Allocations, local origins and baselines use floating-point logical pixels.
+The fixture exercises width constraints and intrinsic heights.
 
 ## Row negotiation
 
@@ -62,7 +62,8 @@ root entry for a new origin while retaining all descendant geometry.
 
 ## Cache and work accounting
 
-The full width-query variant and value form the measurement key. Natural,
+The measurement key includes the width query and both definite or unknown
+parent content dimensions. Natural,
 AtMost(80), and Exact(80) are different queries even if a fixture happens to
 return the same size. Input and ancestor invalidation clear all cached queries
 for an affected node. A failed query cannot publish a result.

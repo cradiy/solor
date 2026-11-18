@@ -133,31 +133,36 @@ retained pixel replay, child-first and parent-first disposal, and delayed dispos
 after remount. Unrelated scopes retain their bindings and presses. Frame acceptance is
 simulated in one window. [Disposal timings](node-execution.md#cost-of-disposing-a-scope)
 compare membership discovery and full removal across tree sizes, with checks on
-surviving order, binding cancellation and payload drops. The public component
-model remains a proposal.
+surviving order, binding cancellation and payload drops.
 
 The [headless window acceptance experiment](window-frame-commit.md#headless-acceptance-evidence)
 injects an upload failure after rasterization. It checks hit targets, binding
 delivery and submitted bytes through retry, resize and replacement with an
 identical-looking mount.
 
-The private [component authoring fixture](component-api.md#lifecycle-checks)
+The [solor-ui authoring library](component-api.md#lifecycle-checks)
 tests initialization during mount, immediate event writes, ordered conditional
 subtrees at the next update boundary, and signal ownership across remounts.
 It checks targeted branch delivery, gap placement and surviving sibling
-identity across subtree insertion and removal.
+identity across subtree insertion and removal. A caller-defined meter uses
+`Render` for composition and a retained `Element` for layout and local paint
+recording. Accepted-frame input and native presentation for these custom
+elements remain open. The [refresh workload](component-api.md#high-frequency-updates)
+measures local paint, shared subscriptions and structural layout at an explicit update boundary.
+The [UI contracts](ui-contracts.md) distinguish implemented authoring behavior
+from open frame, input and platform boundaries.
 The [shared source text experiment](text-layout.md#shared-source-text) checks
 source identity across nodes and widths and measures short-label construction.
 
 The following are outside this milestone:
 
-- Publishing a node behavior API or UI property facade, or replacing the backing map.
+- A general UI property facade or replacement of the core node store.
 - Moving existing nodes, immutable tree snapshots, and serialization.
 - Derived signals, automatic dependency tracking, and multi-source bindings.
-- Integration with signal callbacks, recursive dependency pruning, general paint
+- Recursive dependency pruning, general paint
   invalidation, and general pixel damage tracking.
 - General layout algorithms, font fallback, rich text, GPU rendering, general input routing, and a general window abstraction.
-- A public widget API, showcase applications, and application-level performance comparisons.
+- A standard widget collection, showcase applications, and application-level performance comparisons.
 - Selecting a rendering backend or committing to a complete framework design.
 
 Acceptance requires independent per-query records, cache-hit observations,
