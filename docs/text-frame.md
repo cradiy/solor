@@ -140,6 +140,11 @@ unshifted topology in the earlier text experiment.
 
 ## Storage and reclamation
 
+The following allocation measurements describe the complete-snapshot baseline
+with an inline vector header. Current frames use a reference-counted geometry
+vector so the disclosure can share it between scroll offsets. Per-frame capacity
+reporting includes the vector header and payload once for each reported frame.
+
 An independent allocator probe passes its Rust positive control (one 123-byte
 request, 136 usable bytes). A 64-row frame's geometry and command payload is
 7,272 bytes, excluding shared paragraphs and allocator headers; 512 rows require

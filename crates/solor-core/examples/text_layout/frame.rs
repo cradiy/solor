@@ -83,7 +83,7 @@ pub struct Frame {
     /// Logical distance from the document top to the viewport top.
     pub scroll_y: u32,
     pub font: &'static [u8],
-    pub geometry: Vec<Geometry>,
+    pub geometry: Rc<Vec<Geometry>>,
     pub draws: Vec<TextDraw>,
 }
 
@@ -104,6 +104,7 @@ impl Frame {
 
     pub fn shallow_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
+            + std::mem::size_of::<Vec<Geometry>>()
             + self.geometry.capacity() * std::mem::size_of::<Geometry>()
             + self.draws.capacity() * std::mem::size_of::<TextDraw>()
     }
@@ -365,7 +366,7 @@ impl Presentation {
             revision,
             scroll_y: 0,
             font: FONT,
-            geometry,
+            geometry: Rc::new(geometry),
             draws,
         });
         // No callbacks or fallible preparation after this publication point.

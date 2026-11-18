@@ -116,8 +116,10 @@ separately. This experiment groups the known suffix of one disclosure list.
 The scrolling experiment takes an absolute logical offset on the disclosure
 frame request. Require agreement with a crop of the full document at partially
 visible rows, hit testing against the published viewport and stable measurement
-and layout counts for scroll-only frames. Compare snapshot time at the start,
-middle and end of the same list. The Linux host maps focused vertical pointer
+and layout counts for scroll-only frames. Scroll-only snapshots share published
+geometry. Verify that variable-height rows remain visible through their final
+logical pixel and that held frames survive a topology change. Compare snapshot
+time at the start, middle and end of the same list. The Linux host maps focused vertical pointer
 axis input to that offset. Native acceptance covers repeated movement, fractional
 accumulation, idle commits at both bounds, reverse input at the bottom,
 title activation after returning to the top, and shared-buffer pixel agreement.

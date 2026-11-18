@@ -59,7 +59,7 @@ fn assigned_root_only_publishes_measurement_evidence_when_queried() {
                 .unwrap()
                 .is_some()
         );
-        assert!(frame.same_content(&list.collect_frame(0, 0, size.height).unwrap()));
+        assert!(frame.same_content(&list.collect_frame(0, 0, size.height, None).unwrap()));
     }
 }
 
@@ -100,9 +100,9 @@ fn viewport_frames_match_full_draws_through_edges_resizes_and_edits() {
             .scene
             .run(Query::Exact(width), Some(size), true)
             .unwrap();
-        let full = oracle.collect_frame(0, 0, u32::MAX).unwrap();
+        let full = oracle.collect_frame(0, 0, u32::MAX, None).unwrap();
         assert_eq!(
-            frame.geometry,
+            *frame.geometry,
             oracle
                 .scene
                 .snapshot()
@@ -233,7 +233,7 @@ fn measure_snapshot_collection() {
                             .unwrap();
                     }
                     let laid_out = Instant::now();
-                    let frame = Rc::new(list.collect_frame(step, 0, bottom).unwrap());
+                    let frame = Rc::new(list.collect_frame(step, 0, bottom, None).unwrap());
                     list.published = Some(black_box(frame));
                     elapsed[0] += laid_out.elapsed().as_secs_f64();
                     elapsed[1] += start.elapsed().as_secs_f64();
@@ -327,6 +327,45 @@ fn measure_tail_resize() {
 }
 
 #[test]
+fn scroll_snapshots_share_geometry_and_find_both_edges_of_each_row() {
+    let size = Size {
+        width: 88,
+        height: 1,
+    };
+    let mut list =
+        DisclosureLayout::new(&["First", DETAIL, "Third"], &["Short", DETAIL, "Last"]).unwrap();
+    list.set_detail("Hide details", Some(DETAIL)).unwrap();
+    let first = list.frame(size, 0, false).unwrap();
+    let item_y = list.geometry(list.item).unwrap().origin.y;
+    let tail_y = list.geometry(list.tail_group.unwrap()).unwrap().origin.y;
+    let rows: Vec<_> = list
+        .before
+        .iter()
+        .map(|&id| (id, 0))
+        .chain([list.title, list.detail.unwrap()].map(|id| (id, item_y)))
+        .chain(list.after.iter().map(|&id| (id, tail_y)))
+        .collect();
+    for (id, parent_y) in rows {
+        let row = list.geometry(id).unwrap();
+        let start = parent_y + row.origin.y;
+        let end = start + row.metrics.size.height;
+        for y in [start, end - 1] {
+            let frame = list.frame(size, y, false).unwrap();
+            assert!(Rc::ptr_eq(&frame.geometry, &first.geometry));
+            assert_eq!(frame.draws.len(), 1);
+            assert_eq!(frame.draws[0].node, id);
+        }
+        assert!(list.frame(size, end, false).unwrap().draws.is_empty());
+    }
+
+    list.set_detail("Show details", None).unwrap();
+    let collapsed = list.frame(size, 0, false).unwrap();
+    assert!(!Rc::ptr_eq(&first.geometry, &collapsed.geometry));
+    assert_eq!(first.geometry.len(), collapsed.geometry.len() + 1);
+    assert!(first.geometry[0].content.height > collapsed.geometry[0].content.height);
+}
+
+#[test]
 fn scrolled_frames_match_crops_of_the_full_document() {
     let tail = ["Hello", DETAIL, "Short"].repeat(6);
     let mut list = DisclosureLayout::new(BEFORE, &tail).unwrap();
@@ -356,7 +395,7 @@ fn scrolled_frames_match_crops_of_the_full_document() {
         flat.scene
             .run(Query::Exact(width), Some(size), true)
             .unwrap();
-        let full = flat.collect_frame(0, 0, u32::MAX).unwrap();
+        let full = flat.collect_frame(0, 0, u32::MAX, None).unwrap();
         let content_height = full.geometry[0].content.height;
         let max_scroll = content_height.saturating_sub(height);
         let physical = Size {

@@ -251,24 +251,39 @@ leaves the window idle. The submission log reports the applied `scroll_y`.
 cargo test --release --offline --example text_window measure_scroll_positions -- --ignored --nocapture
 ```
 
+Frames at different scroll offsets share one immutable geometry vector when
+the viewport and content are unchanged. A content edit, resize or forced frame
+builds fresh geometry. Holding an earlier frame keeps its geometry and drawing
+commands alive. Each frame still owns its visible commands.
+
+The labels before and after the disclosure form two ordered runs. Their bottom
+edges are monotonic in document coordinates, including when text wraps. For
+each run, a binary search skips rows ending at or above the viewport top.
+Drawing stops at the viewport bottom. The title and optional detail retain
+their coordinates relative to the disclosure item. The search reads the same
+geometry vector retained by the frame and requires no separate row index.
+
 The release fixture uses a warmed 1,024-row list and a 240 by 160 viewport.
-It alternates between two adjacent logical offsets near each position, rotates
-position order by batch and verifies unchanged layout counters. Each process
-runs one warmup batch and seven measured batches of 200 frames per position.
-Timing covers the frame request through replacement of the drawing snapshot,
-including the full geometry copy. Pixel repair and presentation are outside
-the interval.
+It alternates between adjacent offsets at each position, rotates position
+order by batch and verifies unchanged layout counters. Each process runs one
+warmup batch and seven measured batches of 200 frames per position. The table
+shows the median of six process medians per variant, with all six execution
+orders represented. Timing starts at the frame request and ends after replacing
+the drawing snapshot. It excludes rasterization, buffer uploads and presentation.
 
-| Position | Median, µs/frame | Range of five process medians |
-| --- | ---: | ---: |
-| Top | 3.43 | 3.41–3.55 |
-| Middle | 4.51 | 4.50–4.64 |
-| End | 5.77 | 5.67–5.86 |
+| Position | Copy and scan (`3a1aa0e`), µs | Share and scan, µs | Share and binary search, µs |
+| --- | ---: | ---: | ---: |
+| Top | 4.57 | 0.11 | ~0.10 |
+| Middle | 6.48 | 1.97 | 0.11 |
+| End | 8.45 | 3.85 | 0.11 |
 
-Row selection scans from the start and stops at the bottom of the viewport.
-The measured end-to-top difference is 2.34 µs per snapshot. The fixture keeps
-this scan at the measured list size. A larger workload could test binary
-search over the existing ordered row geometry before adding a separate index.
+Process medians at the end ranged from 7.93–8.62 µs for the baseline and
+0.10–0.12 µs with sharing and search. Both implementations still rebuild the
+geometry vector when the disclosure changes size or topology. In four paired
+release runs with alternating order, grouped-list toggles took 23.52 µs per
+edit through snapshot at the baseline and 23.03 µs with sharing and search.
+Grouped-list width changes took 48.63 and 47.99 µs respectively. The ranges
+overlapped for each workload.
 
 An independent flat list supplies a full uncached document raster at 150%
 scale. Tests compare cropped bytes with the retained surface after partial-row

@@ -177,10 +177,11 @@ impl DisclosureLayout {
         let content_height = self.geometry(self.scene.root())?.content.height;
         let max_scroll_y = content_height.saturating_sub(size.height);
         let top = requested_y.min(max_scroll_y);
-        if !force
-            && !self.dirty
-            && self.viewport == Some(size)
-            && let Some(frame) = &self.published
+        let previous = self
+            .published
+            .as_ref()
+            .filter(|_| !force && !self.dirty && self.viewport == Some(size));
+        if let Some(frame) = previous
             && frame.scroll_y == top
         {
             return Ok(frame.clone());
@@ -191,7 +192,8 @@ impl DisclosureLayout {
             .map_or(0, |f| f.revision)
             .checked_add(1)
             .ok_or(LayoutError::RevisionExhausted)?;
-        let frame = Rc::new(self.collect_frame(revision, top, size.height)?);
+        let frame =
+            Rc::new(self.collect_frame(revision, top, size.height, previous.map(Rc::as_ref))?);
         self.published = Some(frame.clone());
         self.viewport = Some(size);
         self.max_scroll_y = max_scroll_y;
@@ -199,32 +201,34 @@ impl DisclosureLayout {
         Ok(frame)
     }
 
-    fn collect_frame(&mut self, revision: u64, top: u32, height: u32) -> Result<Frame> {
-        let item_origin = self.geometry(self.item)?.origin;
-        let tail_origin = match self.tail_group {
-            Some(group) => self.geometry(group)?.origin,
-            None => Origin::default(),
+    fn collect_frame(
+        &self,
+        revision: u64,
+        top: u32,
+        height: u32,
+        previous: Option<&Frame>,
+    ) -> Result<Frame> {
+        let geometry = match previous {
+            Some(frame) => frame.geometry.clone(),
+            None => Rc::new(self.snapshot_geometry()?),
         };
-        let top_level = |id: &NodeId| (*id, Origin::default());
-        let rows = self
-            .before
-            .iter()
-            .map(top_level)
-            .chain(
-                [Some(self.title), self.detail]
-                    .into_iter()
-                    .flatten()
-                    .map(|id| (id, item_origin)),
-            )
-            .chain(self.after.iter().map(|&id| (id, tail_origin)));
+        // Snapshot order is root, preceding rows, item, title, following rows, optional detail.
+        let (before, item_and_rest) = geometry[1..].split_at(self.before.len());
+        let item_origin = item_and_rest[0].origin;
+        let (after, detail) = item_and_rest[2..].split_at(self.after.len());
+        let item_rows = std::iter::once((self.title, &item_and_rest[1]))
+            .chain(self.detail.into_iter().zip(detail))
+            .map(|(id, row)| (id, row, item_origin));
+        let rows = rows_from_offset(&self.before, before, top)
+            .chain(item_rows)
+            .chain(rows_from_offset(&self.after, after, top));
         let bottom = top.saturating_add(height);
         let estimated_rows = height.div_ceil(u32::from(STYLE.line_height)) as usize + 1;
         let mut draws =
             Vec::with_capacity(estimated_rows.min(self.before.len() + self.after.len() + 2));
-        for (node, parent_origin) in rows {
-            let geometry = self.geometry(node)?;
-            let allocated = geometry.metrics.size;
-            let origin = translated(geometry.origin, parent_origin)?;
+        for (node, row, parent_origin) in rows {
+            let allocated = row.metrics.size;
+            let origin = translated(row.origin, parent_origin)?;
             // Rows are ordered top-to-bottom and clipped to their allocations.
             if height == 0 || origin.y >= bottom {
                 break;
@@ -253,20 +257,21 @@ impl DisclosureLayout {
             revision,
             scroll_y: top,
             draws,
-            geometry: self.snapshot_geometry(tail_origin)?,
+            geometry,
             font: FONT,
         })
     }
 
-    fn snapshot_geometry(&self, tail_origin: Origin) -> Result<Vec<Geometry>> {
-        if self.tail_group.is_none() {
+    fn snapshot_geometry(&self) -> Result<Vec<Geometry>> {
+        let Some(group) = self.tail_group else {
             return self
                 .scene
                 .snapshot()
                 .into_iter()
                 .collect::<Option<_>>()
                 .ok_or(LayoutError::MissingLayout(0));
-        }
+        };
+        let tail_origin = self.geometry(group)?.origin;
         // Publish the same logical nodes and coordinate spaces for either hierarchy.
         let mut geometry = Vec::with_capacity(
             3 + self.before.len() + self.after.len() + usize::from(self.detail.is_some()),
@@ -285,6 +290,23 @@ impl DisclosureLayout {
         }
         Ok(geometry)
     }
+}
+
+/// Both runs of sibling labels are sorted by their document-space bottom edges.
+fn rows_from_offset<'a>(
+    nodes: &'a [NodeId],
+    geometry: &'a [Geometry],
+    top: u32,
+) -> impl Iterator<Item = (NodeId, &'a Geometry, Origin)> {
+    let start = if top == 0 {
+        0
+    } else {
+        geometry.partition_point(|row| row.origin.y.saturating_add(row.metrics.size.height) <= top)
+    };
+    nodes[start..]
+        .iter()
+        .zip(&geometry[start..])
+        .map(|(&id, row)| (id, row, Origin::default()))
 }
 
 #[cfg(test)]
