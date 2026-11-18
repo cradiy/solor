@@ -8,6 +8,9 @@ description = "Core data structures for the Solor GUI experiment"
 [dependencies]
 slotmap.workspace = true
 
+[dev-dependencies]
+cosmic-text = { version = "=0.19.0", default-features = false, features = ["std"] }
+
 [lints]
 workspace = true
 
@@ -30,3 +33,11 @@ path = "examples/layout_cost/one.rs"
 [[example]]
 name = "layout_cost_three"
 path = "examples/layout_cost/three.rs"
+
+[[example]]
+name = "text_layout"
+path = "examples/text_layout/main.rs"
+
+[[example]]
+name = "text_frame"
+path = "examples/text_layout/frame_main.rs"

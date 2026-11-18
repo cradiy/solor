@@ -53,15 +53,23 @@ The [parent-layout skip](parent-layout-skip.md) uses complete unchanged layout
 dependencies to retain the current root layout while publishing audited child
 changes. Evidence must be anchored to that publication; standalone checks cannot
 hide unpublished work. Root measurement remains conservative.
+The [fixed-font text experiment](text-layout.md) connects real shaping and line
+layout to these measurement/allocation semantics. Text nodes own bounded caches
+of immutable paragraphs; geometry and glyph results are checked against fresh
+buffers and forced layout. It uses one bundled font subset and remains headless.
+The [text drawing snapshot experiment](text-frame.md) publishes geometry, paragraph
+handles, colors, and absolute positions together. It retains the old frame after
+preparation failures, including when internal layout has already succeeded.
 The [node execution model draft](node-execution.md) remains the broader proposal.
 
 The following are outside this milestone:
 
 - Publishing a node behavior API or UI property facade, or replacing the backing map.
-- Moving existing nodes, immutable snapshots, and serialization.
+- Moving existing nodes, immutable tree snapshots, and serialization.
 - Derived signals, automatic dependency tracking, and multi-source bindings.
-- Integration with signal callbacks, recursive dependency pruning, and paint invalidation.
-- General layout algorithms, real text measurement, rendering, input, and windows.
+- Integration with signal callbacks, recursive dependency pruning, general paint
+  invalidation, and pixel damage tracking.
+- General layout algorithms, font fallback, rich text, rendering, input, and windows.
 - Widgets, showcase applications, and application-level performance comparisons.
 - Selecting a rendering backend or committing to a complete framework design.
 
@@ -92,8 +100,17 @@ or a cursor advanced by standalone auditing must fall back to normal layout.
 Measure complete updates and retained storage, including cases that cannot skip.
 This bounded headless milestone is sufficient when its selective benefit and
 fallback costs are understood; it does not require further micro-optimization.
-These checks do not validate real text, pixel output, or a complete incremental
-layout system.
+The separate text milestone requires fixed-font mixed-script wrapping and baseline
+checks, correct final allocation after intervening measurement queries, explicit
+missing-glyph errors, bounded cache replacement, owned result lifetimes, and full
+recomputation agreement. Measure content edits, style edits, repeated widths,
+width churn, engine construction, and retained heap with explicit reclamation.
+The drawing snapshot milestone requires color-only changes without layout work,
+same-size glyph replacement, nested absolute placement, atomic frame replacement,
+retry after completed layout, and resource lifetimes independent of node caches.
+Compare complete updates with layout-only work and measure reclamation while a
+consumer holds the last frame. These checks do not validate pixel output or a
+complete incremental layout system.
 
 ## Candidate investigations
 

@@ -1,0 +1,3 @@
+ !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
+Solor 中文排版，文字换行与基线。测试界面宽度改变。
+Hello 世界！Rust GUI 123

@@ -77,8 +77,11 @@ The framework caches metrics only. A cache hit does not restore a node's private
 measurement state. Final layout must calculate from the assigned size or use a
 behavior-owned cache with a matching key; it cannot assume that the last executed
 measurement prepared the right state. The synthetic leaves calculate from the
-assignment. Ownership of real shaping results remains an unresolved text-engine
-integration concern.
+assignment. The separate [fixed-font text experiment](text-layout.md) evaluates
+behavior-owned immutable paragraphs keyed by width, with cache invalidation on
+content or style changes. It preserves glyph positions independently of the
+framework's metrics cache. The separate [drawing snapshot experiment](text-frame.md)
+owns and publishes paragraph handles with corresponding geometry and colors.
 
 ## Acceptance
 

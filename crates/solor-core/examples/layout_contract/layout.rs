@@ -20,6 +20,8 @@ mod staged_allocation_tests;
 pub enum LayoutError {
     Access(AccessError),
     InvalidSize,
+    #[allow(dead_code)] // Used by the separate fixed-font integration target.
+    TextUnavailable,
     WrongNodeType,
     MissingChild(usize),
     DuplicatePlacement(usize),

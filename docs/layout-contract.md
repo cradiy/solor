@@ -178,3 +178,8 @@ layouts within one update and publishes only drafts used by normal layout.
 The [parent-layout skip](parent-layout-skip.md) retains a validated root layout
 while publishing audited child changes. It also checks publication identity,
 standalone-audit cursors, and preserved placement at nonzero parent origins.
+The [fixed-font text integration](text-layout.md) exercises the same contract with
+real shaping, line breaks, and owned paragraph caches. Its text fixtures and
+performance results remain separate from the synthetic layout workload.
+The [text drawing snapshot experiment](text-frame.md) retains geometry and drawing
+resources together across preparation failures, even after internal layout succeeds.
