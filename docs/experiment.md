@@ -127,10 +127,19 @@ title activation after returning to the top, and shared-buffer pixel agreement.
 Horizontal scrolling and kinetic scrolling are outside this experiment.
 
 The [component lifecycle fixture](node-execution.md#headless-lifecycle-evidence)
-exercises one scope owning two sibling leaves. Acceptance covers cancellation
+exercises single and nested scopes owning sibling visual leaves. Acceptance covers cancellation
 before binding delivery, press retirement across a failed frame and remount,
-retained pixel replay, and cleanup on scope disposal. Frame acceptance is
-simulated in one window. The public component model remains a proposal.
+retained pixel replay, child-first and parent-first disposal, and delayed disposal
+after remount. Unrelated scopes retain their bindings and presses. Frame acceptance is
+simulated in one window. [Disposal timings](node-execution.md#cost-of-disposing-a-scope)
+compare membership discovery and full removal across tree sizes, with checks on
+surviving order, binding cancellation and payload drops. The public component
+model remains a proposal.
+
+The [headless window acceptance experiment](window-frame-commit.md#headless-acceptance-evidence)
+injects an upload failure after rasterization. It checks hit targets, binding
+delivery and submitted bytes through retry, resize and replacement with an
+identical-looking mount.
 
 The following are outside this milestone:
 

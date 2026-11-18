@@ -66,7 +66,9 @@ The initial scheduler should process updates at explicit boundaries, then finish
 the necessary geometry work before recording paint. Late update requests are
 queued for the next update boundary, not executed recursively from layout or
 painting. Event dispatch must not observe partially computed geometry. Any future
-synchronous geometry query needs an explicit completion barrier.
+synchronous geometry query needs an explicit completion barrier. The
+[window frame acceptance proposal](window-frame-commit.md) defines which
+snapshot drives hit testing and who retries an incomplete frame.
 
 ## Layout inputs and dependencies
 
@@ -293,8 +295,8 @@ for this runtime. [Flutter pointer dispatch](https://api.flutter.dev/flutter/ges
 ### Headless lifecycle evidence
 
 The [lifecycle fixture](../crates/solor-core/examples/text_layout/lifecycle_tests.rs)
-mounts two overlapping text leaves under one layout parent. Each mount pairs its
-visual handle with a state handle and binding. Both leaves subscribe to a
+mounts overlapping text leaves under one layout parent. Each mount pairs its
+visual handle with a state handle and binding. Leaves subscribe to a
 parent-owned color signal. Input resolves the frontmost hit in the accepted
 frame, then checks that mount's live membership.
 
@@ -309,12 +311,66 @@ press and release delivers one action to the replacement.
 
 Across 32 whole-scope disposals the test checks both payload drops, empty
 membership and press state, zero bindings and queued work, and continued
-access to the shared signal. These are live object counts. The fixture uses a
-two-entry linear lookup and a simulated acceptance boundary. Lookup cost at
-scale, native input timing, nested scopes, focus, and keyed moves remain open.
+access to the shared signal. These are live object counts.
+
+In the nested cases each scope has a generational handle to a state-tree node.
+Child scopes and bound payloads attach under their owner. All visual leaves
+remain siblings under the same layout parent. Disposal walks the state subtree
+and marks its bound payloads. It retires affected presses, bindings and visual
+leaves before removing the state subtree and flushing remaining bindings. A queued disposal
+whose handle is already stale has no effect.
+
+Child-first disposal preserves the parent's queued delivery. A remounted child
+survives a late request for its predecessor and is released exactly once with
+the parent. Parent-first disposal also removes live child contributions when
+their visual positions interleave with an unrelated owner's. That owner's
+queued binding and active press still complete. Frame acceptance is simulated.
+Native input timing, focus and keyed moves remain open.
 
 ```sh
 cargo test --offline --example text_window lifecycle_tests
+```
+
+### Cost of disposing a scope
+
+The [headless timing test](../crates/solor-core/examples/text_layout/lifecycle_tests/disposal_cost.rs)
+compares walking ancestors for every live mount with visiting the target scope's
+existing child links. The latter sets one boolean per visited label, then checks
+the marks in visual order while compacting the mount list. It keeps no second
+per-scope membership list. Traversal uses a temporary stack of pending nodes.
+
+Each release process runs one warmup and seven measured batches per case,
+alternating strategy order. Each batch starts with a completed layout, a cached
+snapshot and one queued binding per leaf. Target scopes span the visual order,
+with owned leaves interleaved with survivors and distributed across two scope
+levels. Discovery and disposal use separately constructed fixtures. Discovery
+materializes the affected identities. Disposal removes up to 16 disjoint scopes
+in succession and includes finding members, compacting lists, canceling
+bindings, detaching layout leaves and dropping state payloads. Subsequent
+layout, painting and submission are outside the interval. Checks verify the
+surviving order, queued work, dropped identities and final geometry count.
+
+Median of five process medians, in microseconds per scope:
+
+| Initial mounts | Leaves per scope | Discover by ascent | Discover by subtree | Dispose by ascent | Dispose by subtree |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | 1 | 0.14 | 0.19 | 0.50 | 0.59 |
+| 128 | 1 | 0.43 | 0.09 | 1.10 | 0.66 |
+| 1,024 | 4 | 3.90 | 0.14 | 10.63 | 6.07 |
+| 8,192 | 1 | 27.83 | 0.22 | 60.03 | 22.91 |
+| 8,192 | 4 | 28.61 | 0.27 | 81.29 | 43.50 |
+| 8,192 | 64 | 33.37 | 0.70 | 459.85 | 418.29 |
+| 256 | 64 | 1.29 | 0.59 | 27.25 | 25.94 |
+
+For four leaves among 8,192, complete disposal ranged from 80.12 to 87.13 µs
+by ascent and 42.57 to 46.07 µs by subtree. For one leaf among eight the
+subtree path cost about 0.09 µs more. The fixture uses subtree traversal for
+both sizes. The ordered mount list still requires one scan, and each layout
+leaf removal scans the scene's node index and its parent's child list. The
+timings do not isolate these remaining costs individually.
+
+```sh
+cargo test --release --offline --example text_window measure_scope_disposal -- --ignored --nocapture
 ```
 
 ## Validation before implementation expands
