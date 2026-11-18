@@ -4,11 +4,11 @@ use swash::FontRef;
 use swash::scale::image::Image;
 use swash::scale::{Render, ScaleContext, Source};
 
-use crate::frame::Frame;
+use crate::frame::{Frame, TextDraw};
 use crate::glyph_masks::GlyphMasks;
 use crate::layout::Size;
 
-/// Half-open destination coordinates, in device pixels at scale 1.
+/// Half-open destination coordinates, in device pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Clip {
     pub left: i64,
@@ -41,6 +41,29 @@ impl Clip {
     }
 }
 
+/// Device pixels per logical unit, expressed in 120ths.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RasterScale(pub u32);
+
+impl RasterScale {
+    pub const ONE: Self = Self(120);
+
+    fn edge(self, logical: f64) -> i64 {
+        (logical * (f64::from(self.0) / 120.0)).round() as i64
+    }
+
+    pub fn bounds(self, draw: &TextDraw) -> Clip {
+        let x = f64::from(draw.origin.x);
+        let y = f64::from(draw.origin.y);
+        Clip {
+            left: self.edge(x),
+            top: self.edge(y),
+            right: self.edge(x + f64::from(draw.allocated.width)),
+            bottom: self.edge(y + f64::from(draw.allocated.height)),
+        }
+    }
+}
+
 pub struct Surface {
     pub size: Size,
     pub rgba: Vec<u8>,
@@ -48,7 +71,7 @@ pub struct Surface {
 
 impl Surface {
     pub fn draw(frame: &Frame, size: Size, clip: Clip) -> Result<Self> {
-        Self::raster(frame, size, clip, (0, 0), None)
+        Self::raster(frame, size, clip, (0, 0), RasterScale::ONE, None)
     }
 
     pub fn draw_cached(
@@ -57,11 +80,16 @@ impl Surface {
         clip: Clip,
         cache: &mut GlyphMasks,
     ) -> Result<Self> {
-        Self::raster(frame, size, clip, (0, 0), Some(cache))
+        Self::raster(frame, size, clip, (0, 0), RasterScale::ONE, Some(cache))
     }
 
     /// The caller supplies a nonempty region inside the validated destination.
-    pub(super) fn patch(frame: &Frame, area: Clip, cache: &mut GlyphMasks) -> Result<Self> {
+    pub(super) fn patch(
+        frame: &Frame,
+        area: Clip,
+        scale: RasterScale,
+        cache: &mut GlyphMasks,
+    ) -> Result<Self> {
         let size = Size {
             width: (area.right - area.left) as u32,
             height: (area.bottom - area.top) as u32,
@@ -71,15 +99,17 @@ impl Surface {
             size,
             Clip::canvas(size),
             (area.left, area.top),
+            scale,
             Some(cache),
         )
     }
 
-    fn raster(
+    pub(super) fn raster(
         frame: &Frame,
         size: Size,
         clip: Clip,
         origin: (i64, i64),
+        scale: RasterScale,
         mut cache: Option<&mut GlyphMasks>,
     ) -> Result<Self> {
         let pixels = u64::from(size.width) * u64::from(size.height);
@@ -100,19 +130,20 @@ impl Surface {
         let renderer = Render::new(&[Source::Outline]);
         let viewport = Clip::canvas(size).intersect(clip);
         for draw in &frame.draws {
-            let left = i64::from(draw.origin.x) - origin.0;
-            let top = i64::from(draw.origin.y) - origin.1;
+            let device = scale.bounds(draw);
             let bounds = viewport.intersect(Clip {
-                left,
-                top,
-                right: left + i64::from(draw.allocated.width),
-                bottom: top + i64::from(draw.allocated.height),
+                left: device.left - origin.0,
+                top: device.top - origin.1,
+                right: device.right - origin.0,
+                bottom: device.bottom - origin.1,
             });
             if bounds.empty() || draw.color[3] == 0 {
                 continue;
             }
             let em = f32::from(draw.paragraph.style.size);
-            let mut scaler = context.builder(font).size(em).hint(false).build();
+            let factor = scale.0 as f32 / 120.0;
+            let device_em = em * factor;
+            let mut scaler = context.builder(font).size(device_em).hint(false).build();
             for line in &draw.paragraph.lines {
                 for glyph in &line.glyphs {
                     let mut rasterize = |mask: &mut Image| {
@@ -124,21 +155,22 @@ impl Surface {
                         }
                     };
                     let mask = match cache.as_deref_mut() {
-                        Some(cache) => cache.resolve(
-                            draw.paragraph.style.size,
-                            glyph.id,
-                            &mut scratch,
-                            rasterize,
-                        )?,
+                        Some(cache) => {
+                            cache.resolve(device_em.to_bits(), glyph.id, &mut scratch, rasterize)?
+                        }
                         None => {
                             rasterize(&mut scratch)?;
                             &scratch
                         }
                     };
-                    let x = left
-                        + (glyph.x + em * glyph.x_offset).round() as i64
+                    let x = scale
+                        .edge(f64::from(draw.origin.x) + f64::from(glyph.x + em * glyph.x_offset))
+                        - origin.0
                         + i64::from(mask.placement.left);
-                    let y = top + (line.baseline + glyph.y - em * glyph.y_offset).round() as i64
+                    let y = scale.edge(
+                        f64::from(draw.origin.y)
+                            + f64::from(line.baseline + glyph.y - em * glyph.y_offset),
+                    ) - origin.1
                         - i64::from(mask.placement.top);
                     surface.composite(mask, x, y, bounds, draw.color);
                 }

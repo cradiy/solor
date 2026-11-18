@@ -67,6 +67,11 @@ mask cache is evaluated on warm, cold and eviction-heavy full redraws against
 the uncached pixel output. Retained CPU pixels support a single damage rectangle
 for clipped text commands, with old and new bounds, ordered overlap replay,
 and full redraw on target changes.
+The [Wayland text window](text-window.md) presents these pixels at the preferred
+surface scale. Acceptance covers a mapped two-row window, alternating row edits,
+released buffer reuse, compositor-driven resizing, agreement with uncached
+physical pixels, idle commits and normal close. Record client PSS and shared
+buffer sizes separately.
 The [node execution model draft](node-execution.md) remains the broader proposal.
 
 The following are outside this milestone:
@@ -76,7 +81,7 @@ The following are outside this milestone:
 - Derived signals, automatic dependency tracking, and multi-source bindings.
 - Integration with signal callbacks, recursive dependency pruning, general paint
   invalidation, and general pixel damage tracking.
-- General layout algorithms, font fallback, rich text, GPU rendering, input, and windows.
+- General layout algorithms, font fallback, rich text, GPU rendering, input, and a general window abstraction.
 - Widgets, showcase applications, and application-level performance comparisons.
 - Selecting a rendering backend or committing to a complete framework design.
 

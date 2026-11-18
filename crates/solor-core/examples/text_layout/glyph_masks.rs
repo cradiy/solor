@@ -5,7 +5,7 @@ use std::io::Result;
 use swash::scale::image::Image;
 
 struct Entry {
-    size: u16,
+    size_bits: u32,
     glyph: u16,
     mask: Image,
 }
@@ -52,7 +52,7 @@ impl GlyphMasks {
 
     pub fn resolve<'a>(
         &'a mut self,
-        size: u16,
+        size_bits: u32,
         glyph: u16,
         scratch: &'a mut Image,
         render: impl FnOnce(&mut Image) -> Result<()>,
@@ -60,7 +60,7 @@ impl GlyphMasks {
         if let Some(index) = self
             .entries
             .iter()
-            .position(|e| e.size == size && e.glyph == glyph)
+            .position(|e| e.size_bits == size_bits && e.glyph == glyph)
         {
             self.hits += 1;
             return Ok(&self.entries[index].mask);
@@ -88,7 +88,7 @@ impl GlyphMasks {
         }
         self.bytes += bytes;
         self.entries.push_back(Entry {
-            size,
+            size_bits,
             glyph,
             mask: std::mem::take(scratch),
         });

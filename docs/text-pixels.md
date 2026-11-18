@@ -6,14 +6,14 @@ the snapshot's fixed font bytes, and paints the supplied glyph IDs in command
 order. Swash supplies unhinted grayscale outline masks. PNG encoding is used for
 the sample output. Both dependencies are development-only.
 
-The device scale is one. Glyph origins include the command origin, the line
-baseline and the size-scaled shaping offsets. The renderer rounds the local
+The offscreen benchmark uses device scale one. Glyph origins include the command origin, the line
+baseline and the size-scaled shaping offsets. The renderer rounds the absolute
 glyph origin to the nearest pixel and applies the signed bitmap bearings. A
 half-open scissor intersects the surface, the allocated text box and each glyph
 mask. Coverage modulates text alpha, and source-over blending operates on the
 encoded color channels of the opaque destination. These are explicit policies
-of this fixture. Fractional device scale, transparent targets and native window
-presentation require separate evaluation.
+of this fixture. The [Wayland text window](text-window.md) uses the same renderer at
+the preferred surface scale. Transparent targets remain outside this experiment.
 
 Each draw creates one surface (1 through 4,194,304 pixels), a scale context and
 one reusable scratch mask. The uncached path rasterizes each visible command’s glyphs anew.

@@ -359,3 +359,43 @@ fn damage_replays_unchanged_overlapping_layers_in_order() {
         .unwrap();
     assert_eq!(retained.surface().rgba, render(&swapped).rgba);
 }
+
+#[test]
+fn fractional_scale_matches_a_native_size_glyph_with_a_warm_one_x_cache() {
+    use crate::{glyph_masks::GlyphMasks, pixels::RasterScale, text::Style};
+    let physical = Size {
+        width: 192,
+        height: 120,
+    };
+    let mut view = Presentation::new(1, "界", true);
+    let logical = view.update(SIZE, Mode::Normal).unwrap().frame;
+    let mut masks = GlyphMasks::new(16, 16384);
+    Surface::draw_cached(&logical, SIZE, Clip::canvas(SIZE), &mut masks).unwrap();
+    let scaled = Surface::raster(
+        &logical,
+        physical,
+        Clip::canvas(physical),
+        (0, 0),
+        RasterScale(180),
+        Some(&mut masks),
+    )
+    .unwrap();
+
+    // Produce the reference by shaping and rasterizing directly at 24 px.
+    view.set_style(
+        0,
+        Style {
+            size: 24,
+            line_height: 36,
+        },
+    )
+    .unwrap();
+    let mut native = view.update(physical, Mode::Normal).unwrap().frame;
+    drop(view);
+    let draw = &mut Rc::get_mut(&mut native).unwrap().draws[0];
+    draw.origin.x = 3;
+    draw.origin.y = 3;
+    let reference = Surface::draw(&native, physical, Clip::canvas(physical)).unwrap();
+    assert!(reference.rgba.iter().any(|&channel| channel < 128));
+    assert_eq!(scaled.rgba, reference.rgba);
+}

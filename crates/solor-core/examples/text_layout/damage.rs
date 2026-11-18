@@ -1,22 +1,11 @@
 use std::{io::Result, rc::Rc};
 
-use crate::frame::{Frame, TextDraw};
+use crate::frame::Frame;
 use crate::glyph_masks::GlyphMasks;
 use crate::layout::Size;
-use crate::pixels::{Clip, Surface};
+use crate::pixels::{Clip, RasterScale, Surface};
 
-fn bounds(draw: &TextDraw) -> Clip {
-    let left = i64::from(draw.origin.x);
-    let top = i64::from(draw.origin.y);
-    Clip {
-        left,
-        top,
-        right: left + i64::from(draw.allocated.width),
-        bottom: top + i64::from(draw.allocated.height),
-    }
-}
-
-fn damage(old: &Frame, new: &Frame, viewport: Clip) -> Option<Clip> {
+fn damage(old: &Frame, new: &Frame, viewport: Clip, scale: RasterScale) -> Option<Clip> {
     let mut area: Option<Clip> = None;
     // Compare ordered slots. Insertions, removals and swaps dirty both occupants.
     for index in 0..old.draws.len().max(new.draws.len()) {
@@ -32,7 +21,7 @@ fn damage(old: &Frame, new: &Frame, viewport: Clip) -> Option<Clip> {
             continue;
         }
         for draw in before.into_iter().chain(after) {
-            let rect = bounds(draw).intersect(viewport);
+            let rect = scale.bounds(draw).intersect(viewport);
             if draw.color[3] == 0 || rect.empty() {
                 continue;
             }
@@ -55,12 +44,24 @@ pub struct RetainedPixels {
     surface: Surface,
     frame: Rc<Frame>,
     clip: Clip,
+    scale: RasterScale,
 }
 
 impl RetainedPixels {
     pub fn new(frame: Rc<Frame>, size: Size, clip: Clip, cache: &mut GlyphMasks) -> Result<Self> {
-        let surface = Surface::draw_cached(&frame, size, clip, cache)?;
+        Self::new_scaled(frame, size, clip, RasterScale::ONE, cache)
+    }
+
+    pub fn new_scaled(
+        frame: Rc<Frame>,
+        size: Size,
+        clip: Clip,
+        scale: RasterScale,
+        cache: &mut GlyphMasks,
+    ) -> Result<Self> {
+        let surface = Surface::raster(&frame, size, clip, (0, 0), scale, Some(cache))?;
         Ok(Self {
+            scale,
             surface,
             frame,
             clip,
@@ -88,16 +89,17 @@ impl RetainedPixels {
         } else if Rc::ptr_eq(&self.frame, &frame) {
             None
         } else {
-            damage(&self.frame, &frame, canvas.intersect(clip))
+            damage(&self.frame, &frame, canvas.intersect(clip), self.scale)
         };
         let count = match area {
             None => 0,
             Some(a) if a == canvas => {
-                self.surface = Surface::draw_cached(&frame, size, clip, cache)?;
+                self.surface =
+                    Surface::raster(&frame, size, clip, (0, 0), self.scale, Some(cache))?;
                 self.surface.rgba.len() / 4
             }
             Some(a) => {
-                let patch = Surface::patch(&frame, a, cache)?;
+                let patch = Surface::patch(&frame, a, self.scale, cache)?;
                 let stride = size.width as usize * 4;
                 let width = patch.size.width as usize * 4;
                 let first = a.top as usize * stride + a.left as usize * 4;
