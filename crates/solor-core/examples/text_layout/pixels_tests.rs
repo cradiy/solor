@@ -285,7 +285,10 @@ fn retained_pixels_match_every_edit_and_replay_across_viewports() {
             retained.surface().rgba,
             Surface::draw(&frame, size, clip).unwrap().rgba
         );
-        assert_eq!(retained.update(frame, size, clip, &mut masks).unwrap(), 0);
+        assert_eq!(
+            retained.update(frame, size, clip, &mut masks).unwrap(),
+            None
+        );
     }
     drop(view);
     retained
@@ -306,7 +309,7 @@ fn retained_pixels_match_every_edit_and_replay_across_viewports() {
         retained
             .update(first, SIZE, Clip::canvas(SIZE), &mut masks)
             .unwrap(),
-        0
+        None
     );
 }
 
@@ -343,12 +346,12 @@ fn damage_replays_unchanged_overlapping_layers_in_order() {
     let second = layered([0, 128, 0, 200], &mut view);
     let mut masks = GlyphMasks::new(16, 2048);
     let mut retained = RetainedPixels::new(first, SIZE, Clip::canvas(SIZE), &mut masks).unwrap();
-    let n = retained
+    let region = retained
         .update(second.clone(), SIZE, Clip::canvas(SIZE), &mut masks)
         .unwrap();
     assert_eq!(
-        n,
-        (second.draws[0].allocated.width * second.draws[0].allocated.height) as usize
+        region,
+        Some(crate::pixels::RasterScale::ONE.bounds(&second.draws[0]))
     );
     assert_eq!(retained.surface().rgba, render(&second).rgba);
     let mut swapped = layered([0, 128, 0, 200], &mut view);

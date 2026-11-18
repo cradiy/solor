@@ -81,9 +81,12 @@ pub fn run() -> Result<()> {
                     if mode == 0 {
                         black_box(Surface::draw_cached(&frame, size, clip, &mut masks[0])?);
                     } else {
-                        let n = retained.update(frame, size, clip, &mut masks[1])?;
-                        if batch > 0 {
-                            pixels += n;
+                        let area = retained.update(frame, size, clip, &mut masks[1])?;
+                        if batch > 0
+                            && let Some(rect) = area
+                        {
+                            pixels +=
+                                ((rect.right - rect.left) * (rect.bottom - rect.top)) as usize;
                         }
                         black_box(retained.surface());
                     }

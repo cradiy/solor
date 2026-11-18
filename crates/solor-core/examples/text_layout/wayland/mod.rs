@@ -167,20 +167,25 @@ impl Window {
             .map_err(layout_error)?
             .frame;
         let clip = Clip::canvas(size);
-        let pixels = match &mut self.pixels {
-            Some(pixels) => {
-                pixels.update(frame.clone(), size, clip, &mut self.masks)?;
-                pixels
+        let damage = match &mut self.pixels {
+            Some(pixels) => pixels.update(frame.clone(), size, clip, &mut self.masks)?,
+            None => {
+                self.pixels = Some(RetainedPixels::new_scaled(
+                    frame.clone(),
+                    size,
+                    clip,
+                    self.scale,
+                    &mut self.masks,
+                )?);
+                Some(clip)
             }
-            None => self.pixels.insert(RetainedPixels::new_scaled(
-                frame.clone(),
-                size,
-                clip,
-                self.scale,
-                &mut self.masks,
-            )?),
         };
 
+        if let Some(area) = damage {
+            for slot in self.slots.iter_mut().flatten().filter(|s| s.size == size) {
+                slot.invalidate(area);
+            }
+        }
         let reuse = self.slots[index]
             .as_ref()
             .is_some_and(|slot| slot.size == size);
@@ -191,7 +196,8 @@ impl Window {
             .as_mut()
             .expect("initialized free shm slot");
         let upload_start = Instant::now();
-        slot.upload(pixels.surface())?;
+        let pixels = self.pixels.as_ref().expect("prepared retained pixels");
+        let uploaded = slot.upload(pixels.surface())?;
         let upload_us = upload_start.elapsed().as_micros();
         if self.audit {
             slot.verify(&Surface::raster(
@@ -218,7 +224,7 @@ impl Window {
         self.dirty = false;
         self.commits += 1;
         eprintln!(
-            "commit={} edit={} size={}x{} buffer={}x{} scale_120={} slot={} reuse={} audited={} upload_us={} elapsed_us={}",
+            "commit={} edit={} size={}x{} buffer={}x{} scale_120={} slot={} reuse={} audited={} upload_bytes={} upload_us={} elapsed_us={}",
             self.commits,
             self.edit,
             self.size.width,
@@ -229,6 +235,7 @@ impl Window {
             index,
             reuse,
             self.audit,
+            uploaded,
             upload_us,
             self.start.elapsed().as_micros()
         );

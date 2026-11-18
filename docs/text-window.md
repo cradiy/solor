@@ -19,14 +19,17 @@ in 120ths to size the physical buffer and rasterize each glyph outline. At
 Mask keys include the physical font size. A scale change invalidates retained
 pixels even if rounding leaves the physical buffer dimensions unchanged.
 
-The client keeps one retained RGBA image and up to two shared files. It
-repairs the RGBA image using damage bounds in physical pixels, converts the
-whole image to native-endian XRGB8888, and writes it to a free file. Each
-submitted slot stays busy until the compositor releases it. A free slot with
-a different size receives a fresh buffer. This provides a reference for later
-experiments with partial uploads. The core library has no Wayland dependency.
+The client keeps one retained RGBA image and up to two shared files. Each file
+tracks a single band of physical scanlines that changed since its last upload,
+including changes while the compositor held the file. Once the compositor
+releases a slot, the client can convert and write the entire band in contiguous
+chunks of native-endian XRGB8888. New files start with all rows pending. The
+band is cleared after all writes succeed. Its bounds can include unchanged
+rows between distant edits and unchanged columns on every affected row.
+The surface still reports full-buffer damage to the compositor. The core
+library has no Wayland dependency.
 
-## Measurements
+## Full upload baseline
 
 On one Niri output at 150%, the release example mapped at 829 by 987 logical
 units (1244 by 1481 physical pixels). One audited run completed 12 buffer
@@ -49,3 +52,28 @@ use file descriptors without mapping the files into the client. Client PSS
 does not cover compositor resources or provide a total desktop memory cost.
 All four clients exited through the XDG close event. Visual verification is
 limited to the submitted buffer sample on this output.
+
+## Upload comparison
+
+The two-row release fixture ran against the full-upload version at `525fbdb`
+on the same Niri output at 150%. Each fresh process completed eight alternating
+edits at 1244 by 1481 physical pixels. The first two commits populated the two
+slots. The next seven reused them. Three pairs of processes alternated which
+version ran first. Timing covers conversion and shared-file writes for those
+seven commits per process. Pixel auditing was disabled for timing.
+
+| Upload strategy | Bytes per reused buffer | Median upload time across process medians (range) |
+| --- | ---: | ---: |
+| Full image | 7,369,456 | 1,634 µs (1,303–1,654) |
+| Pending rows | 383,152 | 132 µs (119–133) |
+
+Alternating rows left both changes pending in the older slot, spanning 77
+physical scanlines. The band reduced written bytes by 94.8% in this fixture.
+First use and resize still require full writes. A separate audited run checked
+all 12 commits against an uncached full redraw, including the seven reused
+buffers and resizes through 192 by 100 and 320 by 100 logical units.
+
+Client PSS after the eight edits, before any resize, was 10,053–10,205 KiB
+for pending rows and 10,180–10,257 KiB for full upload. Both versions also
+held two 7,369,456-byte shared files outside the client address space. The
+timings exclude layout, rasterization, compositor work and display latency.

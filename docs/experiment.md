@@ -71,7 +71,10 @@ The [Wayland text window](text-window.md) presents these pixels at the preferred
 surface scale. Acceptance covers a mapped two-row window, alternating row edits,
 released buffer reuse, compositor-driven resizing, agreement with uncached
 physical pixels, idle commits and normal close. Record client PSS and shared
-buffer sizes separately.
+buffer sizes separately. The partial upload experiment tracks missed scanlines
+per shared file. Compare bytes and conversion/write time with full uploads
+under identical content and compositor damage, and verify the complete file
+after edits and resizing.
 The [node execution model draft](node-execution.md) remains the broader proposal.
 
 The following are outside this milestone:

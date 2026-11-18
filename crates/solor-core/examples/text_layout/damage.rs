@@ -72,14 +72,14 @@ impl RetainedPixels {
         &self.surface
     }
 
-    /// Returns the number of RGBA pixels prepared for this update.
+    /// Returns the physical region repaired in the retained surface.
     pub fn update(
         &mut self,
         frame: Rc<Frame>,
         size: Size,
         clip: Clip,
         cache: &mut GlyphMasks,
-    ) -> Result<usize> {
+    ) -> Result<Option<Clip>> {
         let canvas = Clip::canvas(size);
         let full = self.surface.size != size
             || self.clip != clip
@@ -91,12 +91,11 @@ impl RetainedPixels {
         } else {
             damage(&self.frame, &frame, canvas.intersect(clip), self.scale)
         };
-        let count = match area {
-            None => 0,
+        match area {
+            None => {}
             Some(a) if a == canvas => {
                 self.surface =
                     Surface::raster(&frame, size, clip, (0, 0), self.scale, Some(cache))?;
-                self.surface.rgba.len() / 4
             }
             Some(a) => {
                 let patch = Surface::patch(&frame, a, self.scale, cache)?;
@@ -107,11 +106,10 @@ impl RetainedPixels {
                     let start = first + index * stride;
                     self.surface.rgba[start..start + width].copy_from_slice(row);
                 }
-                patch.rgba.len() / 4
             }
         };
         self.frame = frame;
         self.clip = clip;
-        Ok(count)
+        Ok(area)
     }
 }
