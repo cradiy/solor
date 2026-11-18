@@ -32,15 +32,7 @@ fn damage(old: &Frame, new: &Frame, viewport: Clip, scale: RasterScale) -> Optio
             if draw.color[3] == 0 || rect.empty() {
                 continue;
             }
-            area = Some(match area {
-                None => rect,
-                Some(a) => Clip {
-                    left: a.left.min(rect.left),
-                    top: a.top.min(rect.top),
-                    right: a.right.max(rect.right),
-                    bottom: a.bottom.max(rect.bottom),
-                },
-            });
+            area = Some(area.map_or(rect, |old| old.union(rect)));
         }
     }
     area

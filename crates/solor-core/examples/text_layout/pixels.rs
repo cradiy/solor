@@ -36,6 +36,16 @@ impl Clip {
         }
     }
 
+    /// Smallest rectangle containing both nonempty input rectangles.
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            left: self.left.min(other.left),
+            top: self.top.min(other.top),
+            right: self.right.max(other.right),
+            bottom: self.bottom.max(other.bottom),
+        }
+    }
+
     pub fn empty(self) -> bool {
         self.left >= self.right || self.top >= self.bottom
     }

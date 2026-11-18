@@ -22,12 +22,17 @@ Mask keys include the physical font size. A scale change invalidates retained
 pixels even if rounding leaves the physical buffer dimensions unchanged.
 
 The client keeps one retained RGBA image and up to two shared files. Each file
-tracks a single band of physical scanlines that changed since its last upload,
-including changes while the compositor held the file. Once the compositor
-releases a slot, the client can convert and write the entire band in contiguous
-chunks of native-endian XRGB8888. New files start with all rows pending. The
-band is cleared after all writes succeed. Its bounds can include unchanged
-rows between distant edits and unchanged columns on every affected row.
+tracks the bounding rectangle of all pixel changes since its last upload,
+including changes while the compositor held it. New files start with the entire
+image pending. The uploader converts pixels to native-endian XRGB8888 using
+a 16 KiB staging buffer and clears the rectangle after every write succeeds.
+
+For a gap of at least 2,048 bytes between the end of one affected row span and
+the start of the next, the uploader writes the spans separately. For smaller
+gaps it writes the contiguous range from the first affected pixel to the last.
+This also handles full-width updates. Both paths can include unmodified pixels
+within the combined bounds of distant edits.
+
 The window sends the retained rasterizer's physical rectangle through
 `wl_surface.damage_buffer`. The rectangle uses the current buffer’s coordinates and
 bounds the pixel changes since the preceding surface commit. A slot can need
@@ -35,7 +40,7 @@ more scanlines repaired than the rectangle reported to the compositor. A new
 logical size or scale damages the full target.
 
 When the retained rasterizer returns an empty damage region, the window keeps
-the current buffer attached and preserves the pending rows in each slot. An
+the current buffer attached and preserves the pending rectangle in each slot. An
 event-driven disclosure then waits for input. If another application update
 needs a frame callback, the window requests it and commits the callback alone.
 The next visible change repairs the selected file before attaching it. The
@@ -44,7 +49,7 @@ updates are checked against an uncached full raster.
 
 ## Surface damage verification
 
-On Niri at 150%, the release two-row window started with a 1244 by 1481
+On Niri at 150%, the scanline-upload fixture started with a 1244 by 1481
 physical buffer. The eight alternating edits sent rectangles of 258 by 36
 and 353 by 36 pixels. The first edit populated a second shared file in full.
 Each later edit repaired a 77-scanline band in a reused file. All 12 buffer
@@ -59,7 +64,7 @@ callback recolored the label. A real pointer click woke the idle window and
 collapsed the detail. All submitted buffers, including resizes, passed the
 full-raster check.
 
-Two paired release runs against `38dfb11` used the same driver, with run
+Two paired release runs of the scanline uploader against `38dfb11` used the same driver, with run
 order reversed for the second pair. At 1244 by 1481 physical pixels, both
 empty updates wrote zero bytes. The baseline wrote 562,288 and 358,272 bytes
 respectively. From initial mapping through the click, including deferred
@@ -114,3 +119,38 @@ Client PSS after the eight edits, before any resize, was 10,053–10,205 KiB
 for pending rows and 10,180–10,257 KiB for full upload. Both versions also
 held two 7,369,456-byte shared files outside the client address space. The
 timings exclude layout, rasterization, compositor work and display latency.
+
+## Bounding rectangle uploads
+
+At 1244 by 1481 physical pixels, alternating edits of two labels leave a
+353 by 77 rectangle pending in the older file. The scanline uploader in
+`988598e` converts 383,152 bytes on each reuse. Restricting the upload to
+the horizontal bounds reduces that to 108,724 bytes. A full buffer still
+takes 7,369,456 bytes. On Niri at 150%, all 12 buffers in each audited
+two-row run matched uncached rasterization through edits and resizes.
+The 1,024-row disclosure also matched through scrolling, expansion and collapse.
+
+Four paired release runs used the same Niri output, with both executables on
+the same filesystem, auditing disabled and pair order alternating. Each fresh
+process contributed the median upload time for its seven reused buffers.
+
+| Upload strategy | Bytes per reuse | Median of process medians (range) |
+| --- | ---: | ---: |
+| Full-width scanline band | 383,152 | 136.5 µs (110–157) |
+| Bounding rectangle | 108,724 | 81.5 µs (80–85) |
+
+Upload time starts before pixel conversion and ends after the shared-file
+writes return. In all eight processes client anonymous PSS was 7,708 KiB
+after the edits and 1,188 KiB after resizing to 320 by 100 logical units.
+Total PSS after resizing ranged from 3,889–3,929 KiB for scanline bands
+and 3,825–3,961 KiB for bounding rectangles.
+
+The gap heuristic was checked separately by writing to prefilled memfds in
+release builds. For a 288-pixel buffer with a 250 by 160 edit, writing every
+partial row separately took 43.7 µs versus 21.5 µs for the scanline band in
+the initial trial. Bridging the short gaps brought the two paths within
+1 µs in three subsequent processes. For a 12 by 1,300 edit in a
+1,244-pixel buffer, separate row spans took 233–252 µs versus 962–1,103 µs
+for the scanline band. Each process alternated the two paths over one warmup
+and seven measured batches of 96 uploads per path. These timings cover pixel
+conversion and file writes to warmed targets.
