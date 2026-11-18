@@ -40,8 +40,7 @@ fn changed_allocation_discards_old_parent_and_reuses_only_matching_descendants()
         layout_root(
             &mut scene.store,
             attempt.0,
-            Query::Exact(100),
-            Some(original),
+            RootRequest::Measure(Query::Exact(100), Some(original)),
             false,
         )
         .unwrap();
@@ -49,8 +48,7 @@ fn changed_allocation_discards_old_parent_and_reuses_only_matching_descendants()
         layout_root(
             &mut scene.store,
             attempt.0,
-            Query::Exact(10),
-            Some(assigned),
+            RootRequest::Measure(Query::Exact(10), Some(assigned)),
             false,
         )
         .unwrap();

@@ -595,25 +595,30 @@ fn layout(
     Ok((position, output))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RootRequest {
+    Measure(Query, Option<Size>),
+    Assigned(Size),
+}
+
 fn layout_root(
     store: &mut NodeStore<Entry>,
     scratch: &mut Scratch,
-    query: Query,
-    assigned: Option<Size>,
+    request: RootRequest,
     force: bool,
 ) -> Result<usize> {
     let root = store.root();
-    let metrics = store.execute(root, |entry, access| {
-        Ok(measure(entry, access, query, force))
-    })??;
+    let size = match request {
+        RootRequest::Measure(query, assigned) => {
+            let metrics = store.execute(root, |entry, access| {
+                Ok(measure(entry, access, query, force))
+            })??;
+            assigned.unwrap_or(metrics.size)
+        }
+        RootRequest::Assigned(size) => size,
+    };
     let (position, _) = store.execute(root, |entry, access| {
-        Ok(layout(
-            entry,
-            access,
-            assigned.unwrap_or(metrics.size),
-            scratch,
-            force,
-        ))
+        Ok(layout(entry, access, size, scratch, force))
     })??;
     scratch.draft[position].geometry.origin = Origin::default();
     Ok(position)
@@ -656,7 +661,7 @@ pub struct Scene {
     scratch: Scratch,
     nodes: Vec<NodeId>,
     pending: bool,
-    request: Option<(Query, Option<Size>)>,
+    request: Option<RootRequest>,
     changes: Option<validation::ChangeLog>,
     publication: u64,
     topology_revision: u64,
@@ -802,7 +807,17 @@ impl Scene {
     }
 
     pub fn run(&mut self, query: Query, assigned: Option<Size>, force: bool) -> Result<usize> {
-        if !self.pending && self.request == Some((query, assigned)) && !force {
+        self.run_request(RootRequest::Measure(query, assigned), force)
+    }
+
+    /// Place the root at the host allocation without requesting its preferred size.
+    #[allow(dead_code, reason = "used by the disclosure fixture")]
+    pub fn run_assigned(&mut self, size: Size, force: bool) -> Result<usize> {
+        self.run_request(RootRequest::Assigned(size), force)
+    }
+
+    fn run_request(&mut self, request: RootRequest, force: bool) -> Result<usize> {
+        if !self.pending && self.request == Some(request) && !force {
             return Ok(0);
         }
         let publication = self
@@ -811,9 +826,9 @@ impl Scene {
             .ok_or(LayoutError::RevisionExhausted)?;
         self.pending = true;
         let attempt = Attempt(&mut self.scratch);
-        layout_root(&mut self.store, attempt.0, query, assigned, force)?;
+        layout_root(&mut self.store, attempt.0, request, force)?;
         let published = publish_layout(&mut self.store, attempt.0);
-        self.request = Some((query, assigned));
+        self.request = Some(request);
         self.pending = false;
         self.publication = publication;
         Ok(published)

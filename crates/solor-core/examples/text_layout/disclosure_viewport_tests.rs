@@ -9,6 +9,54 @@ const BEFORE: &[&str] = &["Previous item"];
 const DETAIL: &str = "Hello 世界！Rust GUI 123";
 
 #[test]
+fn assigned_root_only_publishes_measurement_evidence_when_queried() {
+    use crate::layout::validation::CheckTarget;
+
+    let size = Size {
+        width: 132,
+        height: 160,
+    };
+    let query = Query::Exact(size.width);
+    let mut list = DisclosureLayout::new(BEFORE, &["Short"]).unwrap();
+    let root = list.scene.root();
+    for open in [false, true, false] {
+        if list.detail.is_some() != open {
+            list.set_detail(
+                if open { "Hide details" } else { "Show details" },
+                open.then_some(DETAIL),
+            )
+            .unwrap();
+        }
+        let previous = list.scene.node_counts(root);
+        let frame = list.frame(size, false).unwrap();
+        assert_eq!(list.scene.node_counts(root).queries, previous.queries);
+        assert!(
+            list.scene
+                .capture_dependencies(root, CheckTarget::Measure(query))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            list.scene
+                .capture_dependencies(root, CheckTarget::Layout(size))
+                .unwrap()
+                .is_some()
+        );
+
+        // The allocation is identical, but a caller now needs a preferred size.
+        assert_eq!(list.scene.run(query, Some(size), false).unwrap(), 0);
+        assert_eq!(list.scene.node_counts(root).measures, previous.measures + 1);
+        assert!(
+            list.scene
+                .capture_dependencies(root, CheckTarget::Measure(query))
+                .unwrap()
+                .is_some()
+        );
+        assert!(frame.same_content(&list.collect_frame(0, size.height).unwrap()));
+    }
+}
+
+#[test]
 fn viewport_frames_match_full_draws_through_edges_resizes_and_edits() {
     let tail = ["Short", "Hello 世界！Rust GUI 123", "Other text"].repeat(20);
     let mut list = DisclosureLayout::new(BEFORE, &tail).unwrap();
@@ -98,17 +146,18 @@ fn measure_snapshot_collection() {
             width: 240,
             height: 160,
         };
-        let mut lists = [u32::MAX, size.height].map(|_| {
+        let bottoms = [u32::MAX, size.height, size.height];
+        let mut lists = bottoms.map(|_| {
             let mut list = DisclosureLayout::new(BEFORE, &tail).unwrap();
             list.frame(size, false).unwrap();
             list
         });
-        let mut samples = [[Vec::new(), Vec::new()], [Vec::new(), Vec::new()]];
+        let mut samples = bottoms.map(|_| [Vec::new(), Vec::new()]);
         for batch in 0..8 {
-            for offset in 0..2 {
-                let mode = (batch + offset) % 2;
+            for offset in 0..lists.len() {
+                let mode = (batch + offset) % lists.len();
                 let list = &mut lists[mode];
-                let bottom = [u32::MAX, size.height][mode];
+                let bottom = bottoms[mode];
                 let mut elapsed = [0.0; 2];
                 for step in 0..80 {
                     let start = Instant::now();
@@ -118,9 +167,13 @@ fn measure_snapshot_collection() {
                         open.then_some(DETAIL),
                     )
                     .unwrap();
-                    list.scene
-                        .run(Query::Exact(size.width), Some(size), false)
-                        .unwrap();
+                    if mode == 2 {
+                        list.scene.run_assigned(size, false).unwrap();
+                    } else {
+                        list.scene
+                            .run(Query::Exact(size.width), Some(size), false)
+                            .unwrap();
+                    }
                     let laid_out = Instant::now();
                     let frame = Rc::new(list.collect_frame(step, bottom).unwrap());
                     list.published = Some(black_box(frame));
@@ -134,7 +187,15 @@ fn measure_snapshot_collection() {
                 }
             }
         }
+        assert!(
+            lists[1]
+                .published
+                .as_ref()
+                .unwrap()
+                .same_content(lists[2].published.as_ref().unwrap())
+        );
         for (i, stages) in samples.into_iter().enumerate() {
+            let root = if i == 2 { "assigned" } else { "measured" };
             let frame = lists[i].published.as_ref().unwrap();
             for (stage, mut samples) in ["snapshot", "edit through snapshot"]
                 .into_iter()
@@ -142,7 +203,7 @@ fn measure_snapshot_collection() {
             {
                 samples.sort_by(f64::total_cmp);
                 eprintln!(
-                    "{row_count} rows, {} draws, {} bytes, {stage}: {:.2} us",
+                    "{row_count} rows, {root} root, {} draws, {} bytes, {stage}: {:.2} us",
                     frame.draws.len(),
                     frame.shallow_bytes(),
                     samples[3]

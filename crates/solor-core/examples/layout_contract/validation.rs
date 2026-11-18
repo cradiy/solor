@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{
     AccessError, Attempt, Context, Draft, Entry, LayoutError, NodeId, Query, Read, ReadSet, Result,
-    Scene, Scratch, Size, layout, layout_root, measure, publish_layout,
+    RootRequest, Scene, Scratch, Size, layout, layout_root, measure, publish_layout,
 };
 
 pub const MAX_TRACKED_EDITS: usize = 256;
@@ -255,6 +255,7 @@ impl Scene {
             if selected.iter().flatten().all(Vec::is_empty) {
                 (self.run(query, Some(assigned), false)?, 0, false)
             } else {
+                let request = RootRequest::Measure(query, Some(assigned));
                 let publication = self
                     .publication
                     .checked_add(1)
@@ -315,12 +316,12 @@ impl Scene {
                     });
                     attempt.0.record_draft(position, None);
                 } else {
-                    layout_root(&mut self.store, attempt.0, query, Some(assigned), false)?;
+                    layout_root(&mut self.store, attempt.0, request, false)?;
                 }
                 let published = publish_layout(&mut self.store, attempt.0);
                 let hits = attempt.0.reuse.as_ref().unwrap().hits;
                 self.pending = false;
-                self.request = Some((query, Some(assigned)));
+                self.request = Some(request);
                 self.publication = publication;
                 (published, hits, skipped)
             };

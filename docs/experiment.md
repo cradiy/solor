@@ -88,6 +88,13 @@ viewport-limited drawing commands for the same retained layout. Acceptance
 includes partially visible rows, resize, hit testing and pixel replay of a
 held frame. The viewport is anchored at the top and the frame keeps complete
 scene geometry.
+
+For a host-assigned viewport, the disclosure root can lay out its children
+directly at the given size. Compare edit-through-snapshot time against a
+preferred-size query followed by the same allocation. Require agreement with
+forced layout and full rasterization, and verify that a subsequent preferred-size
+request still measures the root after an edit.
+
 The [node execution model draft](node-execution.md) remains the broader proposal.
 
 The following are outside this milestone:

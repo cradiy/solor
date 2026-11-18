@@ -138,3 +138,29 @@ At a boundary exactly at the title origin, hit testing has no published title.
 In a 132 by 220 logical Niri window at 150%, opening and closing the detail
 twice changed visible command counts from 9 to 8 and back. Shared-buffer
 readback matched full rasterization of each submitted frame.
+
+## Host-assigned root size
+
+The disclosure window receives a logical size from the host. Its column uses
+the assigned width to measure children for wrapping and to place each row.
+The window can therefore omit the root's preferred-size query. A caller that
+needs the root's preferred size can still request it, including immediately
+after layout at the same allocation. Measurement evidence becomes available
+when the corresponding query succeeds.
+
+The `measure_snapshot_collection` command above also compares these two root
+requests with the same viewport-limited commands and complete geometry.
+The three strategies rotate execution order by batch. Times below are medians
+of five release-process medians, in microseconds per edit through snapshot
+replacement. Brackets give the range of process medians.
+
+| Collapsed rows | Measure root, then place | Place at host size |
+| ---: | ---: | ---: |
+| 3 | 16.52 [16.25–17.62] | 16.27 [15.99–17.49] |
+| 1,024 | 86.67 [86.42–89.79] | 74.28 [73.22–76.68] |
+
+The host-sized path reduced the long-list median by 14%. The three-row
+measurements overlap. Placement and geometry collection still visit the
+flat column’s rows on an edit. The comparison ends before rasterization or
+compositor submission. Offscreen tests compare host-sized frames against
+forced, measured layout and uncached rasterization across edits and resizes.

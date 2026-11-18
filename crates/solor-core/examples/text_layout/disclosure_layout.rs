@@ -104,8 +104,7 @@ impl DisclosureLayout {
             .map_or(0, |f| f.revision)
             .checked_add(1)
             .ok_or(LayoutError::RevisionExhausted)?;
-        self.scene
-            .run(Query::Exact(size.width), Some(size), force)?;
+        self.scene.run_assigned(size, force)?;
         let frame = Rc::new(self.collect_frame(revision, size.height)?);
         self.published = Some(frame.clone());
         self.viewport = Some(size);
