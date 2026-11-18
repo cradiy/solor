@@ -10,13 +10,23 @@ use crate::{
     disclosure_layout::DisclosureLayout,
     frame::Frame,
     input::{Point, PointerEvent},
-    layout::{Result, Size},
+    layout::{LayoutError, Result, Size},
+    text::MAX_TEXT_BYTES,
 };
 
+pub const DETAIL_COLOR: [u8; 4] = [27, 85, 148, 255];
+
+#[derive(Clone, PartialEq)]
+struct Label {
+    text: Rc<str>,
+    color: [u8; 4],
+}
+
 pub struct Disclosure {
-    labels: Runtime<Rc<str>>,
+    labels: Runtime<Label>,
     expanded: Signal<bool>,
-    detail_text: Signal<Rc<str>>,
+    detail_label: Signal<Label>,
+    sync_pending: bool,
     detail: Option<NodeId>,
     mounted: Option<NodeId>,
     layout: DisclosureLayout,
@@ -24,13 +34,19 @@ pub struct Disclosure {
 }
 
 impl Disclosure {
-    pub fn new(detail: &str, before: &[&str], after: &[&str]) -> Result<Self> {
-        let mut labels = Runtime::new(Rc::from("Show details"));
+    pub fn new(before: &[&str], after: &[&str]) -> Result<Self> {
+        let mut labels = Runtime::new(Label {
+            text: Rc::from("Show details"),
+            color: [20, 30, 40, 255],
+        });
         let expanded = labels.create_signal(false);
-        let detail_text = labels.create_signal(Rc::from(detail));
+        let detail_label = labels.create_signal(Label {
+            text: Rc::from(""),
+            color: DETAIL_COLOR,
+        });
         labels
             .bind(expanded, labels.tree().root(), |open, title| {
-                *title = Rc::from(if *open {
+                title.text = Rc::from(if *open {
                     "Hide details"
                 } else {
                     "Show details"
@@ -41,12 +57,33 @@ impl Disclosure {
         Ok(Self {
             labels,
             expanded,
-            detail_text,
+            detail_label,
+            sync_pending: false,
             detail: None,
             mounted: None,
             layout: DisclosureLayout::new(before, after)?,
             pressed: None,
         })
+    }
+
+    /// Change the detail inputs. A visible subscriber needs a frame when its value changes.
+    pub fn set_detail(&mut self, text: &str, color: [u8; 4]) -> Result<bool> {
+        if text.len() > MAX_TEXT_BYTES {
+            return Err(LayoutError::InvalidSize);
+        }
+        let old = self.labels.read(self.detail_label).expect("owned signal");
+        let text = if old.text.as_ref() == text {
+            if old.color == color {
+                return Ok(false);
+            }
+            old.text.clone()
+        } else {
+            Rc::from(text)
+        };
+        self.labels
+            .set(self.detail_label, Label { text, color })
+            .expect("owned signal");
+        Ok(self.detail.is_some())
     }
 
     /// Semantic action. The caller schedules a frame after activation.
@@ -57,15 +94,19 @@ impl Disclosure {
         if let Some(child) = self.detail.take() {
             self.labels.remove_subtree(child).expect("mounted detail");
         } else {
-            let child = self.labels.append(root, Rc::from("")).expect("owned title");
+            let label = self
+                .labels
+                .read(self.detail_label)
+                .expect("owned signal")
+                .clone();
+            let child = self.labels.append(root, label).expect("owned title");
             self.labels
-                .bind(self.detail_text, child, |text, label| {
-                    *label = Rc::clone(text)
+                .bind(self.detail_label, child, |value, label| {
+                    label.clone_from(value)
                 })
                 .expect("owned detail and signal");
             self.detail = Some(child);
         }
-        self.labels.flush();
     }
 
     fn hits_title(&self, p: Point) -> bool {
@@ -108,14 +149,25 @@ impl Disclosure {
     }
 
     pub fn frame(&mut self, size: Size, scroll_y: u32) -> Result<Rc<Frame>> {
-        if self.mounted != self.detail {
+        // Keep synchronization pending until all bound inputs have reached the layout scene.
+        self.sync_pending |= self.labels.flush() != 0;
+        if self.sync_pending {
             let labels = self.labels.tree();
-            let title = labels.get(labels.root()).expect("owned title");
             let detail = self
                 .detail
-                .map(|child| labels.get(child).expect("mounted detail").as_ref());
-            self.layout.set_detail(title, detail)?;
-            self.mounted = self.detail;
+                .map(|child| labels.get(child).expect("mounted detail"));
+            if self.mounted != self.detail {
+                let title = labels.get(labels.root()).expect("owned title");
+                self.layout
+                    .set_detail(&title.text, detail.map(|label| label.text.as_ref()))?;
+                self.mounted = self.detail;
+            } else if let Some(label) = detail {
+                self.layout.update_detail_text(&label.text)?;
+            }
+            if let Some(label) = detail {
+                self.layout.set_detail_color(label.color);
+            }
+            self.sync_pending = false;
         }
         let frame = self.layout.frame(size, scroll_y, false)?;
         if self.pressed.is_some() && self.layout.published_title().is_none() {
@@ -140,10 +192,16 @@ mod tests {
     };
     const INSIDE: Point = Point { x: 10.5, y: 12.0 };
 
+    fn disclosure(text: &str, before: &[&str], after: &[&str]) -> Disclosure {
+        let mut row = Disclosure::new(before, after).unwrap();
+        row.set_detail(text, DETAIL_COLOR).unwrap();
+        row
+    }
+
     #[test]
     fn only_matching_release_inside_committed_title_activates() {
         use PointerEvent::*;
-        let mut row = Disclosure::new("Detail", &[], &[]).unwrap();
+        let mut row = disclosure("Detail", &[], &[]);
         assert!(!row.pointer(Down(1, INSIDE)));
         let published = row.frame(SIZE, 0).unwrap();
         assert!(!row.pointer(Up(1, INSIDE)));
@@ -178,7 +236,7 @@ mod tests {
     #[test]
     fn scrolled_hit_testing_uses_the_visible_part_of_the_published_title() {
         use PointerEvent::{Down, Up};
-        let mut row = Disclosure::new("Detail", &["Before"], &["After"; 10]).unwrap();
+        let mut row = disclosure("Detail", &["Before"], &["After"; 10]);
         let size = Size {
             width: 240,
             height: 64,
@@ -217,9 +275,110 @@ mod tests {
     }
 
     #[test]
+    fn bound_detail_edits_reflow_or_repaint_the_same_leaf() {
+        let size = Size {
+            width: 120,
+            height: 240,
+        };
+        let physical = Size {
+            width: 180,
+            height: 360,
+        };
+        let scale = RasterScale(1.5);
+        let clip = Clip::canvas(physical);
+        let mut row = disclosure("Detail", &["Before"], &["After"]);
+        row.activate();
+        let initial = row.frame(size, 0).unwrap();
+        let mut masks = GlyphMasks::new(64, 32 * 1024);
+        let mut pixels =
+            RetainedPixels::new_scaled(initial.clone(), physical, clip, scale, &mut masks).unwrap();
+
+        let text = "Hello 世界！Rust GUI 123 Hello 世界！";
+        let counts = row.layout.layout_counts();
+        assert!(row.set_detail("🦀", DETAIL_COLOR).unwrap());
+        assert!(row.set_detail(text, DETAIL_COLOR).unwrap());
+        assert_eq!(row.labels.pending_count(), 1);
+        let wrapped = row.frame(size, 0).unwrap();
+        assert_eq!(wrapped.draws[2].node, initial.draws[2].node);
+        let growth = wrapped.draws[2].allocated.height - initial.draws[2].allocated.height;
+        assert!(growth > 0);
+        assert_eq!(
+            wrapped.draws[3].origin.y,
+            initial.draws[3].origin.y + growth
+        );
+        let reflow = row.layout.layout_counts();
+        assert!(reflow.measures > counts.measures && reflow.layouts > counts.layouts);
+        let mut reference = DisclosureLayout::new(&["Before"], &["After"]).unwrap();
+        reference.set_detail("Hide details", Some(text)).unwrap();
+        let expected = reference.frame(size, 0, true).unwrap();
+        assert!(wrapped.same_content(&expected));
+        pixels
+            .update(wrapped.clone(), physical, clip, &mut masks)
+            .unwrap();
+        let raster =
+            |frame: &Frame| Surface::raster(frame, physical, clip, (0, 0), scale, None).unwrap();
+        assert_eq!(pixels.surface().rgba, raster(&expected).rgba);
+
+        let ink = [170, 35, 70, 255];
+        assert!(row.set_detail(text, ink).unwrap());
+        let painted = row.frame(size, 0).unwrap();
+        assert_eq!(row.layout.layout_counts(), reflow);
+        assert_eq!(painted.geometry, wrapped.geometry);
+        assert_eq!(painted.draws[2].node, wrapped.draws[2].node);
+        assert_eq!(painted.draws[2].color, ink);
+        assert_eq!(wrapped.draws[2].color, DETAIL_COLOR);
+        assert!(Rc::ptr_eq(
+            &wrapped.draws[2].paragraph,
+            &painted.draws[2].paragraph
+        ));
+        assert_eq!(
+            pixels
+                .update(painted.clone(), physical, clip, &mut masks)
+                .unwrap(),
+            Some(scale.bounds(&painted.draws[2]).intersect(clip))
+        );
+        let painted_pixels = raster(&painted);
+        assert_ne!(painted_pixels.rgba, raster(&wrapped).rgba);
+        assert_eq!(pixels.surface().rgba, painted_pixels.rgba);
+        assert!(!row.set_detail(text, ink).unwrap());
+        assert!(row.set_detail("Superseded", DETAIL_COLOR).unwrap());
+        assert!(row.set_detail(text, ink).unwrap());
+        assert!(Rc::ptr_eq(&painted, &row.frame(size, 0).unwrap()));
+    }
+
+    #[test]
+    fn failed_and_canceled_writes_do_not_leak_into_the_next_detail() {
+        let mut row = disclosure("Old", &[], &[]);
+        row.activate();
+        let old = row.frame(SIZE, 0).unwrap();
+        let old_node = old.draws[1].node;
+        assert!(row.set_detail("🦀", DETAIL_COLOR).unwrap());
+        assert!(row.frame(SIZE, 0).is_err());
+        assert!(std::ptr::eq(
+            row.layout.published_title().unwrap().0,
+            &old.draws[0]
+        ));
+        assert!(row.frame(SIZE, 0).is_err());
+        assert!(row.set_detail("New", DETAIL_COLOR).unwrap());
+        let repaired = row.frame(SIZE, 0).unwrap();
+        assert_eq!(repaired.draws[1].node, old_node);
+        assert_eq!(repaired.draws[1].paragraph.text, "New");
+        assert_eq!(old.draws[1].paragraph.text, "Old");
+
+        assert!(row.set_detail("Queued", DETAIL_COLOR).unwrap());
+        row.activate();
+        assert!(!row.set_detail("While closed", DETAIL_COLOR).unwrap());
+        row.activate();
+        let reopened = row.frame(SIZE, 0).unwrap();
+        assert_ne!(reopened.draws[1].node, old_node);
+        assert_eq!(reopened.draws[1].paragraph.text, "While closed");
+        assert_eq!(row.labels.binding_count(), 2);
+    }
+
+    #[test]
     fn toggling_releases_detail_bindings_and_matches_fresh_layout_and_pixels() {
         let detail = "Hello 世界！Rust GUI 123";
-        let mut row = Disclosure::new(detail, &[], &[]).unwrap();
+        let mut row = disclosure(detail, &[], &[]);
         let title_id = row.labels.tree().root();
         let physical = Size {
             width: 360,
@@ -242,9 +401,8 @@ mod tests {
             let open = old_child.is_none();
             let count = if open { 2 } else { 1 };
             assert_eq!(row.labels.binding_count(), count);
-            assert_eq!(row.labels.pending_count(), 0);
-
             let frame = row.frame(SIZE, 0).unwrap();
+            assert_eq!(row.labels.pending_count(), 0);
             assert!(frame.revision > previous);
             previous = frame.revision;
             assert_eq!(frame.draws.len(), count);

@@ -54,6 +54,7 @@ pub struct DisclosureLayout {
     published: Option<Rc<Frame>>,
     viewport: Option<Size>,
     pub(super) max_scroll_y: u32,
+    detail_color: [u8; 4],
     dirty: bool,
 }
 
@@ -106,6 +107,7 @@ impl DisclosureLayout {
             published: None,
             viewport: None,
             max_scroll_y: 0,
+            detail_color: crate::disclosure::DETAIL_COLOR,
             dirty: true,
         })
     }
@@ -127,6 +129,32 @@ impl DisclosureLayout {
             self.detail = Some(self.scene.mount(self.item, text)?);
         }
         Ok(())
+    }
+
+    pub fn update_detail_text(&mut self, content: &str) -> Result<()> {
+        let node = self
+            .detail
+            .ok_or(LayoutError::Node("detail is not mounted"))?;
+        if self.scene.body::<Text>(node)?.content() != content {
+            let mut result = Ok(());
+            self.scene
+                .edit_layout::<Text>(node, |text| result = text.set_content(content))?;
+            result?;
+            self.dirty = true;
+        }
+        Ok(())
+    }
+
+    pub fn set_detail_color(&mut self, color: [u8; 4]) {
+        if self.detail_color != color {
+            self.detail_color = color;
+            self.dirty = true;
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn layout_counts(&self) -> crate::layout::Counts {
+        self.scene.counts()
     }
 
     pub fn published_title(&self) -> Option<(&TextDraw, u32, Size)> {
@@ -209,7 +237,7 @@ impl DisclosureLayout {
                 .body::<Text>(node)?
                 .resolve(Query::Exact(allocated.width))?;
             let color = if Some(node) == self.detail {
-                [27, 85, 148, 255]
+                self.detail_color
             } else {
                 [20, 30, 40, 255]
             };

@@ -27,17 +27,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use window_content::Content;
 
     if let Some(mode) = std::env::var_os("SOLOR_DISCLOSURE") {
-        let detail = "Hello 世界！Rust GUI 123";
-        let row = if mode == "long-list" {
+        let mut row = if mode == "long-list" {
             let labels: Vec<_> = (3..=1024).map(|n| format!("Item {n}")).collect();
             let tail: Vec<_> = labels.iter().map(String::as_str).collect();
-            disclosure::Disclosure::new(detail, &["Item 1"], &tail)
+            disclosure::Disclosure::new(&["Item 1"], &tail)
         } else if mode == "list" {
-            disclosure::Disclosure::new(detail, &["Previous item"], &["Next item"])
+            disclosure::Disclosure::new(&["Previous item"], &["Next item"])
         } else {
-            disclosure::Disclosure::new(detail, &[], &[])
+            disclosure::Disclosure::new(&[], &[])
         }
         .map_err(|err| std::io::Error::other(format!("disclosure fixture: {err:?}")))?;
+        row.set_detail("Hello 世界！Rust GUI 123", disclosure::DETAIL_COLOR)?;
         wayland::run(
             "Solor disclosure",
             "solor.disclosure",

@@ -222,11 +222,15 @@ impl Text {
         })
     }
 
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
     pub fn set_content(&mut self, content: &str) -> Result<()> {
         if content.len() > MAX_TEXT_BYTES {
             return Err(LayoutError::InvalidSize);
         }
-        if self.content != content {
+        if self.content() != content {
             self.content = content.into();
             self.release_cache();
         }

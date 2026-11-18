@@ -82,7 +82,10 @@ after edits and resizing.
 The [disclosure experiment](disclosure.md) connects primary pointer activation,
 explicit state bindings and conditional detail lifetime to the CPU window.
 Acceptance covers logical hit testing, cancellation, frame requests, repeated
-mount and removal, and complete pixel agreement. The component and input
+mount and removal, and complete pixel agreement. A mounted detail accepts bound
+text and color edits. Verification requires stable node identity, sibling movement
+after wrapping, and a paint-only edit with unchanged layout counters and pixels
+matching full rasterization. The component and input
 contract remain private to the example. Its three-item list mounts the middle
 item's detail between frames. Acceptance requires stable surviving layout
 handles, cached neighbor layout under unchanged allocation, correct downstream

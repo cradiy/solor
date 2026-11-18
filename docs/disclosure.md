@@ -40,6 +40,17 @@ text leaf inside that column. Collapsing removes the leaf. The enclosing column
 places its children using the current measured heights. The last published
 frame stays valid if text preparation fails.
 
+The application can update the detail's text and RGBA color together. A changed
+value requests a frame while the detail is mounted. Writes while collapsed are
+retained for the next mount. The frame callback flushes bindings once and applies
+the latest label. An in-place text edit invalidates the existing layout leaf and
+its ancestors. A color edit marks the drawing snapshot dirty. Removing and
+mounting a detail between two frames still creates a fresh layout identity.
+
+```rust
+needs_frame |= row.set_detail("Hello 世界！", [170, 35, 70, 255])?;
+```
+
 The Wayland host translates seat input, coalesces frame requests and waits
 for compositor pacing and a free shared buffer. It converts the preferred
 scale in 120ths into device pixels per logical unit for rasterization. The
@@ -57,6 +68,13 @@ Headless tests exercise mismatched pointer identities, explicit cancellation,
 the exclusive right edge, and twelve mount/unmount transitions. They compare
 geometry, text and retained pixels with independently prepared frames and
 check that each removed detail handle is stale and its binding is gone.
+
+In the offscreen four-label fixture at 120 by 240 logical units, replacing the
+open detail with wrapping text moves the following row down by 48 logical units.
+The result matches a freshly constructed, forced layout and its full raster.
+Changing only the detail's color preserves all geometry and the shaped paragraph,
+runs zero measurement and layout bodies, and repairs the detail's rectangle.
+The repaired pixels match full rasterization at 150% scale.
 
 ## Dynamic list
 

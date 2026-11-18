@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn fractional_scroll_coalesces_and_clamps_after_resize() {
-        let row = Disclosure::new("A detail", &[], &["Tail"; 10]).unwrap();
+        let row = Disclosure::new(&[], &["Tail"; 10]).unwrap();
         let mut content = Content::disclosure(row);
         let size = Size {
             width: 240,
