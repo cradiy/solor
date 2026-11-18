@@ -166,3 +166,46 @@ fn removing_a_zero_height_leaf_changes_membership_without_moving_any_node() -> R
     assert!(!Rc::ptr_eq(&remounted, &held));
     Ok(())
 }
+
+#[test]
+fn indexed_mount_and_subtree_removal_preserve_sibling_handles_and_snapshot_lifetimes() -> Result<()>
+{
+    let mut scene = Scene::new(Rows);
+    let root = scene.root();
+    let leaf = |height| Leaf {
+        height,
+        fail_once: false,
+    };
+    let tail = scene.mount(root, leaf(5))?;
+    let viewport = Size {
+        width: 32,
+        height: 64,
+    };
+    scene.run_assigned(viewport, false)?;
+    let closed = scene.shared_snapshot().unwrap();
+    assert!(scene.mount_at(root, 2, Rows).is_err());
+    assert!(!scene.is_pending());
+    assert!(Rc::ptr_eq(&closed, &scene.shared_snapshot().unwrap()));
+
+    let section = scene.mount_at(root, 0, Rows)?;
+    let child = scene.mount(section, leaf(12))?;
+    assert!(scene.shared_snapshot().is_none());
+    scene.run_assigned(viewport, false)?;
+    let opened = scene.shared_snapshot().unwrap();
+    assert_eq!(scene.geometry(tail).unwrap().origin.y, 12);
+    assert_eq!(opened.len(), 4);
+    assert_eq!(
+        scene.unmount_leaf(section),
+        Err(LayoutError::UnexpectedChildCount)
+    );
+    assert!(Rc::ptr_eq(&opened, &scene.shared_snapshot().unwrap()));
+    scene.unmount_subtree(section)?;
+    assert!(scene.geometry(child).is_none());
+    assert!(scene.geometry(section).is_none());
+    assert!(scene.shared_snapshot().is_none());
+    scene.run_assigned(viewport, false)?;
+    assert_eq!(scene.geometry(tail).unwrap().origin.y, 0);
+    assert_eq!(scene.shared_snapshot().unwrap(), closed);
+    assert_eq!(opened.len(), 4);
+    Ok(())
+}

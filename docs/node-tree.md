@@ -10,8 +10,8 @@ relationships, not UI construction, update propagation, layout, or painting.
 ## Identity and ownership
 
 - Every tree has one root for its entire lifetime. The root cannot be removed.
-- Every other node has exactly one parent. Children retain insertion order.
-- Only appending new children and removing subtrees can change topology. Moving
+- Every other node has exactly one parent. Children retain their declared sibling order.
+- Inserting new children and removing subtrees can change topology. Moving
   nodes and attaching existing nodes are outside this milestone, so cycles cannot
   be introduced through the public API.
 - `NodeId` is an opaque handle, not a pointer. It combines a SlotMap key with a
@@ -31,8 +31,9 @@ relationships, not UI construction, update propagation, layout, or painting.
 | `root`, `node_count` | Read root identity or live node count | O(1) |
 | `get`, `get_mut` | Access a live payload, or return `None` | O(1) |
 | `parent` | Return the parent, or `None` for the root | O(1) |
-| `children` | Iterate immediate children in insertion order | O(child count) |
+| `children` | Iterate immediate children in sibling order | O(child count) |
 | `append` | Append a new child to a live parent | Amortized O(1) |
+| `insert` | Insert a new child at an index from zero through the child count | Amortized O(1 + shifted siblings) |
 | `remove_subtree` | Remove a node and its descendants; return the count | O(removed nodes + siblings of subtree root) |
 
 Invalid structural operations return `TreeError` before modifying the tree.

@@ -142,8 +142,10 @@ delivery and submitted bytes through retry, resize and replacement with an
 identical-looking mount.
 
 The private [component authoring fixture](component-api.md#lifecycle-checks)
-tests initialization during mount, immediate event writes, conditional text
-nodes at the next update boundary, and signal ownership across remounts.
+tests initialization during mount, immediate event writes, ordered conditional
+subtrees at the next update boundary, and signal ownership across remounts.
+It checks targeted branch delivery, gap placement and surviving sibling
+identity across subtree insertion and removal.
 The [shared source text experiment](text-layout.md#shared-source-text) checks
 source identity across nodes and widths and measures short-label construction.
 

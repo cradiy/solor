@@ -169,7 +169,11 @@ cases. Construction-time append closes after the first successful layout.
 The [disclosure fixture](disclosure.md) explicitly mounts a new child or
 unmounts a leaf between updates. These operations invalidate layout and
 measurement up the parent chain and invalidate outstanding audit checkpoints when recording is enabled.
-Layout callbacks cannot edit the tree.
+The component fixture uses `mount_at` to insert at a live sibling index and
+`unmount_subtree` to retire a complete conditional child. Surviving handles
+keep their identity. The scene compacts its node registry on removal.
+Previously shared geometry slices remain readable. Layout callbacks cannot edit
+the tree.
 
 ```sh
 cargo test -p solor-core --test layout --offline

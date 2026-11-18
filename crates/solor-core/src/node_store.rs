@@ -110,6 +110,23 @@ impl<T: ?Sized> NodeStore<T> {
         )
     }
 
+    /// Inserts a payload at an ordered child position.
+    pub fn insert(
+        &mut self,
+        parent: NodeId,
+        index: usize,
+        body: Box<T>,
+    ) -> Result<NodeId, TreeError> {
+        self.tree.insert(
+            parent,
+            index,
+            Slot {
+                body: Some(body),
+                interrupted: false,
+            },
+        )
+    }
+
     pub fn remove_subtree(&mut self, node: NodeId) -> Result<usize, TreeError> {
         self.tree.remove_subtree(node)
     }

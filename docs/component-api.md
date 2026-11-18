@@ -19,6 +19,7 @@ each instance. The scope itself adds no layout box.
 ```rust
 component(|mount| {
     let open = mount.signal(false);
+    let volume = mount.signal(40_u8);
 
     div()
         .column()
@@ -29,7 +30,15 @@ component(|mount| {
                 .child(text("Audio settings"))
                 .on_click(move |event| event.update(open, |v| *v = !*v)),
         )
-        .child_when(open, || text("Output follows the system device."))
+        .child_when(open, || {
+            div().column()
+                .child(text("Output device"))
+                .child(text("System default"))
+        })
+        .child(
+            div().child(text("Volume"))
+                .on_click(move |event| event.update(volume, |v| *v = v.saturating_add(1))),
+        )
 })
 ```
 
@@ -60,7 +69,13 @@ the handle to an ordinary function that builds the section.
 Each call to `mount.signal(value)` creates a distinct `Signal<T>`, including
 when two calls have identical types and initial values. Handlers capture the
 typed handles they use. The instance keeps a list of signal identities for
-disposal. Reads and writes go directly through the typed handle.
+disposal. Ordinary Rust code can hold the typed handle in a model and pass it
+to the same runtime's `read` and `set` methods. In the playback fixture a model
+method toggles one signal shared by two views. Each write is immediately
+readable. The next host flush updates each remaining subscriber. The model
+retains its externally created signal after both views unmount and explicitly
+removes it when finished. Copying a component-owned handle outside its mount
+does not extend its lifetime.
 
 The fixture stores `open` and `muted` as separate booleans alongside a numeric
 volume and an owned device name. Its event update helper clones the selected
@@ -76,10 +91,23 @@ detail node after closing and reopening. They also exercise independent
 instances, disposal with a pending update, and remount with a caller-owned
 signal.
 
-Each instance has its own layout scene and one trailing conditional text
-leaf. The fixture checks all mounted instances after binding delivery. These
-tests cover lifecycle semantics. Native hit testing, frame presentation and
-the cost of updating many instances require separate verification.
+The factory may return text or a container. A conditional child reserves a
+declaration position and contributes a layout child only while open. The
+factory can build another container, including nested conditionals. In the
+audio section, opening and closing the middle subtree keeps the volume row's
+identity, signal and handler. The column applies one gap between adjacent
+mounted children.
+
+Signal delivery queues the affected positions by instance. A flush processes
+parents before descendants, picks up bindings created during attachment, and
+can retry a failed attachment after removing its partial nodes and handlers.
+With two independent sections, one toggle visits one position. A volume write
+visits zero. These counts cover conditional dispatch only.
+
+The private fixture uses one scene per instance. It stores declaration paths,
+counts mounted preceding siblings on insertion, and removes retired entries
+on close. The cost on deep or wide trees, native hit testing and frame
+presentation are outside this check.
 
 ```sh
 cargo test --offline --example text_window component_authoring

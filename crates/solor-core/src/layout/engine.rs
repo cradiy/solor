@@ -776,15 +776,22 @@ impl Scene {
         if self.request.is_some() {
             return Err(LayoutError::StructureLocked);
         }
-        self.append_entry(parent, body)
+        self.insert_entry(parent, None, body)
     }
 
-    fn append_entry(&mut self, parent: NodeId, body: impl LayoutNode) -> Result<NodeId> {
+    fn insert_entry(
+        &mut self,
+        parent: NodeId,
+        index: Option<usize>,
+        body: impl LayoutNode,
+    ) -> Result<NodeId> {
+        let entry = Box::new(Entry::new(body));
+        let node = match index {
+            Some(index) => self.store.insert(parent, index, entry),
+            None => self.store.append(parent, entry),
+        }
+        .map_err(AccessError::from)?;
         self.invalidate(parent)?;
-        let node = self
-            .store
-            .append(parent, Box::new(Entry::new(body)))
-            .map_err(AccessError::from)?;
         self.nodes.push(node);
         self.shared_geometry = None;
         Ok(node)
@@ -792,12 +799,31 @@ impl Scene {
 
     /// Mount a child at the end of its parent's ordered children.
     pub fn mount(&mut self, parent: NodeId, body: impl LayoutNode) -> Result<NodeId> {
+        self.mount_entry(parent, None, body)
+    }
+
+    /// Mount at a live child index or at the end. Existing siblings retain their handles.
+    pub fn mount_at(
+        &mut self,
+        parent: NodeId,
+        index: usize,
+        body: impl LayoutNode,
+    ) -> Result<NodeId> {
+        self.mount_entry(parent, Some(index), body)
+    }
+
+    fn mount_entry(
+        &mut self,
+        parent: NodeId,
+        index: Option<usize>,
+        body: impl LayoutNode,
+    ) -> Result<NodeId> {
         #[cfg(feature = "layout-audit")]
         let revision = self
             .topology_revision
             .checked_add(1)
             .ok_or(LayoutError::RevisionExhausted)?;
-        let node = self.append_entry(parent, body)?;
+        let node = self.insert_entry(parent, index, body)?;
         #[cfg(feature = "layout-audit")]
         {
             self.topology_revision = revision;
@@ -806,12 +832,22 @@ impl Scene {
     }
 
     pub fn unmount_leaf(&mut self, node: NodeId) -> Result<()> {
+        self.remove_mounted(node, true)
+    }
+
+    /// Remove a mounted subtree and invalidate its former parent.
+    pub fn unmount_subtree(&mut self, node: NodeId) -> Result<()> {
+        self.remove_mounted(node, false)
+    }
+
+    fn remove_mounted(&mut self, node: NodeId, leaf_only: bool) -> Result<()> {
         let parent = self
             .store
             .parent(node)
             .map_err(AccessError::from)?
             .ok_or(AccessError::Tree(super::tree::TreeError::CannotRemoveRoot))?;
-        if self.store.child_count(node).map_err(AccessError::from)? != 0 {
+        let leaf = self.store.child_count(node).map_err(AccessError::from)? == 0;
+        if leaf_only && !leaf {
             return Err(LayoutError::UnexpectedChildCount);
         }
         #[cfg(feature = "layout-audit")]
@@ -825,8 +861,39 @@ impl Scene {
             self.topology_revision = revision;
         }
         self.shared_geometry = None;
-        self.nodes.retain(|&id| id != node);
-        self.store.remove_subtree(node).map_err(AccessError::from)?;
+        if leaf {
+            self.nodes.retain(|&id| id != node);
+            self.store.remove_subtree(node).map_err(AccessError::from)?;
+        } else {
+            // A payload destructor can unwind after only part of the subtree is retired.
+            struct PruneRemoved<'a> {
+                nodes: &'a mut Vec<NodeId>,
+                store: &'a mut NodeStore<Entry>,
+            }
+            impl Drop for PruneRemoved<'_> {
+                fn drop(&mut self) {
+                    let interrupted = std::thread::panicking();
+                    self.nodes.retain(|&id| {
+                        let Ok(entry) = self.store.get_mut(id) else {
+                            return false;
+                        };
+                        if interrupted {
+                            entry.measure_dirty = true;
+                            entry.layout_dirty = true;
+                        }
+                        true
+                    });
+                }
+            }
+            let removal = PruneRemoved {
+                nodes: &mut self.nodes,
+                store: &mut self.store,
+            };
+            removal
+                .store
+                .remove_subtree(node)
+                .map_err(AccessError::from)?;
+        }
         Ok(())
     }
 

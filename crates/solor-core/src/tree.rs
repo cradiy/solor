@@ -28,12 +28,17 @@ pub enum TreeError {
     InvalidNode(NodeId),
     /// The root must live as long as the tree.
     CannotRemoveRoot,
+    /// The insertion position exceeds the current number of children.
+    InvalidChildIndex(usize),
 }
 
 impl fmt::Display for TreeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidNode(id) => write!(formatter, "invalid node handle: {id:?}"),
+            Self::InvalidChildIndex(index) => {
+                write!(formatter, "invalid child insertion index {index}")
+            }
             Self::CannotRemoveRoot => formatter.write_str("cannot remove the tree root"),
         }
     }
@@ -105,7 +110,7 @@ impl<T> Tree<T> {
         Ok(self.node(id)?.parent.map(|key| self.handle(key)))
     }
 
-    /// Iterates immediate children in insertion order without allocating.
+    /// Iterates immediate children in sibling order without allocating.
     pub fn children(
         &self,
         id: NodeId,
@@ -115,13 +120,31 @@ impl<T> Tree<T> {
 
     /// Appends a child. An invalid parent is rejected before allocating a node.
     pub fn append(&mut self, parent: NodeId, value: T) -> Result<NodeId, TreeError> {
-        self.node(parent)?;
+        self.insert_child(parent, None, value)
+    }
+
+    /// Inserts a new child at an ordered position, preserving sibling handles.
+    pub fn insert(&mut self, parent: NodeId, index: usize, value: T) -> Result<NodeId, TreeError> {
+        self.insert_child(parent, Some(index), value)
+    }
+
+    fn insert_child(
+        &mut self,
+        parent: NodeId,
+        index: Option<usize>,
+        value: T,
+    ) -> Result<NodeId, TreeError> {
+        let count = self.node(parent)?.children.len();
+        let index = index.unwrap_or(count);
+        if index > count {
+            return Err(TreeError::InvalidChildIndex(index));
+        }
         let key = self.nodes.insert(Node {
             value,
             parent: Some(parent.key),
             children: Vec::new(),
         });
-        self.nodes[parent.key].children.push(key);
+        self.nodes[parent.key].children.insert(index, key);
         Ok(self.handle(key))
     }
 
