@@ -1,0 +1,135 @@
+use crate::frame::{Frame, Mode, Presentation};
+use crate::layout::Size;
+use crate::pixels::{Clip, Surface};
+use std::rc::Rc;
+
+const SIZE: Size = Size {
+    width: 128,
+    height: 80,
+};
+const WHITE: &[u8] = &[255; 4];
+
+fn render(frame: &Frame) -> Surface {
+    Surface::draw(frame, SIZE, Clip::canvas(SIZE)).unwrap()
+}
+fn at(surface: &Surface, x: usize, y: usize) -> &[u8] {
+    let i = (y * surface.size.width as usize + x) * 4;
+    &surface.rgba[i..i + 4]
+}
+
+#[test]
+fn same_geometry_replaces_only_target_ink_and_old_snapshot_replays() {
+    let mut view = Presentation::new(2, "中文", true);
+    let old = view.update(SIZE, Mode::Pruned).unwrap().frame;
+    let before = render(&old);
+    view.set_content(0, "文字").unwrap();
+    let new = view.update(SIZE, Mode::Pruned).unwrap();
+    assert!(new.skipped_parent);
+    assert_eq!(old.geometry, new.frame.geometry);
+    drop(view);
+    let after = render(&new.frame);
+    let sibling_start = old.draws[1].origin.y as usize * SIZE.width as usize * 4;
+    assert_ne!(before.rgba[..sibling_start], after.rgba[..sibling_start]);
+    assert_eq!(before.rgba[sibling_start..], after.rgba[sibling_start..]);
+    assert!(
+        before.rgba[sibling_start..]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|p| p != WHITE)
+    );
+    assert_eq!(before.rgba, render(&old).rgba);
+}
+
+#[test]
+fn motion_and_scissor_match_translation_and_crop_of_complete_pixels() {
+    let mut view = Presentation::new(1, "宽度 Hello", true);
+    let before = render(&view.update(SIZE, Mode::Pruned).unwrap().frame);
+    view.set_shift(0, 9).unwrap();
+    let frame = view.update(SIZE, Mode::Pruned).unwrap().frame;
+    let shifted = render(&frame);
+    let clip = Clip {
+        left: 15,
+        top: 9,
+        right: 44,
+        bottom: 17,
+    };
+    let cropped = Surface::draw(&frame, SIZE, clip).unwrap();
+    let mut kept = 0;
+    let mut removed = 0;
+    for y in 0..SIZE.height as usize {
+        for x in 0..SIZE.width as usize {
+            let original = if x >= 9 { at(&before, x - 9, y) } else { WHITE };
+            assert_eq!(at(&shifted, x, y), original);
+            let inside = (15..44).contains(&x) && (9..17).contains(&y);
+            assert_eq!(at(&cropped, x, y), if inside { original } else { WHITE });
+            if original != WHITE {
+                if inside { kept += 1 } else { removed += 1 }
+            }
+        }
+    }
+    assert!(kept > 0 && removed > 0);
+}
+
+#[test]
+fn baselines_place_identical_lines_and_descenders_below_capitals() {
+    let mut view = Presentation::new(1, "Hg\nHg", true);
+    let frame = view.update(SIZE, Mode::Normal).unwrap().frame;
+    let draw = &frame.draws[0];
+    let first = &draw.paragraph.lines[0];
+    let baseline = draw.origin.y as usize + first.baseline.round() as usize;
+    let g_start = draw.origin.x as usize + first.glyphs[1].x.round() as usize;
+    let image = render(&frame);
+    let mut descender = false;
+    let mut cap_ink = false;
+    for y in draw.origin.y as usize..draw.origin.y as usize + 24 {
+        for x in 0..SIZE.width as usize {
+            let pixel = at(&image, x, y);
+            assert_eq!(pixel, at(&image, x, y + 24));
+            if pixel != WHITE && x < g_start {
+                assert!(y < baseline);
+                cap_ink = true;
+            }
+            if pixel != WHITE && x >= g_start && y >= baseline {
+                descender = true;
+            }
+        }
+    }
+    assert!(cap_ink && descender);
+}
+
+#[test]
+fn coverage_and_opacity_compose_commands_in_order_with_leaf_clipping() {
+    let mut view = Presentation::new(2, "中", true);
+    view.set_color(0, [0, 0, 0, 255]).unwrap();
+    view.set_color(1, [255, 0, 0, 128]).unwrap();
+    let mut frame = view.update(SIZE, Mode::Normal).unwrap().frame;
+    drop(view);
+    let black = render(&frame);
+    let frame = Rc::get_mut(&mut frame).unwrap();
+    frame.draws[1].origin = frame.draws[0].origin;
+    frame.draws[1].allocated.width = 10;
+    let edge = frame.draws[1].origin.x as usize + 10;
+    let overlaid = render(frame);
+    let mut covered = false;
+    let mut clipped = false;
+    for y in 0..26 {
+        for x in 0..SIZE.width as usize {
+            let gray = u32::from(at(&black, x, y)[0]);
+            let coverage = 255 - gray;
+            let alpha = if x < edge {
+                (coverage * 128 + 127) / 255
+            } else {
+                0
+            };
+            let other = (gray * (255 - alpha) + 127) / 255;
+            assert_eq!(
+                at(&overlaid, x, y),
+                &[(alpha + other) as u8, other as u8, other as u8, 255]
+            );
+            covered |= x < edge && coverage > 0;
+            clipped |= x >= edge && coverage > 0;
+        }
+    }
+    assert!(covered && clipped);
+}

@@ -60,6 +60,9 @@ buffers and forced layout. It uses one bundled font subset and remains headless.
 The [text drawing snapshot experiment](text-frame.md) publishes geometry, paragraph
 handles, colors, and absolute positions together. It retains the old frame after
 preparation failures, including when internal layout has already succeeded.
+The [CPU text pixel experiment](text-pixels.md) renders snapshot glyphs to an
+opaque RGBA surface and checks placement, clipping, blending and replay against
+pixel references. It measures full CPU redraw separately from snapshot preparation.
 The [node execution model draft](node-execution.md) remains the broader proposal.
 
 The following are outside this milestone:
@@ -69,7 +72,7 @@ The following are outside this milestone:
 - Derived signals, automatic dependency tracking, and multi-source bindings.
 - Integration with signal callbacks, recursive dependency pruning, general paint
   invalidation, and pixel damage tracking.
-- General layout algorithms, font fallback, rich text, rendering, input, and windows.
+- General layout algorithms, font fallback, rich text, GPU rendering, input, and windows.
 - Widgets, showcase applications, and application-level performance comparisons.
 - Selecting a rendering backend or committing to a complete framework design.
 

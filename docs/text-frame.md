@@ -167,8 +167,7 @@ RSS/PSS. Caller-retained frame history is a separate ownership cost.
 The publication boundary meets this milestone: drawing changes are independent
 of layout equality, consumers retain a coherent old frame on failure, and owned
 resources live for exactly as long as their handles require. Keep full snapshot
-replacement as the measured baseline. Clipping and CPU raster output need their
-own acceptance criteria; this result does not require command-list optimization.
+replacement as the measured baseline. The [CPU text pixel experiment](text-pixels.md) checks clipping and raster output independently; this result does not require command-list optimization.
 
 ```sh
 cargo test --workspace --tests --examples --offline

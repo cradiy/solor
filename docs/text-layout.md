@@ -178,7 +178,7 @@ evaluation choice, not a public default: repeated-width reuse is valuable, but
 storage increases and miss-heavy updates still reconstruct text buffers. Further
 text optimization is not required to close this milestone. The
 [drawing snapshot experiment](text-frame.md) evaluates committed drawing resources;
-clipping and raster output remain separate investigations.
+the [CPU text pixel experiment](text-pixels.md) checks clipping and raster output.
 
 ## Reproduction
 
