@@ -70,7 +70,7 @@ impl Content {
 
     pub fn frame(&mut self, size: Size) -> Result<Rc<Frame>> {
         match self {
-            Self::Disclosure(row) => row.frame(size),
+            Self::Disclosure(row) => row.frame(size, 0),
             Self::Text {
                 view,
                 edit,

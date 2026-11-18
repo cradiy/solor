@@ -22,7 +22,7 @@ or cancellation. A host can drive the component in two separate callbacks:
 needs_frame |= row.pointer(event);
 
 // Frame callback, when the host can submit the result
-let frame = row.frame(logical_size)?;
+let frame = row.frame(logical_size, requested_scroll_y)?;
 ```
 
 The component tests input against its last published title geometry, clipped
@@ -130,7 +130,7 @@ The byte counts exclude paragraph allocations, layout storage, and window
 buffers. The three-row control retained all three commands and took 0.12–0.13
 µs for snapshot collection in both paths. The flat layout visits the column's
 children, and copying the complete geometry still takes work proportional to
-the total node count. This experiment uses a viewport anchored at the top.
+the total node count. These measurements use a viewport anchored at the top.
 
 Tests compare damage updates with uncached rendering of a complete command
 list after wrapping, height changes, detail edits and replay of a held frame.
@@ -200,3 +200,46 @@ or placing them individually. On resize both hierarchies revisit the rows.
 Their process medians overlapped (58.28–65.32 µs flat, 58.50–63.97 µs
 grouped). The four-row edit ranges also overlapped. These timings end before
 rasterization and presentation.
+
+## Vertical scrolling
+
+The disclosure takes an absolute vertical offset in whole logical units with
+each frame request. It clamps the offset to the laid-out content height minus
+the viewport height, with a minimum of zero. A resize or detail edit uses the
+new extent. Equal effective offsets reuse the published frame when the size and
+content are unchanged.
+
+The snapshot retains document-space geometry and emits text commands for rows
+intersecting the half-open visible interval. Both edge rows can be partial.
+Rasterization rounds the scaled scroll offset once and crops in device pixels.
+Damage uses the old and new device offsets. Hit testing looks up the title by
+node identity in the published commands and clips its translated bounds to the
+logical viewport. Scrolling the title fully out of view cancels a pending press.
+The Wayland host currently requests offset zero.
+
+```sh
+cargo test --release --offline --example text_window measure_scroll_positions -- --ignored --nocapture
+```
+
+The release fixture uses a warmed 1,024-row list and a 240 by 160 viewport.
+It alternates between two adjacent logical offsets near each position, rotates
+position order by batch and verifies unchanged layout counters. Each process
+runs one warmup batch and seven measured batches of 200 frames per position.
+Timing covers the frame request through replacement of the drawing snapshot,
+including the full geometry copy. Pixel repair and presentation are outside
+the interval.
+
+| Position | Median, µs/frame | Range of five process medians |
+| --- | ---: | ---: |
+| Top | 3.43 | 3.41–3.55 |
+| Middle | 4.51 | 4.50–4.64 |
+| End | 5.77 | 5.67–5.86 |
+
+Row selection scans from the start and stops at the bottom of the viewport.
+The measured end-to-top difference is 2.34 µs per snapshot. The fixture keeps
+this scan at the measured list size. A larger workload could test binary
+search over the existing ordered row geometry before adding a separate index.
+
+An independent flat list supplies a full uncached document raster at 150%
+scale. Tests compare cropped bytes with the retained surface after partial-row
+scrolls, resizes, expansion and collapse, and replay a held scrolled frame.

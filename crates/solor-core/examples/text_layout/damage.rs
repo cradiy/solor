@@ -7,11 +7,14 @@ use crate::pixels::{Clip, RasterScale, Surface};
 
 fn damage(old: &Frame, new: &Frame, viewport: Clip, scale: RasterScale) -> Option<Clip> {
     let mut area: Option<Clip> = None;
+    let old_top = scale.edge(f64::from(old.scroll_y));
+    let new_top = scale.edge(f64::from(new.scroll_y));
     // Compare ordered slots. Insertions, removals and swaps dirty both occupants.
     for index in 0..old.draws.len().max(new.draws.len()) {
         let before = old.draws.get(index);
         let after = new.draws.get(index);
         if let (Some(a), Some(b)) = (before, after)
+            && old_top == new_top
             && a.node == b.node
             && a.origin == b.origin
             && a.allocated == b.allocated
@@ -20,8 +23,12 @@ fn damage(old: &Frame, new: &Frame, viewport: Clip, scale: RasterScale) -> Optio
         {
             continue;
         }
-        for draw in before.into_iter().chain(after) {
-            let rect = scale.bounds(draw).intersect(viewport);
+        for (draw, offset) in [(before, old_top), (after, new_top)] {
+            let Some(draw) = draw else { continue };
+            let mut rect = scale.bounds(draw);
+            rect.top -= offset;
+            rect.bottom -= offset;
+            let rect = rect.intersect(viewport);
             if draw.color[3] == 0 || rect.empty() {
                 continue;
             }

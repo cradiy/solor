@@ -131,9 +131,11 @@ impl DisclosureLayout {
         Ok(())
     }
 
-    pub fn published_title(&self) -> Option<(&TextDraw, Size)> {
+    pub fn published_title(&self) -> Option<(&TextDraw, u32, Size)> {
+        let frame = self.published.as_ref()?;
         Some((
-            self.published.as_ref()?.draws.get(self.before.len())?,
+            frame.draws.iter().find(|draw| draw.node == self.title)?,
+            frame.scroll_y,
             self.viewport?,
         ))
     }
@@ -144,11 +146,15 @@ impl DisclosureLayout {
             .ok_or(LayoutError::MissingLayout(0))
     }
 
-    pub fn frame(&mut self, size: Size, force: bool) -> Result<Rc<Frame>> {
+    pub fn frame(&mut self, size: Size, requested_y: u32, force: bool) -> Result<Rc<Frame>> {
+        self.scene.run_assigned(size, force)?;
+        let content_height = self.geometry(self.scene.root())?.content.height;
+        let top = requested_y.min(content_height.saturating_sub(size.height));
         if !force
             && !self.dirty
             && self.viewport == Some(size)
             && let Some(frame) = &self.published
+            && frame.scroll_y == top
         {
             return Ok(frame.clone());
         }
@@ -158,15 +164,14 @@ impl DisclosureLayout {
             .map_or(0, |f| f.revision)
             .checked_add(1)
             .ok_or(LayoutError::RevisionExhausted)?;
-        self.scene.run_assigned(size, force)?;
-        let frame = Rc::new(self.collect_frame(revision, size.height)?);
+        let frame = Rc::new(self.collect_frame(revision, top, size.height)?);
         self.published = Some(frame.clone());
         self.viewport = Some(size);
         self.dirty = false;
         Ok(frame)
     }
 
-    fn collect_frame(&mut self, revision: u64, bottom: u32) -> Result<Frame> {
+    fn collect_frame(&mut self, revision: u64, top: u32, height: u32) -> Result<Frame> {
         let item_origin = self.geometry(self.item)?.origin;
         let tail_origin = match self.tail_group {
             Some(group) => self.geometry(group)?.origin,
@@ -184,7 +189,8 @@ impl DisclosureLayout {
                     .map(|id| (id, item_origin)),
             )
             .chain(self.after.iter().map(|&id| (id, tail_origin)));
-        let estimated_rows = bottom.div_ceil(u32::from(STYLE.line_height)) as usize + 1;
+        let bottom = top.saturating_add(height);
+        let estimated_rows = height.div_ceil(u32::from(STYLE.line_height)) as usize + 1;
         let mut draws =
             Vec::with_capacity(estimated_rows.min(self.before.len() + self.after.len() + 2));
         for (node, parent_origin) in rows {
@@ -192,8 +198,11 @@ impl DisclosureLayout {
             let allocated = geometry.metrics.size;
             let origin = translated(geometry.origin, parent_origin)?;
             // Rows are ordered top-to-bottom and clipped to their allocations.
-            if origin.y >= bottom {
+            if height == 0 || origin.y >= bottom {
                 break;
+            }
+            if origin.y.saturating_add(allocated.height) <= top {
+                continue;
             }
             let paragraph = self
                 .scene
@@ -214,6 +223,7 @@ impl DisclosureLayout {
         }
         Ok(Frame {
             revision,
+            scroll_y: top,
             draws,
             geometry: self.snapshot_geometry(tail_origin)?,
             font: FONT,
@@ -280,7 +290,7 @@ mod tests {
             let clip = Clip::canvas(surface);
             let scale = RasterScale(1.5);
             let mut masks = GlyphMasks::new(64, 32 * 1024);
-            let closed = list.frame(size, false).unwrap();
+            let closed = list.frame(size, 0, false).unwrap();
             let mut pixels =
                 RetainedPixels::new_scaled(closed.clone(), surface, clip, scale, &mut masks)
                     .unwrap();
@@ -291,7 +301,7 @@ mod tests {
                 let counts = neighbors.map(|id| list.scene.node_counts(id));
                 let title = if open { "Hide details" } else { "Show details" };
                 list.set_detail(title, open.then_some(DETAIL)).unwrap();
-                let frame = list.frame(size, false).unwrap();
+                let frame = list.frame(size, 0, false).unwrap();
                 assert_eq!(frame.draws.len(), if open { 4 } else { 3 });
                 assert_eq!(frame.draws[1].node, closed.draws[1].node);
                 assert_eq!(frame.draws[1].origin, closed.draws[1].origin);
@@ -328,7 +338,7 @@ mod tests {
                 if open {
                     reference.set_detail(title, Some(DETAIL)).unwrap();
                 }
-                let fresh = reference.frame(size, true).unwrap();
+                let fresh = reference.frame(size, 0, true).unwrap();
                 assert!(frame.same_content(&fresh));
                 pixels
                     .update(frame.clone(), surface, clip, &mut masks)
@@ -377,7 +387,7 @@ mod tests {
                         if open {
                             fresh.set_detail("Hide details", Some(DETAIL)).unwrap();
                         }
-                        black_box(fresh.frame(size, false).unwrap());
+                        black_box(fresh.frame(size, 0, false).unwrap());
                         *list = fresh;
                     } else {
                         list.set_detail(
@@ -385,7 +395,7 @@ mod tests {
                             open.then_some(DETAIL),
                         )
                         .unwrap();
-                        black_box(list.frame(size, false).unwrap());
+                        black_box(list.frame(size, 0, false).unwrap());
                     }
                 }
                 if batch > 0 {
@@ -416,7 +426,7 @@ mod tests {
             height: 160,
         };
         let mut list = DisclosureLayout::new(BEFORE, AFTER).unwrap();
-        let closed = list.frame(size, false).unwrap();
+        let closed = list.frame(size, 0, false).unwrap();
         let root = list.scene.root();
         let target = CheckTarget::Layout(size);
         let mut check = list
@@ -441,7 +451,7 @@ mod tests {
             CheckOutcome::Unchanged
         );
         list.set_detail("Hide details", Some("🦀")).unwrap();
-        assert!(list.frame(size, false).is_err());
+        assert!(list.frame(size, 0, false).is_err());
         assert!(Rc::ptr_eq(list.published.as_ref().unwrap(), &closed));
         assert_eq!(
             list.scene
@@ -451,7 +461,7 @@ mod tests {
             CheckOutcome::Unverifiable
         );
         list.set_detail("Hide details", Some(DETAIL)).unwrap();
-        let good = list.frame(size, false).unwrap();
+        let good = list.frame(size, 0, false).unwrap();
         assert!(good.revision > closed.revision);
         assert_eq!(
             list.scene
@@ -480,6 +490,6 @@ mod tests {
                 .outcome,
             CheckOutcome::Unverifiable
         );
-        assert!(list.frame(size, false).unwrap().same_content(&closed));
+        assert!(list.frame(size, 0, false).unwrap().same_content(&closed));
     }
 }

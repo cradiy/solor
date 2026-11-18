@@ -83,6 +83,8 @@ pub struct TextDraw {
 #[derive(Debug)]
 pub struct Frame {
     pub revision: u64,
+    /// Logical distance from the document top to the viewport top.
+    pub scroll_y: u32,
     pub font: &'static [u8],
     pub geometry: Vec<Geometry>,
     pub draws: Vec<TextDraw>,
@@ -91,7 +93,8 @@ pub struct Frame {
 impl Frame {
     /// Independent fixtures have different NodeIds; compare all visual inputs instead.
     pub fn same_content(&self, other: &Self) -> bool {
-        self.font == other.font
+        self.scroll_y == other.scroll_y
+            && self.font == other.font
             && self.geometry == other.geometry
             && self.draws.len() == other.draws.len()
             && self.draws.iter().zip(&other.draws).all(|(a, b)| {
@@ -357,6 +360,7 @@ impl Presentation {
         }
         let frame = Rc::new(Frame {
             revision,
+            scroll_y: 0,
             font: FONT,
             geometry,
             draws,

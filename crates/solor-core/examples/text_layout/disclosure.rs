@@ -69,13 +69,13 @@ impl Disclosure {
     }
 
     fn hits_title(&self, p: Point) -> bool {
-        let Some((title, size)) = self.layout.published_title() else {
+        let Some((title, top, size)) = self.layout.published_title() else {
             return false;
         };
         let x = f64::from(title.origin.x);
-        let y = f64::from(title.origin.y);
+        let y = f64::from(title.origin.y) - f64::from(top);
         p.x >= x
-            && p.y >= y
+            && p.y >= y.max(0.0)
             && p.x < (x + f64::from(title.allocated.width)).min(f64::from(size.width))
             && p.y < (y + f64::from(title.allocated.height)).min(f64::from(size.height))
     }
@@ -102,7 +102,7 @@ impl Disclosure {
         false
     }
 
-    pub fn frame(&mut self, size: Size) -> Result<Rc<Frame>> {
+    pub fn frame(&mut self, size: Size, scroll_y: u32) -> Result<Rc<Frame>> {
         if self.mounted != self.detail {
             let labels = self.labels.tree();
             let title = labels.get(labels.root()).expect("owned title");
@@ -112,7 +112,11 @@ impl Disclosure {
             self.layout.set_detail(title, detail)?;
             self.mounted = self.detail;
         }
-        self.layout.frame(size, false)
+        let frame = self.layout.frame(size, scroll_y, false)?;
+        if self.pressed.is_some() && self.layout.published_title().is_none() {
+            self.pressed = None;
+        }
+        Ok(frame)
     }
 }
 
@@ -136,7 +140,7 @@ mod tests {
         use PointerEvent::*;
         let mut row = Disclosure::new("Detail", &[], &[]).unwrap();
         assert!(!row.pointer(Down(1, INSIDE)));
-        let published = row.frame(SIZE).unwrap();
+        let published = row.frame(SIZE, 0).unwrap();
         assert!(!row.pointer(Up(1, INSIDE)));
         let draw = &published.draws[0];
         let edge = Point {
@@ -156,14 +160,55 @@ mod tests {
         ] {
             assert!(!row.pointer(event));
         }
-        assert!(Rc::ptr_eq(&published, &row.frame(SIZE).unwrap()));
+        assert!(Rc::ptr_eq(&published, &row.frame(SIZE, 0).unwrap()));
         assert!(!row.pointer(Down(1, INSIDE)));
         assert!(!row.pointer(Down(2, INSIDE)));
         assert!(!row.pointer(Cancel(2)));
         assert!(!row.pointer(Up(2, INSIDE)));
         assert!(row.pointer(Up(1, INSIDE)));
         assert!(!row.pointer(Up(1, INSIDE)));
-        assert_eq!(row.frame(SIZE).unwrap().draws.len(), 2);
+        assert_eq!(row.frame(SIZE, 0).unwrap().draws.len(), 2);
+    }
+
+    #[test]
+    fn scrolled_hit_testing_uses_the_visible_part_of_the_published_title() {
+        use PointerEvent::{Down, Up};
+        let mut row = Disclosure::new("Detail", &["Before"], &["After"; 10]).unwrap();
+        let size = Size {
+            width: 240,
+            height: 64,
+        };
+        let first = row.frame(size, 0).unwrap();
+        let title = &first.draws[1];
+        let old = Point {
+            x: 6.0,
+            y: f64::from(title.origin.y + 2),
+        };
+        assert!(!row.pointer(Down(1, old)));
+        row.frame(size, 100).unwrap();
+        row.frame(size, 0).unwrap();
+        assert!(!row.pointer(Up(1, old)));
+        row.frame(size, 100).unwrap();
+        assert!(!row.pointer(Down(1, old)));
+        assert!(!row.pointer(Up(1, old)));
+
+        let top = title.origin.y + 8;
+        row.frame(size, top).unwrap();
+        for y in [-0.5, f64::from(title.allocated.height - 8)] {
+            let outside = Point { x: 6.0, y };
+            assert!(!row.pointer(Down(1, outside)));
+            assert!(!row.pointer(Up(1, outside)));
+        }
+        let visible = Point { x: 6.0, y: 0.0 };
+        assert!(!row.pointer(Down(1, visible)));
+        assert!(row.pointer(Up(1, visible)));
+        assert!(
+            row.frame(size, top)
+                .unwrap()
+                .draws
+                .iter()
+                .any(|draw| draw.paragraph.text == "Detail")
+        );
     }
 
     #[test]
@@ -177,7 +222,7 @@ mod tests {
         };
         let clip = Clip::canvas(physical);
         let scale = RasterScale(1.5);
-        let first = row.frame(SIZE).unwrap();
+        let first = row.frame(SIZE, 0).unwrap();
         let mut masks = GlyphMasks::new(64, 32 * 1024);
         let mut retained =
             RetainedPixels::new_scaled(first.clone(), physical, clip, scale, &mut masks).unwrap();
@@ -194,7 +239,7 @@ mod tests {
             assert_eq!(row.labels.binding_count(), count);
             assert_eq!(row.labels.pending_count(), 0);
 
-            let frame = row.frame(SIZE).unwrap();
+            let frame = row.frame(SIZE, 0).unwrap();
             assert!(frame.revision > previous);
             previous = frame.revision;
             assert_eq!(frame.draws.len(), count);
@@ -202,7 +247,7 @@ mod tests {
             if open {
                 reference.set_detail("Hide details", Some(detail)).unwrap();
             }
-            let reference = reference.frame(SIZE, true).unwrap();
+            let reference = reference.frame(SIZE, 0, true).unwrap();
             assert!(frame.same_content(&reference));
             retained.update(frame, physical, clip, &mut masks).unwrap();
             let oracle = Surface::raster(&reference, physical, clip, (0, 0), scale, None).unwrap();

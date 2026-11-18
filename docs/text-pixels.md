@@ -92,7 +92,9 @@ raster settings. Selecting the cache budget for broader text needs a larger corp
 ## Redrawing a damaged rectangle
 
 The retained path holds one surface and the frame that produced it. It compares
-ordered commands in the two snapshots. A change of node, color, origin,
+ordered commands in the two snapshots. The frame scroll offset translates
+document bounds into viewport pixels at the current scale. A change of device
+scroll offset, node, color, origin,
 allocation or paragraph handle includes both old and new visible allocations
 in a single bounding rectangle. The renderer clips all text ink to these
 allocations, which makes them conservative pixel bounds. Identical frame handles

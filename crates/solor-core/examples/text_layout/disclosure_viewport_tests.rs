@@ -28,7 +28,7 @@ fn assigned_root_only_publishes_measurement_evidence_when_queried() {
             .unwrap();
         }
         let previous = list.scene.node_counts(root);
-        let frame = list.frame(size, false).unwrap();
+        let frame = list.frame(size, 0, false).unwrap();
         assert_eq!(list.scene.node_counts(root).queries, previous.queries);
         assert!(
             list.scene
@@ -52,7 +52,7 @@ fn assigned_root_only_publishes_measurement_evidence_when_queried() {
                 .unwrap()
                 .is_some()
         );
-        assert!(frame.same_content(&list.collect_frame(0, size.height).unwrap()));
+        assert!(frame.same_content(&list.collect_frame(0, 0, size.height).unwrap()));
     }
 }
 
@@ -83,7 +83,7 @@ fn viewport_frames_match_full_draws_through_edges_resizes_and_edits() {
             .unwrap();
         }
         let size = Size { width, height };
-        let frame = list.frame(size, false).unwrap();
+        let frame = list.frame(size, 0, false).unwrap();
         let mut oracle =
             DisclosureLayout::with_engine(BEFORE, &tail, Engine::new(), false).unwrap();
         if open {
@@ -93,7 +93,7 @@ fn viewport_frames_match_full_draws_through_edges_resizes_and_edits() {
             .scene
             .run(Query::Exact(width), Some(size), true)
             .unwrap();
-        let full = oracle.collect_frame(0, u32::MAX).unwrap();
+        let full = oracle.collect_frame(0, 0, u32::MAX).unwrap();
         assert_eq!(
             frame.geometry,
             oracle
@@ -155,7 +155,7 @@ fn moving_the_tail_keeps_row_measurements_and_local_positions() {
         height: 300,
     };
     let group = list.tail_group.unwrap();
-    let closed = list.frame(size, false).unwrap();
+    let closed = list.frame(size, 0, false).unwrap();
     let group_y = list.geometry(group).unwrap().origin.y;
     let rows = list
         .after
@@ -163,7 +163,7 @@ fn moving_the_tail_keeps_row_measurements_and_local_positions() {
         .map(|&id| (id, list.geometry(id).unwrap(), list.scene.node_counts(id)))
         .collect::<Vec<_>>();
     list.set_detail("Hide details", Some(DETAIL)).unwrap();
-    let open = list.frame(size, false).unwrap();
+    let open = list.frame(size, 0, false).unwrap();
     assert!(list.geometry(group).unwrap().origin.y > group_y);
     for (id, local, counts) in rows {
         assert_eq!(list.geometry(id).unwrap(), local);
@@ -194,7 +194,7 @@ fn measure_snapshot_collection() {
         let mut lists = [false, false, false, tail.len() > 1].map(|grouped| {
             let mut list =
                 DisclosureLayout::with_engine(BEFORE, &tail, Engine::new(), grouped).unwrap();
-            list.frame(size, false).unwrap();
+            list.frame(size, 0, false).unwrap();
             list
         });
         let mut samples = bottoms.map(|_| [Vec::new(), Vec::new()]);
@@ -220,7 +220,7 @@ fn measure_snapshot_collection() {
                             .unwrap();
                     }
                     let laid_out = Instant::now();
-                    let frame = Rc::new(list.collect_frame(step, bottom).unwrap());
+                    let frame = Rc::new(list.collect_frame(step, 0, bottom).unwrap());
                     list.published = Some(black_box(frame));
                     elapsed[0] += laid_out.elapsed().as_secs_f64();
                     elapsed[1] += start.elapsed().as_secs_f64();
@@ -288,7 +288,7 @@ fn measure_tail_resize() {
                 let width = if step % 2 == 0 { 84 } else { 240 };
                 black_box(
                     lists[mode]
-                        .frame(Size { width, height: 160 }, false)
+                        .frame(Size { width, height: 160 }, 0, false)
                         .unwrap(),
                 );
             }
@@ -310,5 +310,134 @@ fn measure_tail_resize() {
             "1024 rows, {name} resize through snapshot: {:.2} us",
             times[3]
         );
+    }
+}
+
+#[test]
+fn scrolled_frames_match_crops_of_the_full_document() {
+    let tail = ["Hello", DETAIL, "Short"].repeat(6);
+    let mut list = DisclosureLayout::new(BEFORE, &tail).unwrap();
+    let mut masks = GlyphMasks::new(64, 32 * 1024);
+    let mut pixels: Option<RetainedPixels> = None;
+    let scale = RasterScale(1.5);
+    let mut held = None;
+
+    for (width, height, open) in [
+        (134, 62, false),
+        (100, 78, true),
+        (100, 78, false),
+        (240, 800, false),
+    ] {
+        if open != list.detail.is_some() {
+            list.set_detail(
+                if open { "Hide details" } else { "Show details" },
+                open.then_some(DETAIL),
+            )
+            .unwrap();
+        }
+        let size = Size { width, height };
+        let mut flat = DisclosureLayout::with_engine(BEFORE, &tail, Engine::new(), false).unwrap();
+        if open {
+            flat.set_detail("Hide details", Some(DETAIL)).unwrap();
+        }
+        flat.scene
+            .run(Query::Exact(width), Some(size), true)
+            .unwrap();
+        let full = flat.collect_frame(0, 0, u32::MAX).unwrap();
+        let content_height = full.geometry[0].content.height;
+        let max_scroll = content_height.saturating_sub(height);
+        let physical = Size {
+            width: width * 3 / 2,
+            height: height * 3 / 2,
+        };
+        let clip = Clip::canvas(physical);
+        let canvas = Size {
+            width: physical.width,
+            height: (content_height.max(height) * 3).div_ceil(2),
+        };
+        let document =
+            Surface::raster(&full, canvas, Clip::canvas(canvas), (0, 0), scale, None).unwrap();
+        let mut counts = None;
+        for request in [u32::MAX, 0, 17, 26, 29, content_height / 2, u32::MAX] {
+            let frame = list.frame(size, request, false).unwrap();
+            let top = request.min(max_scroll);
+            assert_eq!(frame.scroll_y, top);
+            assert_eq!(frame.geometry, full.geometry);
+            assert_eq!(
+                frame.draws.iter().map(|d| d.origin).collect::<Vec<_>>(),
+                full.draws
+                    .iter()
+                    .filter(|d| d.origin.y + d.allocated.height > top && d.origin.y < top + height)
+                    .map(|d| d.origin)
+                    .collect::<Vec<_>>()
+            );
+            let current = list.scene.counts();
+            assert_eq!(current, *counts.get_or_insert(current));
+            let retained = match &mut pixels {
+                Some(p) => {
+                    p.update(frame.clone(), physical, clip, &mut masks).unwrap();
+                    p
+                }
+                None => pixels.insert(
+                    RetainedPixels::new_scaled(frame.clone(), physical, clip, scale, &mut masks)
+                        .unwrap(),
+                ),
+            };
+            let stride = physical.width as usize * 4;
+            let start = (top * 3).div_ceil(2) as usize * stride;
+            let expected = &document.rgba[start..start + physical.height as usize * stride];
+            assert!(
+                retained.surface().rgba == expected,
+                "width {width}, top {top}, open {open}"
+            );
+            assert!(Rc::ptr_eq(&frame, &list.frame(size, top, false).unwrap()));
+            if request == 17 && open {
+                held = Some((frame, physical, expected.to_vec()));
+            }
+        }
+    }
+    drop(list);
+    let (frame, size, expected) = held.unwrap();
+    assert!(
+        Surface::raster(&frame, size, Clip::canvas(size), (0, 0), scale, None)
+            .unwrap()
+            .rgba
+            == expected
+    );
+}
+
+#[test]
+#[ignore = "release timing experiment"]
+fn measure_scroll_positions() {
+    use std::{hint::black_box, time::Instant};
+    let labels: Vec<_> = (3..=1024).map(|n| format!("Item {n}")).collect();
+    let tail: Vec<_> = labels.iter().map(String::as_str).collect();
+    let size = Size {
+        width: 240,
+        height: 160,
+    };
+    let mut list = DisclosureLayout::new(BEFORE, &tail).unwrap();
+    let first = list.frame(size, 0, false).unwrap();
+    let end = first.geometry[0].content.height - size.height;
+    let counts = list.scene.counts();
+    let positions = [0, end / 2, end - 1];
+    let mut samples = positions.map(|_| Vec::new());
+    for batch in 0..8 {
+        for offset in 0..3 {
+            let mode = (batch + offset) % 3;
+            let start = Instant::now();
+            for step in 0..200 {
+                let top = positions[mode] + step % 2;
+                black_box(list.frame(size, top, false).unwrap());
+            }
+            if batch > 0 {
+                samples[mode].push(start.elapsed().as_secs_f64() * 1e6 / 200.0);
+            }
+        }
+    }
+    assert_eq!(list.scene.counts(), counts);
+    for (position, mut times) in ["top", "middle", "end"].into_iter().zip(samples) {
+        times.sort_by(f64::total_cmp);
+        eprintln!("scroll {position}: {:.2} us/frame", times[3]);
     }
 }

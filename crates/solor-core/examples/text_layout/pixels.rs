@@ -48,7 +48,7 @@ pub struct RasterScale(pub f64);
 impl RasterScale {
     pub const ONE: Self = Self(1.0);
 
-    fn edge(self, logical: f64) -> i64 {
+    pub(super) fn edge(self, logical: f64) -> i64 {
         (logical * self.0).round() as i64
     }
 
@@ -128,6 +128,8 @@ impl Surface {
         let mut context = ScaleContext::new();
         let mut scratch = Image::new();
         let renderer = Render::new(&[Source::Outline]);
+        // Sample a device-pixel crop of the document at the current scale.
+        let origin = (origin.0, origin.1 + scale.edge(f64::from(frame.scroll_y)));
         let viewport = Clip::canvas(size).intersect(clip);
         for draw in &frame.draws {
             let device = scale.bounds(draw);
