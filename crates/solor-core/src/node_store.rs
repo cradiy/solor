@@ -1,8 +1,11 @@
+//! Scoped execution of boxed node payloads in an ordered tree.
+
 use std::fmt;
 use std::num::NonZeroUsize;
 
-use solor_core::tree::{NodeId, Tree, TreeError};
+use crate::tree::{NodeId, Tree, TreeError};
 
+/// A rejected node access or child invocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AccessError {
     Tree(TreeError),
@@ -32,6 +35,7 @@ impl From<TreeError> for AccessError {
     }
 }
 
+/// Execution state of a single payload. A successful invocation clears interruption.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
     Ready,
@@ -44,12 +48,32 @@ struct Slot<T: ?Sized> {
     interrupted: bool,
 }
 
+/// Owns boxed payloads at stable tree handles. Callbacks may execute direct children
+/// while retaining exclusive access to the current payload.
+///
+/// ```
+/// use std::num::NonZeroUsize;
+/// use solor_core::node_store::{AccessError, NodeStore};
+///
+/// # fn main() -> Result<(), AccessError> {
+/// let mut nodes = NodeStore::new(Box::new(1), NonZeroUsize::new(2).unwrap());
+/// let root = nodes.root();
+/// let child = nodes.append(root, Box::new(2))?;
+/// nodes.execute(root, |parent, cx| {
+///     *parent += cx.execute_child(child, |value, _| Ok(*value))?;
+///     Ok(())
+/// })?;
+/// assert_eq!(*nodes.get(root)?, 3);
+/// # Ok(())
+/// # }
+/// ```
 pub struct NodeStore<T: ?Sized> {
     tree: Tree<Slot<T>>,
     max_depth: NonZeroUsize,
 }
 
 impl<T: ?Sized> NodeStore<T> {
+    /// Creates a rooted store. The first callback enters at depth one.
     pub fn new(root: Box<T>, max_depth: NonZeroUsize) -> Self {
         Self {
             tree: Tree::new(Slot {
@@ -72,7 +96,6 @@ impl<T: ?Sized> NodeStore<T> {
         self.tree.parent(node)
     }
 
-    #[allow(dead_code, reason = "used by the live layout experiment")]
     pub fn child_count(&self, node: NodeId) -> Result<usize, TreeError> {
         Ok(self.tree.children(node)?.len())
     }
@@ -120,6 +143,8 @@ impl<T: ?Sized> NodeStore<T> {
             .ok_or(AccessError::ActiveNode(node))
     }
 
+    /// Lends the payload and a topology context to a callback. On error or unwind,
+    /// the store restores the payload with its mutations and marks it interrupted.
     pub fn execute<R>(
         &mut self,
         node: NodeId,
@@ -224,6 +249,7 @@ impl<T: ?Sized> Context<'_, T> {
             .nth(index)
     }
 
+    /// Executes a live direct child within the configured depth limit.
     pub fn execute_child<R>(
         &mut self,
         node: NodeId,

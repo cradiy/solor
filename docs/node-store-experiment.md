@@ -2,19 +2,16 @@
 
 ## Scope and decision
 
-The `node_store` example tests one borrowing mechanism: a node holds mutable
-access to its behavior while invoking a child through a restricted context.
-It wraps the existing `Tree` and its `SlotMap`; it does not implement a new map
-or change the public core API.
+The library exposes `solor_core::node_store::NodeStore` for scoped execution
+of boxed payloads. A parent holds mutable access to its own payload while
+calling a direct child through a restricted context. The store uses the same
+`Tree` and `NodeId` types as the rest of the core. The layout and window
+examples use this library implementation.
 
-The mechanism works in safe Rust with heterogeneous boxed payloads. It remains
-an experiment because traversal has measurable overhead and the UI execution
-contract needs separate validation. No layout, paint, invalidation scheduler,
-deferred edit queue, or component API is implemented here.
-
-Implementation: [store](../crates/solor-core/examples/node_store/store.rs),
-[tests](../crates/solor-core/examples/node_store/tests.rs),
-[scalar measurements](../crates/solor-core/examples/node_store/measure.rs), and
+The [store](../crates/solor-core/src/node_store.rs) and its
+[access tests](../crates/solor-core/tests/node_store.rs) define the borrowing
+and recovery contract. The `node_store` example contains the
+[scalar measurements](../crates/solor-core/examples/node_store/measure.rs) and
 [heterogeneous workloads](../crates/solor-core/examples/node_store/workload.rs).
 
 ## Access contract
@@ -78,11 +75,11 @@ Seven focused tests cover:
 Separate compile-fail checks verify that callback context insertion/removal is
 unavailable (`E0599`) and capturing the mutably borrowed outer store for removal
 is rejected (`E0499`). These were local compiler checks, not committed test
-fixtures. The existing tree and state tests remain separate from this example.
+fixtures. The access contract tests use the public library entry point.
 
 ```sh
 cargo test --workspace --offline
-cargo test -p solor-core --example node_store --offline
+cargo test -p solor-core --test node_store --offline
 cargo run --release -p solor-core --example node_store --offline
 ```
 
@@ -183,13 +180,10 @@ restoration costs individually. They provide no evidence that changing the map
 would improve the complete workload. The store implementation retains its
 identity, reentry, depth, and failure checks.
 
-## Next decision
+## Integration boundary
 
-The results support retaining this access layer as a candidate without replacing
-`SlotMap`. They do not establish that its overhead is acceptable for the final
-framework. Selected-subtree execution scales with supplied work in this fixture,
-but does not establish correct incremental layout. The separate
-[layout contract experiment](layout-contract.md) tests restricted contexts,
-ancestor invalidation, and failure-safe publication in a narrow sizing domain.
-The broader [node model](node-execution.md) still needs review before introducing
-public behavior traits or integrating these examples into `Runtime`.
+The library provides scoped execution and recovery. The
+[layout contract experiment](layout-contract.md) uses this layer for child
+measurement and placement and owns its invalidation and geometry publication.
+The [node model](node-execution.md) describes the broader behavior contract
+under investigation. The measurements above apply to the named workloads.

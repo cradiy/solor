@@ -2,10 +2,10 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 
+use solor_core::node_store::{AccessError, Context, NodeStore};
 use solor_core::tree::NodeId;
 
 use super::MEASUREMENT_CACHE_SLOTS;
-use super::store::{AccessError, Context, NodeStore};
 
 const _: () = assert!(MEASUREMENT_CACHE_SLOTS > 0);
 

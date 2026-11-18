@@ -3,9 +3,8 @@ use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
+use solor_core::node_store::{AccessError, Context, NodeStore, Status};
 use solor_core::tree::TreeError;
-
-use super::store::{AccessError, Context, NodeStore, Status};
 
 fn limit(value: usize) -> NonZeroUsize {
     NonZeroUsize::new(value).unwrap()

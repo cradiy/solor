@@ -6,11 +6,6 @@ mod fixtures;
 mod layout;
 mod negotiation;
 
-// Reuse the access prototype; this target exercises only part of its API.
-#[allow(dead_code)]
-#[path = "../node_store/store.rs"]
-mod store;
-
 #[cfg(test)]
 mod tests;
 

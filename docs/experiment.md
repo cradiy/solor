@@ -7,8 +7,9 @@ and support for custom rendering and animation.
 
 ## Current boundary
 
-The implemented foundation consists of a [persistent node tree](node-tree.md)
-and [explicit state-to-node updates](state-updates.md), including typed signals,
+The core library provides a [persistent node tree](node-tree.md),
+[scoped execution of node payloads](node-store-experiment.md), and
+[explicit state-to-node updates](state-updates.md) with typed signals,
 deduplicated pending work, and lifecycle cleanup.
 
 The [access experiment](node-store-experiment.md) records scoped payload borrowing,

@@ -98,7 +98,7 @@ and reject further child operations. A new attempt is required for retry. This
 avoids publishing journal entries left by an abandoned nested operation; recovery
 and alternate layout within the same attempt are outside this contract.
 
-The access prototype has a fixed access-error type, so layout callbacks return a
+The node store has a fixed access-error type, so layout callbacks return a
 nested layout result. Its `Status` describes the access callback, not successful
 layout. Layout validity and pending work are tracked independently and must not
 be inferred from `Status::Ready`.
@@ -133,7 +133,7 @@ normal layout attempt.
 ## Implementation and validation
 
 The private [execution code](../crates/solor-core/examples/layout_contract/layout.rs)
-uses the existing scoped access prototype. The
+uses the core library’s node store. The
 [fixtures](../crates/solor-core/examples/layout_contract/fixtures.rs) implement
 the three behaviors, and the
 [tests](../crates/solor-core/examples/layout_contract/tests.rs) cover the acceptance

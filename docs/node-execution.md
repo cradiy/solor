@@ -251,7 +251,7 @@ tests rather than assuming identical behavior.
 
 ## Validation before implementation expands
 
-The isolated access prototype establishes the basic borrowing mechanism. The
+The core node store implements scoped parent and child access. The
 headless layout experiment tests synthetic versions of the container and two
 leaves, including comparison with full recomputation and failure recovery. It
 does not validate real font inputs, paint records, or the broader sizing model.

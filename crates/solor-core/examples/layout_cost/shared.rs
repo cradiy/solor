@@ -10,9 +10,6 @@ mod layout;
 #[allow(dead_code)]
 #[path = "../layout_contract/negotiation.rs"]
 mod negotiation;
-#[allow(dead_code)]
-#[path = "../node_store/store.rs"]
-mod store;
 
 #[path = "workload.rs"]
 mod workload;

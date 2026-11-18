@@ -7,9 +7,6 @@ mod fixtures;
 #[allow(dead_code)]
 #[path = "../layout_contract/layout.rs"]
 mod layout;
-#[allow(dead_code)]
-#[path = "../node_store/store.rs"]
-mod store;
 
 #[cfg(test)]
 mod tests;

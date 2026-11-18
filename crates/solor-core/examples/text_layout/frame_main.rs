@@ -8,9 +8,6 @@ mod fixtures;
 #[path = "../layout_contract/layout.rs"]
 mod layout;
 #[allow(dead_code)]
-#[path = "../node_store/store.rs"]
-mod store;
-#[allow(dead_code)]
 mod text;
 
 mod frame;

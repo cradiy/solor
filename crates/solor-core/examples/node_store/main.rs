@@ -1,11 +1,7 @@
-//! Headless storage-access experiment, not a public UI API.
+//! Headless workloads for the node store.
 
 mod measure;
-mod store;
 mod workload;
-
-#[cfg(test)]
-mod tests;
 
 fn main() {
     measure::run();

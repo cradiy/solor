@@ -1,10 +1,10 @@
 use std::hint::black_box;
 use std::num::NonZeroUsize;
 
+use solor_core::node_store::{AccessError, Context, NodeStore, Status};
 use solor_core::tree::{NodeId, Tree};
 
 use super::measure::paired;
-use super::store::{AccessError, Context, NodeStore, Status};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Output {

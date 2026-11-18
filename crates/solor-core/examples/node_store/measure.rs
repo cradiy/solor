@@ -2,9 +2,8 @@ use std::hint::black_box;
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
+use solor_core::node_store::{AccessError, Context, NodeStore, Status};
 use solor_core::tree::{NodeId, Tree};
-
-use super::store::{AccessError, Context, NodeStore, Status};
 
 const LIMIT: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 const SAMPLES: usize = 7;
