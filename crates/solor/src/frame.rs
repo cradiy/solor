@@ -23,6 +23,11 @@ impl ViewFrame {
         self.font.as_ref().map(|font| font.as_slice())
     }
 
+    /// Separates the recorded commands for retention from the hit geometry for submission.
+    pub fn into_parts(self) -> (Vec<Draw>, PointerFrame) {
+        (self.draws, self.pointer)
+    }
+
     /// Takes the hit geometry for acceptance after successful presentation.
     pub fn into_pointer_frame(self) -> PointerFrame {
         self.pointer

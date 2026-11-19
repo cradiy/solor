@@ -154,6 +154,10 @@ opened and closed the conditional row. A window capture showed the detail
 background after expansion and the original pixel color after collapse.
 Clicking the retired row's location produced no further buffer submission. The [refresh workload](component-api.md#high-frequency-updates)
 measures local paint, shared subscriptions and structural layout at an explicit update boundary.
+The [mounted meter workload](../crates/solor-render-cpu/tests/meter_updates.rs)
+compares window updates with independent full rasterization at fractional
+scale, including shrinking fills, overlapping text and submission retries.
+See [mounted CPU window measurements](text-pixels.md#mounted-cpu-window-measurements).
 The [UI contracts](ui-contracts.md) distinguish implemented authoring behavior
 from open frame, input and platform boundaries.
 The [shared source text experiment](text-layout.md#shared-source-text) checks

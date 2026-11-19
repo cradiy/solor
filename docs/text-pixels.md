@@ -146,3 +146,35 @@ Run the example with stdout redirected to an image. Timings go to stderr.
 cargo test -p solor-render-cpu --example text_pixels --locked --offline
 cargo run --release -p solor-render-cpu --example text_pixels --locked --offline > text-pixels.png
 ```
+
+## Mounted CPU window measurements
+
+A mounted meter changes width on each pointer move. It draws a translucent fill
+over a track, beside four static labels. The viewport is 320 by 180 logical
+pixels at 1.25 scale (400 by 225 device pixels). The handler receives the same
+sequence in both builds. Timing includes input delivery, flush, layout, full
+command recording, rasterization and local submission acknowledgement.
+Wayland uploads, compositor scheduling and display latency are outside this timing.
+
+Six pairs of release processes alternated run order. Each discarded 20 warm-up
+frames and measured 200 updates. Values below are the medians of the six
+per-process statistics. The full replay executable used the same workload
+with the window implementation at `6f378a8`.
+
+| Window rasterization | Median frame (range across runs) | p95 frame | Mean reported damage |
+| --- | ---: | ---: | ---: |
+| Full replay | 782 µs (748–788 µs) | 1,236 µs | 90,000 pixels |
+| Retained image with clipped replay | 42 µs (38–76 µs) | 96 µs | 2,059 pixels |
+
+The full command list is still recorded and compared on each frame. Damage is
+one rectangle, so changes far apart can include the intervening area.
+
+Run the timing workload with
+`cargo test --release -p solor-render-cpu --test meter_updates --offline -- --ignored --nocapture`.
+
+In a separate nested Wayland run of the mounted settings example, the initial
+submission reported 260 by 110 pixels. Expanding and collapsing the detail row
+each reported 200 by 32 at (12, 50). Window captures confirmed the row appeared
+and disappeared, and all three buffer submissions passed the readback audit. The
+second submission initialized a fresh shared file, writing 114,400 bytes.
+The third reused a file and wrote 33,040 bytes.

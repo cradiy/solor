@@ -57,8 +57,13 @@ image on each call.
 `CpuWindow::mount(ui, component)` owns the UI and mounts the root once. Pass
 the resulting handler to `Platform::run_window` on an RGBA8 platform. It
 dispatches pointer events against the accepted layout and requests a frame
-when signal bindings have work to flush. Each frame uses the current logical
-size and scale and reports full damage. The platform acknowledges successful
+when signal bindings have work to flush. Each frame records the view and
+compares the ordered commands with the previous submission. The window keeps
+one RGBA surface and repairs the bounding rectangle of changed commands,
+including the space vacated by shrinking or removed content. Unchanged draws
+overlapping that area are replayed in paint order. Identical commands produce
+empty damage. Changes to the allocation or scale and retries after a discarded
+prepared image require full damage. The platform acknowledges successful
 submission before the handler publishes its prepared hit geometry. The next
 frame callback returns the window to idle when no binding work remains.
 

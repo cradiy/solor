@@ -1,7 +1,7 @@
 //! Presentation of a mounted component on RGBA8 window targets.
 use anyhow::Result;
 use solor::{
-    Render, Ui, ViewId,
+    Draw, Render, Ui, ViewId,
     layout::Size,
     platform::{WindowEvent, WindowHandler},
     pointer::PointerFrame,
@@ -14,7 +14,15 @@ use crate::pixels::Surface;
 pub struct CpuWindow {
     ui: Ui,
     view: ViewId,
-    prepared: Option<(PointerFrame, Surface)>,
+    prepared: Option<PointerFrame>,
+    retained: Option<RetainedView>,
+}
+
+struct RetainedView {
+    logical: Size,
+    scale: RasterScale,
+    surface: Surface,
+    draws: Vec<Draw>,
 }
 
 impl CpuWindow {
@@ -25,6 +33,7 @@ impl CpuWindow {
             ui,
             view,
             prepared: None,
+            retained: None,
         })
     }
 }
@@ -38,23 +47,44 @@ impl WindowHandler<Rgba8> for CpuWindow {
     }
 
     fn frame(&mut self, size: Size, scale: RasterScale) -> Result<RasterFrame<'_>> {
-        self.prepared = None;
+        // An unacknowledged image cannot be the baseline for the platform's next damage.
+        if self.prepared.take().is_some() {
+            self.retained = None;
+        }
         let physical = scale.buffer_size(size)?;
         self.ui.flush()?;
         self.ui.layout(self.view, size)?;
         let frame = self.ui.record_frame(self.view)?;
-        let surface = Surface::draw_view(&frame, physical, scale)?;
-        let (_, surface) = self.prepared.insert((frame.into_pointer_frame(), surface));
+        let canvas = Clip::canvas(physical);
+        // Take ownership before mutating pixels. On a raster error, retry from a clean image.
+        let (surface, damage) = match self.retained.take() {
+            Some(mut old) if old.logical == size && old.scale == scale => {
+                let damage = crate::view::damage(&old.draws, frame.draws(), scale, canvas)?;
+                if let Some(area) = damage {
+                    old.surface.repair(&frame, scale, area)?;
+                }
+                (old.surface, damage)
+            }
+            _ => (Surface::draw_view(&frame, physical, scale)?, Some(canvas)),
+        };
+        let (draws, pointer) = frame.into_parts();
+        self.prepared = Some(pointer);
+        let retained = self.retained.insert(RetainedView {
+            logical: size,
+            scale,
+            surface,
+            draws,
+        });
         Ok(RasterFrame {
             size: physical,
-            rgba: &surface.rgba,
-            damage: Some(Clip::canvas(physical)),
+            rgba: &retained.surface.rgba,
+            damage,
             request_callback: true,
         })
     }
 
     fn frame_submitted(&mut self) -> Result<()> {
-        if let Some((pointer, _)) = self.prepared.take() {
+        if let Some(pointer) = self.prepared.take() {
             self.ui.accept_pointer_frame(pointer)?;
         }
         Ok(())
