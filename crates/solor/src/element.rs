@@ -221,6 +221,7 @@ pub(super) struct MountedNode {
     record: fn(&Scene, NodeId, &mut PaintContext) -> Result<()>,
     pub(super) owned: Vec<SignalId>,
     pub(crate) handlers: Option<Box<Handlers>>,
+    pub(super) z_index: i32,
     pub(crate) hit_testable: bool,
 }
 
@@ -242,6 +243,11 @@ impl MountedNode {
             paint_mode,
             binding_target: None,
             handlers,
+            z_index: style
+                .appearance
+                .as_deref()
+                .and_then(|a| a.z_index)
+                .unwrap_or_default(),
             hit_testable: style.appearance.as_deref().and_then(|a| a.pointer_events)
                 != Some(PointerEvents::None),
             text_style,

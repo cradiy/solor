@@ -199,3 +199,94 @@ fn fixed_label_recording_matches_live_text_across_edits_and_relayout() -> Result
     }
     Ok(())
 }
+
+#[test]
+fn overlapping_subtrees_share_paint_and_accepted_hit_order() -> Result<()> {
+    let size = DeviceSize {
+        width: 32,
+        height: 32,
+    };
+    let mut ui = Ui::new();
+    let open = ui.context().signal(false);
+    let clicked = ui.context().signal(0u8);
+    let layer = || div().size(px(16.0)).mb(px(-16.0));
+    let view = ui.mount(component(|_| {
+        div()
+            .flex_col()
+            .child_when(open, move || {
+                layer()
+                    .z_index(1)
+                    .on_click(move |cx| cx.set(clicked, 1))
+                    .child(div().size(px(16.0)).bg(rgb(0x0000ff)))
+            })
+            .child(
+                layer()
+                    .bg(rgb(0xff0000))
+                    .on_click(move |cx| cx.set(clicked, 2)),
+            )
+            .child(
+                layer()
+                    .bg(rgb(0x00ff00))
+                    .on_click(move |cx| cx.set(clicked, 3)),
+            )
+            .child(
+                layer().z_index(-1).child(
+                    div()
+                        .size(px(16.0))
+                        .z_index(i32::MAX)
+                        .bg(rgb(0xffffff))
+                        .on_click(move |cx| cx.set(clicked, 4)),
+                ),
+            )
+    }))?;
+    let sample = PointerSample {
+        id: PointerId(1),
+        kind: PointerKind::Mouse,
+        position: Origin {
+            x: px(5.0),
+            y: px(5.0),
+        },
+        modifiers: Default::default(),
+    };
+    let click = |ui: &mut Ui| -> Result<u8> {
+        ui.context().set(clicked, 0)?;
+        ui.dispatch_pointer(view, PointerInput::Down(sample, PointerButton::Primary))?;
+        ui.dispatch_pointer(view, PointerInput::Up(sample, PointerButton::Primary))?;
+        Ok(*ui.context().read(clicked)?)
+    };
+
+    ui.flush()?;
+    ui.layout(view, size.at_unit_scale())?;
+    let root = ui.root(view)?;
+    let initial_children: Vec<_> = ui.children(view, root)?.collect();
+    let initial = ui.record_frame(view)?;
+    let image = Surface::draw_view(&initial, size, RasterScale::ONE)?;
+    assert_eq!(pixel(&image, 5, 5), [0, 255, 0, 255]);
+    ui.accept_pointer_frame(initial.into_pointer_frame())?;
+    assert_eq!(click(&mut ui)?, 3);
+
+    ui.context().set(open, true)?;
+    ui.flush()?;
+    ui.layout(view, size.at_unit_scale())?;
+    assert!(
+        ui.children(view, root)?
+            .skip(1)
+            .eq(initial_children.iter().copied())
+    );
+    let pending = ui.record_frame(view)?;
+    let image = Surface::draw_view(&pending, size, RasterScale::ONE)?;
+    assert_eq!(pixel(&image, 5, 5), [0, 0, 255, 255]);
+    drop(pending);
+    assert_eq!(click(&mut ui)?, 3);
+    let retry = ui.record_frame(view)?;
+    ui.accept_pointer_frame(retry.into_pointer_frame())?;
+    assert_eq!(click(&mut ui)?, 1);
+
+    ui.context().set(open, false)?;
+    ui.flush()?;
+    ui.layout(view, size.at_unit_scale())?;
+    let closed = ui.record_frame(view)?;
+    ui.accept_pointer_frame(closed.into_pointer_frame())?;
+    assert_eq!(click(&mut ui)?, 3);
+    Ok(())
+}

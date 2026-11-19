@@ -40,8 +40,8 @@ frame receives the same acknowledgement. The compositor controls display timing.
 After flushing signals and laying out a view, call `Ui::record_frame(view)`.
 The returned `ViewFrame` owns the ordered commands, retains the font data and
 shaped paragraphs, and carries the pointer geometry for that layout. Both
-painting and hit testing use the same view-local node origins. Each text
-command includes its allocated content box for clipping. A failed recording
+painting and hit testing use the same view-local node origins and stacking order. Each
+text command includes its allocated content box for clipping. A failed recording
 preserves outstanding repaint requests for retry.
 
 `Surface::draw_view` in the CPU backend replays the frame onto an opaque white
@@ -114,6 +114,12 @@ share it equally. Automatic vertical margins contribute zero. Percentages on
 all four edges use the column's content width. Their intrinsic contribution
 is zero while that width is indefinite, and placement resolves them against
 the assigned width. Root margins do not change the host's viewport allocation.
+
+Use `.z_index(i32)` to order overlapping siblings. Each parent paints its own
+content first, then its child subtrees in ascending layer order. The default
+layer is zero. Equal layers keep declaration order. A child's layer applies
+within its parent, so moving a card in front carries its labels and controls
+with it. Flex placement continues to use the declared layout direction.
 
 The background painter uses a
 uniform corner radius and draws square corners for mixed radii. Additional

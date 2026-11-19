@@ -133,7 +133,7 @@ properties! {
     Appearance {
         /// Whether the box is visible.
         visibility: Visibility,
-        /// Stacking order.
+        /// Sibling paint order. Higher values draw in front, and ties follow declaration order.
         z_index: i32,
         /// Opacity of the composited subtree, from zero to one.
         opacity: f32,

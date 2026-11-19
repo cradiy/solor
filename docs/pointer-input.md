@@ -67,10 +67,11 @@ node is inserted or removed, or layout publishes changed geometry. The next
 recording then builds a new snapshot. Accepting a submission selects its own
 snapshot for input, even if the view has already prepared a different layout.
 
-Hit testing uses the view rectangle and axis-aligned border boxes, in reverse
-declaration paint order. `PointerEvents::None` skips that box as a target;
-its children remain eligible. Captured motion looks up its owner directly.
-Transformed or rounded clips and z-index ordering require frame composition.
+Hit testing visits axis-aligned border boxes in reverse paint order within the
+view rectangle. Higher sibling `z_index` values are in front. For ties the
+later sibling is in front. Children stay within their parent's layer.
+`PointerEvents::None` skips that box as a target while its children remain
+eligible. Captured motion looks up its owner directly.
 The host supplies `Leave` on surface exit, `Cancel` on loss of one pointer,
 and calls `cancel_pointers(view)` on deactivation.
 

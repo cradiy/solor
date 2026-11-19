@@ -85,7 +85,7 @@ impl PointerFrame {
 }
 
 impl Ui {
-    /// Snapshots the laid-out border boxes in declaration paint order for one submission.
+    /// Snapshots the laid-out border boxes in paint order for one submission.
     pub fn prepare_pointer_frame(&self, view: ViewId) -> Result<PointerFrame> {
         let instance = self.instance(view)?;
         ensure!(!instance.scene.is_pending(), "layout pending");
@@ -110,11 +110,10 @@ impl HitGeometry {
             entries: Vec::with_capacity(instance.nodes.len()),
             interactive: HashMap::new(),
         };
-        let mut parents: Vec<(Origin, Option<NodeId>)> = Vec::new();
-        // Lexicographic paths visit the parent before its descendants, in sibling order.
-        for (path, &id) in &instance.nodes {
-            parents.truncate(path.len());
-            let (offset, inherited) = parents.last().copied().unwrap_or_default();
+        let root = &instance.bodies[&instance.scene.root()];
+        let mut pending = vec![(root, Origin::default(), None)];
+        while let Some((body, offset, inherited)) = pending.pop() {
+            let id = body.id;
             let geometry = instance
                 .scene
                 .geometry(id)
@@ -133,7 +132,6 @@ impl HitGeometry {
                 origin,
                 size: geometry.metrics.size,
             };
-            let body = &instance.bodies[&id];
             let recipient = if body.hit_testable && body.handlers.is_some() {
                 frame.interactive.insert(id, area);
                 Some(id)
@@ -146,7 +144,16 @@ impl HitGeometry {
                 recipient,
                 testable: body.hit_testable,
             });
-            parents.push((origin, recipient));
+            let start = pending.len();
+            for child in instance.scene.children(id)? {
+                pending.push((&instance.bodies[&child], origin, recipient));
+            }
+            let siblings = &mut pending[start..];
+            if !siblings.is_sorted_by_key(|(child, _, _)| child.z_index) {
+                siblings.sort_by_key(|(child, _, _)| child.z_index);
+            }
+            // Pop lower layers first, visiting each entire subtree before the next sibling.
+            siblings.reverse();
         }
         Ok(frame)
     }
