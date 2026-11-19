@@ -18,7 +18,7 @@ fn primary_release_updates_pixels_and_an_idle_frame_has_no_damage() -> anyhow::R
     let initial = window.frame(size, RasterScale::ONE)?;
     assert_eq!(initial.damage, Some(Clip::canvas(initial.size)));
     let closed = initial.rgba.to_vec();
-    window.frame_submitted();
+    window.frame_submitted()?;
     let sample = PointerSample {
         id: PointerId(1),
         kind: PointerKind::Mouse,
@@ -36,7 +36,7 @@ fn primary_release_updates_pixels_and_an_idle_frame_has_no_damage() -> anyhow::R
     let open = window.frame(size, RasterScale::ONE)?;
     assert!(open.damage.is_some());
     assert_ne!(open.rgba, closed);
-    window.frame_submitted();
+    window.frame_submitted()?;
     let idle = window.frame(size, RasterScale::ONE)?;
     assert!(idle.damage.is_none());
     assert!(!idle.request_callback);

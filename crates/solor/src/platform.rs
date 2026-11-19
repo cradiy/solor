@@ -51,5 +51,7 @@ pub trait WindowHandler<T: Presentation> {
 
     /// Acknowledges successful submission, including a frame with unchanged pixels.
     /// This is the point at which a view may accept its prepared pointer geometry.
-    fn frame_submitted(&mut self) {}
+    fn frame_submitted(&mut self) -> Result<()> {
+        Ok(())
+    }
 }

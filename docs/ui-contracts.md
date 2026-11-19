@@ -52,6 +52,20 @@ successful presentation, pass `frame.into_pointer_frame()` to
 geometry in place. This path records the whole view and rasterizes a fresh
 image on each call.
 
+## Presenting a mounted view
+
+`CpuWindow::mount(ui, component)` owns the UI and mounts the root once. Pass
+the resulting handler to `Platform::run_window` on an RGBA8 platform. It
+dispatches pointer events against the accepted layout and requests a frame
+when signal bindings have work to flush. Each frame uses the current logical
+size and scale and reports full damage. The platform acknowledges successful
+submission before the handler publishes its prepared hit geometry. The next
+frame callback returns the window to idle when no binding work remains.
+
+Run `cargo run -p solor-render-cpu --example mounted_window` in a Linux
+Wayland session. Click **Audio settings** to expand the row, then click
+**Close settings** to collapse it. The newly mounted row has its own handler.
+
 ## Style declarations
 
 `Styled` supplies the same builders on containers, text, custom element

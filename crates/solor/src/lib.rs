@@ -470,6 +470,13 @@ impl Ui {
         Ok(true)
     }
 
+    /// Whether bindings are queued for the next flush, including work retained for retry.
+    pub fn has_pending_bindings(&self) -> bool {
+        self.state.pending_count() != 0
+            || !self.pending.borrow().is_empty()
+            || !self.labels.borrow().is_empty()
+    }
+
     /// Applies structural, label and paint bindings. Returns the number of branch positions visited.
     pub fn flush(&mut self) -> Result<usize> {
         let mut visited = 0;

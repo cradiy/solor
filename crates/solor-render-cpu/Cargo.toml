@@ -12,11 +12,11 @@ workspace = true
 layout-audit = ["solor/layout-audit"]
 
 [dependencies]
+anyhow.workspace = true
 solor.workspace = true
 swash = "=0.2.10"
 
 [dev-dependencies]
-anyhow.workspace = true
 png = "0.18"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]

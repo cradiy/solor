@@ -148,8 +148,11 @@ identity across subtree insertion and removal. A caller-defined meter uses
 `Render` for composition and a retained `Element` for layout and local paint
 recording. The [mounted frame tests](../crates/solor-render-cpu/tests/view_frame.rs)
 check nested placement, clipped gradients, glyphs, frame-owned resources and
-pointer delivery before and after acceptance. Native presentation of a
-mounted view remains open. The [refresh workload](component-api.md#high-frequency-updates)
+pointer delivery before and after acceptance. The [mounted window](ui-contracts.md#presenting-a-mounted-view)
+uses the same frame path on Wayland. In a nested Niri session, pointer input
+opened and closed the conditional row. A window capture showed the detail
+background after expansion and the original pixel color after collapse.
+Clicking the retired row's location produced no further buffer submission. The [refresh workload](component-api.md#high-frequency-updates)
 measures local paint, shared subscriptions and structural layout at an explicit update boundary.
 The [UI contracts](ui-contracts.md) distinguish implemented authoring behavior
 from open frame, input and platform boundaries.

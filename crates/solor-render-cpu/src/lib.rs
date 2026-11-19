@@ -8,3 +8,5 @@ pub mod glyph_masks;
 /// CPU pixel surfaces.
 pub mod pixels;
 mod view;
+mod window;
+pub use window::CpuWindow;

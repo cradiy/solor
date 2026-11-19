@@ -245,7 +245,7 @@ impl Window {
                 self.waiting = true;
             }
             self.dirty = false;
-            self.view.frame_submitted();
+            self.view.frame_submitted()?;
             return Ok(());
         };
         for slot in self.slots.iter_mut().flatten().filter(|s| s.size == size) {
@@ -284,7 +284,7 @@ impl Window {
         self.next_slot = 1 - index;
         self.dirty = false;
         self.full_damage = false;
-        self.view.frame_submitted();
+        self.view.frame_submitted()?;
         self.commits += 1;
         if self.trace {
             eprintln!(
