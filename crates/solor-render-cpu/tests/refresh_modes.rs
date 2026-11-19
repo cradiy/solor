@@ -358,6 +358,28 @@ fn mixed_updates_at_120_hz() -> Result<()> {
 #[test]
 #[ignore = "requires a visible Wayland surface"]
 fn wayland_mixed_frame_cadence() -> Result<()> {
+    let samples = Rc::new(Samples::default());
+    let window = mixed_window(&samples, true, 1024)?;
+    measure_native_cadence(window, samples)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires a visible Wayland surface"]
+fn wayland_minimal_frame_cadence() -> Result<()> {
+    let samples = Rc::new(Samples::default());
+    let source = samples.clone();
+    let window = CpuWindow::mount(
+        Ui::new(),
+        component(move |_| {
+            div().child(bar(move |_| Ok(source.latest.get())).refresh_mode(RefreshMode::Continuous))
+        }),
+    )?;
+    measure_native_cadence(window, samples)
+}
+
+#[cfg(target_os = "linux")]
+fn measure_native_cadence(window: CpuWindow, samples: Rc<Samples>) -> Result<()> {
     use solor::{
         platform::{Platform, WindowOptions},
         raster::{RasterFrame, Rgba8},
@@ -421,10 +443,9 @@ fn wayland_mixed_frame_cadence() -> Result<()> {
             Ok(())
         }
     }
-    let samples = Rc::new(Samples::default());
     let timings = Rc::new(RefCell::new(Timings::default()));
     let probe = Probe {
-        window: mixed_window(&samples, true, 1024)?,
+        window,
         samples,
         timings: timings.clone(),
         pending: None,
@@ -469,3 +490,7 @@ fn wayland_mixed_frame_cadence() -> Result<()> {
     );
     Ok(())
 }
+
+#[cfg(target_os = "linux")]
+#[path = "refresh_modes/presentation.rs"]
+mod presentation;

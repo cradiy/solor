@@ -266,7 +266,7 @@ The window coalesces requests and rearms after successful submission. A
 measured size. Signal reads in custom paint invalidate drawing only. The CPU
 backend assembles and compares whole-view command lists and rasterizes
 intersecting draws inside damage. See the
-[mixed window measurements](text-pixels.md#retained-and-continuous-elements).
+[refresh workloads](text-pixels.md#retained-and-continuous-elements).
 
 The release harness uses 100, 1,000 and 10,000 siblings. It excludes setup
 and warm-up, times individual iterations and checks the sampled width,

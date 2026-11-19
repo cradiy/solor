@@ -69,6 +69,8 @@
 - Report what changed, what was verified, and the limits of that verification.
 - Inspect repository status and relevant diffs before editing or committing when
   Git metadata is available. Do not initialize or repair Git metadata implicitly.
+- Keep workstation-specific diagnostics, desktop configurations, and measurements
+  from personal desktop sessions outside the repository.
 - Commit or push only when requested. Before committing, inspect staged paths and
   contents and exclude local configuration, credentials, absolute machine paths,
   logs, caches, build outputs, and local diagnostic artifacts.

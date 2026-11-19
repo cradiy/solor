@@ -58,12 +58,6 @@ component receives logical coordinates and viewport size.
 
 ## Verification
 
-In a release build on Niri at 150%, a compositor virtual pointer clicked
-the title four times. The two-row and one-row states alternated twice. A click
-below the title and a press dragged outside and back produced zero additional
-buffer commits. Every submitted buffer matched a full redraw. The original
-text fixture also completed its initial commit and eight scripted edits.
-
 Headless tests exercise mismatched pointer identities, explicit cancellation,
 the exclusive right edge, and twelve mount/unmount transitions. They compare
 geometry, text and retained pixels with independently prepared frames and
@@ -94,10 +88,7 @@ preserved both neighbors' paragraph handles and added zero executions of their
 measurement or layout bodies. Tests compare every resulting geometry and pixel
 buffer with a fresh forced layout and full raster at 150%. A separate test
 checks rejection of obsolete dependency evidence and recovery after an
-unrenderable detail. In a 400 by 220 logical Niri window at 150%, four clicks
-produced 4, 3, 4 and 3 draws after the initial three. All submitted buffers
-matched full rasterization. An outside click and a canceled drag added no
-buffer commits.
+unrenderable detail.
 
 ### Update cost
 
@@ -153,9 +144,6 @@ the total node count. These measurements use a viewport anchored at the top.
 Tests compare damage updates with uncached rendering of a complete command
 list after wrapping, height changes, detail edits and replay of a held frame.
 At a boundary exactly at the title origin, hit testing has no published title.
-In a 132 by 220 logical Niri window at 150%, opening and closing the detail
-twice changed visible command counts from 9 to 8 and back. Shared-buffer
-readback matched full rasterization of each submitted frame.
 
 ## Host-assigned root size
 
@@ -290,14 +278,3 @@ overlapped for each workload.
 An independent flat list supplies a full uncached document raster at 150%
 scale. Tests compare cropped bytes with the retained surface after partial-row
 scrolls, resizes, expansion and collapse, and replay a held scrolled frame.
-
-On Niri at 150%, a compositor virtual pointer drove a 132 by 220 logical
-window with 1,024 collapsed rows. A discrete wheel step paired with distance
-15 moved the list by 15. Two quarter-unit inputs moved the rounded offset by
-one and twelve successive eight-unit inputs added 96. The list stopped at
-27,429 and reversed to 27,428 on the first negative unit. Further outward
-input at either edge and a horizontal axis event produced no extra commits.
-A click at the scrolled-away title's old location left the list unchanged.
-After returning to the top, two clicks opened and closed the detail.
-All 23 submitted shared buffers matched uncached redraws; the window closed
-normally. This run exercised compositor-delivered events from a virtual device.
