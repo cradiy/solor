@@ -66,11 +66,11 @@ fn run(siblings: usize) -> Result<()> {
     let level = ui.context().signal(0);
     let visible = ui.context().signal(false);
     let view = ui.mount(component(|_| {
-        let mut column = div().flex_col().child(element(Meter(level)));
-        for _ in 0..siblings {
-            column = column.child(div().padding(px(1.0)));
-        }
-        column.child_when(visible, || div().padding(px(1.0)))
+        div()
+            .flex_col()
+            .child(element(Meter(level)))
+            .children((0..siblings).map(|_| div().padding(px(1.0))))
+            .child_when(visible, || div().padding(px(1.0)))
     }))?;
     assert_eq!(ui.flush()?, 1);
     ui.layout(view, SIZE)?;
@@ -161,11 +161,9 @@ fn paint_all(count: usize) -> Result<()> {
     let mut ui = Ui::new();
     let level = ui.context().signal(0);
     let view = ui.mount(component(|_| {
-        let mut column = div().flex_col();
-        for _ in 0..count {
-            column = column.child(element(Meter(level)));
-        }
-        column
+        div()
+            .flex_col()
+            .children((0..count).map(|_| element(Meter(level))))
     }))?;
     ui.flush()?;
     ui.layout(view, SIZE)?;
@@ -198,13 +196,10 @@ fn scheduled_meter(siblings: usize) -> Result<()> {
     let mut ui = Ui::new();
     let level = ui.context().signal(0);
     let view = ui.mount(component(|_| {
-        let mut column = div()
+        div()
             .flex_col()
-            .child(element(Meter(level)).repaint_on(level));
-        for _ in 0..siblings {
-            column = column.child(div().padding(px(1.0)));
-        }
-        column
+            .child(element(Meter(level)).repaint_on(level))
+            .children((0..siblings).map(|_| div().padding(px(1.0))))
     }))?;
     ui.flush()?;
     ui.layout(view, SIZE)?;

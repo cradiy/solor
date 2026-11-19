@@ -83,6 +83,19 @@ pub trait Styled: Sized {
     /// Borrows the element's local declarations.
     fn style(&mut self) -> &mut StyleRefinement;
 
+    /// Applies a builder operation once if the condition is true during construction.
+    fn when(self, condition: bool, build: impl FnOnce(Self) -> Self) -> Self {
+        if condition { build(self) } else { self }
+    }
+
+    /// Passes a present value to a builder operation during construction.
+    fn when_some<T>(self, value: Option<T>, build: impl FnOnce(Self, T) -> Self) -> Self {
+        match value {
+            Some(value) => build(self, value),
+            None => self,
+        }
+    }
+
     /// Overlays a reusable set of style declarations.
     fn with_style(mut self, style: &StyleRefinement) -> Self {
         self.style().refine(style);

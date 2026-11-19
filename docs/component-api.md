@@ -52,6 +52,18 @@ and can receive input or record custom drawing in its allocated bounds. The
 text leaf owns shaping and measurement. A row or column is a layout choice
 on the container. These capabilities can be used directly in application code.
 
+`children` consumes an iterator in order alongside individual children.
+`when` and `when_some` apply a closure while building the declaration and
+can use borrowed inputs. Use `child_when` for a branch that follows a signal
+after the component has mounted.
+
+```rust
+div().flex_col()
+    .when(compact, |list| list.gap(px(2.0)))
+    .when_some(heading, |list, title| list.child(text(title)))
+    .children(devices.into_iter().map(|device| text(device.name)))
+```
+
 A stateful section can declare its mount boundary explicitly. In this sketch
 `component` takes a factory. The framework invokes it once when attaching
 each instance. The scope itself adds no layout box.

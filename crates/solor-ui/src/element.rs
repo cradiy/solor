@@ -403,6 +403,16 @@ impl<E: Element> Node<E> {
         self
     }
 
+    /// Appends fixed children in iterator order at this point in the declaration.
+    pub fn children<T: IntoElement>(mut self, children: impl IntoIterator<Item = T>) -> Self {
+        self.children.extend(
+            children
+                .into_iter()
+                .map(|child| Child::Fixed(child.into_element())),
+        );
+        self
+    }
+
     /// Registers the handler invoked on a direct click.
     pub fn on_click(mut self, click: impl Fn(&mut Context<'_>) -> Result<()> + 'static) -> Self {
         self.click = Some(Box::new(click));
