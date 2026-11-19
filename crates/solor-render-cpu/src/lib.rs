@@ -1,4 +1,4 @@
-//! CPU rasterization, glyph caching and damage tracking for shaped text frames.
+//! CPU rasterization of mounted views and incremental rendering of shaped text frames.
 /// Incremental raster updates.
 pub mod damage;
 /// Immutable input to the text rasterizer.
@@ -7,3 +7,4 @@ pub mod frame;
 pub mod glyph_masks;
 /// CPU pixel surfaces.
 pub mod pixels;
+mod view;

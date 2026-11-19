@@ -37,6 +37,12 @@ pub struct PointerFrame {
 }
 
 impl PointerFrame {
+    pub(crate) fn paint_order(&self) -> impl Iterator<Item = (NodeId, Origin)> + '_ {
+        self.entries
+            .iter()
+            .map(|entry| (entry.node, entry.area.origin))
+    }
+
     pub(super) fn has_recipient(&self, node: NodeId) -> bool {
         self.interactive.contains_key(&node)
     }

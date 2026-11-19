@@ -146,8 +146,10 @@ subtrees at the next update boundary, and signal ownership across remounts.
 It checks targeted branch delivery, gap placement and surviving sibling
 identity across subtree insertion and removal. A caller-defined meter uses
 `Render` for composition and a retained `Element` for layout and local paint
-recording. Accepted-frame pointer routing for these elements is covered by
-headless tests. Native presentation of a mounted view remains open. The [refresh workload](component-api.md#high-frequency-updates)
+recording. The [mounted frame tests](../crates/solor-render-cpu/tests/view_frame.rs)
+check nested placement, clipped gradients, glyphs, frame-owned resources and
+pointer delivery before and after acceptance. Native presentation of a
+mounted view remains open. The [refresh workload](component-api.md#high-frequency-updates)
 measures local paint, shared subscriptions and structural layout at an explicit update boundary.
 The [UI contracts](ui-contracts.md) distinguish implemented authoring behavior
 from open frame, input and platform boundaries.

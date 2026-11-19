@@ -96,6 +96,7 @@ impl Element for Text {
     fn paint(&self, cx: &mut PaintContext) -> Result<()> {
         cx.commands.push(Draw::Text {
             origin: cx.origin,
+            size: cx.size,
             paragraph: self.resolve(Query::Exact(cx.size.width))?,
             color: cx.text_color,
         });
@@ -103,12 +104,12 @@ impl Element for Text {
     }
 }
 
-/// A recorded local drawing operation.
+/// A recorded drawing operation. Origins are local to the recording target.
 #[derive(Debug, PartialEq)]
 pub enum Draw {
     /// Fills a rounded rectangle.
     Fill {
-        /// Upper-left corner in node-local coordinates.
+        /// Upper-left corner of the fill.
         origin: Origin,
         /// Extent of the rectangle.
         size: Size,
@@ -119,8 +120,10 @@ pub enum Draw {
     },
     /// Draws a shaped paragraph.
     Text {
-        /// Position of the paragraph in node-local coordinates.
+        /// Upper-left corner of the paragraph.
         origin: Origin,
+        /// Assigned content box used to clip glyphs.
+        size: Size,
         /// Shaped text retained for this command.
         paragraph: Rc<Paragraph>,
         /// Foreground applied to the glyphs.

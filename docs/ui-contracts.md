@@ -35,6 +35,23 @@ device scale at frame preparation, validates the returned buffer, then
 acknowledges submission with `frame_submitted`. A successful empty-damage
 frame receives the same acknowledgement. The compositor controls display timing.
 
+## Recording a mounted view
+
+After flushing signals and laying out a view, call `Ui::record_frame(view)`.
+The returned `ViewFrame` owns the ordered commands, retains the font data and
+shaped paragraphs, and carries the pointer geometry for that layout. Both
+painting and hit testing use the same view-local node origins. Each text
+command includes its allocated content box for clipping. A failed recording
+preserves outstanding repaint requests for retry.
+
+`Surface::draw_view` in the CPU backend replays the frame onto an opaque white
+RGBA8 image. Supply the physical target size and its device scale. Gradients
+are sampled in the original fill box even when the target clips it. After
+successful presentation, pass `frame.into_pointer_frame()` to
+`Ui::accept_pointer_frame`. Discarding the frame leaves the accepted input
+geometry in place. This path records the whole view and rasterizes a fresh
+image on each call.
+
 ## Style declarations
 
 `Styled` supplies the same builders on containers, text, custom element

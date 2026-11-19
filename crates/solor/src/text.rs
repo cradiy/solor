@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::{Pixels, SharedString, px};
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Shaping, Wrap, fontdb};
@@ -132,6 +133,7 @@ pub struct Counts {
 
 /// Single-face shaping engine shared between text nodes.
 pub struct Engine {
+    pub(crate) bytes: Arc<Vec<u8>>,
     fonts: FontSystem,
     face: fontdb::ID,
     /// Cumulative request, cache and shaping counts.
@@ -152,7 +154,8 @@ impl Engine {
     /// Loads one standalone font face. All text in this engine uses that face.
     pub fn from_font(bytes: Vec<u8>, locale: &str) -> Result<SharedEngine> {
         let mut db = fontdb::Database::new();
-        db.load_font_data(bytes);
+        let bytes = Arc::new(bytes);
+        db.load_font_source(fontdb::Source::Binary(bytes.clone()));
         let mut faces = db.faces();
         let face = faces
             .next()
@@ -170,6 +173,7 @@ impl Engine {
         drop(faces);
         db.set_sans_serif_family(family);
         Ok(Rc::new(RefCell::new(Self {
+            bytes,
             fonts: FontSystem::new_with_locale_and_db(locale.into(), db),
             face,
             counts: Counts::default(),

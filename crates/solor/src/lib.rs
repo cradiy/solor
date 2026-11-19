@@ -10,6 +10,8 @@ use anyhow::Result;
 mod column;
 mod element;
 mod fill;
+mod frame;
+pub use frame::ViewFrame;
 pub mod layout;
 mod length;
 pub mod node_store;
