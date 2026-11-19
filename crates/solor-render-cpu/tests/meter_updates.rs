@@ -74,7 +74,6 @@ fn panel_with_offscreen_labels(cx: &mut Context<'_>, extra: usize) -> impl IntoE
                 .w(px(240.0))
                 .h(px(8.0))
                 .bg(rgb(0xbbbbbb))
-                .repaint_on(level)
                 .on_pointer_move(move |event, cx| {
                     cx.set(level, event.local_position().x.get() as u16)
                 }),

@@ -1,6 +1,6 @@
 //! Composition, conversion at attachment, and retained element behavior.
 use anyhow::Context as _;
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use crate::layout::{LayoutNode, Origin, Query, Scene, Size};
 use crate::state::{Runtime, Signal, SignalId};
@@ -105,7 +105,7 @@ impl Element for Text {
 }
 
 /// A recorded drawing operation. Origins are local to the recording target.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Draw {
     /// Fills a rounded rectangle.
     Fill {
@@ -139,13 +139,26 @@ pub struct PaintContext<'a> {
     /// Resolved foreground color for this element.
     pub text_color: Rgba,
     commands: &'a mut Vec<Draw>,
+    next_frame: bool,
     state: &'a Runtime<()>,
+    reads: &'a RefCell<Vec<SignalId>>,
 }
 
 impl PaintContext<'_> {
-    /// Samples the latest value when the caller records this node.
+    /// Samples a signal and subscribes this element to changes after successful paint.
     pub fn read<T: 'static>(&self, signal: Signal<T>) -> Result<&T> {
-        Ok(self.state.read(signal)?)
+        let value = self.state.read(signal)?;
+        let mut reads = self.reads.borrow_mut();
+        if !reads.contains(&signal.id()) {
+            reads.push(signal.id());
+        }
+        Ok(value)
+    }
+
+    /// Requests another host-paced frame after this view frame is submitted.
+    /// Call on each paint while animation is active. Requests from siblings coalesce.
+    pub fn request_animation_frame(&mut self) {
+        self.next_frame = true;
     }
 
     /// Records a rectangle at the content origin.
@@ -166,10 +179,41 @@ struct MountedBackground {
     radius: Pixels,
 }
 
+/// When an element records new drawing commands.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RefreshMode {
+    /// Reuse commands until a paint dependency or layout changes.
+    #[default]
+    OnDemand,
+    /// Sample on every host frame, including frames with identical inputs.
+    Continuous,
+}
+
+/// A fixed refresh mode or a runtime-selected mode.
+pub enum RefreshPolicy {
+    /// Use this mode throughout the element's attachment.
+    Fixed(RefreshMode),
+    /// Follow the current value of the signal.
+    Bound(Signal<RefreshMode>),
+}
+
+impl From<RefreshMode> for RefreshPolicy {
+    fn from(mode: RefreshMode) -> Self {
+        Self::Fixed(mode)
+    }
+}
+
+impl From<Signal<RefreshMode>> for RefreshPolicy {
+    fn from(mode: Signal<RefreshMode>) -> Self {
+        Self::Bound(mode)
+    }
+}
+
 pub(super) struct MountedNode {
     pub(super) id: NodeId,
     pub(super) offset: usize,
     pub(super) fixed_label: bool,
+    paint_mode: RefreshPolicy,
     pub(super) text_style: TextStyleRefinement,
     text_color: Rgba,
     background: Option<Box<MountedBackground>>,
@@ -187,11 +231,15 @@ impl MountedNode {
         text_style: TextStyleRefinement,
         style: Style,
         fixed_label: bool,
+        paint_mode: RefreshPolicy,
     ) -> Self {
         Self {
             id,
             offset: 0,
-            fixed_label: fixed_label && style.background.is_none(),
+            fixed_label: fixed_label
+                && style.background.is_none()
+                && matches!(paint_mode, RefreshPolicy::Fixed(RefreshMode::OnDemand)),
+            paint_mode,
             binding_target: None,
             handlers,
             hit_testable: style.appearance.as_deref().and_then(|a| a.pointer_events)
@@ -218,21 +266,30 @@ impl MountedNode {
         &self,
         scene: &Scene,
         state: &Runtime<()>,
+        reads: &RefCell<Vec<SignalId>>,
         commands: &mut Vec<Draw>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         if scene.is_pending() {
             anyhow::bail!("layout pending");
         }
         let geometry = scene.geometry(self.id).context("missing layout geometry")?;
         let start = commands.len();
         let size = geometry.metrics.size;
+        reads.borrow_mut().clear();
         let mut cx = PaintContext {
             origin: Origin::default(),
             size,
             text_color: self.text_color,
             commands,
+            next_frame: false,
             state,
+            reads,
         };
+        let mode = match self.paint_mode {
+            RefreshPolicy::Fixed(mode) => mode,
+            RefreshPolicy::Bound(source) => *cx.read(source)?,
+        };
+        cx.next_frame = mode == RefreshMode::Continuous;
         if let Some(paint) = &self.background {
             let fill = match &paint.source {
                 Background::Fixed(fill) => fill.clone(),
@@ -249,7 +306,7 @@ impl MountedNode {
                 radius,
             });
         }
-        let result = (self.record)(scene, self.id, &mut cx);
+        let result = (self.record)(scene, self.id, &mut cx).map(|()| cx.next_frame);
         if result.is_err() {
             commands.truncate(start);
         }
@@ -261,6 +318,38 @@ pub(super) struct Installation {
     pub node: MountedNode,
     pub children: Vec<Child>,
     pub watches: Vec<Watch>,
+}
+
+pub(super) struct PaintSubscription {
+    repaints: Repaints,
+    node: NodeId,
+}
+
+impl PaintSubscription {
+    pub(super) fn observe(
+        state: &mut Runtime<()>,
+        source: SignalId,
+        target: NodeId,
+        node: NodeId,
+        repaints: &Repaints,
+    ) -> Result<crate::state::BindingId> {
+        let subscription = Self {
+            repaints: repaints.clone(),
+            node,
+        };
+        Ok(state.observe(source, target, move || subscription.invalidate())?)
+    }
+
+    fn invalidate(&self) {
+        self.repaints.borrow_mut().invalidate(self.node);
+    }
+}
+
+impl Drop for PaintSubscription {
+    fn drop(&mut self) {
+        // A retired source can no longer invalidate commands through its binding.
+        self.repaints.borrow_mut().commands.remove(&self.node);
+    }
 }
 
 pub(super) type Watch =
@@ -309,9 +398,6 @@ impl AnyElement {
                 return Err(crate::layout::LayoutError::InvalidSize.into());
             }
             node.body.prepare_content(&style)?;
-            if let Some(Background::Bound(signal)) = style.background {
-                node = node.repaint_on(signal);
-            }
             let body = StyledBody::new(node.body, &style, units)?;
             let id = match target {
                 Target::Root(slot) => slot.insert(Scene::new(body)).root(),
@@ -323,7 +409,14 @@ impl AnyElement {
                 } => scene.mount_at(parent, index, body)?,
             };
             Ok(Installation {
-                node: MountedNode::new::<E>(id, node.handlers, text, style, fixed_label),
+                node: MountedNode::new::<E>(
+                    id,
+                    node.handlers,
+                    text,
+                    style,
+                    fixed_label,
+                    node.paint_mode,
+                ),
                 children: node.children,
                 watches: node.watches,
             })
@@ -380,6 +473,7 @@ pub(super) enum Child {
 
 /// A primitive and the children, handlers and styles to attach with it.
 pub struct Node<E> {
+    paint_mode: RefreshPolicy,
     style: StyleRefinement,
     watches: Vec<Watch>,
     body: E,
@@ -390,6 +484,7 @@ pub struct Node<E> {
 /// Wraps a custom layout body in the common element builder.
 pub fn element<E: Element>(body: E) -> Node<E> {
     Node {
+        paint_mode: RefreshMode::OnDemand.into(),
         style: StyleRefinement::default(),
         watches: Vec::new(),
         body,
@@ -433,16 +528,9 @@ impl<E: Element> Node<E> {
         self
     }
 
-    /// Requests local paint at the next flush when this signal changes.
-    pub fn repaint_on<T: 'static>(mut self, signal: Signal<T>) -> Self {
-        self.watches
-            .push(Box::new(move |cx, target, node, repaints| {
-                let repaints = Rc::clone(repaints);
-                cx.state.bind(signal, target, move |_, _| {
-                    repaints.borrow_mut().insert(node);
-                })?;
-                Ok(())
-            }));
+    /// Selects a fixed or signal-driven refresh mode. The default is on demand.
+    pub fn refresh_mode(mut self, mode: impl Into<RefreshPolicy>) -> Self {
+        self.paint_mode = mode.into();
         self
     }
 
@@ -522,7 +610,7 @@ impl IntoElement for Label {
                     cx.state.bind(signal, target, move |_, _| {
                         pending.borrow_mut().insert((view, id), signal);
                     })?;
-                    repaints.borrow_mut().insert(id);
+                    repaints.borrow_mut().invalidate(id);
                     Ok(())
                 }));
             }

@@ -15,7 +15,7 @@ stage consumes it, and how a host learns about the resulting work.
 | Style refinements | Later declarations override individual specified fields. Text size, line height and color propagate into fixed and conditional descendants. Each element resolves its own box and background at mount. |
 | Text | A fixed or signal-bound label owns a shared string and caches shaped paragraphs by width. Updating bound text keeps the element ID. A changed label schedules layout and local paint. |
 | Fill | A straight-alpha sRGB color has named channels. Every gradient shares an ordered, variable-length stop sequence. Four geometries sample it in sRGB or Oklab. Backgrounds and custom fills carry the same fill value. Equal offsets describe hard edges. Rounded fills use the assigned dimensions. |
-| Paint scheduling | A paint subscription samples the latest value when recording. Repeated writes coalesce. A fill signal can replace solid or gradient paint. Explicit local recording acknowledges the node only after successful recording. |
+| Paint scheduling | Each successful paint subscribes the element to the signals it read. Repeated writes coalesce. Elements default to on-demand recording. A fixed or signal-driven continuous mode samples every host frame. |
 | Pointer input | The host accepts a border-box snapshot for hit testing. Positioned events deliver local logical coordinates. A press can capture its pointer until release or cancellation. See [pointer input](pointer-input.md). |
 | Platform boundary | `solor` owns the GUI and the platform traits. `solor-linux` owns the Wayland event loop and buffer submission. `solor-render-cpu` rasterizes shaped text. The window example pairs them using the RGBA8 presentation format. |
 
@@ -64,8 +64,9 @@ including the space vacated by shrinking or removed content. Unchanged draws
 overlapping that area are replayed in paint order. Identical commands produce
 empty damage. Changes to the allocation or scale and retries after a discarded
 prepared image require full damage. The platform acknowledges successful
-submission before the handler publishes its prepared hit geometry. The next
-frame callback returns the window to idle when no binding work remains.
+submission before the handler publishes its prepared hit geometry. On the next
+frame callback the window continues if the submitted frame requested another
+frame or signal bindings have pending work. Otherwise it returns to idle.
 
 Run `cargo run -p solor-render-cpu --example mounted_window` in a Linux
 Wayland session. Click **Audio settings** to expand the row, then click

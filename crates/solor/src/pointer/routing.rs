@@ -257,7 +257,7 @@ impl Ui {
             .context("pointer view is no longer mounted")?;
         Ok(Delivery {
             instance,
-            state: &mut self.state,
+            state: self.state.get_mut(),
             engine: self.engine.as_ref(),
         })
     }

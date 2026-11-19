@@ -273,20 +273,11 @@ impl<N> Runtime<N> {
         node: NodeId,
         mut apply: impl FnMut(&S, &mut N) + 'static,
     ) -> Result<BindingId, StateError> {
-        self.signal(signal.id)?;
-        if self.tree.get(node).is_none() {
-            return Err(TreeError::InvalidNode(node).into());
-        }
-
-        let signal_bindings = &mut self.signals[signal.id.key].bindings;
-        let node_bindings = self.bindings.by_node.entry(node).or_default();
-        let key = self.bindings.entries.insert(Binding {
+        self.register_binding(
+            signal.id,
             node,
-            signal: signal.id.key,
-            signal_index: signal_bindings.len(),
-            node_index: node_bindings.len(),
-            pending_index: None,
-            apply: Box::new(move |value, node| {
+            true,
+            Box::new(move |value, node| {
                 apply(
                     value
                         .downcast_ref::<S>()
@@ -294,6 +285,39 @@ impl<N> Runtime<N> {
                     node,
                 );
             }),
+        )
+    }
+
+    pub(crate) fn observe(
+        &mut self,
+        signal: SignalId,
+        target: NodeId,
+        invalidate: impl Fn() + 'static,
+    ) -> Result<BindingId, StateError> {
+        self.register_binding(signal, target, false, Box::new(move |_, _| invalidate()))
+    }
+
+    fn register_binding(
+        &mut self,
+        signal: SignalId,
+        node: NodeId,
+        initial: bool,
+        apply: Apply<N>,
+    ) -> Result<BindingId, StateError> {
+        self.signal(signal)?;
+        if self.tree.get(node).is_none() {
+            return Err(TreeError::InvalidNode(node).into());
+        }
+
+        let signal_bindings = &mut self.signals[signal.key].bindings;
+        let node_bindings = self.bindings.by_node.entry(node).or_default();
+        let key = self.bindings.entries.insert(Binding {
+            node,
+            signal: signal.key,
+            signal_index: signal_bindings.len(),
+            node_index: node_bindings.len(),
+            pending_index: None,
+            apply,
         });
         signal_bindings.push(key);
         node_bindings.push(key);
@@ -302,7 +326,11 @@ impl<N> Runtime<N> {
                 .pending
                 .reserve(self.bindings.entries.len() - self.bindings.pending.len());
         }
-        self.bindings.queue(key);
+        if initial {
+            self.bindings.queue(key);
+        } else {
+            self.signals[signal.key].all_queued = false;
+        }
         Ok(BindingId {
             owner: self.tree.root(),
             key,

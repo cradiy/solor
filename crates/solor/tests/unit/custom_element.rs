@@ -19,7 +19,7 @@ impl crate::element::MountedNode {
         state: &crate::state::Runtime<()>,
     ) -> Result<Vec<Draw>> {
         let mut commands = Vec::new();
-        self.paint(scene, state, &mut commands)?;
+        self.paint(scene, state, &Default::default(), &mut commands)?;
         Ok(commands)
     }
 }
@@ -126,7 +126,7 @@ fn custom_element_layout_paint_and_input_follow_the_mounted_instance() -> Result
     };
     let i = host.instances.get_mut(&root).unwrap();
     let node = &i.bodies[&i.nodes[&[][..]]];
-    assert!(node.record(&i.scene, &host.state).is_err());
+    assert!(node.record(&i.scene, &host.state.borrow()).is_err());
     for width in [200, 120] {
         i.scene.run_assigned(
             Size {
@@ -136,7 +136,7 @@ fn custom_element_layout_paint_and_input_follow_the_mounted_instance() -> Result
             false,
         )?;
         assert_eq!(
-            node.record(&i.scene, &host.state)?,
+            node.record(&i.scene, &host.state.borrow())?,
             [Draw::Fill {
                 origin: Origin::default(),
                 size: Size {
@@ -150,7 +150,7 @@ fn custom_element_layout_paint_and_input_follow_the_mounted_instance() -> Result
     }
     let label = &i.bodies[&i.nodes[&[0][..]]];
     assert_eq!(i.scene.geometry(label.id).unwrap().origin.y, TRACK);
-    let held = label.record(&i.scene, &host.state)?;
+    let held = label.record(&i.scene, &host.state.borrow())?;
 
     let i = host.instances.get_mut(&group).unwrap();
     i.scene.run_assigned(size, false)?;

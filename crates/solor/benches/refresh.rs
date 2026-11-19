@@ -198,7 +198,7 @@ fn scheduled_meter(siblings: usize) -> Result<()> {
     let view = ui.mount(component(|_| {
         div()
             .flex_col()
-            .child(element(Meter(level)).repaint_on(level))
+            .child(element(Meter(level)))
             .children((0..siblings).map(|_| div().padding(px(1.0))))
     }))?;
     ui.flush()?;
@@ -207,6 +207,7 @@ fn scheduled_meter(siblings: usize) -> Result<()> {
     let meter = ui.children(view, root)?.next().unwrap();
     let mut ready = Vec::with_capacity(1);
     let mut commands = Vec::with_capacity(1);
+    ui.paint(view, meter, &mut commands)?;
     let mut samples = Vec::new();
     for frame in 0..220 {
         ready.clear();

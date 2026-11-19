@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::layout::Scene;
-use crate::state::{Runtime, SignalId};
+use crate::state::{BindingId, Runtime, SignalId};
 use anyhow::Result;
 
 mod column;
@@ -30,8 +30,8 @@ pub mod tree;
 pub use crate::layout::Edges;
 pub use crate::{state::Signal, tree::NodeId};
 pub use element::{
-    AnyElement, Div, Draw, Element, IntoElement, Node, PaintContext, Render, TextContent, div,
-    element, text,
+    AnyElement, Div, Draw, Element, IntoElement, Node, PaintContext, RefreshMode, RefreshPolicy,
+    Render, TextContent, div, element, text,
 };
 pub use fill::{
     ColorSpace, ColorStop, Fill, Gradient, GradientError, GradientKind, Rgba, color_stop,
@@ -142,10 +142,26 @@ struct Branch {
     make: Factory,
 }
 
-type Repaints = Rc<RefCell<HashSet<NodeId>>>;
+#[derive(Default)]
+struct PaintState {
+    dirty: HashSet<NodeId>,
+    commands: HashMap<NodeId, Vec<Draw>>,
+}
+
+impl PaintState {
+    fn invalidate(&mut self, node: NodeId) {
+        self.commands.remove(&node);
+        self.dirty.insert(node);
+    }
+}
+
+type Repaints = Rc<RefCell<PaintState>>;
 type LabelUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), Signal<SharedString>>>>;
 
 struct Instance {
+    scope: NodeId,
+    paint_reads: RefCell<Vec<SignalId>>,
+    observers: RefCell<HashMap<NodeId, Vec<(SignalId, BindingId)>>>,
     pointer: pointer::PointerRouter,
     fixed_labels: frame::FixedLabels,
     units: UnitResolver,
@@ -165,9 +181,44 @@ struct Attachment<'a> {
 }
 
 impl Instance {
+    fn observe_paint(&self, node: NodeId, runtime: &mut Runtime<()>) -> Result<()> {
+        let reads = self.paint_reads.borrow();
+        let mut observers = self.observers.borrow_mut();
+        if reads.is_empty() && !observers.contains_key(&node) {
+            return Ok(());
+        }
+        let bindings = observers.entry(node).or_default();
+        bindings.retain(|(source, binding)| {
+            if reads.contains(source) {
+                true
+            } else {
+                // Source disposal may already have removed this binding.
+                let _ = runtime.unbind(*binding);
+                false
+            }
+        });
+        for &source in reads.iter() {
+            if !bindings.iter().any(|(id, _)| *id == source) {
+                let binding = element::PaintSubscription::observe(
+                    runtime,
+                    source,
+                    self.scope,
+                    node,
+                    &self.repaints,
+                )?;
+                bindings.push((source, binding));
+            }
+        }
+        if bindings.is_empty() {
+            observers.remove(&node);
+        }
+        Ok(())
+    }
+
     fn invalidate_geometry(&mut self) {
         self.pointer.invalidate_geometry();
         self.fixed_labels = Default::default();
+        self.repaints.borrow_mut().commands.clear();
     }
 
     fn update_label(&mut self, node: NodeId, value: &SharedString) -> Result<()> {
@@ -176,7 +227,7 @@ impl Instance {
             self.scene.edit_layout::<StyledBody<Text>>(node, |body| {
                 body.content.replace_content(value.clone())
             })?;
-            self.repaints.borrow_mut().insert(node);
+            self.repaints.borrow_mut().invalidate(node);
         }
         Ok(())
     }
@@ -302,9 +353,14 @@ impl Instance {
             let node = self.nodes.remove(&key).expect("mounted node");
             let node = self.bodies.remove(&node).expect("mounted body");
             self.pointer.retire(node.id);
+            if let Some(bindings) = self.observers.get_mut().remove(&node.id) {
+                for (_, binding) in bindings {
+                    let _ = cx.state.unbind(binding);
+                }
+            }
+            self.repaints.borrow_mut().dirty.remove(&node.id);
             if let Some(target) = node.binding_target {
                 cx.state.remove_subtree(target)?;
-                self.repaints.borrow_mut().remove(&node.id);
                 cx.labels.borrow_mut().remove(&(ViewId(cx.scope), node.id));
             }
             for signal in node.owned {
@@ -365,7 +421,7 @@ pub struct ViewId(NodeId);
 
 /// Owns the application signals and its mounted component trees.
 pub struct Ui {
-    state: Runtime<()>,
+    state: RefCell<Runtime<()>>,
     engine: Option<SharedEngine>,
     instances: HashMap<ViewId, Instance>,
     pending: Pending,
@@ -375,7 +431,7 @@ pub struct Ui {
 impl Default for Ui {
     fn default() -> Self {
         Self {
-            state: Runtime::new(()),
+            state: RefCell::new(Runtime::new(())),
             engine: None,
             instances: HashMap::new(),
             pending: Pending::default(),
@@ -407,7 +463,7 @@ impl Ui {
     pub fn mount_with_rem_size(&mut self, item: impl Render, rem_size: Pixels) -> Result<ViewId> {
         let units = UnitResolver::new(rem_size)?;
         let mut mount = Mount {
-            state: &mut self.state,
+            state: self.state.get_mut(),
             owned: Vec::new(),
         };
         let mut cx = mount.context(self.engine.as_ref());
@@ -425,6 +481,9 @@ impl Ui {
         drop(mount);
         let root = scene.root();
         let mut instance = Instance {
+            scope,
+            paint_reads: Default::default(),
+            observers: Default::default(),
             pointer: Default::default(),
             fixed_labels: Default::default(),
             units,
@@ -436,14 +495,14 @@ impl Ui {
         };
         let mut cx = Attachment {
             scope,
-            state: &mut self.state,
+            state: self.state.get_mut(),
             pending: &self.pending,
             labels: &self.labels,
             engine: self.engine.as_ref(),
         };
         if let Err(error) = instance.finish_attachment(root, &[], watches, children, &mut cx) {
-            self.state.remove_subtree(scope)?;
-            instance.dispose(&mut self.state)?;
+            self.state.get_mut().remove_subtree(scope)?;
+            instance.dispose(self.state.get_mut())?;
             return Err(error);
         }
         let view = ViewId(scope);
@@ -454,7 +513,7 @@ impl Ui {
     /// Opens an application-owned state context.
     pub fn context(&mut self) -> Context<'_> {
         Context {
-            state: &mut self.state,
+            state: self.state.get_mut(),
             engine: self.engine.as_ref(),
             owned: None,
         }
@@ -472,7 +531,7 @@ impl Ui {
             return Ok(false);
         };
         click(&mut Context {
-            state: &mut self.state,
+            state: self.state.get_mut(),
             engine: self.engine.as_ref(),
             owned: Some(&mut node.owned),
         })?;
@@ -481,7 +540,7 @@ impl Ui {
 
     /// Whether bindings are queued for the next flush, including work retained for retry.
     pub fn has_pending_bindings(&self) -> bool {
-        self.state.pending_count() != 0
+        self.state.borrow().pending_count() != 0
             || !self.pending.borrow().is_empty()
             || !self.labels.borrow().is_empty()
     }
@@ -490,7 +549,7 @@ impl Ui {
     pub fn flush(&mut self) -> Result<usize> {
         let mut visited = 0;
         loop {
-            self.state.flush();
+            self.state.get_mut().flush();
             let batch = std::mem::take(&mut *self.pending.borrow_mut());
             if batch.is_empty() {
                 self.flush_labels()?;
@@ -504,7 +563,7 @@ impl Ui {
                     .expect("queued scope is live");
                 let mut cx = Attachment {
                     scope,
-                    state: &mut self.state,
+                    state: self.state.get_mut(),
                     pending: &self.pending,
                     labels: &self.labels,
                     engine: self.engine.as_ref(),
@@ -536,7 +595,7 @@ impl Ui {
         }
         let mut failure = None;
         labels.retain(|&(view, id), source| {
-            let Ok(value) = self.state.read(*source) else {
+            let Ok(value) = self.state.get_mut().read(*source) else {
                 return false;
             };
             let instance = self.instances.get_mut(&view).expect("live label view");
@@ -553,7 +612,7 @@ impl Ui {
     /// Successful local recording acknowledges a node. The caller can reuse its output buffer.
     pub fn collect_repaints(&self, view: ViewId, nodes: &mut Vec<NodeId>) -> Result<()> {
         let ready = self.instance(view)?.repaints.borrow();
-        nodes.extend(ready.iter().copied());
+        nodes.extend(ready.dirty.iter().copied());
         Ok(())
     }
 
@@ -584,9 +643,13 @@ impl Ui {
             .instances
             .get_mut(&view)
             .ok_or(crate::tree::TreeError::InvalidNode(view.0))?;
+        let layout_pending = instance.scene.is_pending();
         let changed = instance.scene.run_assigned(size, false)?;
         if changed != 0 {
             instance.invalidate_geometry();
+        } else if layout_pending {
+            // Custom layout can change internal paint data at the same published size.
+            instance.repaints.borrow_mut().commands.clear();
         }
         Ok(changed)
     }
@@ -607,10 +670,12 @@ impl Ui {
             .bodies
             .get(&node)
             .ok_or(crate::tree::TreeError::InvalidNode(node))?;
-        body.paint(&instance.scene, &self.state, commands)?;
-        if body.binding_target.is_some() {
-            instance.repaints.borrow_mut().remove(&node);
-        }
+        let mut state = self.state.try_borrow_mut()?;
+        body.paint(&instance.scene, &state, &instance.paint_reads, commands)?;
+        instance.observe_paint(node, &mut state)?;
+        let mut repaints = instance.repaints.borrow_mut();
+        repaints.commands.remove(&node);
+        repaints.dirty.remove(&node);
         Ok(())
     }
 
@@ -619,12 +684,12 @@ impl Ui {
         if !self.instances.contains_key(&scope) {
             return Err(crate::tree::TreeError::InvalidNode(scope.0).into());
         }
-        self.state.remove_subtree(scope.0)?;
+        self.state.get_mut().remove_subtree(scope.0)?;
         self.pending.borrow_mut().remove(&scope.0);
         self.labels
             .borrow_mut()
             .retain(|(view, _), _| *view != scope);
         let instance = self.instances.remove(&scope).expect("live mounted scope");
-        instance.dispose(&mut self.state)
+        instance.dispose(self.state.get_mut())
     }
 }

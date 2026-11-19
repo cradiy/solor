@@ -167,7 +167,7 @@ The following are outside this milestone:
 
 - A general UI property facade or replacement of the core node store.
 - Moving existing nodes, immutable tree snapshots, and serialization.
-- Derived signals, automatic dependency tracking, and multi-source bindings.
+- Derived signals and automatic signal tracking outside element paint.
 - Recursive dependency pruning, general paint
   invalidation, and general pixel damage tracking.
 - General layout algorithms, font fallback, rich text, GPU rendering, general input routing, and a general window abstraction.

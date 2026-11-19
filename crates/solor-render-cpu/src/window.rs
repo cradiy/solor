@@ -14,7 +14,8 @@ use crate::pixels::Surface;
 pub struct CpuWindow {
     ui: Ui,
     view: ViewId,
-    prepared: Option<PointerFrame>,
+    prepared: Option<(PointerFrame, bool)>,
+    animate: bool,
     retained: Option<RetainedView>,
 }
 
@@ -33,6 +34,7 @@ impl CpuWindow {
             ui,
             view,
             prepared: None,
+            animate: false,
             retained: None,
         })
     }
@@ -40,8 +42,10 @@ impl CpuWindow {
 
 impl WindowHandler<Rgba8> for CpuWindow {
     fn event(&mut self, event: WindowEvent) -> Result<bool> {
-        if let WindowEvent::Pointer(input) = event {
-            self.ui.dispatch_pointer(self.view, input)?;
+        match event {
+            WindowEvent::Pointer(input) => self.ui.dispatch_pointer(self.view, input)?,
+            WindowEvent::FrameReady if std::mem::take(&mut self.animate) => return Ok(true),
+            _ => {}
         }
         Ok(self.ui.has_pending_bindings())
     }
@@ -67,8 +71,9 @@ impl WindowHandler<Rgba8> for CpuWindow {
             }
             _ => (Surface::draw_view(&frame, physical, scale)?, Some(canvas)),
         };
+        let animate = frame.requests_animation_frame();
         let (draws, pointer) = frame.into_parts();
-        self.prepared = Some(pointer);
+        self.prepared = Some((pointer, animate));
         let retained = self.retained.insert(RetainedView {
             logical: size,
             scale,
@@ -79,12 +84,13 @@ impl WindowHandler<Rgba8> for CpuWindow {
             size: physical,
             rgba: &retained.surface.rgba,
             damage,
-            request_callback: true,
+            request_callback: animate || damage.is_some(),
         })
     }
 
     fn frame_submitted(&mut self) -> Result<()> {
-        if let Some(pointer) = self.prepared.take() {
+        if let Some((pointer, animate)) = self.prepared.take() {
+            self.animate = animate;
             self.ui.accept_pointer_frame(pointer)?;
         }
         Ok(())

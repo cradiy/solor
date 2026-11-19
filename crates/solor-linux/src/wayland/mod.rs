@@ -1,6 +1,7 @@
 use solor::px;
 mod buffer;
 mod pointer;
+mod presentation;
 
 use std::{io, time::Instant};
 
@@ -11,6 +12,7 @@ use wayland_client::{
 };
 use wayland_protocols::wp::{
     fractional_scale::v1::client::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1},
+    presentation_time::client::wp_presentation,
     viewporter::client::{wp_viewport, wp_viewporter},
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
@@ -27,11 +29,12 @@ use solor::{
 pub struct Wayland {
     /// Verifies uploaded shared memory and damage on every submission.
     pub verify_shm: bool,
-    /// Logs buffer submissions and upload timings to stderr.
+    /// Logs frame callbacks, buffer availability, commits and presentation feedback to stderr.
     pub trace_submissions: bool,
 }
 
 struct Window {
+    presentation: Option<wp_presentation::WpPresentation>,
     viewport: wp_viewport::WpViewport,
     scale_120: u32,
     surface: wl_surface::WlSurface,
@@ -155,7 +158,13 @@ impl Platform for Wayland {
         top.set_app_id(app_id.into());
         surface.commit();
 
+        let presentation = if self.trace_submissions {
+            globals.bind(&qh, 1..=1, ()).ok()
+        } else {
+            None
+        };
         let mut window = Window {
+            presentation,
             viewport,
             scale_120: 120,
             surface,
@@ -224,6 +233,9 @@ impl Window {
             .into_iter()
             .find(|&i| self.slots[i].as_ref().is_none_or(|slot| !slot.busy))
         else {
+            if self.trace {
+                eprintln!("waiting_for_buffer_after={}", self.commits);
+            }
             return Ok(());
         };
         let size = buffer_size(self.scale_120, self.size)?;
@@ -240,7 +252,7 @@ impl Window {
         let Some(area) = frame.damage else {
             if callback {
                 // A frame request takes effect at commit, even with no new buffer.
-                self.surface.frame(qh, ());
+                self.surface.frame(qh, None);
                 self.surface.commit();
                 self.waiting = true;
             }
@@ -276,19 +288,23 @@ impl Window {
             (area.bottom - area.top) as i32,
         );
         if callback {
-            self.surface.frame(qh, ());
+            self.surface.frame(qh, Some(self.commits + 1));
             self.waiting = true;
         }
+        if let Some(presentation) = &self.presentation {
+            presentation.feedback(&self.surface, qh, self.commits + 1);
+        }
         self.surface.commit();
+        let queued_ns = self.trace.then(presentation::monotonic_ns);
         slot.busy = true;
         self.next_slot = 1 - index;
         self.dirty = false;
         self.full_damage = false;
         self.view.frame_submitted()?;
         self.commits += 1;
-        if self.trace {
+        if let Some(queued_ns) = queued_ns {
             eprintln!(
-                "commit={} size={}x{} buffer={}x{} scale_120={} slot={} reuse={} audited={} upload_bytes={} upload_us={} elapsed_us={}",
+                "commit={} size={}x{} buffer={}x{} scale_120={} slot={} reuse={} audited={} upload_bytes={} upload_us={} elapsed_us={} queued_ns={queued_ns}",
                 self.commits,
                 self.size.width.get(),
                 self.size.height.get(),
@@ -335,15 +351,22 @@ delegate_noop!(Window: ignore wl_surface::WlSurface);
 delegate_noop!(Window: ignore wl_shm::WlShm);
 delegate_noop!(Window: ignore wl_shm_pool::WlShmPool);
 
-impl Dispatch<wl_callback::WlCallback, ()> for Window {
+impl Dispatch<wl_callback::WlCallback, Option<usize>> for Window {
     fn event(
         state: &mut Self,
         _: &wl_callback::WlCallback,
         _: wl_callback::Event,
-        _: &(),
+        buffer_commit: &Option<usize>,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if state.trace {
+            let dispatched_ns = presentation::monotonic_ns();
+            match buffer_commit {
+                Some(commit) => eprintln!("frame_done={commit} dispatched_ns={dispatched_ns}"),
+                None => eprintln!("frame_done=callback_only dispatched_ns={dispatched_ns}"),
+            }
+        }
         state.waiting = false;
         state.event(WindowEvent::FrameReady);
     }

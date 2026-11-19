@@ -232,17 +232,41 @@ sizing, composition, input, text, richer paint and platform adapters.
 
 ## High-frequency updates
 
-A meter with fixed geometry can retain a `Signal<u32>` and sample it inside
-`Element::paint` with `cx.read(level)?`. Declare
-`element(Meter(level)).repaint_on(level)` to subscribe. At the display boundary
-the host calls `flush`, then `collect_repaints(view, &mut nodes)` into a cleared,
-reusable vector. Each node appears once until its local commands are successfully
-recorded. An idle page with no outstanding requests yields an empty list. Paint
-reads sample the current value. Host frame wakeups, geometry damage and successful
-window submission have separate lifetimes. `child_when`
-registers a structural subscription and can change layout. Applications that
-consume every input sample must process those samples before publishing the
-value used for display.
+Elements default to `RefreshMode::OnDemand`. During paint, `cx.read(signal)?`
+samples the current value and records a dependency for that element. Each
+successful paint replaces its previous set of dependencies. A conditional
+read therefore follows the active branch. Equal writes leave the element clean,
+and multiple changes before a flush coalesce. Reads in event handlers are
+ordinary reads. Layout or attachment changes can also require fresh paint.
+
+A panel can mix both cadences in one retained tree:
+
+```rust
+let mode = cx.signal(RefreshMode::OnDemand);
+div()
+    .flex_col()
+    .child(text(device_name))
+    .child(element(Meter(level)).refresh_mode(mode))
+    .child(div().child(text("Start sampling")).on_click(move |cx| {
+        cx.set(mode, RefreshMode::Continuous)
+    }))
+    .child(div().child(text("Pause sampling")).on_click(move |cx| {
+        cx.set(mode, RefreshMode::OnDemand)
+    }))
+```
+
+The meter can read `level` in its paint method. In continuous mode it also
+samples on every host frame when that value stays constant. Switching back
+to on demand records the current value and subsequent changes still wake the
+meter. For a fixed cadence pass `RefreshMode::Continuous` directly. Each
+element keeps its mounted identity across mode changes.
+
+The window coalesces requests and rearms after successful submission. A
+`child_when` binding can change structure and a bound label can change its
+measured size. Signal reads in custom paint invalidate drawing only. The CPU
+backend assembles and compares whole-view command lists and rasterizes
+intersecting draws inside damage. See the
+[mixed window measurements](text-pixels.md#retained-and-continuous-elements).
 
 The release harness uses 100, 1,000 and 10,000 siblings. It excludes setup
 and warm-up, times individual iterations and checks the sampled width,
@@ -252,12 +276,12 @@ the range of per-run medians and the range of per-run 95th percentiles.
 
 | Work per update boundary | Median | p95 |
 | --- | ---: | ---: |
-| One write and one meter paint among 10,000 static siblings | 0.100–0.110 µs | 0.110–0.120 µs |
-| 1,000 writes and one caller-selected meter paint among 10,000 static siblings | 3.407–3.487 µs | 3.427–5.020 µs |
-| 1,000 writes, collect repaint requests and paint the subscribed meter among 10,000 static siblings | 3.276–3.527 µs | 3.326–3.557 µs |
-| One write and 10,000 retained meter paints | 0.630–0.673 ms | 0.701–1.159 ms |
-| Toggle a final row and lay out a flat column with 10,000 static siblings | 0.468–0.498 ms | 0.506–0.602 ms |
-| 1,000 toggles with 1,000 conditional subscribers, all ending closed | 0.083–0.086 ms | 0.093–0.135 ms |
+| One write and one meter paint among 10,000 static siblings | 0.181–0.200 µs | 0.201–0.220 µs |
+| 1,000 writes and one caller-selected meter paint among 10,000 static siblings | 3.587–4.018 µs | 3.607–4.047 µs |
+| 1,000 writes, collect repaint requests and paint the subscribed meter among 10,000 static siblings | 3.246–3.527 µs | 3.266–3.557 µs |
+| One write and 10,000 retained meter paints | 1.778–1.912 ms | 2.547–3.431 ms |
+| Toggle a final row and lay out a flat column with 10,000 static siblings | 0.703–0.765 ms | 0.747–0.797 ms |
+| 1,000 toggles with 1,000 conditional subscribers, all ending closed | 0.093–0.098 ms | 0.099–0.105 ms |
 
 The meter rows include writes, flush, unchanged layout and local fill
 recording. The structural row includes dispatch and layout. In a separate
@@ -287,7 +311,8 @@ fn seek_bar(
     div()
         .w_full()
         .h(px(20.0))
-        .paint(progress, |p, fraction| {
+        .paint(move |p| {
+            let fraction = *p.read(progress)?;
             let track = p.bounds().centered_strip(4);
             p.fill_rect(track, rgb(0x343434));
             p.fill_rect(track.with_width(track.width() * fraction), rgb(0x72aaff));
@@ -301,8 +326,8 @@ fn seek_bar(
 }
 ```
 
-In this sketch the paint callback receives the current bound value by copy and records in local
-logical coordinates. A progress update invalidates this paint binding. An
+In this sketch the paint callback reads playback progress and records in local
+logical coordinates. A progress update invalidates the element’s drawing. An
 allocation change also invalidates its bounds-dependent drawing. Drag positions
 use the accepted frame's local coordinates and bounds. Retirement cancels the
 active drag. The caller decides when a seek changes the playback signal.

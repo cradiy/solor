@@ -8,9 +8,9 @@ use std::{
 use anyhow::{Context as _, Result};
 
 use crate::{
-    Draw, Rgba, Ui, ViewId,
+    Draw, Instance, Rgba, Ui, ViewId,
     element::MountedNode,
-    layout::{Origin, Scene, Size},
+    layout::{Origin, Size},
     pointer::PointerFrame,
     state::Runtime,
     text::Paragraph,
@@ -67,12 +67,18 @@ pub struct ViewFrame {
     draws: Vec<Draw>,
     font: Option<Arc<Vec<u8>>>,
     pointer: PointerFrame,
+    next_frame: bool,
 }
 
 impl ViewFrame {
     /// Returns commands in paint order, with each parent before its children.
     pub fn draws(&self) -> &[Draw] {
         &self.draws
+    }
+
+    /// Whether a painted element requested a subsequent host-paced frame.
+    pub fn requests_animation_frame(&self) -> bool {
+        self.next_frame
     }
 
     /// Borrows the face used to shape the view's text.
@@ -96,12 +102,18 @@ impl MountedNode {
     fn paint_at(
         &self,
         offset: Origin,
-        scene: &Scene,
-        state: &Runtime<()>,
+        instance: &Instance,
+        state: &mut Runtime<()>,
         draws: &mut Vec<Draw>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
+        if !self.fixed_label
+            && let Some(saved) = instance.repaints.borrow().commands.get(&self.id)
+        {
+            draws.extend_from_slice(saved);
+            return Ok(false);
+        }
         let start = draws.len();
-        self.paint(scene, state, draws)?;
+        let next_frame = self.paint(&instance.scene, state, &instance.paint_reads, draws)?;
         for draw in &mut draws[start..] {
             let origin = match draw {
                 Draw::Fill { origin, .. } | Draw::Text { origin, .. } => origin,
@@ -115,7 +127,16 @@ impl MountedNode {
                 .checked_add(origin.y)
                 .context("paint y outside layout range")?;
         }
-        Ok(())
+        if !self.fixed_label {
+            instance.observe_paint(self.id, state)?;
+            let mut saved = instance.repaints.borrow_mut();
+            if next_frame {
+                saved.commands.remove(&self.id);
+            } else {
+                saved.commands.insert(self.id, draws[start..].to_vec());
+            }
+        }
+        Ok(next_frame)
     }
 }
 
@@ -126,8 +147,8 @@ impl Ui {
         let instance = self.instance(view)?;
         let pointer = self.prepare_pointer_frame(view)?;
         let cache = &instance.fixed_labels;
-        let scene = &instance.scene;
-        let state = &self.state;
+        let mut next_frame = false;
+        let mut state = self.state.try_borrow_mut()?;
         let mut draws = Vec::new();
         if let Some(labels) = cache.labels.get() {
             draws.reserve(labels.len());
@@ -136,7 +157,8 @@ impl Ui {
                 if let Some(label) = labels.next_if(|label| label.index == index) {
                     draws.push(label.draw());
                 } else {
-                    instance.bodies[&id].paint_at(offset, scene, state, &mut draws)?;
+                    next_frame |=
+                        instance.bodies[&id].paint_at(offset, instance, &mut state, &mut draws)?;
                 }
             }
         } else if cache.recorded.get() {
@@ -144,7 +166,7 @@ impl Ui {
             for (index, (id, offset)) in pointer.paint_order().enumerate() {
                 let start = draws.len();
                 let body = &instance.bodies[&id];
-                body.paint_at(offset, scene, state, &mut draws)?;
+                next_frame |= body.paint_at(offset, instance, &mut state, &mut draws)?;
                 if body.fixed_label
                     && let Some(label) = FixedLabel::from_commands(index, &draws[start..])
                 {
@@ -155,7 +177,8 @@ impl Ui {
         } else {
             // Keep one-off layouts allocation-free with respect to the label cache.
             for (id, offset) in pointer.paint_order() {
-                instance.bodies[&id].paint_at(offset, scene, state, &mut draws)?;
+                next_frame |=
+                    instance.bodies[&id].paint_at(offset, instance, &mut state, &mut draws)?;
             }
             cache.recorded.set(true);
         }
@@ -163,11 +186,12 @@ impl Ui {
             .engine
             .as_ref()
             .map(|engine| engine.borrow().bytes.clone());
-        instance.repaints.borrow_mut().clear();
+        instance.repaints.borrow_mut().dirty.clear();
         Ok(ViewFrame {
             draws,
             font,
             pointer,
+            next_frame,
         })
     }
 }

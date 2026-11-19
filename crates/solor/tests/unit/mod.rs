@@ -56,9 +56,9 @@ fn clicks_write_immediately_and_only_final_visibility_builds_a_leaf() -> Result<
     let header = host.instances[&scope].nodes[&[0][..]];
     let open = open_handle.get().unwrap();
     host.flush()?;
-    assert!(!*host.state.read(open)?);
+    assert!(!*host.state.get_mut().read(open)?);
     assert!(host.click(scope, header)?);
-    assert!(*host.state.read(open)?);
+    assert!(*host.state.get_mut().read(open)?);
     assert!(host.instances[&scope].node_at(&[1]).is_none());
     host.click(scope, header)?;
     host.flush()?;
@@ -93,7 +93,7 @@ fn clicks_write_immediately_and_only_final_visibility_builds_a_leaf() -> Result<
     host.flush()?;
     assert_eq!(host.instances[&scope].node_at(&[1]), Some(first));
     assert_eq!(builds.get(), 1);
-    assert!(*host.state.read(open)?);
+    assert!(*host.state.get_mut().read(open)?);
 
     host.click(scope, header)?;
     host.flush()?;
@@ -131,16 +131,19 @@ fn instance_owns_initial_value_and_unmount_cancels_pending_work() -> Result<()> 
     assert!(host.instances[&sibling].node_at(&[1]).is_none());
     host.click(scope, header)?;
     host.unmount(scope)?;
-    assert!(host.state.read(open).is_err());
-    assert_eq!(host.state.pending_count(), 0);
-    assert_eq!(host.state.binding_count(), 1);
+    assert!(host.state.get_mut().read(open).is_err());
+    assert_eq!(host.state.get_mut().pending_count(), 0);
+    assert_eq!(host.state.get_mut().binding_count(), 1);
     let new_scope = host.mount(make())?;
     assert!(!host.click(new_scope, header)?);
-    assert!(!*host.state.read(open_handle.get().unwrap())?);
+    assert!(!*host.state.get_mut().read(open_handle.get().unwrap())?);
     host.unmount(new_scope)?;
     host.unmount(sibling)?;
     assert_eq!(
-        (host.state.signal_count(), host.state.binding_count()),
+        (
+            host.state.get_mut().signal_count(),
+            host.state.get_mut().binding_count()
+        ),
         (0, 0)
     );
     Ok(())
@@ -222,7 +225,7 @@ fn middle_subtree_keeps_volume_identity_and_dispatches_only_the_changed_section(
     assert_eq!(layout(&mut host)?.1, closed);
     assert!(!host.click(scope, detail)?);
     assert!(host.click(scope, row)?);
-    assert_eq!(*host.state.read(volume)?, 43);
+    assert_eq!(*host.state.get_mut().read(volume)?, 43);
     assert_eq!(host.flush()?, 0);
     Ok(())
 }
@@ -230,8 +233,8 @@ fn middle_subtree_keeps_volume_identity_and_dispatches_only_the_changed_section(
 #[test]
 fn nested_initial_bindings_and_simultaneous_parent_removal() -> Result<()> {
     let mut host = test_ui();
-    let outer = host.state.create_signal(true);
-    let inner = host.state.create_signal(true);
+    let outer = host.state.get_mut().create_signal(true);
+    let inner = host.state.get_mut().create_signal(true);
     let builds = Rc::new(Cell::new(0));
     let scope = host.mount(component(|_| {
         div()
@@ -251,19 +254,19 @@ fn nested_initial_bindings_and_simultaneous_parent_removal() -> Result<()> {
     assert_eq!(host.flush()?, 3);
     let sibling = host.instances[&scope].nodes[&[1][..]];
     assert_eq!(builds.get(), 1);
-    host.state.set(inner, false)?;
+    host.state.get_mut().set(inner, false)?;
     host.flush()?;
-    host.state.set(inner, true)?;
-    host.state.set(outer, false)?;
+    host.state.get_mut().set(inner, true)?;
+    host.state.get_mut().set(outer, false)?;
     host.flush()?;
     assert_eq!(builds.get(), 1);
-    assert_eq!(host.state.binding_count(), 2);
+    assert_eq!(host.state.get_mut().binding_count(), 2);
     assert_ne!(host.instances[&scope].nodes[&[1][..]], sibling);
-    host.state.set(outer, true)?;
+    host.state.get_mut().set(outer, true)?;
     assert_eq!(host.flush()?, 2);
     assert_eq!(builds.get(), 2);
     host.unmount(scope)?;
-    assert_eq!(host.state.binding_count(), 0);
+    assert_eq!(host.state.get_mut().binding_count(), 0);
     let label = host.mount(component(|_| text("Standalone")))?;
     assert_eq!(host.flush()?, 0);
     let i = &host.instances[&label];
@@ -281,7 +284,7 @@ fn nested_initial_bindings_and_simultaneous_parent_removal() -> Result<()> {
 fn failed_subtree_attachment_releases_partial_nodes_handlers_and_bindings_then_retries()
 -> Result<()> {
     let mut host = test_ui();
-    let open = host.state.create_signal(true);
+    let open = host.state.get_mut().create_signal(true);
     let invalid = Rc::new(Cell::new(true));
     let scope = host.mount(component(|_| {
         div()
@@ -307,8 +310,8 @@ fn failed_subtree_attachment_releases_partial_nodes_handlers_and_bindings_then_r
     let i = &host.instances[&scope];
     assert_eq!(i.nodes.len(), 2);
     assert!(i.bodies.values().all(|node| node.handlers.is_none()));
-    assert_eq!(host.state.binding_count(), 1);
-    assert_eq!(host.state.pending_count(), 0);
+    assert_eq!(host.state.get_mut().binding_count(), 1);
+    assert_eq!(host.state.get_mut().pending_count(), 0);
     invalid.set(false);
     assert_eq!(host.flush()?, 2);
     assert_eq!(host.instances[&scope].nodes[&[1][..]], tail);
@@ -338,17 +341,17 @@ fn mixed_state_uses_independent_typed_handles_and_one_scope_cleanup() -> Result<
     let (open, muted, volume, device) = handles.get().unwrap();
     host.flush()?;
     assert!(host.click(scope, host.instances[&scope].scene.root())?);
-    assert_eq!(host.state.pending_count(), 0);
-    assert!(!*host.state.read(open)?);
-    assert!(*host.state.read(muted)?);
-    assert_eq!(*host.state.read(volume)?, 45);
-    assert_eq!(host.state.read(device)?, "System headphones");
+    assert_eq!(host.state.get_mut().pending_count(), 0);
+    assert!(!*host.state.get_mut().read(open)?);
+    assert!(*host.state.get_mut().read(muted)?);
+    assert_eq!(*host.state.get_mut().read(volume)?, 45);
+    assert_eq!(host.state.get_mut().read(device)?, "System headphones");
 
     host.unmount(scope)?;
-    assert!(host.state.read(open).is_err());
-    assert!(host.state.read(muted).is_err());
-    assert!(host.state.read(volume).is_err());
-    assert!(host.state.read(device).is_err());
+    assert!(host.state.get_mut().read(open).is_err());
+    assert!(host.state.get_mut().read(muted).is_err());
+    assert!(host.state.get_mut().read(volume).is_err());
+    assert!(host.state.get_mut().read(device).is_err());
     Ok(())
 }
 
@@ -400,7 +403,7 @@ fn external_playback_logic_updates_both_views_and_outlives_them() -> Result<()> 
 #[test]
 fn borrowed_state_survives_remount_and_stale_input_rolls_back_mount() -> Result<()> {
     let mut host = test_ui();
-    let open = host.state.create_signal(true);
+    let open = host.state.get_mut().create_signal(true);
     let make = || component(|_| section(open, || text("Detail")));
     let scope = host.mount(make())?;
     host.flush()?;
@@ -409,10 +412,10 @@ fn borrowed_state_survives_remount_and_stale_input_rolls_back_mount() -> Result<
     host.unmount(scope)?;
     let scope = host.mount(make())?;
     host.flush()?;
-    assert!(!*host.state.read(open)?);
+    assert!(!*host.state.get_mut().read(open)?);
     assert!(host.instances[&scope].node_at(&[1]).is_none());
     host.unmount(scope)?;
-    host.state.remove_signal(open)?;
+    host.state.get_mut().remove_signal(open)?;
     assert!(
         host.mount(component(|mount| {
             mount.signal(false);
@@ -422,7 +425,10 @@ fn borrowed_state_survives_remount_and_stale_input_rolls_back_mount() -> Result<
         .is_err()
     );
     assert_eq!(
-        (host.state.signal_count(), host.state.binding_count()),
+        (
+            host.state.get_mut().signal_count(),
+            host.state.get_mut().binding_count()
+        ),
         (0, 0)
     );
     Ok(())

@@ -243,3 +243,101 @@ and allocates no label cache entries. It excludes rasterization and upload.
 
 Run the resize workload with
 `cargo test --release -p solor-render-cpu --test meter_updates --offline -- time_resizing_meter --exact --ignored --nocapture`.
+
+### Retained and continuous elements
+
+One mounted window contains 1,024 labels, a retained signal-driven bar and a
+continuous bar that samples the latest value. At 120 updates
+per second the budget is 8.33 ms. In the paced release test, a 320 by 180
+device-pixel window receives 260 frame opportunities with four independent
+changes to the retained bar. Including initial paint, the two bars record
+5 and 261 times respectively. Across three processes, after 20 warm-up
+updates the CPU p95 was 85–111 µs and p99 was 101–123 µs. All 720 measured
+updates finished before the next scheduled tick. This test includes local
+rasterization and acknowledgement.
+
+On a 165 Hz Wayland output the compositor allocated 829 by 987 logical pixels
+at scale 1.5 (1,244 by 1,481 device pixels). Three traced release processes
+used the same tree and updates. Each received presentation timestamps for
+all 240 buffer commits numbered 21 through 260. For those 239 intervals per
+process, effective presentation rates were 86.5, 89.6 and 85.9 fps. The median
+interval was 12.12 ms and p95 was 18.18 ms in all three runs. Callback entry
+through local submission acknowledgement, including shared-memory upload, took
+139–199 µs at p95. This configuration missed the 120 fps presentation target.
+These timestamps locate the larger interval outside the measured local update;
+they do not identify which compositor or display stage consumed it.
+
+Run the paced test with
+`cargo test --release -p solor-render-cpu --test refresh_modes --offline -- mixed_updates_at_120_hz --exact --ignored --nocapture`.
+On a visible Wayland output, the following command runs the native probe and
+prints buffer submissions and available presentation feedback. Feedback timestamps
+are in the compositor's presentation clock.
+
+```sh
+SOLOR_TRACE_SUBMISSIONS=1 cargo test --release -p solor-render-cpu --test refresh_modes --offline -- wayland_mixed_frame_cadence --exact --ignored --nocapture
+```
+
+### Same-size Wayland control
+
+Four pairs of release processes alternated the mixed Solor window and
+a standalone libwayland client. Each got an 829 by 987
+logical allocation, a 1,244 by 1,481 XRGB8888 buffer, 1.5 scale and the same
+application ID. Both alternated two shared-memory buffers, waited for a frame
+callback before submitting the next update, changed two bars on the same
+schedule and requested presentation feedback. The control wrote the bars
+directly into mapped memory over a white background. Solor also drew its
+static labels. All 240 measured commits per process (21 through 260) received
+presentation timestamps.
+
+| Client | Effective fps across four runs | Median presentation interval | p95 interval | Callback to local commit, p95 |
+| --- | ---: | ---: | ---: | ---: |
+| Solor mixed window | 78.9–88.2 | 12.12 ms | 18.18 ms | 141–193 µs |
+| Direct shared-memory client | 85.0–92.6 | 12.12 ms | 18.18 ms | 30–54 µs |
+
+In three additional control runs, a 120 Hz monotonic timer drove submissions
+whenever a buffer was available. Of 240 measured commits per run, 34–58
+received discarded feedback. Effective presentation was 74.5–85.1 fps.
+Bypassing the callback wait alone did not reach the target on this desktop.
+The common 12.12 ms median spans two refresh periods at 165 Hz. These runs
+cannot isolate the costs of shared-memory import, compositor scheduling and
+output presentation from each other.
+
+### Locating the missed refresh
+
+The native trace associates each buffer commit with its frame callback and
+presentation feedback. For buffer commit `i`, subtract `frame_done=i-1`'s
+`dispatched_ns` from commit `i`'s `queued_ns` to measure client work.
+The enqueue stamp is taken immediately after `wl_surface.commit`.
+Both client stamps use Linux `CLOCK_MONOTONIC`. Compare them with the reported
+presentation time only when the compositor advertises that same clock
+(`presentation_clock_id=1`). Successive `sequence` values count output refreshes.
+
+On a fixed 165 Hz output, three release processes per configuration rendered
+the same 829 by 987 logical window with 1,024 labels and two bars. Run order
+rotated. Each process yielded feedback for commits 21–260, giving 239 consecutive
+intervals. A separate diagnostic build queued a `wl_display.sync` immediately
+after each buffer commit and timestamped its reply without waiting before the
+next frame. Receipt bounds when the server had processed the protocol request.
+The compositor can import the buffer and schedule rendering later.
+
+| Mixed Solor window | Effective fps | Callback to enqueue, p95 | Enqueue to sync reply, p95 | Sync reply to presentation, median |
+| --- | ---: | ---: | ---: | ---: |
+| Preferred scale, 1,244 × 1,481 buffer | 85.0–89.6 | 158–169 µs | — | — |
+| Same buffer with sync probe | 77.5–86.7 | 169–173 µs | 169–183 µs | 15.47–16.51 ms |
+| 622 × 740 buffer with sync probe | 81.0–87.4 | 115–152 µs | 165–183 µs | 16.25–16.46 ms |
+
+All nine runs had a median presentation interval of 12.12 ms and no observed
+wait for a free buffer. In the full-size sync runs, 543 of 717 intervals spanned
+multiple refreshes. In all 543 cases the sync reply had already arrived before
+the first predicted refresh after the previous presentation. The median lead was
+10.17–10.26 ms across runs. The protocol measurements leave the compositor's
+buffer import, render scheduling, GPU execution and display queue unresolved.
+
+A separate CPU-drawn two-bar client alternated shared memory and linear
+DMA-BUF submissions across three pairs of runs. Both paths used two released
+buffers in rotation, identical XRGB8888 dimensions, pixel writes, damage and
+frame callbacks. The DMA-BUF path exported DRM dumb buffers from the
+compositor's advertised main device and bracketed CPU writes with
+`DMA_BUF_IOCTL_SYNC`. Shared memory reached 85.9–90.7 fps and linear DMA-BUF
+reached 77.9–89.2 fps. Both had a 12.12 ms median presentation interval.
+This comparison covers CPU-written linear buffers on this desktop.
