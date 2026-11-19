@@ -2,7 +2,7 @@
 
 ## Scope
 
-`solor_core::tree::Tree<T>` owns a single rooted tree with application-defined
+`solor::tree::Tree<T>` owns a single rooted tree with application-defined
 payloads. Persistent means nodes remain in storage across edits; it does not mean
 immutable snapshots or serialization. This module implements storage and
 relationships, not UI construction, update propagation, layout, or painting.

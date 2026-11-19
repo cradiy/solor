@@ -1,0 +1,39 @@
+[package]
+name = "solor-render-cpu"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+description = "CPU rasterization of retained text frames for Solor"
+
+[lints]
+workspace = true
+
+[features]
+layout-audit = ["solor/layout-audit"]
+
+[dependencies]
+solor.workspace = true
+swash = "=0.2.10"
+
+[dev-dependencies]
+anyhow.workspace = true
+png = "0.18"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+solor-linux = { path = "../solor-linux" }
+
+[[example]]
+name = "text_layout"
+path = "examples/text_layout/main.rs"
+
+[[example]]
+name = "text_frame"
+path = "examples/text_layout/frame_main.rs"
+
+[[example]]
+name = "text_pixels"
+path = "examples/text_layout/pixels_main.rs"
+
+[[example]]
+name = "text_window"
+path = "examples/text_layout/window_main.rs"

@@ -39,10 +39,10 @@ after 100 updates, explicit scratch release, and destruction. They run after all
 timed workloads and include stable-label preparation where applicable.
 
 ```sh
-cargo build --release -p solor-core --example layout_cost_one --example layout_cost_three --features layout-audit --offline
-cargo test -p solor-core --example layout_cost_one --example layout_cost_three --features layout-audit --offline
-cargo run --release -p solor-core --example layout_cost_one --features layout-audit --offline
-cargo run --release -p solor-core --example layout_cost_three --features layout-audit --offline
+cargo build --release -p solor --example layout_cost_one --example layout_cost_three --features layout-audit --offline
+cargo test -p solor --example layout_cost_one --example layout_cost_three --features layout-audit --offline
+cargo run --release -p solor --example layout_cost_one --features layout-audit --offline
+cargo run --release -p solor --example layout_cost_three --features layout-audit --offline
 ```
 
 Repeat the two executables in alternating order without running other benchmarks

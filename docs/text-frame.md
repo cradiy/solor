@@ -184,7 +184,7 @@ replacement as the measured baseline. The [CPU text pixel experiment](text-pixel
 
 ```sh
 cargo test --workspace --tests --examples --offline
-cargo run --release -p solor-ui --example text_frame --offline
+cargo run --release -p solor-render-cpu --example text_frame --offline
 ```
 
 The executable runs the mixed-update oracle, paired timing, and separate allocator

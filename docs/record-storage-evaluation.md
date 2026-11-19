@@ -183,7 +183,7 @@ account for active and post-reclamation storage. Zero allocations alone is not
 an acceptance criterion.
 
 ```sh
-cargo run --release -p solor-core --example layout_cost_three --features layout-audit --offline
+cargo run --release -p solor --example layout_cost_three --features layout-audit --offline
 ```
 
 The executable emits `warmed-storage`, `warmed-release`, and `warmed-destruction`

@@ -107,8 +107,8 @@ memory while their checkpoints live. Measurements are not RSS/PSS or peak storag
 
 ```sh
 cargo test --workspace --tests --examples --offline
-cargo run --release -p solor-core --example layout_cost_three --features layout-audit --offline
-cargo run --release -p solor-core --example layout_cost_one --features layout-audit --offline
+cargo run --release -p solor --example layout_cost_three --features layout-audit --offline
+cargo run --release -p solor --example layout_cost_one --features layout-audit --offline
 ```
 
 Keep same-order refresh in the explicit experiment. The

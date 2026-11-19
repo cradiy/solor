@@ -17,7 +17,23 @@ stage consumes it, and how a host learns about the resulting work.
 | Fill | A straight-alpha sRGB color has named channels. Every gradient shares an ordered, variable-length stop sequence. Four geometries sample it in sRGB or Oklab. Backgrounds and custom fills carry the same fill value. Equal offsets describe hard edges. Rounded fills use the assigned dimensions. |
 | Paint scheduling | A paint subscription samples the latest value when recording. Repeated writes coalesce. A fill signal can replace solid or gradient paint. Explicit local recording acknowledges the node only after successful recording. |
 | Pointer input | The host accepts a border-box snapshot for hit testing. Positioned events deliver local logical coordinates. A press can capture its pointer until release or cancellation. See [pointer input](pointer-input.md). |
-| Platform boundary | Core provides tree, state and layout. The UI library adds element authoring, shaping and local commands. The Linux example owns its window, input and pixel buffers. |
+| Platform boundary | `solor` owns the GUI and the platform traits. `solor-linux` owns the Wayland event loop and buffer submission. `solor-render-cpu` rasterizes shaped text. The window example pairs them using the RGBA8 presentation format. |
+
+## Platform and renderer ownership
+
+`Platform::run_window` takes a window handler for the platform's presentation
+format. The Linux implementation drives one XDG toplevel until close. Its
+handler implements `WindowHandler<Rgba8>` and can borrow a retained image for
+one submission. Rendering code depends on the presentation format. Only the
+application entry point selects Wayland.
+
+Pointer positions and scroll distances arrive in logical pixels. The Linux
+adapter currently delivers mouse buttons, motion, cancellation and vertical
+wheel input. Keyboard modifiers are currently reported as empty. An event
+handler can request a redraw. The host supplies the logical allocation and
+device scale at frame preparation, validates the returned buffer, then
+acknowledges submission with `frame_submitted`. A successful empty-damage
+frame receives the same acknowledgement. The compositor controls display timing.
 
 ## Style declarations
 

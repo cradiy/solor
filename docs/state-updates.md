@@ -80,7 +80,7 @@ signal fan-out, and bulk independent updates. Compare single-update work across
 tree sizes. Report registration separately from measured update work; inspect
 allocation behavior separately from elapsed-time measurement.
 
-Run `cargo bench -p solor-core --bench state_updates --offline`. The harness warms
+Run `cargo bench -p solor --bench state_updates --offline`. The harness warms
 each workload and reports seven samples, including the median and range per batch.
 Single-update batches contain one write and one flush. Burst batches contain 32
 writes to one signal and one flush. Bulk batches write 10,000 independent signals;

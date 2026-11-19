@@ -2,17 +2,17 @@
 
 ## Scope and decision
 
-The library exposes `solor_core::node_store::NodeStore` for scoped execution
+The library exposes `solor::node_store::NodeStore` for scoped execution
 of boxed payloads. A parent holds mutable access to its own payload while
 calling a direct child through a restricted context. The store uses the same
 `Tree` and `NodeId` types as the rest of the core. The layout and window
 examples use this library implementation.
 
-The [store](../crates/solor-core/src/node_store.rs) and its
-[access tests](../crates/solor-core/tests/node_store.rs) define the borrowing
+The [store](../crates/solor/src/node_store.rs) and its
+[access tests](../crates/solor/tests/node_store.rs) define the borrowing
 and recovery contract. The `node_store` example contains the
-[scalar measurements](../crates/solor-core/examples/node_store/measure.rs) and
-[heterogeneous workloads](../crates/solor-core/examples/node_store/workload.rs).
+[scalar measurements](../crates/solor/examples/node_store/measure.rs) and
+[heterogeneous workloads](../crates/solor/examples/node_store/workload.rs).
 
 ## Access contract
 
@@ -79,8 +79,8 @@ fixtures. The access contract tests use the public library entry point.
 
 ```sh
 cargo test --workspace --offline
-cargo test -p solor-core --test node_store --offline
-cargo run --release -p solor-core --example node_store --offline
+cargo test -p solor --test node_store --offline
+cargo run --release -p solor --example node_store --offline
 ```
 
 ## Measurement boundaries

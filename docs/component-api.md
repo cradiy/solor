@@ -1,6 +1,6 @@
 # Component authoring
 
-`solor-ui` provides component composition, retained element layout, local
+`solor` provides component composition, retained element layout, local
 paint recording, pointer routing and direct click dispatch. A host creates a `Ui`, mounts a
 `Render` component, calls `flush` at its update boundary, then calls `layout`
 with the viewport size. It can walk `root` and `children` in sibling order,
@@ -166,7 +166,7 @@ retired node IDs, and a flat column measures and places its direct children
 on structural changes.
 
 ```sh
-cargo test --offline -p solor-ui
+cargo test --offline -p solor
 ```
 
 ## Styles and bound labels
@@ -267,7 +267,7 @@ per-signal queue flag. Rasterization, text reshaping, damage, buffer upload,
 compositor pacing and memory usage were outside these timings.
 
 ```sh
-cargo bench -p solor-ui --bench refresh --offline
+cargo bench -p solor --bench refresh --offline
 ```
 
 ## Custom drawing and input

@@ -140,14 +140,14 @@ injects an upload failure after rasterization. It checks hit targets, binding
 delivery and submitted bytes through retry, resize and replacement with an
 identical-looking mount.
 
-The [solor-ui authoring library](component-api.md#lifecycle-checks)
+The [solor authoring library](component-api.md#lifecycle-checks)
 tests initialization during mount, immediate event writes, ordered conditional
 subtrees at the next update boundary, and signal ownership across remounts.
 It checks targeted branch delivery, gap placement and surviving sibling
 identity across subtree insertion and removal. A caller-defined meter uses
 `Render` for composition and a retained `Element` for layout and local paint
-recording. Accepted-frame input and native presentation for these custom
-elements remain open. The [refresh workload](component-api.md#high-frequency-updates)
+recording. Accepted-frame pointer routing for these elements is covered by
+headless tests. Native presentation of a mounted view remains open. The [refresh workload](component-api.md#high-frequency-updates)
 measures local paint, shared subscriptions and structural layout at an explicit update boundary.
 The [UI contracts](ui-contracts.md) distinguish implemented authoring behavior
 from open frame, input and platform boundaries.
@@ -215,7 +215,8 @@ Local update propagation and CPU rendering should be evaluated separately so
 their costs and benefits can be identified.
 
 The initial native desktop investigation is limited to Linux with Wayland.
-Cross-platform support is a later decision, not a current deliverable.
+The platform contract belongs to the shared framework. This experiment validates
+the native implementation on Linux.
 
 ## Decision gates
 

@@ -26,7 +26,7 @@ the experiment. Arithmetic overflow and invalid metrics are explicit errors.
 | Layout attempt | Unpublished geometry, final child outputs, and placement validation |
 | Scene coordinator | Pending layout, last successful root query/allocation, and publication boundary |
 
-Node implementations provide both callbacks through `solor_core::layout::LayoutNode`.
+Node implementations provide both callbacks through `solor::layout::LayoutNode`.
 
 ```rust,ignore
 trait LayoutNode {
@@ -132,7 +132,7 @@ normal layout attempt.
 
 ## Implementation and validation
 
-The [library solver](../crates/solor-core/src/layout/engine.rs) backs the text,
+The [library solver](../crates/solor/src/layout/engine.rs) backs the text,
 frame, pixel and Wayland examples. `Scene::run` measures the root and uses its
 preferred size or the caller's allocation. `Scene::run_assigned` arranges it
 directly. `Scene::geometry` reads the last successful result in parent-local
@@ -162,9 +162,9 @@ The default build uses three measurement slots per node. The optional
 `layout-audit` feature adds dependency recording, checkpoints and explicit
 validated/pruned execution. The historical audit and cache-size fixtures compile
 the same solver at their selected capacity. The
-[fixtures](../crates/solor-core/examples/layout_contract/fixtures.rs) implement
+[fixtures](../crates/solor/examples/layout_contract/fixtures.rs) implement
 the three behaviors, and the
-[tests](../crates/solor-core/examples/layout_contract/tests.rs) cover the acceptance
+[tests](../crates/solor/examples/layout_contract/tests.rs) cover the acceptance
 cases. Construction-time append closes after the first successful layout.
 The [disclosure fixture](disclosure.md) explicitly mounts a new child or
 unmounts a leaf between updates. These operations invalidate layout and
@@ -176,9 +176,9 @@ Previously shared geometry slices remain readable. Layout callbacks cannot edit
 the tree.
 
 ```sh
-cargo test -p solor-core --test layout --offline
-cargo run -p solor-core --example layout_contract --features layout-audit --offline
-cargo test -p solor-core --example layout_contract --features layout-audit --offline
+cargo test -p solor --test layout --offline
+cargo run -p solor --example layout_contract --features layout-audit --offline
+cargo test -p solor --example layout_contract --features layout-audit --offline
 ```
 
 The default-feature library integration test fails the second child after staging

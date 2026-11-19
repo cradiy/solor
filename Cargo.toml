@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/solor-core", "crates/solor-ui"]
+members = ["crates/solor", "crates/solor-linux", "crates/solor-render-cpu"]
 resolver = "3"
 
 [workspace.package]
@@ -7,6 +7,8 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
+solor = { path = "crates/solor" }
+anyhow = "1"
 slotmap = "1.1.1"
 
 [workspace.lints.rust]

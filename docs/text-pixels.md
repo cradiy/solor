@@ -143,6 +143,6 @@ the single bounding rectangle. Keep this as the baseline for localized updates.
 Run the example with stdout redirected to an image. Timings go to stderr.
 
 ```sh
-cargo test -p solor-ui --example text_pixels --locked --offline
-cargo run --release -p solor-ui --example text_pixels --locked --offline > text-pixels.png
+cargo test -p solor-render-cpu --example text_pixels --locked --offline
+cargo run --release -p solor-render-cpu --example text_pixels --locked --offline > text-pixels.png
 ```

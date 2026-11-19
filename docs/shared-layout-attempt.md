@@ -78,7 +78,7 @@ describes the current correctness coverage.
 
 ## Complete update cost
 
-The [selection workload](../crates/solor-core/examples/layout_cost/selection.rs)
+The [selection workload](../crates/solor/examples/layout_cost/selection.rs)
 adds `Shared` alongside `Plain`, `Linear`, and `Selective`. Both selective paths
 retain checkpoint refresh. Timing includes edits, selection, audits, layout,
 publication, and required refresh. Construction, snapshots, and counter
@@ -139,9 +139,9 @@ rounding. The figures are neither RSS/PSS nor peak memory.
 
 ```sh
 cargo test --workspace --tests --examples --offline
-cargo run --release -p solor-core --example layout_contract --features layout-audit --offline
-cargo run --release -p solor-core --example layout_cost_three --features layout-audit --offline
-cargo run --release -p solor-core --example layout_cost_one --features layout-audit --offline
+cargo run --release -p solor --example layout_contract --features layout-audit --offline
+cargo run --release -p solor --example layout_cost_three --features layout-audit --offline
+cargo run --release -p solor --example layout_cost_one --features layout-audit --offline
 ```
 
 Keep shared attempts as an explicit experiment: repeated subtree layout is

@@ -103,9 +103,9 @@ the public core runtime.
 
 ## Implementation and evidence
 
-The [row and button fixtures](../crates/solor-core/examples/layout_contract/negotiation.rs)
+The [row and button fixtures](../crates/solor/examples/layout_contract/negotiation.rs)
 use the revised private layout context. The
-[negotiation tests](../crates/solor-core/examples/layout_contract/negotiation_tests.rs)
+[negotiation tests](../crates/solor/examples/layout_contract/negotiation_tests.rs)
 include 384 consecutive edits and query/allocation changes, each compared with
 cache-disabled recomputation. The earlier 256-step vertical comparison and
 failure checks also run with this interface.
@@ -132,6 +132,6 @@ The separate [layout cost experiment](layout-cost.md) measures this tradeoff
 with identical fixtures compiled at one and three inline slots.
 
 ```sh
-cargo run --release -p solor-core --example layout_contract --features layout-audit --offline
-cargo test -p solor-core --example layout_contract --features layout-audit --offline
+cargo run --release -p solor --example layout_contract --features layout-audit --offline
+cargo test -p solor --example layout_contract --features layout-audit --offline
 ```

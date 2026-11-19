@@ -4,10 +4,10 @@
 
 The private `text_layout` example integrates real font shaping and line layout
 with the core measurement and allocation contract. Its column and text nodes
-come from `solor-ui`. That crate uses [cosmic-text 0.19.0](https://docs.rs/cosmic-text/0.19.0/cosmic_text/)
-with only its `std` feature enabled. The core library itself has no text-engine dependency.
+come from `solor`. That crate uses [cosmic-text 0.19.0](https://docs.rs/cosmic-text/0.19.0/cosmic_text/)
+with only its `std` feature enabled.
 
-One bundled [Noto Sans CJK SC subset](../crates/solor-ui/examples/text_layout/fonts/README.md)
+One bundled [Noto Sans CJK SC subset](../fixtures/fonts/README.md)
 provides deterministic Latin/CJK fixtures. The database starts empty, loads only
 that face, and uses a fixed locale. Missing glyphs fail explicitly. This evaluates
 the included corpus, not arbitrary Unicode, font fallback, rich text, editing,
@@ -212,7 +212,7 @@ the [CPU text pixel experiment](text-pixels.md) checks clipping and raster outpu
 
 ```sh
 cargo test --workspace --tests --examples --offline
-cargo run --release -p solor-ui --example text_layout --offline
+cargo run --release -p solor-render-cpu --example text_layout --offline
 ```
 
 The executable verifies the mixed-update oracle before printing CPU samples and

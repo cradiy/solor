@@ -57,7 +57,7 @@ layout cannot depend on untracked measurement side effects.
 ## Correctness
 
 Six focused tests in
-[parent_skip_tests.rs](../crates/solor-core/examples/layout_contract/parent_skip_tests.rs)
+[parent_skip_tests.rs](../crates/solor/examples/layout_contract/parent_skip_tests.rs)
 cover nonzero direct-child placement with new internal movement, repeated updates
 and scratch release, historical equality against a different publication,
 standalone auditing followed by another child's edit, changed final baseline or
@@ -73,7 +73,7 @@ application frame times.
 
 ## Measurement boundaries
 
-The [selection workload](../crates/solor-core/examples/layout_cost/selection.rs)
+The [selection workload](../crates/solor/examples/layout_cost/selection.rs)
 compares `Plain`, `Linear`, `Selective`, `Shared`, and `Pruned` in the same binary.
 Plain still records dependencies but performs no audits. Shared audits and adopts
 child layouts while always executing root layout. Pruned additionally retains an
@@ -152,9 +152,9 @@ stable updates allocation-free or proportional only to changed nodes.
 
 ```sh
 cargo test --workspace --tests --examples --offline
-cargo run --release -p solor-core --example layout_contract --features layout-audit --offline
-cargo run --release -p solor-core --example layout_cost_three --features layout-audit --offline
-cargo run --release -p solor-core --example layout_cost_one --features layout-audit --offline
+cargo run --release -p solor --example layout_contract --features layout-audit --offline
+cargo run --release -p solor --example layout_cost_three --features layout-audit --offline
+cargo run --release -p solor --example layout_cost_one --features layout-audit --offline
 ```
 
 Allocation markers after timing delimit construction, warmed updates, retained

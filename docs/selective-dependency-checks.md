@@ -79,7 +79,7 @@ only after complete success. They remain a separate explicit path.
 ## Full-recapture reference measurements
 
 The full-recapture reference at `e111a54` uses the shared
-[workload](../crates/solor-core/examples/layout_cost/selection.rs) and
+[workload](../crates/solor/examples/layout_cost/selection.rs) and
 compares three paths: normal layout alone, linear audit followed by normal layout,
 and selective audit followed by normal layout. Every timed update includes edits,
 history maintenance when enabled, both root audits, reconciliation, publication,
@@ -146,8 +146,8 @@ small differences can reflect allocator rounding.
 
 ```sh
 cargo test --workspace --tests --examples --offline
-cargo run --release -p solor-core --example layout_cost_three --features layout-audit --offline
-cargo run --release -p solor-core --example layout_cost_one --features layout-audit --offline
+cargo run --release -p solor --example layout_cost_three --features layout-audit --offline
+cargo run --release -p solor --example layout_cost_one --features layout-audit --offline
 ```
 
 `selection-storage`, `selection-update`, `selection-warmed`, `selection-release`,

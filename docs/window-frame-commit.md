@@ -66,15 +66,15 @@ The lifecycle fixture sets the accepted frame explicitly and checks retired
 hit identities across drawing failure. The native host still propagates upload errors
 out of its event loop. The headless test below exercises recovery and input
 acceptance independently of Wayland.
-[Disclosure layout](../crates/solor-ui/examples/text_layout/disclosure_layout.rs),
-[window submission](../crates/solor-ui/examples/text_layout/wayland/mod.rs),
-[retained pixels](../crates/solor-ui/examples/text_layout/damage.rs),
-[buffer repair](../crates/solor-ui/examples/text_layout/wayland/buffer.rs)
-and [lifecycle tests](../crates/solor-ui/examples/text_layout/lifecycle_tests.rs).
+[Disclosure layout](../crates/solor-render-cpu/examples/text_layout/disclosure_layout.rs),
+[window submission](../crates/solor-linux/src/wayland/mod.rs),
+[retained pixels](../crates/solor-render-cpu/src/damage.rs),
+[buffer repair](../crates/solor-linux/src/wayland/buffer.rs)
+and [lifecycle tests](../crates/solor-render-cpu/examples/text_layout/lifecycle_tests.rs).
 
 ## Headless acceptance evidence
 
-The [test host](../crates/solor-ui/examples/text_layout/lifecycle_tests/frame_commit.rs)
+The [test host](../crates/solor-render-cpu/examples/text_layout/lifecycle_tests/frame_commit.rs)
 uses the existing state runtime, text layout and retained CPU rasterizer. It
 keeps an accepted RGBA buffer and stages uploads separately. When the raster
 changes, the host remembers the outstanding change across attempts. It compares

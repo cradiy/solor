@@ -15,7 +15,7 @@ this investigation.
 
 ## Executable counterexamples
 
-The [dependency tests](../crates/solor-core/examples/layout_contract/dependency_tests.rs)
+The [dependency tests](../crates/solor/examples/layout_contract/dependency_tests.rs)
 exercise three distinct reasons that equal width and height are insufficient:
 
 | Case | Unchanged observation | Required work |

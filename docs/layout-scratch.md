@@ -124,6 +124,6 @@ size versus edits that move later siblings. Scratch reuse alone cannot reduce
 that work.
 
 ```sh
-cargo test -p solor-core --example layout_contract --example layout_cost_one --example layout_cost_three --features layout-audit --offline
-cargo run --release -p solor-core --example layout_cost_three --features layout-audit --offline
+cargo test -p solor --example layout_contract --example layout_cost_one --example layout_cost_three --features layout-audit --offline
+cargo run --release -p solor --example layout_cost_three --features layout-audit --offline
 ```

@@ -1,0 +1,16 @@
+[package]
+name = "solor-linux"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+description = "Linux platform implementation for Solor"
+
+[lints]
+workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+solor.workspace = true
+anyhow.workspace = true
+rustix = { version = "1", features = ["fs"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }

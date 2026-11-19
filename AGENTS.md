@@ -17,8 +17,8 @@
 ## Architecture and dependencies
 
 - Keep crate boundaries aligned with concrete responsibilities.
-- Keep the core independent of UI, window systems, renderers, and platform APIs.
-  UI-dependent examples and tests belong to the UI crate.
+- Keep the framework independent of concrete platforms and rendering backends.
+  Put each platform and rendering backend implementation in its own crate.
 - Add crates only when an implemented responsibility needs a separate boundary.
   Do not create empty crates for a speculative architecture.
 - Keep development rules in this file, project motivation and ideas in the README,

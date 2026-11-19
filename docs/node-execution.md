@@ -252,7 +252,7 @@ Today the disclosure binds a label in `Runtime<Label>` and separately mounts a
 text leaf in `Scene`. Each store issues tree-local handles. The example tracks
 the mounted detail and synchronizes the two during frame preparation. Its press
 state stores a pointer ID because the title is its only interactive target.
-[Disclosure implementation](../crates/solor-ui/examples/text_layout/disclosure.rs)
+[Disclosure implementation](../crates/solor-render-cpu/examples/text_layout/disclosure.rs)
 
 The proposal gives each interactive visual node one identity for the lifetime
 of that mount. Bindings that update it, input sequences and published hit
@@ -294,7 +294,7 @@ for this runtime. [Flutter pointer dispatch](https://api.flutter.dev/flutter/ges
 
 ### Headless lifecycle evidence
 
-The [lifecycle fixture](../crates/solor-ui/examples/text_layout/lifecycle_tests.rs)
+The [lifecycle fixture](../crates/solor-render-cpu/examples/text_layout/lifecycle_tests.rs)
 mounts overlapping text leaves under one layout parent. Each mount pairs its
 visual handle with a state handle and binding. Leaves subscribe to a
 parent-owned color signal. Input resolves the frontmost hit in the accepted
@@ -333,7 +333,7 @@ cargo test --offline --example text_window lifecycle_tests
 
 ### Cost of disposing a scope
 
-The [headless timing test](../crates/solor-ui/examples/text_layout/lifecycle_tests/disposal_cost.rs)
+The [headless timing test](../crates/solor-render-cpu/examples/text_layout/lifecycle_tests/disposal_cost.rs)
 compares walking ancestors for every live mount with visiting the target scope's
 existing child links. The latter sets one boolean per visited label, then checks
 the marks in visual order while compacting the mount list. It keeps no second
