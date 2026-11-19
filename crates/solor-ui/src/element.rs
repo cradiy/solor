@@ -56,13 +56,13 @@ impl Element for Column {
     fn base_style(&self) -> Style {
         Style {
             padding: self.padding,
-            gap: self.gap,
+            row_gap: self.gap,
             ..Style::default()
         }
     }
     fn prepare_content(&mut self, style: &Style) -> Result<()> {
         self.padding = crate::Edges::all(px(0.0));
-        self.gap = style.gap;
+        self.gap = style.row_gap;
         Ok(())
     }
 }
@@ -180,7 +180,7 @@ impl MountedNode {
             background: style.background.map(|source| {
                 Box::new(MountedBackground {
                     source,
-                    radius: style.corner_radius,
+                    radius: style.corner_radii.uniform().unwrap_or(px(0.0)),
                 })
             }),
             owned: Vec::new(),
@@ -264,16 +264,18 @@ impl AnyElement {
         Self(Box::new(move |target, cx, units| {
             let mut node = make(cx)?;
             let inherited = match &target {
-                Target::Root(_) => TextStyleRefinement::default(),
-                Target::Child { inherited, .. } => *inherited,
+                Target::Root(_) => &TextStyleRefinement::default(),
+                Target::Child { inherited, .. } => inherited,
             };
-            let text = inherited.overlay(node.style.text);
             let mut style = node.body.base_style();
-            inherited.apply(&mut style.text, units);
-            style.refine(&node.style, units);
+            let text = style.refine(&node.style, inherited, units);
             if [
-                style.corner_radius,
-                style.gap,
+                style.corner_radii.top_left,
+                style.corner_radii.top_right,
+                style.corner_radii.bottom_left,
+                style.corner_radii.bottom_right,
+                style.column_gap,
+                style.row_gap,
                 style.text.size,
                 style.text.line_height,
             ]

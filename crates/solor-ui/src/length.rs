@@ -22,19 +22,19 @@ impl From<Pixels> for AbsoluteLength {
     }
 }
 
-/// Sizing policy for one box axis.
+/// A layout length with an optional percentage basis or automatic policy.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Length {
-    /// Derive the preferred size from content.
+    /// Use the automatic behavior of the property.
     #[default]
     Auto,
     /// Size in logical pixels or multiples of the view's base font size.
     Absolute(AbsoluteLength),
-    /// Percentage of the containing block on this axis, with 100.0 denoting the full extent.
+    /// Percentage of the property's reference dimension, with 100.0 denoting its full extent.
     Percent(f32),
 }
 
-/// Declares a percentage of the parent content dimension on the corresponding axis.
+/// Declares a percentage of the reference dimension used by the property.
 pub const fn percent(value: f32) -> Length {
     Length::Percent(value)
 }

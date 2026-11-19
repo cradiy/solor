@@ -251,7 +251,7 @@ impl Instance {
             &mut self.scene,
             parent,
             index,
-            self.bodies[&parent].text_style,
+            self.bodies[&parent].text_style.clone(),
             self.units,
             &mut mount.context(cx.engine),
         )?;

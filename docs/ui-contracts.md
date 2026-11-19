@@ -18,21 +18,49 @@ stage consumes it, and how a host learns about the resulting work.
 | Paint scheduling | A paint subscription samples the latest value when recording. Repeated writes coalesce. A fill signal can replace solid or gradient paint. Explicit local recording acknowledges the node only after successful recording. |
 | Platform boundary | Core provides tree, state and layout. The UI library adds element authoring, shaping and local commands. The Linux example owns its window, input and pixel buffers. |
 
+## Style declarations
+
+`Styled` supplies the same builders on containers, text, custom element
+wrappers and reusable `StyleRefinement` values. Each setter writes the
+individual fields it names. For example, `.m(rem(1.0)).mx_auto().mt(px(-2.5))`
+leaves the bottom margin at one rem and both horizontal margins automatic.
+A later `.m(...)` replaces all four. Margins and position offsets accept
+logical pixels, rems, percentages and automatic values.
+
+| Property family | Available declarations |
+| --- | --- |
+| Box and placement | Display, box sizing, width and height limits, aspect ratio, per-edge margins, position, four insets, stacking order and visibility |
+| Flex and grid | Direction, wrap, order, basis, grow/shrink, item and content alignment, row and column gaps, explicit and implicit track lists, automatic placement, line numbers and spans |
+| Overflow and input | Independent horizontal and vertical overflow, scrollbar width, cursor and pointer targeting |
+| Paint | Per-edge border widths, fills and patterns, individual corner radii, outlines, shadow layers, opacity, backdrop blur, a 2D transform list and origin, object fit and position |
+| Text | Family, fallbacks, OpenType features, weight, slant, spacing, alignment, whitespace, truncation, line limit, run background, underline and strikethrough |
+
+At attachment, a custom element receives its local layout and appearance
+declarations in `Element::prepare_content`. Text attributes cascade from the
+parent, including when a conditional child is attached later. An explicit
+`clear_line_clamp()` removes an inherited line limit.
+
+The built-in column consumes the row gap. The background painter uses a
+uniform corner radius and draws square corners for mixed radii. The other
+layout, paint, text shaping and input behaviors in this table are declarations
+pending engine support. In particular, `.absolute().top(px(4.0)).right(px(8.0))`
+expresses placement but does not yet move a child or remove it from column flow.
+
 ## Contracts to establish next
 
 | Priority and capability | Required behavior and acceptance case |
 | --- | --- |
 | 1. Frame composition, clipping and hit testing | Compose parent-local coordinates, scale, clips and sibling order into one accepted frame. Move a rounded card over another target, fail one submission, then retry. Pixels and click targets must agree with the last accepted frame. Old bounds must be repaired when a wrapped label moves its siblings. |
-| 2. Sizing, placement and scrolling | Define min/max sizing, margins and per-edge borders. Specify row and column alignment, stretch, grow/shrink and overflow. Validate a long label between a fixed icon and an action at narrow and wide widths. Scrolling must share the visual clip and hit-test transform. |
+| 2. Sizing, placement and scrolling | Apply min/max sizing, positioning, margins and per-edge borders during measurement and placement. Resolve row and column alignment, stretch, grow/shrink and overflow. Validate a long label between a fixed icon and an action at narrow and wide widths. Scrolling must share the visual clip and hit-test transform. |
 | 3. Input and state-dependent styles | Establish pointer and touch capture, cancellation, propagation, keyboard focus, tab order and actions. Define precedence for hover, press, focus and disabled states, including removing an override. Validate a pressed element that moves, loses capture or unmounts before release. |
-| 4. Text, editing and semantics | Define font selection and fallback, weight, alignment, wrapping/truncation, decoration, editable ranges, composition, caret bounds and accessibility actions. A bilingual field must expose the same selection to keyboard, IME and assistive input. Preserve explicit units when converting platform text ranges. |
+| 4. Text, editing and semantics | Apply font selection and fallback, weight, alignment, wrapping/truncation and decoration. Define editable ranges, composition, caret bounds and accessibility actions. A bilingual field must expose the same selection to keyboard, IME and assistive input. Preserve explicit units when converting platform text ranges. |
 | 5. Paint and animation | Define border and shadow paint order, opacity of overlapping descendants, transformed and rounded clipping, and animation timing. A frame-clock repaint must stop on unmount. CPU replay must draw every gradient stop, preserve hard edges and match the declared interpolation. A GPU representation needs equivalent output and a resource lifetime through submission. |
 | 6. Large collections and resources | Define keyed identity, viewport materialization, scroll anchoring, image/font resource ownership and cancellation. Replace and reorder items while keeping focus on a surviving key. Late resource completion must not invalidate a recycled node. |
 
 Linux is the first presentation target. Geometry, semantic actions, text ranges
 and frame requests need platform-independent meanings for Web, macOS, Windows,
 Android and iOS. Native handles, buffer formats and backend resource indices
-belong in adapters. Grid, vector paths, custom shaders and 3D
+belong in adapters. Vector paths, custom shaders and 3D
 need concrete workloads before their public signatures are chosen.
 
 
