@@ -3,7 +3,7 @@ use solor_core::px;
 use std::rc::Rc;
 
 use solor_core::tree::NodeId;
-use solor_ui::Column;
+use solor_ui::layout::Column;
 
 use crate::{
     font_fixture::{FONT, fixture_engine},

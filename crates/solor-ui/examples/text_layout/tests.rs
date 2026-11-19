@@ -171,7 +171,7 @@ fn mixed_updates_match_fresh_text_buffers_and_forced_layout() {
 #[test]
 fn equal_geometry_still_produces_new_glyphs_when_parent_layout_is_skipped() {
     use crate::layout::validation::CheckTarget;
-    use solor_ui::Column;
+    use solor_ui::layout::Column;
     let mut scene = Scene::new(Column::new(px(2.0), px(3.0)));
     let root = scene.root();
     let child = scene

@@ -30,7 +30,7 @@ fn conditional_label_inherits_style_and_keeps_identity_when_it_wraps() -> Result
         .bg(ACCENT);
     let view = ui.mount(component(|_| {
         div()
-            .column()
+            .flex_col()
             .with_style(&card)
             .padding_left(px(11.0))
             .child(text("Title").text_color(ACCENT))
@@ -133,7 +133,7 @@ fn gradient_updates_share_all_stops_and_only_queue_the_live_background() -> Resu
     let open = ui.context().signal(true);
     let view = ui.mount(component(|_| {
         div()
-            .column()
+            .flex_col()
             .child_when(open, move || div().bg(background).padding(px(4.0)))
             .child(div().padding(px(8.0)))
     }))?;
@@ -208,7 +208,10 @@ fn gradient_edges_validation_and_premultiplied_interpolation() -> Result<()> {
 
 #[test]
 fn custom_content_gets_the_shared_box_and_gradient_without_style_hooks() -> Result<()> {
-    use solor_ui::{Column, Element, PaintContext, element, gradient_left_to_right, layout};
+    use solor_ui::{
+        Element, PaintContext, element, gradient_left_to_right,
+        layout::{self, Column},
+    };
     struct Badge;
     impl layout::LayoutNode for Badge {
         fn measure(

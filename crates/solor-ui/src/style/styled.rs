@@ -77,9 +77,8 @@ macro_rules! presets {
 /// Common style declarations for containers, text and custom nodes.
 ///
 /// Builders compose field by field. Custom elements can read the cascaded values
-/// in [`Element::prepare_content`](crate::Element::prepare_content). The built-in
-/// column consumes dimensions, padding and row spacing. Positioning, flex, grid
-/// and other formatting declarations are available for layout consumers.
+/// in [`Element::prepare_content`](crate::Element::prepare_content). Containers consume dimensions, padding,
+/// margins, direction and main-axis spacing.
 pub trait Styled: Sized {
     /// Borrows the element's local declarations.
     fn style(&mut self) -> &mut StyleRefinement;

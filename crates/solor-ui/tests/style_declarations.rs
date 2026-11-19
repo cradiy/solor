@@ -3,8 +3,9 @@ use std::{cell::RefCell, num::NonZeroUsize, rc::Rc};
 
 use anyhow::Result;
 use solor_ui::{
-    Column, Edges, Element, Fill, Length, Style, StyleRefinement, Styled, Ui, component, div,
-    element, layout, percent, px, rem, rgb,
+    Edges, Element, Fill, Length, Style, StyleRefinement, Styled, Ui, component, div, element,
+    layout::{self, Column},
+    percent, px, rem, rgb,
     style::{BorderStyle, GridTrack, Overflow, Position, TrackSize},
 };
 
@@ -114,7 +115,7 @@ fn conditional_custom_element_receives_cascaded_text_and_local_box_declarations(
     ui.mount(component(|_| {
         let received = received.clone();
         div()
-            .column()
+            .flex_col()
             .relative()
             .m(px(3.0))
             .font_family("Example")

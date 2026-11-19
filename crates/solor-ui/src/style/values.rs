@@ -1,5 +1,6 @@
 //! Values used in portable style declarations.
 use crate::{AbsoluteLength, Length, Rgba};
+pub use solor_core::layout::FlexDirection;
 
 macro_rules! keywords {
     ($(#[doc = $doc:literal] $name:ident { $($variant:ident: $meaning:literal),+ $(,)? })+) => {$(
@@ -28,8 +29,6 @@ keywords! {
     BoxSizing { BorderBox: "Include border and padding.", ContentBox: "Size the content area." }
     /// How replaced content such as an image fits its content box.
     ObjectFit { Fill: "Stretch to fill.", Contain: "Preserve proportions and fit inside.", Cover: "Preserve proportions and cover.", None: "Use intrinsic dimensions.", ScaleDown: "Use the smaller of intrinsic and contained dimensions." }
-    /// Main axis and ordering of flex children.
-    FlexDirection { Row: "Inline order.", RowReverse: "Reversed inline order.", Column: "Block order.", ColumnReverse: "Reversed block order." }
     /// How flex items break across lines.
     FlexWrap { NoWrap: "One line.", Wrap: "Multiple lines.", WrapReverse: "Multiple lines in reverse order." }
     /// Alignment of an item within the available space.

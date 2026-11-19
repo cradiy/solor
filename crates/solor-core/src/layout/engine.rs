@@ -12,6 +12,7 @@ use std::rc::Rc;
 use super::node_store::{AccessError, Context, NodeStore};
 use super::tree::NodeId;
 
+use super::column::Margins;
 use super::{MEASUREMENT_CACHE_SLOTS, Pixels};
 
 const _: () = assert!(MEASUREMENT_CACHE_SLOTS > 0);
@@ -248,6 +249,12 @@ pub struct Counts {
 /// Measures preferred dimensions and arranges direct children within an assigned size.
 /// A successful layout must lay out and place each child exactly once.
 pub trait LayoutNode: Any {
+    /// Resolves outer spacing against the parent content width. Intrinsic
+    /// measurement supplies no width for resolving percentages.
+    fn margins(&self, _inline_width: Option<Pixels>) -> Result<Margins> {
+        Ok(Margins::default())
+    }
+
     /// Measures preferred size and baseline under the given width constraint.
     fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics>;
     /// Assigns each direct child its size and parent-local position.
@@ -266,6 +273,7 @@ pub enum Read {
         query: Query,
         containing_block: ContainingBlock,
         metrics: Metrics,
+        margins: Option<Margins>,
     },
     Layout {
         node: NodeId,
@@ -429,6 +437,23 @@ impl MeasureContext<'_, '_> {
 
     /// Queries one child's preferred metrics under the supplied constraint.
     pub fn measure_child(&mut self, index: usize, query: Query) -> Result<Metrics> {
+        Ok(self.measure_item(index, query, false)?.0)
+    }
+
+    pub(crate) fn measure_stack_item(
+        &mut self,
+        index: usize,
+        query: Query,
+    ) -> Result<(Metrics, Margins)> {
+        self.measure_item(index, query, true)
+    }
+
+    fn measure_item(
+        &mut self,
+        index: usize,
+        query: Query,
+        with_margins: bool,
+    ) -> Result<(Metrics, Margins)> {
         if self.failed {
             return Err(LayoutError::FailedChildOperation);
         }
@@ -437,8 +462,15 @@ impl MeasureContext<'_, '_> {
             .access
             .child(index)
             .ok_or(LayoutError::MissingChild(index))?;
-        let metrics = self.access.execute_child(id, |entry, access| {
-            Ok(measure(entry, access, query, self.child_basis, self.force))
+        let (metrics, margins) = self.access.execute_child(id, |entry, access| {
+            Ok(measure_item(
+                entry,
+                access,
+                query,
+                self.child_basis,
+                self.force,
+                with_margins,
+            ))
         })??;
         #[cfg(feature = "layout-audit")]
         self.reads.push(Read::Measure {
@@ -446,10 +478,37 @@ impl MeasureContext<'_, '_> {
             containing_block: self.child_basis,
             query,
             metrics,
+            margins: with_margins.then_some(margins),
         });
         self.failed = false;
-        Ok(metrics)
+        Ok((metrics, margins))
     }
+}
+
+fn measure_item(
+    entry: &mut Entry,
+    access: &mut Context<'_, Entry>,
+    query: Query,
+    basis: ContainingBlock,
+    force: bool,
+    with_margins: bool,
+) -> Result<(Metrics, Margins)> {
+    let (query, margins) = if with_margins {
+        let margins = entry.body.margins(match query {
+            Query::Exact(width) => Some(width),
+            _ => None,
+        })?;
+        let query = match query {
+            Query::Exact(width) | Query::AtMost(width) => {
+                Query::AtMost(margins.inner_width(width)?)
+            }
+            Query::Natural => Query::Natural,
+        };
+        (query, margins)
+    } else {
+        (query, Margins::default())
+    };
+    Ok((measure(entry, access, query, basis, force)?, margins))
 }
 
 fn measure(
@@ -628,6 +687,23 @@ impl LayoutContext<'_, '_> {
 
     /// Queries a child's preferred metrics before assigning its box.
     pub fn measure_child(&mut self, index: usize, query: Query) -> Result<Metrics> {
+        Ok(self.measure_item(index, query, false)?.0)
+    }
+
+    pub(crate) fn measure_stack_item(
+        &mut self,
+        index: usize,
+        query: Query,
+    ) -> Result<(Metrics, Margins)> {
+        self.measure_item(index, query, true)
+    }
+
+    fn measure_item(
+        &mut self,
+        index: usize,
+        query: Query,
+        with_margins: bool,
+    ) -> Result<(Metrics, Margins)> {
         if self.failed {
             return Err(LayoutError::FailedChildOperation);
         }
@@ -641,7 +717,7 @@ impl LayoutContext<'_, '_> {
             force: self.force,
             failed: false,
         }
-        .measure_child(index, query)?;
+        .measure_item(index, query, with_margins)?;
         self.failed = false;
         Ok(metrics)
     }

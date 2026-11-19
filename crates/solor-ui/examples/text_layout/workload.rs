@@ -7,7 +7,7 @@ use solor_core::tree::NodeId;
 
 use crate::font_fixture::fixture_engine;
 use crate::layout::{Query, Scene, Size};
-use solor_ui::Column;
+use solor_ui::layout::Column;
 use solor_ui::text::{SharedEngine, Text, TextStyle};
 
 pub const SAMPLE: &str = "Solor 中文排版，文字换行与基线。Hello 世界！Rust GUI 123";

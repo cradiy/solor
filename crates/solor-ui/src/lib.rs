@@ -28,7 +28,7 @@ pub use fill::{
 use length::UnitResolver;
 pub use length::{AbsoluteLength, Length, percent, rem};
 pub use shared_string::SharedString;
-pub use solor_core::layout::{Column, Edges};
+pub use solor_core::layout::Edges;
 pub use solor_core::{Pixels, px};
 pub use solor_core::{layout, state::Signal, tree::NodeId};
 pub use style::{Style, StyleRefinement, Styled};

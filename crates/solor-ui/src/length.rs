@@ -63,21 +63,31 @@ impl UnitResolver {
             AbsoluteLength::Rem(value) => px(value * self.rem_size.get()),
         }
     }
-    pub fn dimension(self, length: Length) -> Result<Option<ComputedLength>> {
+    pub fn offset(self, length: Length) -> Result<Option<ComputedLength>> {
         match length {
             Length::Auto => Ok(None),
             Length::Absolute(value) => {
                 let value = self.absolute(value);
-                if !value.is_extent() {
+                if !value.get().is_finite() {
                     return Err(LayoutError::InvalidSize);
                 }
                 Ok(Some(ComputedLength::Pixels(value)))
             }
-            Length::Percent(value) if value.is_finite() && value >= 0.0 => {
+            Length::Percent(value) if value.is_finite() => {
                 Ok(Some(ComputedLength::Fraction(value / 100.0)))
             }
             _ => Err(LayoutError::InvalidSize),
         }
+    }
+
+    pub fn dimension(self, length: Length) -> Result<Option<ComputedLength>> {
+        let offset = self.offset(length)?;
+        if matches!(offset, Some(ComputedLength::Pixels(v)) if v.get() < 0.0)
+            || matches!(length, Length::Percent(v) if v < 0.0)
+        {
+            return Err(LayoutError::InvalidSize);
+        }
+        Ok(offset)
     }
 }
 

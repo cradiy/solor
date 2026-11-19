@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use solor_ui::layout::{
     self, LayoutContext, LayoutNode, LayoutOutput, MeasureContext, Metrics, Query, Size,
 };
-use solor_ui::{Draw, Element, PaintContext, Signal, Ui, component, div, element};
+use solor_ui::{Draw, Element, PaintContext, Signal, Styled, Ui, component, div, element};
 
 const SIZE: Size = Size {
     width: px(100.0),
@@ -66,7 +66,7 @@ fn run(siblings: usize) -> Result<()> {
     let level = ui.context().signal(0);
     let visible = ui.context().signal(false);
     let view = ui.mount(component(|_| {
-        let mut column = div().column().child(element(Meter(level)));
+        let mut column = div().flex_col().child(element(Meter(level)));
         for _ in 0..siblings {
             column = column.child(div().padding(px(1.0)));
         }
@@ -131,7 +131,7 @@ fn shared_burst(subscribers: usize) -> Result<()> {
     let mut ui = Ui::new();
     let visible = ui.context().signal(false);
     let view = ui.mount(component(|_| {
-        let mut column = div().column();
+        let mut column = div().flex_col();
         for _ in 0..subscribers {
             column = column.child_when(visible, div);
         }
@@ -161,7 +161,7 @@ fn paint_all(count: usize) -> Result<()> {
     let mut ui = Ui::new();
     let level = ui.context().signal(0);
     let view = ui.mount(component(|_| {
-        let mut column = div().column();
+        let mut column = div().flex_col();
         for _ in 0..count {
             column = column.child(element(Meter(level)));
         }
@@ -199,7 +199,7 @@ fn scheduled_meter(siblings: usize) -> Result<()> {
     let level = ui.context().signal(0);
     let view = ui.mount(component(|_| {
         let mut column = div()
-            .column()
+            .flex_col()
             .child(element(Meter(level)).repaint_on(level));
         for _ in 0..siblings {
             column = column.child(div().padding(px(1.0)));

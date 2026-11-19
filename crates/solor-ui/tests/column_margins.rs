@@ -1,0 +1,111 @@
+//! Outer spacing as observed in published UI geometry.
+use anyhow::Result;
+use solor_ui::{
+    Length, Styled, Ui, component, div,
+    layout::{Origin, Size},
+    percent, px, rem,
+};
+
+#[test]
+fn nested_column_resolves_margins_against_its_padded_content_on_resize() -> Result<()> {
+    let mut ui = Ui::new();
+    let view = ui.mount(component(|_| {
+        div().child(
+            div()
+                .w_full()
+                .p(px(5.0))
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .w(px(20.5))
+                        .h(px(8.0))
+                        .mx_auto()
+                        .mt(percent(10.0))
+                        .mb(px(2.25)),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .h(px(6.0))
+                        .ml(px(-3.5))
+                        .mr(rem(0.5))
+                        .mt(px(-3.0)),
+                ),
+        )
+    }))?;
+    let card = ui.children(view, ui.root(view)?)?.next().unwrap();
+    let rows: Vec<_> = ui.children(view, card)?.collect();
+    for (width, first_x, first_y, second_width, card_height) in [
+        (120.0, 49.75, 16.0, 105.5, 38.25),
+        (80.0, 29.75, 12.0, 65.5, 34.25),
+        (120.0, 49.75, 16.0, 105.5, 38.25),
+    ] {
+        ui.layout(
+            view,
+            Size {
+                width: px(width),
+                height: px(100.0),
+            },
+        )?;
+        let first = ui.geometry(view, rows[0]).unwrap();
+        let second = ui.geometry(view, rows[1]).unwrap();
+        assert_eq!(
+            first.origin,
+            Origin {
+                x: px(first_x),
+                y: px(first_y)
+            }
+        );
+        assert_eq!(first.metrics.size.width, px(20.5));
+        assert_eq!(
+            second.origin,
+            Origin {
+                x: px(1.5),
+                y: px(first_y + 11.25)
+            }
+        );
+        assert_eq!(second.metrics.size.width, px(second_width));
+        assert_eq!(
+            ui.geometry(view, card).unwrap().metrics.size.height,
+            px(card_height)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn automatic_margin_shares_only_positive_free_space() -> Result<()> {
+    let mut ui = Ui::new();
+    let view = ui.mount(component(|_| {
+        div()
+            .child(div().w(px(15.25)).h(px(2.0)).m(Length::Auto).mr(px(3.0)))
+            .child(div().w_full().h(px(2.0)).ml(px(-5.0)).mr(px(35.0)))
+    }))?;
+    let root = ui.root(view)?;
+    let rows: Vec<_> = ui.children(view, root)?.collect();
+    ui.layout(
+        view,
+        Size {
+            width: px(20.0),
+            height: px(50.0),
+        },
+    )?;
+    assert_eq!(
+        ui.geometry(view, rows[0]).unwrap().origin,
+        Origin {
+            x: px(1.75),
+            y: px(0.0)
+        }
+    );
+    let second = ui.geometry(view, rows[1]).unwrap();
+    assert_eq!(
+        second.origin,
+        Origin {
+            x: px(-5.0),
+            y: px(2.0)
+        }
+    );
+    assert_eq!(second.metrics.size.width, px(0.0));
+    assert_eq!(ui.geometry(view, root).unwrap().content.width, px(30.0));
+    Ok(())
+}

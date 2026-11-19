@@ -211,3 +211,64 @@ fn indexed_mount_and_subtree_removal_preserve_sibling_handles_and_snapshot_lifet
     assert_eq!(opened.len(), 4);
     Ok(())
 }
+
+#[cfg(feature = "layout-audit")]
+#[test]
+fn margin_only_edit_invalidates_placement_with_unchanged_child_metrics() -> Result<()> {
+    use solor_core::{
+        Pixels,
+        layout::{
+            Column, Margin, Margins,
+            validation::{CheckOutcome, CheckTarget},
+        },
+    };
+
+    struct Item {
+        left: Pixels,
+    }
+    impl LayoutNode for Item {
+        fn margins(&self, _: Option<Pixels>) -> Result<Margins> {
+            Ok(Margins {
+                left: Margin::Fixed(self.left),
+                right: Margin::Fixed(px(12.0) - self.left),
+                ..Margins::default()
+            })
+        }
+        fn measure(&mut self, _: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
+            Ok(Metrics {
+                size: Size {
+                    width: query.resolve(px(4.0)),
+                    height: px(5.0),
+                },
+                baseline: Some(px(3.0)),
+            })
+        }
+        fn layout(&mut self, _: &mut LayoutContext<'_, '_>, size: Size) -> Result<LayoutOutput> {
+            Ok(LayoutOutput {
+                content: size,
+                baseline: Some(px(3.0)),
+            })
+        }
+    }
+    let mut scene = Scene::new(Column::new(px(0.0), px(0.0)));
+    let root = scene.root();
+    let item = scene.append(root, Item { left: px(2.5) })?;
+    let query = Query::Exact(px(40.0));
+    scene.run(query, None, false)?;
+    let assigned = scene.geometry(root).unwrap().metrics.size;
+    let mut measurement = scene
+        .capture_selective_dependencies(root, CheckTarget::Measure(query))?
+        .unwrap();
+    let mut placement = scene
+        .capture_selective_dependencies(root, CheckTarget::Layout(assigned))?
+        .unwrap();
+    scene.edit_layout::<Item>(item, |item| item.left = px(9.25))?;
+    let run = scene.run_pruned(query, assigned, &mut measurement, &mut placement)?;
+    assert_eq!(run.checks[1].outcome, CheckOutcome::Changed);
+    assert!(!run.skipped_parent_layout);
+    assert_eq!(scene.geometry(item).unwrap().origin.x, px(9.25));
+    let incremental = scene.snapshot();
+    scene.run(query, Some(assigned), true)?;
+    assert_eq!(scene.snapshot(), incremental);
+    Ok(())
+}

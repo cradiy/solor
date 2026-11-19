@@ -1,14 +1,15 @@
 //! Shared content-box adapter for every retained element.
 use crate::layout::{
-    ContainingBlock, LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext, Metrics,
-    Origin, Query, Result, Size,
+    ContainingBlock, LayoutContext, LayoutError, LayoutNode, LayoutOutput, Margin, Margins,
+    MeasureContext, Metrics, Origin, Query, Result, Size,
 };
 use crate::length::{ComputedLength, UnitResolver};
-use crate::{Edges, Pixels, Style};
+use crate::{Edges, Pixels, Style, px};
 
 pub(crate) struct StyledBody<E> {
     pub content: E,
     padding: Edges,
+    margins: Option<Box<Edges<Option<ComputedLength>>>>,
     inset: Size,
     width: Option<ComputedLength>,
     height: Option<ComputedLength>,
@@ -16,6 +17,15 @@ pub(crate) struct StyledBody<E> {
 
 fn add(a: Pixels, b: Pixels) -> Result<Pixels> {
     a.checked_add(b).ok_or(LayoutError::InvalidSize)
+}
+
+fn map_edges<T, U>(edges: Edges<T>, mut f: impl FnMut(T) -> Result<U>) -> Result<Edges<U>> {
+    Ok(Edges {
+        top: f(edges.top)?,
+        right: f(edges.right)?,
+        bottom: f(edges.bottom)?,
+        left: f(edges.left)?,
+    })
 }
 
 impl<E> StyledBody<E> {
@@ -27,7 +37,16 @@ impl<E> StyledBody<E> {
         {
             return Err(LayoutError::InvalidSize);
         }
+        let margins = style
+            .layout
+            .as_ref()
+            .map(|layout| layout.margin)
+            .filter(|edges| *edges != Edges::default())
+            .map(|edges| map_edges(edges, |value| units.offset(value.unwrap_or(px(0.0).into()))))
+            .transpose()?
+            .map(Box::new);
         Ok(Self {
+            margins,
             content,
             padding: p,
             width: units.dimension(style.width)?,
@@ -56,6 +75,22 @@ impl<E> StyledBody<E> {
 }
 
 impl<E: LayoutNode> LayoutNode for StyledBody<E> {
+    fn margins(&self, inline_width: Option<Pixels>) -> Result<Margins> {
+        let Some(margins) = &self.margins else {
+            return Ok(Margins::default());
+        };
+        map_edges(**margins, |value| {
+            let Some(length) = value else {
+                return Ok(Margin::Auto);
+            };
+            let distance = length.resolve(inline_width).unwrap_or_default();
+            if distance.get().is_finite() {
+                Ok(Margin::Fixed(distance))
+            } else {
+                Err(LayoutError::InvalidSize)
+            }
+        })
+    }
     fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
         let inner = |w: Pixels| w.saturating_sub(self.inset.width);
         let basis = cx.containing_block();

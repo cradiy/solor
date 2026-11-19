@@ -10,7 +10,7 @@ use crate::layout::{
     Counts, Geometry, LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext,
     Metrics, Origin, Query, Result, Scene, Size,
 };
-use solor_ui::Column;
+use solor_ui::layout::Column;
 use solor_ui::text::{Paragraph, SharedEngine, Text, TextStyle};
 
 const RESERVE: u32 = 16;

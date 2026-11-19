@@ -1,7 +1,7 @@
 use super::Pixels;
 use super::layout::{
-    LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext, Metrics, Origin, Query,
-    Result, Size,
+    LayoutContext, LayoutError, LayoutNode, LayoutOutput, Margin, MeasureContext, Metrics, Origin,
+    Query, Result, Size,
 };
 
 fn add(a: Pixels, b: Pixels) -> Result<Pixels> {
@@ -33,6 +33,38 @@ impl<T: Copy> Edges<T> {
     }
 }
 
+/// Margins on all four edges of a child's border box.
+pub type Margins = Edges<Margin>;
+
+impl Margins {
+    pub(crate) fn horizontal(self) -> Result<Pixels> {
+        add(self.left.fixed_or_zero(), self.right.fixed_or_zero())
+    }
+
+    pub(crate) fn inner_width(self, width: Pixels) -> Result<Pixels> {
+        let width = width.saturating_sub(self.horizontal()?);
+        if width.is_extent() {
+            Ok(width)
+        } else {
+            Err(LayoutError::InvalidSize)
+        }
+    }
+
+    fn left_offset(self, available: Pixels, child: Pixels) -> Pixels {
+        match self.left {
+            Margin::Fixed(value) => value,
+            Margin::Auto => {
+                let free = available.saturating_sub(child);
+                if self.right == Margin::Auto {
+                    free / 2.0
+                } else {
+                    free
+                }
+            }
+        }
+    }
+}
+
 /// Measures and stacks children from top to bottom in sibling order.
 pub struct Column {
     /// Insets between the column bounds and its children.
@@ -54,13 +86,12 @@ impl Column {
         let inset = add(self.padding.left, self.padding.right)?;
         Ok(match query {
             Query::Natural => Query::Natural,
-            Query::AtMost(width) | Query::Exact(width) => {
-                Query::AtMost(width.saturating_sub(inset))
-            }
+            Query::AtMost(width) => Query::AtMost(width.saturating_sub(inset)),
+            Query::Exact(width) => Query::Exact(width.saturating_sub(inset)),
         })
     }
 
-    /// A stretched child receives the column's inner width. Content bounds
+    /// A stretched child receives the width left after padding and fixed margins. Content bounds
     /// still describe the measured children and their reported overflow.
     pub fn layout_rows(
         &self,
@@ -68,10 +99,24 @@ impl Column {
         assigned: Size,
         stretch: Option<usize>,
     ) -> Result<LayoutOutput> {
+        self.arrange(cx, assigned, stretch, false)
+    }
+
+    pub(crate) fn arrange(
+        &self,
+        cx: &mut LayoutContext<'_, '_>,
+        assigned: Size,
+        stretch: Option<usize>,
+        reverse: bool,
+    ) -> Result<LayoutOutput> {
         let inset = add(self.padding.left, self.padding.right)?;
         let inner_width = assigned.width.saturating_sub(inset);
-        let query = Query::AtMost(inner_width);
-        let mut y = self.padding.top;
+        let query = Query::Exact(inner_width);
+        let mut cursor = if reverse {
+            self.padding.bottom
+        } else {
+            self.padding.top
+        };
         let mut content = Size {
             width: inset,
             height: self.padding.top,
@@ -79,43 +124,57 @@ impl Column {
         let mut baseline = None;
         for index in 0..cx.child_count() {
             if index > 0 {
-                y = add(y, self.gap)?;
+                cursor = add(cursor, self.gap)?;
             }
-            let child = cx.measure_child(index, query)?;
+            let (child, margin) = cx.measure_stack_item(index, query)?;
+            let (leading, trailing) = if reverse {
+                (margin.bottom, margin.top)
+            } else {
+                (margin.top, margin.bottom)
+            };
+            cursor = add(cursor, leading.fixed_or_zero())?;
+            let end = add(cursor, child.size.height)?;
+            let y = if reverse {
+                assigned.height - end
+            } else {
+                cursor
+            };
+            let available = margin.inner_width(inner_width)?;
             let mut size = child.size;
             if stretch == Some(index) {
-                size.width = inner_width;
+                size.width = available;
             }
             let output = cx.layout_child(index, size)?;
-            cx.place_child(
-                index,
-                Origin {
-                    x: self.padding.left,
-                    y,
-                },
-            )?;
+            let x = add(self.padding.left, margin.left_offset(available, size.width))?;
+            cx.place_child(index, Origin { x, y })?;
             if index == 0 {
                 baseline = output.baseline.map(|value| add(value, y)).transpose()?;
             }
-            content.width = content.width.max(add(
-                add(
-                    self.padding.left,
-                    child.size.width.max(output.content.width),
-                )?,
-                self.padding.right,
-            )?);
+            let right = add(child.size.width, margin.right.fixed_or_zero())?
+                .max(child.size.width)
+                .max(output.content.width);
+            content.width = content.width.max(add(add(x, right)?, self.padding.right)?);
             content.height = content
                 .height
                 .max(add(y, child.size.height.max(output.content.height))?);
-            y = add(y, child.size.height)?;
+            cursor = add(end, trailing.fixed_or_zero())?;
+            if !reverse {
+                content.height = content.height.max(cursor);
+            }
         }
-        content.height = add(content.height.max(y), self.padding.bottom)?;
-        Ok(LayoutOutput { baseline, content })
+        content.height = add(content.height, self.padding.bottom)?;
+        Ok(LayoutOutput {
+            baseline: baseline.filter(|b| b.is_extent() && *b <= content.height),
+            content,
+        })
     }
-}
 
-impl LayoutNode for Column {
-    fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
+    pub(crate) fn measure_stack(
+        &self,
+        cx: &mut MeasureContext<'_, '_>,
+        query: Query,
+        reverse: bool,
+    ) -> Result<Metrics> {
         let child_query = self.child_query(query)?;
         let mut height = self.padding.top;
         let mut width = Pixels::default();
@@ -124,20 +183,47 @@ impl LayoutNode for Column {
             if index > 0 {
                 height = add(height, self.gap)?;
             }
-            let child = cx.measure_child(index, child_query)?;
+            let (child, margin) = cx.measure_stack_item(index, child_query)?;
+            height = add(height, margin.top.fixed_or_zero())?;
             if index == 0 {
-                baseline = child.baseline.map(|value| add(value, height)).transpose()?;
+                baseline = if reverse {
+                    // Distance from the bottom edge to the first child's baseline.
+                    child
+                        .baseline
+                        .map(|value| {
+                            add(
+                                add(self.padding.bottom, margin.bottom.fixed_or_zero())?,
+                                child.size.height - value,
+                            )
+                        })
+                        .transpose()?
+                } else {
+                    child.baseline.map(|value| add(value, height)).transpose()?
+                };
             }
-            height = add(height, child.size.height)?;
-            width = width.max(child.size.width);
+            height = add(
+                add(height, child.size.height)?,
+                margin.bottom.fixed_or_zero(),
+            )?;
+            width = width.max(add(child.size.width, margin.horizontal()?)?);
+        }
+        let height = add(height, self.padding.bottom)?.max(Pixels::default());
+        if reverse {
+            baseline = baseline.map(|distance| height - distance);
         }
         Ok(Metrics {
             size: Size {
                 width: query.resolve(add(width, add(self.padding.left, self.padding.right)?)?),
-                height: add(height, self.padding.bottom)?,
+                height,
             },
-            baseline,
+            baseline: baseline.filter(|b| b.is_extent() && *b <= height),
         })
+    }
+}
+
+impl LayoutNode for Column {
+    fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
+        self.measure_stack(cx, query, false)
     }
 
     fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {

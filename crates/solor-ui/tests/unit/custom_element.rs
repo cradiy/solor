@@ -10,7 +10,7 @@ use solor_core::state::Signal;
 
 use super::test_ui;
 use crate::element::{Draw, Element, IntoElement, PaintContext, Render, div, element, text};
-use crate::{Context, Result, component};
+use crate::{Context, Result, Styled, component};
 
 impl crate::element::MountedNode {
     fn record(
@@ -185,7 +185,7 @@ fn nested_render_state_retires_on_failure_close_and_remount() -> Result<()> {
     let view = host.mount(component(|_| {
         let handle = handle.clone();
         let fail = fail.clone();
-        div().column().child_when(visible, move || {
+        div().flex_col().child_when(visible, move || {
             let handle = handle.clone();
             let fail = fail.clone();
             component(move |cx| {

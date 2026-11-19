@@ -1,4 +1,5 @@
 // Compile the library solver at the cache size selected by this experiment.
+pub use solor_core::layout::Margin;
 include!("../../src/layout/engine.rs");
 
 #[cfg(test)]

@@ -26,7 +26,7 @@ fn section<E: IntoElement + 'static>(
     detail: impl Fn() -> E + 'static,
 ) -> impl IntoElement {
     div()
-        .column()
+        .flex_col()
         .gap(px(8.0))
         .child(
             div()
@@ -156,7 +156,7 @@ fn middle_subtree_keeps_volume_identity_and_dispatches_only_the_changed_section(
             let volume = mount.signal(40_u8);
             volume_handle.set(Some(volume));
             div()
-                .column()
+                .flex_col()
                 .gap(px(8.0))
                 .child(
                     div()
@@ -165,7 +165,7 @@ fn middle_subtree_keeps_volume_identity_and_dispatches_only_the_changed_section(
                 )
                 .child_when(open, move || {
                     div()
-                        .column()
+                        .flex_col()
                         .child(text("Output device"))
                         .child(text("System default"))
                         .on_click(move |event| event.update(open, |v| *v = false))
@@ -235,12 +235,12 @@ fn nested_initial_bindings_and_simultaneous_parent_removal() -> Result<()> {
     let builds = Rc::new(Cell::new(0));
     let scope = host.mount(component(|_| {
         div()
-            .column()
+            .flex_col()
             .child_when(outer, {
                 let builds = builds.clone();
                 move || {
                     let builds = builds.clone();
-                    div().column().child_when(inner, move || {
+                    div().flex_col().child_when(inner, move || {
                         builds.set(builds.get() + 1);
                         text("Nested")
                     })
@@ -285,12 +285,12 @@ fn failed_subtree_attachment_releases_partial_nodes_handlers_and_bindings_then_r
     let invalid = Rc::new(Cell::new(true));
     let scope = host.mount(component(|_| {
         div()
-            .column()
+            .flex_col()
             .child_when(open, {
                 let invalid = invalid.clone();
                 move || {
                     div()
-                        .column()
+                        .flex_col()
                         .on_click(|_| Ok(()))
                         .child_when(open, || text("Nested"))
                         .child(text(if invalid.get() {
@@ -371,7 +371,7 @@ fn external_playback_logic_updates_both_views_and_outlives_them() -> Result<()> 
     let view = || {
         component(|_| {
             div()
-                .column()
+                .flex_col()
                 .child_when(playback.playing, || text("Playing"))
         })
     };

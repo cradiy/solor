@@ -62,7 +62,7 @@ component(|cx| {
     let volume = cx.signal(40_u8);
 
     div()
-        .column()
+        .flex_col()
         .gap(px(8.0))
         .child(
             div()
@@ -71,7 +71,7 @@ component(|cx| {
                 .on_click(move |event| event.update(open, |v| *v = !*v)),
         )
         .child_when(open, || {
-            div().column()
+            div().flex_col()
                 .child(text("Output device"))
                 .child(text("System default"))
         })

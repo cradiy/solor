@@ -536,11 +536,19 @@ fn check_reads<'a>(
                 query,
                 metrics,
                 containing_block,
+                margins,
             } => {
                 let current = access.execute_child(node, |entry, child| {
-                    Ok(measure(entry, child, query, containing_block, false))
+                    Ok(super::measure_item(
+                        entry,
+                        child,
+                        query,
+                        containing_block,
+                        false,
+                        margins.is_some(),
+                    ))
                 })??;
-                current == metrics
+                current.0 == metrics && margins.is_none_or(|edges| edges == current.1)
             }
             Read::Layout {
                 node,

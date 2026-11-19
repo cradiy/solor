@@ -7,11 +7,11 @@ use solor_core::state::{Runtime, Signal, SignalId};
 use solor_core::tree::NodeId;
 
 use super::{Attachment, Context, Repaints, Result, SharedString, ViewId};
-use crate::Column;
+use crate::layout::{FlexDirection, FlexLayout};
 use crate::length::UnitResolver;
 use crate::style::{Background, TextStyleRefinement};
 use crate::text::{Paragraph, Text, TextStyle};
-use crate::{AbsoluteLength, Fill, Pixels, Rgba, Style, StyleRefinement, Styled, StyledBody, px};
+use crate::{Fill, Pixels, Rgba, Style, StyleRefinement, Styled, StyledBody, px};
 
 /// Builds an element declaration when a component is attached.
 pub trait Render {
@@ -52,17 +52,27 @@ pub trait Element: LayoutNode {
     }
 }
 
-impl Element for Column {
+impl Element for FlexLayout {
     fn base_style(&self) -> Style {
         Style {
-            padding: self.padding,
             row_gap: self.gap,
+            column_gap: self.gap,
             ..Style::default()
         }
     }
+
     fn prepare_content(&mut self, style: &Style) -> Result<()> {
-        self.padding = crate::Edges::all(px(0.0));
-        self.gap = style.row_gap;
+        if let Some(direction) = style
+            .layout
+            .as_ref()
+            .and_then(|layout| layout.flex_direction)
+        {
+            self.direction = direction;
+        }
+        self.gap = match self.direction {
+            FlexDirection::Row | FlexDirection::RowReverse => style.column_gap,
+            FlexDirection::Column | FlexDirection::ColumnReverse => style.row_gap,
+        };
         Ok(())
     }
 }
@@ -496,50 +506,13 @@ impl IntoElement for Label {
     }
 }
 
-/// A general-purpose container declaration.
-pub struct Div {
-    style: StyleRefinement,
-}
+/// A general-purpose container with children, styles and event handlers.
+pub type Div = Node<FlexLayout>;
 
-/// Creates a container with default style.
+/// Creates a container that stacks children vertically by default.
 pub fn div() -> Div {
-    Div {
-        style: StyleRefinement::default(),
-    }
-}
-
-impl Styled for Div {
-    fn style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
-    }
-}
-
-impl Div {
-    /// Sets all four padding edges of the container.
-    pub fn padding(self, padding: impl Into<AbsoluteLength>) -> Self {
-        Styled::padding(self, padding)
-    }
-
-    /// Arranges children vertically in declaration order.
-    pub fn column(self) -> Node<Column> {
-        element(Column::new(px(0.0), px(0.0))).with_style(&self.style)
-    }
-
-    /// Adds a child using column layout.
-    pub fn child(self, child: impl IntoElement) -> Node<Column> {
-        self.column().child(child)
-    }
-}
-
-impl IntoElement for Div {
-    fn into_element(self) -> AnyElement {
-        self.column().into_element()
-    }
-}
-
-impl Node<Column> {
-    /// Sets the space between adjacent column children.
-    pub fn gap(self, gap: impl Into<AbsoluteLength>) -> Self {
-        Styled::gap(self, gap)
-    }
+    element(FlexLayout {
+        direction: FlexDirection::Column,
+        gap: px(0.0),
+    })
 }
