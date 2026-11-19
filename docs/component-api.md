@@ -1,7 +1,7 @@
 # Component authoring
 
 `solor-ui` provides component composition, retained element layout, local
-paint recording and direct click dispatch. A host creates a `Ui`, mounts a
+paint recording, pointer routing and direct click dispatch. A host creates a `Ui`, mounts a
 `Render` component, calls `flush` at its update boundary, then calls `layout`
 with the viewport size. It can walk `root` and `children` in sibling order,
 read parent-local `geometry` and append individual elements' commands with
@@ -272,6 +272,9 @@ cargo bench -p solor-ui --bench refresh --offline
 
 ## Custom drawing and input
 
+The [pointer input interface](pointer-input.md) shows how a seek bar can
+track one drag across its bounds and share the signal update path with a button.
+
 The same builder syntax should leave room for an element whose appearance
 depends on allocated space. Here the caller supplies playback progress in
 the range 0 to 1 and a function accepting a fractional seek position.
@@ -282,8 +285,8 @@ fn seek_bar(
     seek: impl Fn(f32) + 'static,
 ) -> impl IntoElement {
     div()
-        .fill_width()
-        .height(px(20.0))
+        .w_full()
+        .h(px(20.0))
         .paint(progress, |p, fraction| {
             let track = p.bounds().centered_strip(4);
             p.fill_rect(track, rgb(0x343434));

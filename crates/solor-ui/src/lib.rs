@@ -10,6 +10,7 @@ use solor_core::state::{Runtime, SignalId};
 mod element;
 mod fill;
 mod length;
+pub mod pointer;
 mod shared_string;
 pub mod style;
 mod styled_body;
@@ -135,6 +136,7 @@ type Repaints = Rc<RefCell<HashSet<NodeId>>>;
 type LabelUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), Signal<SharedString>>>>;
 
 struct Instance {
+    pointer: pointer::PointerRouter,
     units: UnitResolver,
     repaints: Repaints,
     scene: Scene,
@@ -281,6 +283,7 @@ impl Instance {
         for key in subtree_keys(&self.nodes, path) {
             let node = self.nodes.remove(&key).expect("mounted node");
             let node = self.bodies.remove(&node).expect("mounted body");
+            self.pointer.retire(node.id);
             if let Some(target) = node.binding_target {
                 cx.state.remove_subtree(target)?;
                 self.repaints.borrow_mut().remove(&node.id);
@@ -404,6 +407,7 @@ impl Ui {
         drop(mount);
         let root = scene.root();
         let mut instance = Instance {
+            pointer: Default::default(),
             units,
             repaints: Repaints::default(),
             scene,
@@ -445,7 +449,7 @@ impl Ui {
         let Some(node) = instance.bodies.get_mut(&target) else {
             return Ok(false);
         };
-        let Some(click) = &node.click else {
+        let Some(click) = node.handlers.as_deref().and_then(|h| h.click.as_ref()) else {
             return Ok(false);
         };
         click(&mut Context {

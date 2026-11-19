@@ -306,7 +306,7 @@ fn failed_subtree_attachment_releases_partial_nodes_handlers_and_bindings_then_r
     assert!(host.flush().is_err());
     let i = &host.instances[&scope];
     assert_eq!(i.nodes.len(), 2);
-    assert!(i.bodies.values().all(|node| node.click.is_none()));
+    assert!(i.bodies.values().all(|node| node.handlers.is_none()));
     assert_eq!(host.state.binding_count(), 1);
     assert_eq!(host.state.pending_count(), 0);
     invalid.set(false);

@@ -9,6 +9,8 @@ use solor_core::tree::NodeId;
 use super::{Attachment, Context, Repaints, Result, SharedString, ViewId};
 use crate::layout::{FlexDirection, FlexLayout};
 use crate::length::UnitResolver;
+use crate::pointer::Handlers;
+use crate::style::PointerEvents;
 use crate::style::{Background, TextStyleRefinement};
 use crate::text::{Paragraph, Text, TextStyle};
 use crate::{Fill, Pixels, Rgba, Style, StyleRefinement, Styled, StyledBody, px};
@@ -170,13 +172,14 @@ pub(super) struct MountedNode {
     pub(super) binding_target: Option<NodeId>,
     record: fn(&Scene, NodeId, &mut PaintContext) -> Result<()>,
     pub(super) owned: Vec<SignalId>,
-    pub(super) click: Option<Click>,
+    pub(crate) handlers: Option<Box<Handlers>>,
+    pub(crate) hit_testable: bool,
 }
 
 impl MountedNode {
     fn new<E: Element>(
         id: NodeId,
-        click: Option<Click>,
+        handlers: Option<Box<Handlers>>,
         text_style: TextStyleRefinement,
         style: Style,
     ) -> Self {
@@ -184,7 +187,9 @@ impl MountedNode {
             id,
             offset: 0,
             binding_target: None,
-            click,
+            handlers,
+            hit_testable: style.appearance.as_deref().and_then(|a| a.pointer_events)
+                != Some(PointerEvents::None),
             text_style,
             text_color: style.text.color,
             background: style.background.map(|source| {
@@ -309,7 +314,7 @@ impl AnyElement {
                 } => scene.mount_at(parent, index, body)?,
             };
             Ok(Installation {
-                node: MountedNode::new::<E>(id, node.click, text, style),
+                node: MountedNode::new::<E>(id, node.handlers, text, style),
                 children: node.children,
                 watches: node.watches,
             })
@@ -370,7 +375,7 @@ pub struct Node<E> {
     watches: Vec<Watch>,
     body: E,
     children: Vec<Child>,
-    click: Option<Click>,
+    pub(crate) handlers: Option<Box<Handlers>>,
 }
 
 /// Wraps a custom layout body in the common element builder.
@@ -380,7 +385,7 @@ pub fn element<E: Element>(body: E) -> Node<E> {
         watches: Vec::new(),
         body,
         children: Vec::new(),
-        click: None,
+        handlers: None,
     }
 }
 
@@ -415,7 +420,7 @@ impl<E: Element> Node<E> {
 
     /// Registers the handler invoked on a direct click.
     pub fn on_click(mut self, click: impl Fn(&mut Context<'_>) -> Result<()> + 'static) -> Self {
-        self.click = Some(Box::new(click));
+        self.handlers.get_or_insert_with(Default::default).click = Some(Box::new(click));
         self
     }
 
