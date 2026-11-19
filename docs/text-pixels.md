@@ -166,11 +166,11 @@ with the window implementation at `6f378a8`.
 | Full replay | 782 µs (748–788 µs) | 1,236 µs | 90,000 pixels |
 | Retained image with clipped replay | 42 µs (38–76 µs) | 96 µs | 2,059 pixels |
 
-The full command list is still recorded and compared on each frame. Damage is
+The CPU window compares complete command lists on each frame. Damage is
 one rectangle, so changes far apart can include the intervening area.
 
 Run the timing workload with
-`cargo test --release -p solor-render-cpu --test meter_updates --offline -- --ignored --nocapture`.
+`cargo test --release -p solor-render-cpu --test meter_updates --offline -- time_mounted_meter_frames --exact --ignored --nocapture`.
 
 In a separate nested Wayland run of the mounted settings example, the initial
 submission reported 260 by 110 pixels. Expanding and collapsing the detail row
@@ -178,3 +178,68 @@ each reported 200 by 32 at (12, 50). Window captures confirmed the row appeared
 and disappeared, and all three buffer submissions passed the readback audit. The
 second submission initialized a fresh shared file, writing 114,400 bytes.
 The third reused a file and wrote 33,040 bytes.
+
+### Static label count
+
+The same meter and four visible labels stay in place. Additional mounted text
+siblings sit below the viewport. A separate check compares all RGBA bytes and
+damage rectangles across the four sizes on the first frame and all 220 updates.
+Each size reports an average of 2,059 damaged device pixels per measured update.
+
+Six pairs of release processes alternated the two builds. The rebuild baseline
+uses the same test with Solor at `0aa6f5b`. Each process ran the label counts in
+ascending and descending order. Each pass discarded 20 updates and measured
+200. Values are medians of the twelve pass statistics per build, in µs.
+Window time includes local submission acknowledgement. A separate mounted view
+times command recording; layout reports zero changed nodes for each update.
+
+| Static labels | Window, rebuild | Window, reuse | Window p95, rebuild / reuse | Record, rebuild / reuse |
+| ---: | ---: | ---: | ---: | ---: |
+| 4 | 40.9 | 39.9 | 63.4 / 61.7 | 0.42 / 0.29 |
+| 64 | 45.1 | 43.1 | 67.4 / 65.4 | 3.55 / 2.45 |
+| 256 | 58.5 | 53.3 | 81.7 / 76.1 | 13.20 / 8.89 |
+| 1,024 | 123.1 | 101.0 | 147.4 / 124.9 | 63.81 / 42.51 |
+
+At 1,024 labels, per-pass window medians ranged from 116.5 to 127.5 µs when
+rebuilding and 94.6 to 103.9 µs with reuse. In a separate warm loop, preparing
+the pointer snapshot took 17.35 µs and 0.05 µs respectively. Both builds in this comparison record each label individually. The four-label window medians overlapped across runs. This workload
+covers steady-state local updates, excluding mount, upload and compositor time.
+
+Run the scaling workload with
+`cargo test --release -p solor-render-cpu --test meter_updates --offline -- time_static_label_scaling --exact --ignored --nocapture`.
+
+### Reusing fixed label commands
+
+A view retains the drawing commands of fixed text labels without backgrounds
+after a second successful recording with the same geometry. Subsequent frames
+copy those commands in paint order. Each cache entry shares the shaped
+paragraph and stores the label's position, content size, foreground and order.
+On x86-64 the entry occupies 40 bytes, or 40 KiB of entries for 1,024 labels,
+excluding vector spare capacity and allocator overhead. Insertion, removal or
+changed geometry discards the cache. Bound text, labels with backgrounds and
+custom elements follow their normal recording paths.
+
+The same six-pair release comparison uses shared pointer geometry in both
+builds. Each measurement below is the median of twelve pass statistics in µs.
+
+| Static labels | Window, individual / cached | Window p95, individual / cached | Record, individual / cached |
+| ---: | ---: | ---: | ---: |
+| 4 | 39.6 / 38.9 | 62.8 / 61.2 | 0.30 / 0.21 |
+| 64 | 44.2 / 41.2 | 66.3 / 63.4 | 2.42 / 0.53 |
+| 256 | 53.3 / 46.5 | 76.6 / 69.2 | 8.73 / 1.75 |
+| 1,024 | 101.3 / 62.8 | 127.6 / 86.9 | 41.47 / 6.09 |
+
+At 1,024 labels, per-pass window medians ranged from 95.7 to 105.4 µs for
+individual recording and 59.4 to 67.5 µs with caching. Damage averaged 2,059
+pixels per frame in both builds. The four-label window medians overlapped.
+
+A separate workload alternated the viewport width between 320 and 321 logical
+pixels every frame with 1,024 labels. Each of six paired processes per build
+discarded 20 updates and timed 200. The median from layout through recording
+and local input-frame acceptance was 125.0 µs for individual recording and
+128.5 µs with caching (per-run medians 122.3–126.9 and 121.6–135.8 µs).
+This workload never reuses a layout, so it exercises the first recording path
+and allocates no label cache entries. It excludes rasterization and upload.
+
+Run the resize workload with
+`cargo test --release -p solor-render-cpu --test meter_updates --offline -- time_resizing_meter --exact --ignored --nocapture`.

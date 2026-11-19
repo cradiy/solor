@@ -169,6 +169,7 @@ struct MountedBackground {
 pub(super) struct MountedNode {
     pub(super) id: NodeId,
     pub(super) offset: usize,
+    pub(super) fixed_label: bool,
     pub(super) text_style: TextStyleRefinement,
     text_color: Rgba,
     background: Option<Box<MountedBackground>>,
@@ -185,10 +186,12 @@ impl MountedNode {
         handlers: Option<Box<Handlers>>,
         text_style: TextStyleRefinement,
         style: Style,
+        fixed_label: bool,
     ) -> Self {
         Self {
             id,
             offset: 0,
+            fixed_label: fixed_label && style.background.is_none(),
             binding_target: None,
             handlers,
             hit_testable: style.appearance.as_deref().and_then(|a| a.pointer_events)
@@ -278,7 +281,10 @@ enum Target<'a> {
 pub struct AnyElement(Install);
 
 impl AnyElement {
-    fn new<E: Element>(make: impl FnOnce(&mut Context<'_>) -> Result<Node<E>> + 'static) -> Self {
+    fn new<E: Element>(
+        fixed_label: bool,
+        make: impl FnOnce(&mut Context<'_>) -> Result<Node<E>> + 'static,
+    ) -> Self {
         Self(Box::new(move |target, cx, units| {
             let mut node = make(cx)?;
             let inherited = match &target {
@@ -317,7 +323,7 @@ impl AnyElement {
                 } => scene.mount_at(parent, index, body)?,
             };
             Ok(Installation {
-                node: MountedNode::new::<E>(id, node.handlers, text, style),
+                node: MountedNode::new::<E>(id, node.handlers, text, style, fixed_label),
                 children: node.children,
                 watches: node.watches,
             })
@@ -400,7 +406,7 @@ impl<E> Styled for Node<E> {
 
 impl<E: Element> IntoElement for Node<E> {
     fn into_element(self) -> AnyElement {
-        AnyElement::new(move |_| Ok(self))
+        AnyElement::new(false, move |_| Ok(self))
     }
 }
 
@@ -493,7 +499,8 @@ pub fn text(content: impl Into<TextContent>) -> impl IntoElement + Styled {
 
 impl IntoElement for Label {
     fn into_element(self) -> AnyElement {
-        AnyElement::new(move |cx| {
+        let fixed = matches!(self.content, TextContent::Fixed(_));
+        AnyElement::new(fixed, move |cx| {
             let (initial, source) = match self.content {
                 TextContent::Fixed(value) => (value, None),
                 TextContent::Bound(signal) => (cx.read(signal)?.clone(), Some(signal)),

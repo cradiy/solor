@@ -122,6 +122,7 @@ fn capture_uses_accepted_bounds_and_ends_on_release_error_or_cancel() -> Result<
         )
     }))?;
     accept(&mut ui, view, 50.0)?;
+    let original = ui.prepare_pointer_frame(view)?;
     let inside = sample(1, 10.0, 8.0);
     let outside = sample(1, 65.0, 25.0);
     ui.dispatch_pointer(view, Down(inside, Primary))?;
@@ -142,6 +143,14 @@ fn capture_uses_accepted_bounds_and_ends_on_release_error_or_cancel() -> Result<
     ui.dispatch_pointer(view, Move(outside))?;
     assert_eq!(*ui.context().read(value)?, 1.5);
     ui.accept_pointer_frame(resized)?;
+    ui.dispatch_pointer(view, Move(outside))?;
+    assert_eq!(*ui.context().read(value)?, 0.75);
+    // A delayed submission may present the old geometry after the resize.
+    ui.accept_pointer_frame(original)?;
+    ui.dispatch_pointer(view, Move(outside))?;
+    assert_eq!(*ui.context().read(value)?, 1.5);
+    let current = ui.record_frame(view)?.into_pointer_frame();
+    ui.accept_pointer_frame(current)?;
     ui.dispatch_pointer(view, Move(outside))?;
     assert_eq!(*ui.context().read(value)?, 0.75);
     ui.dispatch_pointer(view, Down(outside, Secondary))?;
@@ -195,6 +204,7 @@ fn retired_press_and_stale_frontmost_hit_never_retarget() -> Result<()> {
     assert_eq!(downs.get(), 1);
     ui.context().set(open, false)?;
     ui.flush()?;
+    assert!(ui.prepare_pointer_frame(view).is_err());
     ui.layout(
         view,
         Size {
@@ -208,6 +218,11 @@ fn retired_press_and_stale_frontmost_hit_never_retarget() -> Result<()> {
     ui.dispatch_pointer(view, Down(p, Primary))?;
     ui.dispatch_pointer(view, Up(p, Primary))?;
     assert_eq!(*ui.context().read(behind)?, 0);
+    let uncovered = ui.record_frame(view)?.into_pointer_frame();
+    ui.accept_pointer_frame(uncovered)?;
+    ui.dispatch_pointer(view, Down(p, Primary))?;
+    ui.dispatch_pointer(view, Up(p, Primary))?;
+    assert_eq!(*ui.context().read(behind)?, 1);
     ui.context().set(open, true)?;
     accept(&mut ui, view, 50.0)?;
     ui.dispatch_pointer(view, Up(p, Primary))?;

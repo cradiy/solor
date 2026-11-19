@@ -1,11 +1,11 @@
 //! Immutable hit geometry paired with a host submission.
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context as _, ensure};
 
 use super::{PointerButton, PointerEvent, PointerSample};
 use crate::{
-    NodeId, Result, Ui, ViewId,
+    Instance, NodeId, Result, Ui, ViewId,
     layout::{Origin, Size},
 };
 
@@ -32,26 +32,32 @@ struct Entry {
 /// Immutable input geometry prepared alongside a view's pending presentation.
 pub struct PointerFrame {
     pub(super) view: ViewId,
+    geometry: Arc<HitGeometry>,
+}
+
+pub(super) struct HitGeometry {
     entries: Vec<Entry>,
     interactive: HashMap<NodeId, HitBox>,
 }
 
 impl PointerFrame {
     pub(crate) fn paint_order(&self) -> impl Iterator<Item = (NodeId, Origin)> + '_ {
-        self.entries
+        self.geometry
+            .entries
             .iter()
             .map(|entry| (entry.node, entry.area.origin))
     }
 
     pub(super) fn has_recipient(&self, node: NodeId) -> bool {
-        self.interactive.contains_key(&node)
+        self.geometry.interactive.contains_key(&node)
     }
 
     pub(super) fn hit(&self, p: Origin) -> Option<(NodeId, NodeId)> {
-        if !self.entries.first()?.area.contains(p) {
+        if !self.geometry.entries.first()?.area.contains(p) {
             return None;
         }
         let hit = self
+            .geometry
             .entries
             .iter()
             .rev()
@@ -65,7 +71,7 @@ impl PointerFrame {
         sample: PointerSample,
         button: Option<PointerButton>,
     ) -> Option<PointerEvent> {
-        let area = self.interactive.get(&node)?;
+        let area = self.geometry.interactive.get(&node)?;
         Some(PointerEvent {
             sample,
             button,
@@ -83,8 +89,24 @@ impl Ui {
     pub fn prepare_pointer_frame(&self, view: ViewId) -> Result<PointerFrame> {
         let instance = self.instance(view)?;
         ensure!(!instance.scene.is_pending(), "layout pending");
-        let mut frame = PointerFrame {
+        let cache = &instance.pointer.geometry;
+        let geometry = match cache.get() {
+            Some(geometry) => geometry,
+            None => {
+                let built = HitGeometry::from_layout(instance)?;
+                cache.get_or_init(|| Arc::new(built))
+            }
+        };
+        Ok(PointerFrame {
             view,
+            geometry: geometry.clone(),
+        })
+    }
+}
+
+impl HitGeometry {
+    fn from_layout(instance: &Instance) -> Result<Self> {
+        let mut frame = Self {
             entries: Vec::with_capacity(instance.nodes.len()),
             interactive: HashMap::new(),
         };

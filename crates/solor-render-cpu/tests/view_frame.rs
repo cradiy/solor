@@ -147,3 +147,55 @@ fn late_recording_failure_preserves_earlier_nodes_repaint_requests() -> Result<(
     assert_eq!(frame.draws().len(), 1);
     Ok(())
 }
+
+#[test]
+fn fixed_label_recording_matches_live_text_across_edits_and_relayout() -> Result<()> {
+    use solor::{SharedString, TextContent};
+
+    let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
+    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    let fixed = ui.context().signal(SharedString::from("Output level"));
+    let value = ui.context().signal(SharedString::from("A"));
+    let background = ui.context().signal(Fill::Solid(rgb(0xffffff)));
+    let open = ui.context().signal(false);
+    let panel = |use_fixed: bool| {
+        let label = move || {
+            text(if use_fixed {
+                TextContent::from("Output level")
+            } else {
+                TextContent::Bound(fixed)
+            })
+        };
+        component(move |_| {
+            div()
+                .p(px(2.5))
+                .child_when(open, move || label().text_color(rgb(0x903010)))
+                .child(label().text_color(rgb(0x152030)))
+                .child(text(value))
+                .child(label().bg(background))
+                .child(label().p(px(1.25)))
+        })
+    };
+    let cached = ui.mount(panel(true))?;
+    let live = ui.mount(panel(false))?;
+    for (width, visible, content, color) in [
+        (120, false, "A", 0xffffff),
+        (120, false, "B", 0x233040),
+        (120, true, "B", 0x233040),
+        (46, true, "Output level", 0xffffff),
+        (46, false, "A", 0x233040),
+    ] {
+        ui.context().set(value, SharedString::from(content))?;
+        ui.context().set(open, visible)?;
+        ui.context().set(background, Fill::Solid(rgb(color)))?;
+        ui.flush()?;
+        let size = DeviceSize { width, height: 180 }.at_unit_scale();
+        ui.layout(cached, size)?;
+        ui.layout(live, size)?;
+        let reference = ui.record_frame(live)?;
+        for _ in 0..3 {
+            assert_eq!(ui.record_frame(cached)?.draws(), reference.draws());
+        }
+    }
+    Ok(())
+}

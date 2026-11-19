@@ -1,12 +1,12 @@
 //! Synchronous direct delivery to live nodes from accepted hit geometry.
-use std::collections::HashMap;
+use std::{cell::OnceCell, collections::HashMap, sync::Arc};
 
 use crate::state::Runtime;
 use anyhow::{Context as _, ensure};
 
 use super::{
     Handlers, PointerButton, PointerDownContext, PointerEvent, PointerFrame, PointerId,
-    PointerInput, PointerSample,
+    PointerInput, PointerSample, frame::HitGeometry,
 };
 use crate::{
     Context, Instance, NodeId, Result, Ui, ViewId, element::MountedNode, text::SharedEngine,
@@ -22,10 +22,15 @@ struct Press {
 #[derive(Default)]
 pub(crate) struct PointerRouter {
     pub(super) frame: Option<PointerFrame>,
+    pub(super) geometry: OnceCell<Arc<HitGeometry>>,
     presses: HashMap<PointerId, Vec<Press>>,
 }
 
 impl PointerRouter {
+    pub(crate) fn invalidate_geometry(&mut self) {
+        self.geometry.take();
+    }
+
     pub(crate) fn retire(&mut self, node: NodeId) {
         self.presses.retain(|_, presses| {
             presses.retain(|press| press.owner != node);

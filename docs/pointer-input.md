@@ -62,6 +62,11 @@ failed submission's snapshot. Input before the first acceptance has no target.
 If the newly accepted snapshot omits a live press owner, acceptance cancels
 that sequence. A cancel callback error leaves the new snapshot in effect.
 
+Recordings of the same mounted tree share its immutable hit geometry until a
+node is inserted or removed, or layout publishes changed geometry. The next
+recording then builds a new snapshot. Accepting a submission selects its own
+snapshot for input, even if the view has already prepared a different layout.
+
 Hit testing uses the view rectangle and axis-aligned border boxes, in reverse
 declaration paint order. `PointerEvents::None` skips that box as a target;
 its children remain eligible. Captured motion looks up its owner directly.

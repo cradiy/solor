@@ -147,6 +147,7 @@ type LabelUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), Signal<SharedString>>>>
 
 struct Instance {
     pointer: pointer::PointerRouter,
+    fixed_labels: frame::FixedLabels,
     units: UnitResolver,
     repaints: Repaints,
     scene: Scene,
@@ -164,6 +165,11 @@ struct Attachment<'a> {
 }
 
 impl Instance {
+    fn invalidate_geometry(&mut self) {
+        self.pointer.invalidate_geometry();
+        self.fixed_labels = Default::default();
+    }
+
     fn update_label(&mut self, node: NodeId, value: &SharedString) -> Result<()> {
         if self.scene.body::<StyledBody<Text>>(node)?.content.content() != value.as_str() {
             Text::validate_content(value)?;
@@ -273,6 +279,7 @@ impl Instance {
         let id = node.id;
         self.bodies.insert(id, node);
         self.nodes.insert(path.to_vec(), id);
+        self.invalidate_geometry();
         self.finish_attachment(id, path, watches, children, cx)?;
         Ok(())
     }
@@ -282,6 +289,7 @@ impl Instance {
             return Ok(());
         };
         self.scene.unmount_subtree(*node)?;
+        self.invalidate_geometry();
         // Keep this slot's subscription so a later opening can mount fresh content.
         for key in subtree_keys(&self.branches, path)
             .into_iter()
@@ -418,6 +426,7 @@ impl Ui {
         let root = scene.root();
         let mut instance = Instance {
             pointer: Default::default(),
+            fixed_labels: Default::default(),
             units,
             repaints: Repaints::default(),
             scene,
@@ -575,7 +584,11 @@ impl Ui {
             .instances
             .get_mut(&view)
             .ok_or(crate::tree::TreeError::InvalidNode(view.0))?;
-        Ok(instance.scene.run_assigned(size, false)?)
+        let changed = instance.scene.run_assigned(size, false)?;
+        if changed != 0 {
+            instance.invalidate_geometry();
+        }
+        Ok(changed)
     }
 
     /// Published geometry in parent-local coordinates after a completed layout.

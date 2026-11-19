@@ -59,6 +59,10 @@ impl Element for Meter {
 }
 
 fn panel(cx: &mut Context<'_>) -> impl IntoElement + use<> {
+    panel_with_offscreen_labels(cx, 0)
+}
+
+fn panel_with_offscreen_labels(cx: &mut Context<'_>, extra: usize) -> impl IntoElement + use<> {
     let level = cx.signal(0u16);
     div()
         .flex_col()
@@ -83,6 +87,9 @@ fn panel(cx: &mut Context<'_>) -> impl IntoElement + use<> {
                 "System device",
             ]
             .map(text),
+        )
+        .children(
+            (0..extra).map(|i| text("Output level").when(i == 0, |label| label.mt(SIZE.height))),
         )
 }
 
@@ -142,7 +149,18 @@ fn meter_damage_covers_old_and_new_ink_and_matches_full_replay() -> Result<()> {
 #[test]
 #[ignore = "release timing workload"]
 fn time_mounted_meter_frames() -> Result<()> {
-    let mut window = CpuWindow::mount(Ui::with_font(FONT.to_vec(), "en")?, component(panel))?;
+    time_window(0)
+}
+
+fn scaled_window(extra: usize) -> Result<CpuWindow> {
+    CpuWindow::mount(
+        Ui::with_font(FONT.to_vec(), "en")?,
+        component(move |cx| panel_with_offscreen_labels(cx, extra)),
+    )
+}
+
+fn time_window(extra: usize) -> Result<()> {
+    let mut window = scaled_window(extra)?;
     window.frame(SIZE, SCALE)?;
     window.frame_submitted()?;
     let mut times = Vec::new();
@@ -162,11 +180,100 @@ fn time_mounted_meter_frames() -> Result<()> {
     }
     times.sort_unstable();
     println!(
-        "median_ns={} p95_ns={} damaged_pixels_per_frame={:.1}",
+        "labels={} median_ns={} p95_ns={} damaged_pixels_per_frame={:.1}",
+        4 + extra,
         times[99].as_nanos(),
         times[189].as_nanos(),
         total_area as f64 / 200.0
     );
+    Ok(())
+}
+
+#[test]
+fn offscreen_labels_preserve_meter_pixels_and_damage() -> Result<()> {
+    let mut baseline = scaled_window(0)?;
+    let mut others = [
+        scaled_window(60)?,
+        scaled_window(252)?,
+        scaled_window(1020)?,
+    ];
+    for n in 0..=220 {
+        if n > 0 {
+            baseline.event(WindowEvent::Pointer(movement(n)))?;
+        }
+        let expected = baseline.frame(SIZE, SCALE)?;
+        for window in &mut others {
+            if n > 0 {
+                window.event(WindowEvent::Pointer(movement(n)))?;
+            }
+            let frame = window.frame(SIZE, SCALE)?;
+            assert!(frame.rgba == expected.rgba, "different pixels on frame {n}");
+            assert_eq!(frame.damage, expected.damage);
+            window.frame_submitted()?;
+        }
+        baseline.frame_submitted()?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "release timing workload"]
+fn time_static_label_scaling() -> Result<()> {
+    for extra in [0, 60, 252, 1020, 1020, 252, 60, 0] {
+        time_window(extra)?;
+        let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+        let view = ui.mount(component(move |cx| panel_with_offscreen_labels(cx, extra)))?;
+        ui.layout(view, SIZE)?;
+        let first = ui.record_frame(view)?;
+        assert_eq!(
+            first
+                .draws()
+                .iter()
+                .filter(|d| matches!(d, solor::Draw::Text { .. }))
+                .count(),
+            4 + extra
+        );
+        ui.accept_pointer_frame(first.into_pointer_frame())?;
+        let mut update = Vec::with_capacity(200);
+        let mut record = Vec::with_capacity(200);
+        for n in 1..=220 {
+            let start = Instant::now();
+            ui.dispatch_pointer(view, movement(n))?;
+            ui.flush()?;
+            let changed = ui.layout(view, SIZE)?;
+            let flushed = Instant::now();
+            let frame = ui.record_frame(view)?;
+            black_box(frame.draws());
+            let recorded = Instant::now();
+            ui.accept_pointer_frame(frame.into_pointer_frame())?;
+            assert_eq!(changed, 0);
+            if n > 20 {
+                update.push(flushed - start);
+                record.push(recorded - flushed);
+            }
+        }
+        // Time snapshot preparation separately so probing it cannot warm the recording pass.
+        let mut snapshot = Vec::with_capacity(200);
+        for n in 1..=220 {
+            let start = Instant::now();
+            let pointer = black_box(ui.prepare_pointer_frame(view)?);
+            let elapsed = start.elapsed();
+            drop(pointer);
+            if n > 20 {
+                snapshot.push(elapsed);
+            }
+        }
+        snapshot.sort_unstable();
+        update.sort_unstable();
+        record.sort_unstable();
+        println!(
+            "labels={} input_flush_layout_ns={} record_ns={} snapshot_probe_ns={}",
+            4 + extra,
+            update[99].as_nanos(),
+            record[99].as_nanos(),
+            snapshot[99].as_nanos()
+        );
+    }
     Ok(())
 }
 
@@ -228,5 +335,39 @@ fn repair_replays_overlapping_text_and_rejected_pixels_require_full_damage() -> 
             window.frame_submitted()?;
         }
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "release timing workload"]
+fn time_resizing_meter() -> Result<()> {
+    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let view = ui.mount(component(|cx| panel_with_offscreen_labels(cx, 1020)))?;
+    let mut recordings = Vec::with_capacity(200);
+    let mut updates = Vec::with_capacity(200);
+    for n in 0..220 {
+        let size = Size {
+            width: SIZE.width + px((n % 2) as f32),
+            ..SIZE
+        };
+        let start = Instant::now();
+        ui.layout(view, size)?;
+        let laid_out = Instant::now();
+        let frame = ui.record_frame(view)?;
+        black_box(frame.draws());
+        let recorded = Instant::now();
+        ui.accept_pointer_frame(frame.into_pointer_frame())?;
+        if n >= 20 {
+            recordings.push(recorded - laid_out);
+            updates.push(start.elapsed());
+        }
+    }
+    recordings.sort_unstable();
+    updates.sort_unstable();
+    println!(
+        "labels=1024 resize_record_ns={} resize_update_ns={}",
+        recordings[99].as_nanos(),
+        updates[99].as_nanos()
+    );
     Ok(())
 }
