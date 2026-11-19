@@ -7,6 +7,7 @@ use crate::pixels::{Clip, DeviceSize, RasterScale, Surface, TextRaster, blend};
 use solor::{
     Draw, Fill, Pixels, ViewFrame,
     layout::{Origin, Size},
+    style::Corners,
 };
 
 impl Surface {
@@ -43,9 +44,9 @@ impl Surface {
                     origin,
                     size,
                     fill,
-                    radius,
+                    corner_radii,
                 } => {
-                    self.fill_box(*origin, *size, fill, *radius, scale, bounds)?;
+                    self.fill_box(*origin, *size, fill, *corner_radii, scale, bounds)?;
                 }
                 Draw::Text {
                     origin,
@@ -77,7 +78,7 @@ impl Surface {
         origin: Origin,
         size: Size,
         fill: &Fill,
-        radius: Pixels,
+        corner_radii: Corners<Pixels>,
         scale: RasterScale,
         clip: Clip,
     ) -> Result<()> {
@@ -85,12 +86,21 @@ impl Surface {
         let top = f64::from(origin.y) * scale.0;
         let width = f64::from(size.width) * scale.0;
         let height = f64::from(size.height) * scale.0;
-        let radius = (f64::from(radius) * scale.0).min(width.min(height) / 2.0);
+        let radii = corner_radii.map(|radius| f64::from(radius) * scale.0);
+        let top_radius = radii.top_left.max(radii.top_right);
+        let bottom_radius = radii.bottom_left.max(radii.bottom_right);
         for y in clip.top..clip.bottom {
+            let dy = y as f64 - top;
+            let row_has_arcs = (top_radius > 0.0 && dy < top_radius)
+                || (bottom_radius > 0.0 && height - dy - 1.0 < bottom_radius);
+            let row_height = ((dy + 1.0).min(height) - dy.max(0.0)).clamp(0.0, 1.0);
             for x in clip.left..clip.right {
                 let dx = x as f64 - left;
-                let dy = y as f64 - top;
-                let coverage = coverage(dx, dy, width, height, radius);
+                let coverage = if row_has_arcs {
+                    coverage(dx, dy, width, height, row_height, radii)
+                } else {
+                    rectangle_coverage(dx, width, row_height)
+                };
                 if coverage == 0 {
                     continue;
                 }
@@ -125,10 +135,20 @@ fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
         Draw::Fill {
             origin,
             size,
-            radius,
+            corner_radii,
             ..
         } => {
-            if !size.width.is_extent() || !size.height.is_extent() || !radius.is_extent() {
+            if !size.width.is_extent()
+                || !size.height.is_extent()
+                || [
+                    corner_radii.top_left,
+                    corner_radii.top_right,
+                    corner_radii.bottom_right,
+                    corner_radii.bottom_left,
+                ]
+                .iter()
+                .any(|r| !r.is_extent())
+            {
                 return Err(Error::other("invalid fill extent"));
             }
             if size.width.get() == 0.0 || size.height.get() == 0.0 {
@@ -191,23 +211,41 @@ pub(super) fn damage(
     Ok(area)
 }
 
-// Exact rectangle area along straight edges. Sample only the corner regions.
-fn coverage(x: f64, y: f64, width: f64, height: f64, radius: f64) -> u8 {
-    if radius == 0.0
-        || (x >= radius && x + 1.0 <= width - radius)
-        || (y >= radius && y + 1.0 <= height - radius)
+fn rectangle_coverage(x: f64, width: f64, row_height: f64) -> u8 {
+    let w = ((x + 1.0).min(width) - x.max(0.0)).clamp(0.0, 1.0);
+    (w * row_height * 255.0).round() as u8
+}
+
+// Sample only the corner regions.
+fn coverage(x: f64, y: f64, width: f64, height: f64, row_height: f64, radii: Corners<f64>) -> u8 {
+    let right = width - x;
+    let bottom = height - y;
+    let touches = |dx: f64, dy: f64, r: f64| r > 0.0 && dx < r && dy < r;
+    if !touches(x, y, radii.top_left)
+        && !touches(right - 1.0, y, radii.top_right)
+        && !touches(right - 1.0, bottom - 1.0, radii.bottom_right)
+        && !touches(x, bottom - 1.0, radii.bottom_left)
     {
-        let w = ((x + 1.0).min(width) - x.max(0.0)).clamp(0.0, 1.0);
-        let h = ((y + 1.0).min(height) - y.max(0.0)).clamp(0.0, 1.0);
-        return (w * h * 255.0).round() as u8;
+        return rectangle_coverage(x, width, row_height);
     }
+
+    let inside_corner = |dx: f64, dy: f64, r: f64| {
+        dx >= r || dy >= r || (r - dx).powi(2) + (r - dy).powi(2) <= r * r
+    };
     let mut inside = 0;
     for sy in [0.125, 0.375, 0.625, 0.875] {
         for sx in [0.125, 0.375, 0.625, 0.875] {
-            let (px, py) = (x + sx, y + sy);
-            let dx = (radius - px).max(px - (width - radius)).max(0.0);
-            let dy = (radius - py).max(py - (height - radius)).max(0.0);
-            inside += u16::from(dx * dx + dy * dy <= radius * radius);
+            let (left, top, right, bottom) = (x + sx, y + sy, right - sx, bottom - sy);
+            inside += u16::from(
+                left >= 0.0
+                    && right >= 0.0
+                    && top >= 0.0
+                    && bottom >= 0.0
+                    && inside_corner(left, top, radii.top_left)
+                    && inside_corner(right, top, radii.top_right)
+                    && inside_corner(right, bottom, radii.bottom_right)
+                    && inside_corner(left, bottom, radii.bottom_left),
+            );
         }
     }
     ((inside * 255 + 8) / 16) as u8

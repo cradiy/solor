@@ -11,7 +11,7 @@ use crate::layout::{FlexDirection, FlexLayout};
 use crate::length::UnitResolver;
 use crate::pointer::Handlers;
 use crate::style::PointerEvents;
-use crate::style::{Background, TextStyleRefinement};
+use crate::style::{Background, Corners, TextStyleRefinement};
 use crate::text::{Paragraph, Text, TextStyle};
 use crate::{Fill, Pixels, Rgba, Style, StyleRefinement, Styled, StyledBody, px};
 
@@ -115,8 +115,8 @@ pub enum Draw {
         size: Size,
         /// Color or gradient covering the rectangle.
         fill: Fill,
-        /// Radius of the four corners in logical pixels.
-        radius: Pixels,
+        /// Circular radii in logical pixels, fitted to the fill bounds.
+        corner_radii: Corners<Pixels>,
     },
     /// Draws a shaped paragraph.
     Text {
@@ -167,7 +167,7 @@ impl PaintContext<'_> {
             origin: self.origin,
             size,
             fill: fill.into(),
-            radius: px(0.0),
+            corner_radii: Corners::default(),
         });
     }
 }
@@ -176,7 +176,7 @@ pub(super) type Click = Box<dyn Fn(&mut Context<'_>) -> Result<()>>;
 
 struct MountedBackground {
     source: Background,
-    radius: Pixels,
+    corner_radii: Corners<Pixels>,
 }
 
 /// When an element records new drawing commands.
@@ -255,7 +255,7 @@ impl MountedNode {
             background: style.background.map(|source| {
                 Box::new(MountedBackground {
                     source,
-                    radius: style.corner_radii.uniform().unwrap_or(px(0.0)),
+                    corner_radii: style.corner_radii,
                 })
             }),
             owned: Vec::new(),
@@ -301,15 +301,11 @@ impl MountedNode {
                 Background::Fixed(fill) => fill.clone(),
                 Background::Bound(signal) => cx.read(*signal)?.clone(),
             };
-            let radius = px(paint
-                .radius
-                .get()
-                .min(size.width.min(size.height).get() * 0.5));
             cx.commands.push(Draw::Fill {
                 origin: Origin::default(),
                 size,
                 fill,
-                radius,
+                corner_radii: paint.corner_radii.fit_to(size),
             });
         }
         let result = (self.record)(scene, self.id, &mut cx).map(|()| cx.next_frame);

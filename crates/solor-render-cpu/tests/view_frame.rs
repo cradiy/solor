@@ -290,3 +290,67 @@ fn overlapping_subtrees_share_paint_and_accepted_hit_order() -> Result<()> {
     assert_eq!(click(&mut ui)?, 3);
     Ok(())
 }
+
+#[test]
+fn asymmetric_background_radii_fit_each_allocation_and_survive_replay() -> Result<()> {
+    use solor::{Draw, rem, style::Corners};
+
+    let mut ui = Ui::new();
+    let view = ui.mount(component(|_| {
+        div()
+            .bg(rgb(0))
+            .rounded_tl(rem(1.5))
+            .rounded_tr(px(8.0))
+            .rounded_br(px(4.0))
+    }))?;
+    let radii = Corners {
+        top_left: px(24.0),
+        top_right: px(8.0),
+        bottom_right: px(4.0),
+        bottom_left: px(0.0),
+    };
+    let mut held = None;
+    for (width, height, factor) in [(16, 24, 0.5), (32, 6, 0.25), (32, 24, 1.0)] {
+        let size = DeviceSize { width, height }.at_unit_scale();
+        ui.layout(view, size)?;
+        let frame = ui.record_frame(view)?;
+        assert!(matches!(frame.draws(), [Draw::Fill { corner_radii, .. }]
+            if *corner_radii == radii.map(|r| r * factor)));
+        if held.is_none() {
+            held = Some(frame);
+        }
+    }
+
+    let frame = held.unwrap();
+    let scale = RasterScale(1.5);
+    let image = Surface::draw_view(
+        &frame,
+        DeviceSize {
+            width: 24,
+            height: 36,
+        },
+        scale,
+    )?;
+    // The large top-left arc extends beyond the middle of the top edge.
+    assert_eq!(pixel(&image, 8, 0), [255; 4]);
+    assert_eq!(pixel(&image, 18, 0), [0, 0, 0, 255]);
+    assert_eq!(pixel(&image, 23, 0), [255; 4]);
+    assert_eq!(pixel(&image, 0, 35), [0, 0, 0, 255]);
+    assert_eq!(pixel(&image, 23, 35), [255; 4]);
+    let edge = pixel(&image, 22, 35);
+    assert!(edge[0] > 0 && edge[0] < 255);
+    let crop = Surface::draw_view(
+        &frame,
+        DeviceSize {
+            width: 10,
+            height: 8,
+        },
+        scale,
+    )?;
+    for y in 0..8 {
+        for x in 0..10 {
+            assert_eq!(pixel(&crop, x, y), pixel(&image, x, y));
+        }
+    }
+    Ok(())
+}

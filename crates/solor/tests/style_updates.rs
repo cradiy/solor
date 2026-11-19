@@ -1,6 +1,6 @@
 //! Style resolution and retained update behavior.
 use anyhow::Result;
-use solor::px;
+use solor::{px, style::Corners};
 use std::rc::Rc;
 
 use solor::{
@@ -48,7 +48,7 @@ fn conditional_label_inherits_style_and_keeps_identity_when_it_wraps() -> Result
     ui.paint(view, root, &mut commands)?;
     ui.paint(view, title, &mut commands)?;
     assert!(
-        matches!(&commands[..], [Draw::Fill{fill: Fill::Solid(c), radius, ..}, Draw::Text{color, ..}] if *radius == px(18.0) && *c == ACCENT && *color == ACCENT)
+        matches!(&commands[..], [Draw::Fill{fill: Fill::Solid(c), corner_radii, ..}, Draw::Text{color, ..}] if *corner_radii == Corners::all(px(18.0)) && *c == ACCENT && *color == ACCENT)
     );
 
     ui.context().set(open, true)?;
@@ -312,7 +312,9 @@ fn fractional_style_lengths_survive_cascade_text_shaping_and_paint() -> Result<(
     let mut commands = vec![];
     ui.paint(view, label, &mut commands)?;
     let [
-        Draw::Fill { size, radius, .. },
+        Draw::Fill {
+            size, corner_radii, ..
+        },
         Draw::Text {
             origin, paragraph, ..
         },
@@ -328,7 +330,7 @@ fn fractional_style_lengths_survive_cascade_text_shaping_and_paint() -> Result<(
         }
     );
     assert_eq!(origin.x, px(1.25));
-    assert_eq!(*radius, px(3.5));
+    assert_eq!(*corner_radii, Corners::all(px(3.5)));
     assert_eq!(paragraph.style.size, px(14.5));
     assert_eq!(paragraph.lines[0].height, 20.25);
     for invalid in [-0.25, f32::NAN, f32::INFINITY] {

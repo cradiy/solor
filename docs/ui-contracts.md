@@ -121,8 +121,10 @@ layer is zero. Equal layers keep declaration order. A child's layer applies
 within its parent, so moving a card in front carries its labels and controls
 with it. Flex placement continues to use the declared layout direction.
 
-The background painter uses a
-uniform corner radius and draws square corners for mixed radii. Additional
+Each background corner has an independent circular radius. If two adjacent
+radii exceed their shared edge, the frame scales all four by the same factor
+until they fit. The CPU renderer applies this shape to solid and gradient
+backgrounds. Children and pointer hit boxes use their own bounds. Additional
 layout, paint, text shaping and input behaviors in this table are declarations
 pending engine support. In particular, `.absolute().top(px(4.0)).right(px(8.0))`
 expresses placement but does not yet move a child or remove it from column flow.

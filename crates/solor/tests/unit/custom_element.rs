@@ -144,7 +144,7 @@ fn custom_element_layout_paint_and_input_follow_the_mounted_instance() -> Result
                     height: TRACK
                 },
                 fill: [40, 110, 190, 255].into(),
-                radius: crate::px(0.0)
+                corner_radii: Default::default()
             }]
         );
     }
@@ -287,13 +287,13 @@ fn failed_paint_keeps_prior_commands_and_rejects_a_retired_signal() -> Result<()
                 origin: Origin::default(),
                 size,
                 fill: [0; 4].into(),
-                radius: crate::px(0.0)
+                corner_radii: Default::default()
             },
             Draw::Fill {
                 origin: Origin::default(),
                 size,
                 fill: [255; 4].into(),
-                radius: crate::px(0.0)
+                corner_radii: Default::default()
             }
         ]
     );

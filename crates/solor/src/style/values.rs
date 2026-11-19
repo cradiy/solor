@@ -165,8 +165,34 @@ impl<T: Copy> Corners<T> {
     }
 }
 
-impl<T: Copy + PartialEq> Corners<T> {
-    pub(crate) fn uniform(self) -> Option<T> {
-        (self == Corners::all(self.top_left)).then_some(self.top_left)
+impl<T> Corners<T> {
+    /// Transforms each value while preserving its corner.
+    pub fn map<U>(self, mut f: impl FnMut(T) -> U) -> Corners<U> {
+        Corners {
+            top_left: f(self.top_left),
+            top_right: f(self.top_right),
+            bottom_right: f(self.bottom_right),
+            bottom_left: f(self.bottom_left),
+        }
+    }
+}
+
+impl Corners<crate::Pixels> {
+    pub(crate) fn fit_to(self, size: crate::layout::Size) -> Self {
+        let r = self.map(f64::from);
+        let horizontal = (r.top_left + r.top_right).max(r.bottom_left + r.bottom_right);
+        let vertical = (r.top_left + r.bottom_left).max(r.top_right + r.bottom_right);
+        let mut factor = 1.0_f64;
+        if horizontal > f64::from(size.width) {
+            factor = f64::from(size.width) / horizontal;
+        }
+        if vertical > f64::from(size.height) {
+            factor = factor.min(f64::from(size.height) / vertical);
+        }
+        if factor == 1.0 {
+            self
+        } else {
+            r.map(|radius| crate::px((radius * factor) as f32))
+        }
     }
 }
