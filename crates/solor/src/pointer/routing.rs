@@ -154,9 +154,10 @@ impl Delivery<'_> {
         if button == PointerButton::Primary
             && capture.is_none()
             && !captured
-            && handlers.control == Some(WindowControl::Drag)
+            && let Some(control @ (WindowControl::Drag | WindowControl::Resize(_))) =
+                handlers.control
         {
-            return Ok(Some(WindowControl::Drag));
+            return Ok(Some(control));
         }
         let eligible = button == PointerButton::Primary
             && capture.is_none()

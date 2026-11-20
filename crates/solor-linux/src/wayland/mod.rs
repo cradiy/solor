@@ -20,6 +20,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 
 use buffer::{Buffer, PixelOrder};
 use solor::{
+    ResizeEdge,
     layout::Size,
     platform::{Platform, WindowControl, WindowEvent, WindowHandler, WindowOptions},
     raster::{Clip, Damage, DeviceSize, RasterFrame, RasterScale, Rgba8},
@@ -253,6 +254,22 @@ impl Window {
                     Some(WindowControl::Drag) => {
                         if let Some((seat, serial)) = press {
                             self.top._move(&seat, serial);
+                        }
+                    }
+                    Some(WindowControl::Resize(edge)) => {
+                        if let Some((seat, serial)) = press {
+                            use xdg_toplevel::ResizeEdge as XdgEdge;
+                            let edge = match edge {
+                                ResizeEdge::Top => XdgEdge::Top,
+                                ResizeEdge::TopRight => XdgEdge::TopRight,
+                                ResizeEdge::Right => XdgEdge::Right,
+                                ResizeEdge::BottomRight => XdgEdge::BottomRight,
+                                ResizeEdge::Bottom => XdgEdge::Bottom,
+                                ResizeEdge::BottomLeft => XdgEdge::BottomLeft,
+                                ResizeEdge::Left => XdgEdge::Left,
+                                ResizeEdge::TopLeft => XdgEdge::TopLeft,
+                            };
+                            self.top.resize(&seat, serial, edge);
                         }
                     }
                     Some(WindowControl::ToggleDecorations) => {

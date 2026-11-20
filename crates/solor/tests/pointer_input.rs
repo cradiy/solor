@@ -496,3 +496,50 @@ fn scroll_respects_clipping_and_keeps_a_retired_leaf_from_exposing_its_parent() 
     assert_eq!(*ui.context().read(parent)?, 2);
     Ok(())
 }
+
+#[test]
+fn resize_grip_delegates_to_children_and_respects_pointer_capture() -> Result<()> {
+    use solor::{ResizeEdge, WindowControl};
+
+    let mut ui = Ui::new();
+    let activated = ui.context().signal(false);
+    let capture = ui.context().signal(false);
+    let view = ui.mount(component(|_| {
+        div()
+            .window_resize_region(ResizeEdge::BottomRight)
+            .on_pointer_down(move |_, cx| {
+                if *cx.read(capture)? {
+                    cx.capture_pointer();
+                }
+                Ok(())
+            })
+            .child(
+                div()
+                    .size(px(10.0))
+                    .on_click(move |cx| cx.set(activated, true)),
+            )
+    }))?;
+    accept(&mut ui, view, 80.0)?;
+    let grip = sample(1, 40.0, 20.0);
+    let button = sample(1, 5.0, 5.0);
+
+    for input in [
+        Down(button, Primary),
+        Up(button, Primary),
+        Down(grip, Secondary),
+        Up(grip, Secondary),
+    ] {
+        assert_eq!(ui.dispatch_pointer(view, input)?, None);
+    }
+    assert!(*ui.context().read(activated)?);
+    assert_eq!(
+        ui.dispatch_pointer(view, Down(grip, Primary))?,
+        Some(WindowControl::Resize(ResizeEdge::BottomRight))
+    );
+    assert_eq!(ui.dispatch_pointer(view, Up(grip, Primary))?, None);
+    ui.context().set(capture, true)?;
+    for input in [Down(grip, Primary), Move(button), Up(button, Primary)] {
+        assert_eq!(ui.dispatch_pointer(view, input)?, None);
+    }
+    Ok(())
+}

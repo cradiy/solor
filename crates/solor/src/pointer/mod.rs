@@ -213,6 +213,11 @@ impl<E: crate::Element> crate::Node<E> {
         window_maximize_button => ToggleMaximize;
     }
 
+    /// Starts an interactive window resize from the given edge or corner on primary press.
+    pub fn window_resize_region(self, edge: crate::ResizeEdge) -> Self {
+        self.window_control(crate::WindowControl::Resize(edge))
+    }
+
     /// Assigns a native window operation to this element. Interactive children receive their own input.
     pub fn window_control(mut self, control: crate::WindowControl) -> Self {
         self.handlers.get_or_insert_with(Default::default).control = Some(control);

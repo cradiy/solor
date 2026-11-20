@@ -4,8 +4,8 @@ mod specimens;
 
 use anyhow::Result;
 use solor::{
-    Context, Div, Fill, IntoElement, Render, Rgba, Signal, Styled, Ui, color_stop, component, div,
-    linear_gradient, px, rgb, text,
+    Context, Div, Fill, IntoElement, Render, ResizeEdge, Rgba, Signal, Styled, Ui, color_stop,
+    component, div, linear_gradient, px, rgb, text,
 };
 
 const PAPER: Rgba = rgb(0xf8f7f2);
@@ -123,7 +123,7 @@ pub fn gallery() -> Result<(Ui, impl Render)> {
                 .justify_between()
                 .bg(INK)
                 .px(px(18.0))
-                .h(px(58.0))
+                .h(px(53.0))
                 .child(
                     div()
                         .flex_row()
@@ -144,6 +144,16 @@ pub fn gallery() -> Result<(Ui, impl Render)> {
                 .items_stretch()
                 .bg(PAPER)
                 .text_color(INK)
+                .child(
+                    div()
+                        .flex_row()
+                        .items_stretch()
+                        .bg(INK)
+                        .h(px(5.0))
+                        .child(div().w(px(14.0)).window_resize_region(ResizeEdge::TopLeft))
+                        .child(div().flex_1().window_resize_region(ResizeEdge::Top))
+                        .child(div().w(px(14.0)).window_resize_region(ResizeEdge::TopRight)),
+                )
                 .child(header)
                 .child_when(pages.0[0], markets::market)
                 .child_when(pages.0[1], move || specimens::typography(spacing))

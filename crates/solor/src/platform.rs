@@ -2,11 +2,34 @@
 use crate::{Pixels, layout::Size, pointer::PointerInput, px, raster::RasterScale};
 use anyhow::Result;
 
-/// Native window operation assigned to an element in a custom title bar.
+/// Edge or corner moved during an interactive window resize.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResizeEdge {
+    /// Top edge.
+    Top,
+    /// Upper right corner.
+    TopRight,
+    /// Right edge.
+    Right,
+    /// Lower right corner.
+    BottomRight,
+    /// Bottom edge.
+    Bottom,
+    /// Lower left corner.
+    BottomLeft,
+    /// Left edge.
+    Left,
+    /// Upper left corner.
+    TopLeft,
+}
+
+/// Native window operation assigned to an element in a custom window frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowControl {
     /// Begin an interactive move on primary press.
     Drag,
+    /// Begin resizing from an edge or corner on primary press.
+    Resize(ResizeEdge),
     /// Minimize this window on click.
     Minimize,
     /// Switch between maximized and restored on click.

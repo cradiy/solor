@@ -71,6 +71,13 @@ A completed click on `window_decorations_toggle()` reverses the decoration
 preference for that open window. On Wayland the compositor chooses the final
 mode. Without decoration negotiation the window remains client-decorated.
 
+Use `.window_resize_region(ResizeEdge::BottomRight)` on a sized element for
+a corner grip. All four edges and four corners are supported. Regions use the
+accepted hit geometry and respect ancestor clips and interactive children.
+The primary press starts a native resize unless its handler captures the
+pointer. The window system supplies the resulting sizes through normal
+window configuration. The gallery uses the top edge and both top corners.
+
 The Linux host pairs Wayland with the CPU renderer and runs one XDG toplevel
 until close. The driver accepts a `WindowHandler<Rgba8>` and borrows its
 output for one submission.
