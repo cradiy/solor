@@ -3,8 +3,9 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::style::TextAlign;
 use crate::{Pixels, SharedString, px};
-use cosmic_text::{Attrs, Buffer, Family, FontSystem, Shaping, Wrap, fontdb};
+use cosmic_text::{Align, Attrs, Buffer, Family, FontSystem, Shaping, Wrap, fontdb};
 
 use crate::layout::{
     LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext, Metrics, Query, Result,
@@ -184,6 +185,7 @@ impl Engine {
         &mut self,
         text: &SharedString,
         style: TextStyle,
+        alignment: TextAlign,
         width: Option<Pixels>,
     ) -> Result<Paragraph> {
         let mut buffer = Buffer::new_empty(cosmic_text::Metrics::new(
@@ -196,7 +198,14 @@ impl Engine {
             text,
             &Attrs::new().family(Family::SansSerif),
             Shaping::Advanced,
-            None,
+            match alignment {
+                TextAlign::Start => None,
+                TextAlign::End => Some(Align::End),
+                TextAlign::Left => Some(Align::Left),
+                TextAlign::Right => Some(Align::Right),
+                TextAlign::Center => Some(Align::Center),
+                TextAlign::Justify => Some(Align::Justified),
+            },
         );
         buffer.shape_until_scroll(&mut self.fonts, false);
         self.counts.shapes += 1;
@@ -254,6 +263,7 @@ pub struct Text {
     engine: SharedEngine,
     content: SharedString,
     style: TextStyle,
+    alignment: TextAlign,
     cache: RefCell<VecDeque<Cached>>,
     cache_enabled: bool,
 }
@@ -272,6 +282,7 @@ impl Text {
             engine,
             content: content.into(),
             style,
+            alignment: TextAlign::Start,
             cache: RefCell::default(),
             cache_enabled,
         })
@@ -318,6 +329,13 @@ impl Text {
         self.style
     }
 
+    pub(crate) fn set_alignment(&mut self, alignment: TextAlign) {
+        if self.alignment != alignment {
+            self.alignment = alignment;
+            self.release_cache();
+        }
+    }
+
     /// Releases the node's paragraph cache.
     pub fn release_cache(&self) {
         *self.cache.borrow_mut() = VecDeque::new();
@@ -352,7 +370,7 @@ impl Text {
             engine.counts.hits += 1;
             return Ok(Rc::clone(&cached.paragraph));
         }
-        let paragraph = Rc::new(engine.shape(&self.content, self.style, width)?);
+        let paragraph = Rc::new(engine.shape(&self.content, self.style, self.alignment, width)?);
         if self.cache_enabled {
             if cache.len() == CACHE_SLOTS {
                 cache.pop_front();

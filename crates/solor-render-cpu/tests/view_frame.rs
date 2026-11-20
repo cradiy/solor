@@ -354,3 +354,108 @@ fn asymmetric_background_radii_fit_each_allocation_and_survive_replay() -> Resul
     }
     Ok(())
 }
+
+#[test]
+fn aligned_labels_use_each_visual_lines_allocated_width() -> Result<()> {
+    use solor::{Draw, SharedString, percent};
+
+    let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
+    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    let value = ui.context().signal(SharedString::from("A"));
+    let view = ui.mount(component(|_| {
+        div()
+            .text_center()
+            .child(text("A").w(percent(100.0)).px(px(3.5)))
+            .child(text(value).w(percent(100.0)).px(px(3.5)).text_right())
+    }))?;
+    for (width, content) in [(104, "A"), (72, "Output level A")] {
+        ui.context().set(value, SharedString::from(content))?;
+        ui.flush()?;
+        let size = DeviceSize { width, height: 120 };
+        ui.layout(view, size.at_unit_scale())?;
+        let frame = ui.record_frame(view)?;
+        let image = Surface::draw_view(&frame, size, RasterScale::ONE)?;
+        for (index, draw) in frame.draws().iter().enumerate() {
+            let Draw::Text {
+                origin,
+                size: inner,
+                paragraph,
+                ..
+            } = draw
+            else {
+                panic!("expected a label");
+            };
+            assert_eq!(inner.width, px(width as f32 - 7.0));
+            if index == 1 && content != "A" {
+                assert!(paragraph.lines.len() > 1);
+            }
+            for line in &paragraph.lines {
+                let spare = inner.width.get() - line.width;
+                let offset = if index == 0 { spare / 2.0 } else { spare };
+                assert!((line.glyphs[0].x - offset).abs() < 0.01);
+                let left = (origin.x.get() + offset).floor() as usize;
+                let y = (origin.y.get() + line.top) as usize;
+                let first_ink = (0..width as usize)
+                    .find(|&x| {
+                        (y..y + line.height as usize).any(|y| pixel(&image, x, y) != [255; 4])
+                    })
+                    .expect("visible glyphs");
+                assert!(first_ink.abs_diff(left) <= 3);
+            }
+        }
+        assert_eq!(frame.draws().len(), 2);
+    }
+    Ok(())
+}
+
+#[test]
+fn logical_alignment_follows_paragraph_direction_and_justification_skips_last_line() -> Result<()> {
+    use solor::Draw;
+
+    let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
+    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    // The leading right-to-left mark selects the base direction for this paragraph.
+    let rtl = "\u{200f}A";
+    let view = ui.mount(component(|_| {
+        div()
+            .child(text(rtl).w(px(90.0)).text_start())
+            .child(text(rtl).w(px(90.0)).text_end())
+            .child(text("A A A A A A A").w(px(62.0)).text_justify())
+            .child(text("A A A A A A A").w(px(62.0)).text_left())
+    }))?;
+    ui.layout(
+        view,
+        DeviceSize {
+            width: 100,
+            height: 180,
+        }
+        .at_unit_scale(),
+    )?;
+    let frame = ui.record_frame(view)?;
+    let paragraphs: Vec<_> = frame
+        .draws()
+        .iter()
+        .map(|draw| match draw {
+            Draw::Text { paragraph, .. } => paragraph,
+            _ => panic!("expected a label"),
+        })
+        .collect();
+    let letter_x = |i: usize| {
+        paragraphs[i].lines[0]
+            .glyphs
+            .iter()
+            .find(|g| g.start == '\u{200f}'.len_utf8())
+            .unwrap()
+            .x
+    };
+    assert!(letter_x(0) - letter_x(1) > 70.0);
+
+    let justified = &paragraphs[2].lines;
+    let left = &paragraphs[3].lines;
+    assert_eq!(justified.len(), 2);
+    assert_eq!(justified.len(), left.len());
+    assert!((justified[0].width - 62.0).abs() < 0.01);
+    assert!(justified[0].glyphs.last().unwrap().x > left[0].glyphs.last().unwrap().x);
+    assert_eq!(justified[1].glyphs, left[1].glyphs);
+    Ok(())
+}

@@ -12,7 +12,7 @@ stage consumes it, and how a host learns about the resulting work.
 | --- | --- |
 | Composition and ownership | A component renders once per attachment. A conditional owns its branch. Retiring a node releases its subscriptions and local signals. The host owns application signals. |
 | Box layout | Lengths in logical pixels, rems and percentage box sizes resolve to floating-point geometry. Every primitive receives the same border-box sizing and per-edge padding. Content layout, painting and child origins use the inner bounds. A container applies the gap on its main axis. |
-| Style refinements | Later declarations override individual specified fields. Text size, line height and color propagate into fixed and conditional descendants. Each element resolves its own box and background at mount. |
+| Style refinements | Later declarations override individual specified fields. Text size, line height, alignment and color propagate into fixed and conditional descendants. Each element resolves its own box and background at mount. |
 | Text | A fixed or signal-bound label owns a shared string and caches shaped paragraphs by width. Updating bound text keeps the element ID. A changed label schedules layout and local paint. |
 | Fill | A straight-alpha sRGB color has named channels. Every gradient shares an ordered, variable-length stop sequence. Four geometries sample it in sRGB or Oklab. Backgrounds and custom fills carry the same fill value. Equal offsets describe hard edges. Rounded fills use the assigned dimensions. |
 | Paint scheduling | Each successful paint subscribes the element to the signals it read. Repeated writes coalesce. Elements default to on-demand recording. A fixed or signal-driven continuous mode samples every host frame. |
@@ -115,6 +115,13 @@ all four edges use the column's content width. Their intrinsic contribution
 is zero while that width is indefinite, and placement resolves them against
 the assigned width. Root margins do not change the host's viewport allocation.
 
+Paragraph alignment uses the label's content width after padding. Set
+`.text_center()` on a container to center each visual line in its labels.
+A label can override it with `.text_left()` or `.text_right()`. The default,
+`.text_start()`, and its counterpart `.text_end()` follow each paragraph's
+writing direction. `.text_justify()` distributes extra space between words on
+wrapped lines and leaves the last line at the start edge.
+
 Use `.z_index(i32)` to order overlapping siblings. Each parent paints its own
 content first, then its child subtrees in ascending layer order. The default
 layer is zero. Equal layers keep declaration order. A child's layer applies
@@ -136,7 +143,7 @@ expresses placement but does not yet move a child or remove it from column flow.
 | 1. Frame composition, clipping and hit testing | Compose parent-local coordinates, scale, clips and sibling order into one accepted frame. Move a rounded card over another target, fail one submission, then retry. Pixels and click targets must agree with the last accepted frame. Old bounds must be repaired when a wrapped label moves its siblings. |
 | 2. Sizing, placement and scrolling | Apply min/max sizing, positioning and per-edge borders during measurement and placement. Resolve row and column alignment, stretch, grow/shrink and overflow. Validate a long label between a fixed icon and an action at narrow and wide widths. Scrolling must share the visual clip and hit-test transform. |
 | 3. Input and state-dependent styles | Connect platform pointer adapters and define propagation, keyboard focus, tab order and actions. Define precedence for hover, press, focus and disabled states, including removing an override. Validate a pressed element that moves, loses capture or unmounts before release. |
-| 4. Text, editing and semantics | Apply font selection and fallback, weight, alignment, wrapping/truncation and decoration. Define editable ranges, composition, caret bounds and accessibility actions. A bilingual field must expose the same selection to keyboard, IME and assistive input. Preserve explicit units when converting platform text ranges. |
+| 4. Text, editing and semantics | Apply font selection and fallback, weight, wrapping/truncation and decoration. Define editable ranges, composition, caret bounds and accessibility actions. A bilingual field must expose the same selection to keyboard, IME and assistive input. Preserve explicit units when converting platform text ranges. |
 | 5. Paint and animation | Define border and shadow paint order, opacity of overlapping descendants, transformed and rounded clipping, and animation timing. A frame-clock repaint must stop on unmount. CPU replay must draw every gradient stop, preserve hard edges and match the declared interpolation. A GPU representation needs equivalent output and a resource lifetime through submission. |
 | 6. Large collections and resources | Define keyed identity, viewport materialization, scroll anchoring, image/font resource ownership and cancellation. Replace and reorder items while keeping focus on a surviving key. Late resource completion must not invalidate a recycled node. |
 
