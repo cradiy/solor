@@ -8,7 +8,7 @@ use solor::{
     raster::{Clip, RasterFrame, RasterScale, Rgba8},
 };
 
-use crate::pixels::Surface;
+use crate::{glyph_masks::GlyphMasks, pixels::Surface};
 
 /// A CPU-rendered window that owns its UI and a single mounted root.
 pub struct CpuWindow {
@@ -17,6 +17,8 @@ pub struct CpuWindow {
     prepared: Option<(PointerFrame, bool)>,
     animate: bool,
     retained: Option<RetainedView>,
+    // The mounted UI owns one immutable font face for the lifetime of this cache.
+    glyph_masks: GlyphMasks,
 }
 
 struct RetainedView {
@@ -36,6 +38,7 @@ impl CpuWindow {
             prepared: None,
             animate: false,
             retained: None,
+            glyph_masks: GlyphMasks::new(64, 32 * 1024),
         })
     }
 }
@@ -65,11 +68,15 @@ impl WindowHandler<Rgba8> for CpuWindow {
             Some(mut old) if old.logical == size && old.scale == scale => {
                 let damage = crate::view::damage(&old.draws, frame.draws(), scale, canvas)?;
                 if let Some(area) = damage {
-                    old.surface.repair(&frame, scale, area)?;
+                    old.surface
+                        .repair(&frame, scale, area, &mut self.glyph_masks)?;
                 }
                 (old.surface, damage)
             }
-            _ => (Surface::draw_view(&frame, physical, scale)?, Some(canvas)),
+            _ => (
+                Surface::raster_view(&frame, physical, scale, Some(&mut self.glyph_masks))?,
+                Some(canvas),
+            ),
         };
         let animate = frame.requests_animation_frame();
         let (draws, pointer) = frame.into_parts();

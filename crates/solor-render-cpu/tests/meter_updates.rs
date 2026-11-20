@@ -277,7 +277,7 @@ fn time_static_label_scaling() -> Result<()> {
 }
 
 #[test]
-fn repair_replays_overlapping_text_and_rejected_pixels_require_full_damage() -> Result<()> {
+fn overlapping_text_matches_full_replay_across_repairs_retries_and_scale_changes() -> Result<()> {
     use solor::{Fill, raster::Clip};
 
     fn overlay(cx: &mut Context<'_>) -> impl IntoElement + use<> {
@@ -305,27 +305,36 @@ fn repair_replays_overlapping_text_and_rejected_pixels_require_full_damage() -> 
     let mut window = CpuWindow::mount(Ui::with_font(FONT.to_vec(), "en")?, component(overlay))?;
     let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
     let view = ui.mount(component(overlay))?;
-    let physical = SCALE.buffer_size(SIZE)?;
-    for (step, accept) in [(0, true), (2, false), (2, true), (1, true)] {
+    let scaled = RasterScale(1.5);
+    for (step, scale, accept, full_damage) in [
+        (0, SCALE, true, true),
+        (2, SCALE, false, false),
+        (2, SCALE, true, true),
+        (1, SCALE, true, false),
+        (1, scaled, true, true),
+        (2, scaled, true, false),
+        (2, SCALE, true, true),
+    ] {
+        let physical = scale.buffer_size(SIZE)?;
         let input = movement(step);
         window.event(WindowEvent::Pointer(input))?;
         ui.dispatch_pointer(view, input)?;
-        let frame = window.frame(SIZE, SCALE)?;
+        let frame = window.frame(SIZE, scale)?;
         ui.flush()?;
         ui.layout(view, SIZE)?;
         let reference = ui.record_frame(view)?;
-        let full = Surface::draw_view(&reference, physical, SCALE)?;
+        let full = Surface::draw_view(&reference, physical, scale)?;
         assert_eq!(frame.rgba, full.rgba);
         assert_eq!(
             frame.damage,
-            Some(if step == 0 || (step == 2 && accept) {
+            Some(if full_damage {
                 Clip::canvas(physical)
             } else {
                 Clip {
                     left: 0,
                     top: 0,
-                    right: 12,
-                    bottom: 23,
+                    right: (9.5 * scale.0).ceil() as i64,
+                    bottom: (18.0 * scale.0).ceil() as i64,
                 }
             })
         );

@@ -3,6 +3,7 @@ use std::{
     rc::Rc,
 };
 
+use crate::glyph_masks::GlyphMasks;
 use crate::pixels::{Clip, DeviceSize, RasterScale, Surface, TextRaster, blend};
 use solor::{
     Draw, Fill, Pixels, ViewFrame,
@@ -13,8 +14,17 @@ use solor::{
 impl Surface {
     /// Replays a complete mounted view in paint order onto an opaque white surface.
     pub fn draw_view(frame: &ViewFrame, size: DeviceSize, scale: RasterScale) -> Result<Self> {
+        Self::raster_view(frame, size, scale, None)
+    }
+
+    pub(super) fn raster_view(
+        frame: &ViewFrame,
+        size: DeviceSize,
+        scale: RasterScale,
+        masks: Option<&mut GlyphMasks>,
+    ) -> Result<Self> {
         let mut surface = Self::white(size, scale)?;
-        surface.replay(frame, scale, Clip::canvas(size))?;
+        surface.replay(frame, scale, Clip::canvas(size), masks)?;
         Ok(surface)
     }
 
@@ -23,16 +33,23 @@ impl Surface {
         frame: &ViewFrame,
         scale: RasterScale,
         clip: Clip,
+        masks: &mut GlyphMasks,
     ) -> Result<()> {
         let stride = self.size.width as usize * 4;
         for y in clip.top as usize..clip.bottom as usize {
             self.rgba[y * stride + clip.left as usize * 4..y * stride + clip.right as usize * 4]
                 .fill(255);
         }
-        self.replay(frame, scale, clip)
+        self.replay(frame, scale, clip, Some(masks))
     }
 
-    fn replay(&mut self, frame: &ViewFrame, scale: RasterScale, clip: Clip) -> Result<()> {
+    fn replay(
+        &mut self,
+        frame: &ViewFrame,
+        scale: RasterScale,
+        clip: Clip,
+        mut masks: Option<&mut GlyphMasks>,
+    ) -> Result<()> {
         let mut text = None;
         for draw in frame.draws() {
             let bounds = device_bounds(draw, scale)?.intersect(clip);
@@ -64,7 +81,7 @@ impl Surface {
                                 .ok_or_else(|| Error::other("text without a font face"))?,
                             scale,
                             (0, 0),
-                            None,
+                            masks.take(),
                         )?),
                     };
                     raster.draw(self, *origin, *allocated, paragraph, *color, bounds)?;

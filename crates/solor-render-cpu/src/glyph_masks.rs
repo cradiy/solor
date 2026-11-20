@@ -70,10 +70,10 @@ impl GlyphMasks {
             .iter()
             .position(|e| e.size_bits == size_bits && e.glyph == glyph)
         {
-            self.hits += 1;
+            self.hits = self.hits.saturating_add(1);
             return Ok(&self.entries[index].mask);
         }
-        self.misses += 1;
+        self.misses = self.misses.saturating_add(1);
         render(scratch)?;
         // Move the backing allocation into the cache and charge its actual capacity.
         if self.max_entries > 0

@@ -69,6 +69,11 @@ submission before the handler publishes its prepared hit geometry. On the next
 frame callback the window continues if the submitted frame requested another
 frame or signal bindings have pending work. Otherwise it returns to idle.
 
+The CPU window reuses glyph masks across full frames and partial repairs.
+Each window owns a cache for its font face, keyed by glyph and device font size.
+It retains up to 64 masks and 32 KiB of mask pixel storage. Text color and
+clip are applied when compositing each mask.
+
 Run `cargo run -p solor-render-cpu --example mounted_window` in a Linux
 Wayland session. Click **Audio settings** to expand the row, then click
 **Close settings** to collapse it. The newly mounted row has its own handler.
