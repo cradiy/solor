@@ -36,9 +36,8 @@ impl Scene {
             .measure_cache
             .iter()
             .position(|slot| {
-                slot.as_ref().is_some_and(|cached| {
-                    cached.query == query && cached.containing_block == ContainingBlock::default()
-                })
+                slot.as_ref()
+                    .is_some_and(|cached| cached.input == MeasureInput::direct(query))
             })
             .map(|slot| {
                 entry

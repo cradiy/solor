@@ -122,6 +122,22 @@ children. Horizontal flow uses the column gap (`gap_x`), vertical flow uses
 the row gap (`gap_y`), and `gap` sets both. Reverse directions start placement
 at the far edge while keeping child identity and declaration order.
 
+Use `.flex_basis(length)` to set a child's starting width in a row or
+height in a column. A definite basis takes precedence over the preferred
+size on that axis and uses the child's box sizing and min/max limits.
+Percentages use the parent's content extent along the main axis. During
+intrinsic measurement with an indefinite extent, a percentage basis uses
+the child's content. `Length::Auto` uses the usual preferred size. Gaps and
+margins are counted separately when the line is positioned.
+
+Use `.flex_grow(factor)` to share positive main-axis space after the line's
+measured item sizes, fixed margins and gaps. Growth starts at each item's
+measured size, including its min/max constraints. Items that reach their
+maximum stop growing, and the other items can use the surplus. A total
+factor below one uses that fraction of the surplus. Main-axis auto margins
+and justification receive the space left after growth. The `.flex_1()` preset
+grows with a factor of one from a zero-percent basis.
+
 Use `.justify_center()` or `.justify_end()` to place the whole line, and
 `.justify_between()`, `.justify_around()` or `.justify_evenly()` to distribute
 surplus space in addition to the declared gap. Main-axis auto margins share
@@ -154,8 +170,8 @@ baseline alignment uses the start edge of the horizontal axis.
 Horizontal flow measures each child against the container's content width
 less its fixed margins. The line can overflow when the combined preferred
 widths and gaps exceed its allocation. Automatic horizontal margins share
-positive space left over across the entire line. Flex wrapping and proportional
-growth or shrinkage are declarations pending layout support.
+positive space left over across the entire line. Flex wrapping and proportional shrinkage
+are declarations pending layout support.
 
 Vertical flow measures and places child border boxes with their margins.
 Adjacent vertical margins add to the row gap. Signed margins can overlap
@@ -217,7 +233,7 @@ expresses placement but does not yet move a child or remove it from column flow.
 | Priority and capability | Required behavior and acceptance case |
 | --- | --- |
 | 1. Frame composition, clipping and hit testing | Compose parent-local coordinates, scale, clips and sibling order into one accepted frame. Move a rounded card over another target, fail one submission, then retry. Pixels and click targets must agree with the last accepted frame. Old bounds must be repaired when a wrapped label moves its siblings. |
-| 2. Sizing, placement and scrolling | Apply positioning and per-edge borders during measurement and placement. Resolve grow/shrink and overflow. Validate a long label between a fixed icon and an action at narrow and wide widths. Scrolling must share the visual clip and hit-test transform. |
+| 2. Sizing, placement and scrolling | Apply positioning and per-edge borders during measurement and placement. Resolve shrinking and overflow. Validate a long label between a fixed icon and an action at narrow and wide widths. Scrolling must share the visual clip and hit-test transform. |
 | 3. Input and state-dependent styles | Connect platform pointer adapters and define propagation, keyboard focus, tab order and actions. Define precedence for hover, press, focus and disabled states, including removing an override. Validate a pressed element that moves, loses capture or unmounts before release. |
 | 4. Text, editing and semantics | Apply font selection and fallback, weight, wrapping/truncation and decoration. Define editable ranges, composition, caret bounds and accessibility actions. A bilingual field must expose the same selection to keyboard, IME and assistive input. Preserve explicit units when converting platform text ranges. |
 | 5. Paint and animation | Define border and shadow paint order, opacity of overlapping descendants, transformed and rounded clipping, and animation timing. A frame-clock repaint must stop on unmount. CPU replay must draw every gradient stop, preserve hard edges and match the declared interpolation. A GPU representation needs equivalent output and a resource lifetime through submission. |

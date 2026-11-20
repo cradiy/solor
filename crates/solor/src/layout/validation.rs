@@ -1,9 +1,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{
-    AccessError, Attempt, ContainingBlock, Context, Draft, Entry, LayoutError, NodeId, Query, Read,
-    ReadSet, Result, RootRequest, Scene, Scratch, Size, layout, layout_root, measure,
-    publish_layout,
+    AccessError, Attempt, Context, Draft, Entry, LayoutError, NodeId, Query, Read, ReadSet, Result,
+    RootRequest, Scene, Scratch, Size, layout, layout_root, measure, publish_layout,
 };
 
 /// Maximum number of recent edits retained for selective validation.
@@ -307,8 +306,7 @@ impl Scene {
                         Ok(measure(
                             entry,
                             access,
-                            query,
-                            ContainingBlock::default(),
+                            super::MeasureInput::direct(query),
                             false,
                         ))
                     })??;
@@ -456,10 +454,8 @@ impl Scene {
                     return Ok(None);
                 }
                 let Some(slot) = entry.measure_cache.iter().position(|slot| {
-                    slot.as_ref().is_some_and(|cached| {
-                        cached.query == query
-                            && cached.containing_block == ContainingBlock::default()
-                    })
+                    slot.as_ref()
+                        .is_some_and(|cached| cached.input == super::MeasureInput::direct(query))
                 }) else {
                     return Ok(None);
                 };
@@ -537,7 +533,7 @@ fn check_reads<'a>(
                 metrics,
                 containing_block,
                 margins,
-                column_align,
+                mode,
             } => {
                 let current = access.execute_child(node, |entry, child| {
                     Ok(super::measure_item(
@@ -546,11 +542,7 @@ fn check_reads<'a>(
                         query,
                         containing_block,
                         false,
-                        match (column_align, margins) {
-                            (Some(align), _) => super::ItemQuery::Column(align),
-                            (_, Some(_)) => super::ItemQuery::Stack,
-                            _ => super::ItemQuery::Direct,
-                        },
+                        mode,
                     ))
                 })??;
                 current.0 == metrics && margins.is_none_or(|edges| edges == current.1)

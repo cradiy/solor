@@ -1,9 +1,12 @@
 //! Single-line placement along a container's selected main axis.
+use super::engine::{ItemQuery, MeasuredItem};
 use super::{
-    LayoutContext, LayoutError, LayoutNode, LayoutOutput, Margin, Margins, MeasureContext, Metrics,
-    Origin, Pixels, Query, Result, Size, px,
+    ContainingBlock, LayoutContext, LayoutError, LayoutNode, LayoutOutput, Margin, Margins,
+    MeasureContext, Metrics, Origin, Pixels, Query, Result, Size, px,
 };
 use crate::style::{Align, Distribution};
+mod grow;
+use grow::Growth;
 
 /// Main axis and placement order for a container's children.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +22,10 @@ pub enum FlexDirection {
 }
 
 impl FlexDirection {
+    fn is_row(self) -> bool {
+        matches!(self, Self::Row | Self::RowReverse)
+    }
+
     fn main_axis(self, size: Size, margins: Margins) -> (Pixels, Margin, Margin) {
         match self {
             Self::Row => (size.width, margins.left, margins.right),
@@ -57,10 +64,17 @@ impl FlexLayout {
     fn measure_row(&self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
         let mut size = Size::default();
         let mut first = None;
+        let mut has_growth = false;
         let mut ascent = None;
         let mut descent = None;
+        let available = match query {
+            Query::Exact(width) => Some(width),
+            _ => None,
+        };
+        let mut items = LineItems::new(self, cx.child_count(), available, false);
         for index in 0..cx.child_count() {
-            let item = cx.measure_row_item(index, query)?;
+            let item = items.item(index, |i, mode| cx.measure_item(i, query, mode))?;
+            has_growth |= item.style.grow > 0.0;
             let (child, margins) = (item.metrics, item.margins);
             let top = margins.top.fixed_or_zero();
             let bottom = margins.bottom.fixed_or_zero();
@@ -84,6 +98,16 @@ impl FlexLayout {
                 include_max(&mut descent, add(child.size.height - baseline, bottom)?);
             }
         }
+        size.width = query.resolve(size.width.max(px(0.0)));
+        if has_growth && available.is_none() {
+            // A shrink-wrapped row now has a used width. Measure its line height
+            // with percentage bases and growth resolved at that width.
+            cx.set_child_containing_block(ContainingBlock {
+                width: Some(size.width),
+                height: cx.definite_content_height(),
+            });
+            return self.measure_row(cx, Query::Exact(size.width));
+        }
         if let (Some(above), Some(below)) = (ascent, descent) {
             size.height = size.height.max(add(above, below)?);
         }
@@ -98,7 +122,6 @@ impl FlexLayout {
         } else {
             None
         };
-        size.width = query.resolve(size.width.max(px(0.0)));
         Ok(Metrics {
             size,
             baseline: baseline.filter(|b| b.is_extent() && *b <= size.height),
@@ -109,8 +132,12 @@ impl FlexLayout {
         let mut line = LineTotals::default();
         let mut width = px(0.0);
         let mut first = None;
+        let mut has_growth = false;
+        let mut items = LineItems::new(self, cx.child_count(), cx.definite_content_height(), false);
         for index in 0..cx.child_count() {
-            let (child, margins) = cx.measure_column_item(index, query, self.align_items)?;
+            let item = items.item(index, |i, mode| cx.measure_item(i, query, mode))?;
+            has_growth |= item.style.grow > 0.0;
+            let (child, margins) = (item.metrics, item.margins);
             let (extent, before, after) = self.direction.main_axis(child.size, margins);
             line.push(extent, before, after, self.gap)?;
             width = width.max(add(child.size.width, margins.horizontal()?)?);
@@ -121,8 +148,18 @@ impl FlexLayout {
         let height = cx
             .definite_content_height()
             .unwrap_or(line.occupied.max(px(0.0)));
+        if has_growth && cx.definite_content_height().is_none() {
+            cx.set_child_containing_block(ContainingBlock {
+                width: match query {
+                    Query::Exact(width) => Some(width),
+                    _ => None,
+                },
+                height: Some(height),
+            });
+            return self.measure_column(cx, query);
+        }
         let baseline = if let Some((local, extent, before)) = first {
-            let spacing = line.spacing(height, self.justify_content)?;
+            let spacing = line.spacing(add(height, line.occupied * -1.0)?, self.justify_content);
             let start = add(spacing.start, spacing.margin(before))?;
             let y = if self.direction == FlexDirection::ColumnReverse {
                 height - add(start, extent)?
@@ -142,46 +179,22 @@ impl FlexLayout {
         })
     }
 
-    fn line_spacing(
-        &self,
-        cx: &mut LayoutContext<'_, '_>,
-        query: Query,
-        available: Pixels,
-        column_align: Option<Align>,
-    ) -> Result<LineSpacing> {
-        let mut line = LineTotals::default();
-        for i in 0..cx.child_count() {
-            let item = cx.measure_flex_item(i, query, column_align)?;
-            let (child, margins) = (item.metrics, item.margins);
-            let (extent, before, after) = self.direction.main_axis(child.size, margins);
-            line.push(extent, before, after, self.gap)?;
-        }
-        line.spacing(available, self.justify_content)
-    }
-
     fn layout_line(&self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {
-        let row = matches!(
-            self.direction,
-            FlexDirection::Row | FlexDirection::RowReverse
-        );
+        let row = self.direction.is_row();
         let reverse = matches!(
             self.direction,
             FlexDirection::RowReverse | FlexDirection::ColumnReverse
         );
         let main_size = if row { assigned.width } else { assigned.height };
         let query = Query::Exact(assigned.width);
-        let column_align = (!row).then_some(self.align_items);
-        let mut spacing = match self.justify_content {
-            Distribution::Start | Distribution::Stretch => None,
-            _ => Some(self.line_spacing(cx, query, main_size, column_align)?),
-        };
-        let mut cursor = spacing.unwrap_or_default().start;
+        let mut items = LineItems::new(self, cx.child_count(), Some(main_size), true);
+        let mut cursor = px(0.0);
         let mut content = Size::default();
         let mut first_baseline = None;
         let mut shared_baseline = None;
         let mut baseline_items = Vec::new();
         for index in 0..cx.child_count() {
-            let item = cx.measure_flex_item(index, query, column_align)?;
+            let item = items.item(index, |i, mode| cx.measure_item(i, query, mode))?;
             let (mut child, margins) = (item.metrics, item.margins);
             let align = item.style.alignment(self.align_items);
             if row
@@ -193,12 +206,10 @@ impl FlexLayout {
                 child.size.height = item.stretch_height(available, assigned.height)?;
             }
             let (extent, leading, trailing) = self.direction.main_axis(child.size, margins);
-            // Start-aligned lines only need a totals pass when a main-axis margin is automatic.
-            if spacing.is_none() && (leading == Margin::Auto || trailing == Margin::Auto) {
-                spacing = Some(self.line_spacing(cx, query, main_size, column_align)?);
-            }
-            let spacing = spacing.unwrap_or_default();
-            if index > 0 {
+            let spacing = items.plan.unwrap_or_default().spacing;
+            if index == 0 {
+                cursor = spacing.start;
+            } else {
                 cursor = add(cursor, add(self.gap, spacing.extra_gap)?)?;
             }
             cursor = add(cursor, spacing.margin(leading))?;
@@ -277,6 +288,108 @@ impl FlexLayout {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct LinePlan {
+    unit: f64,
+    spacing: LineSpacing,
+}
+
+struct LineItems<'a> {
+    flex: &'a FlexLayout,
+    count: usize,
+    available: Option<Pixels>,
+    positioning: bool,
+    plan: Option<LinePlan>,
+}
+
+impl<'a> LineItems<'a> {
+    fn new(
+        flex: &'a FlexLayout,
+        count: usize,
+        available: Option<Pixels>,
+        positioning: bool,
+    ) -> Self {
+        Self {
+            flex,
+            count,
+            available,
+            positioning,
+            plan: None,
+        }
+    }
+
+    fn mode(&self, extent: Option<Pixels>) -> ItemQuery {
+        if self.flex.direction.is_row() {
+            ItemQuery::Row(extent)
+        } else {
+            ItemQuery::Column(self.flex.align_items, extent)
+        }
+    }
+
+    fn item(
+        &mut self,
+        index: usize,
+        mut measure: impl FnMut(usize, ItemQuery) -> Result<MeasuredItem>,
+    ) -> Result<MeasuredItem> {
+        let mode = self.mode(None);
+        let item = measure(index, mode)?;
+        let Some(available) = self.available else {
+            return Ok(item);
+        };
+        let (base, before, after) = self
+            .flex
+            .direction
+            .main_axis(item.metrics.size, item.margins);
+        let needs_spacing = self.positioning
+            && (!matches!(
+                self.flex.justify_content,
+                Distribution::Start | Distribution::Stretch
+            ) || before == Margin::Auto
+                || after == Margin::Auto);
+        if self.plan.is_none() && (item.style.grow > 0.0 || needs_spacing) {
+            let mut line = LineTotals::default();
+            let mut growth = Growth::default();
+            for i in 0..self.count {
+                let measured;
+                let child = if i == index {
+                    &item
+                } else {
+                    measured = measure(i, mode)?;
+                    &measured
+                };
+                let (extent, before, after) = self
+                    .flex
+                    .direction
+                    .main_axis(child.metrics.size, child.margins);
+                line.push(extent, before, after, self.flex.gap)?;
+                growth.push(child.style.grow, extent, child.growth_limit);
+            }
+            let free = add(available, line.occupied * -1.0)?;
+            let (unit, remaining) = growth.resolve(free);
+            self.plan = Some(LinePlan {
+                unit,
+                spacing: line.spacing(remaining, self.flex.justify_content),
+            });
+        }
+        if let Some(plan) = self.plan
+            && plan.unit > 0.0
+            && item.style.grow > 0.0
+        {
+            let width_or_height = f64::from(base) + plan.unit * f64::from(item.style.grow);
+            let used = px(item.growth_limit.map_or(width_or_height, |limit| {
+                width_or_height.min(f64::from(limit))
+            }) as f32);
+            if !used.is_extent() {
+                return Err(LayoutError::InvalidSize);
+            }
+            if used > base {
+                return measure(index, self.mode(Some(used)));
+            }
+        }
+        Ok(item)
+    }
+}
+
 #[derive(Default)]
 struct LineTotals {
     count: usize,
@@ -298,8 +411,7 @@ impl LineTotals {
         Ok(())
     }
 
-    fn spacing(&self, available: Pixels, justify: Distribution) -> Result<LineSpacing> {
-        let free = add(available, self.occupied * -1.0)?;
+    fn spacing(&self, free: Pixels, justify: Distribution) -> LineSpacing {
         let mut spacing = LineSpacing::default();
         if self.auto_edges > 0 && free > px(0.0) {
             spacing.auto_margin = free / self.auto_edges as f32;
@@ -323,7 +435,7 @@ impl LineTotals {
                 _ => (px(0.0), px(0.0)),
             };
         }
-        Ok(spacing)
+        spacing
     }
 }
 

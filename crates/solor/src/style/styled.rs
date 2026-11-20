@@ -218,7 +218,7 @@ pub trait Styled: Sized {
     fn h_full(self) -> Self {
         self.h(percent(100.0))
     }
-    /// Lets the item grow and shrink from a zero basis.
+    /// Declares a zero-percent basis and grow and shrink factors of one.
     fn flex_1(self) -> Self {
         self.flex_grow(1.0)
             .flex_shrink(1.0)

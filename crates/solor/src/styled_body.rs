@@ -1,8 +1,8 @@
 //! Shared content-box adapter for every retained element.
 use crate::layout::{
-    AxisLimits, ComputedLength, ContainingBlock, LayoutContext, LayoutError, LayoutNode,
-    LayoutOutput, Margin, Margins, MeasureContext, Metrics, Origin, Query, Result, Size,
-    SizeLimits, WidthLimits, border_extent,
+    AxisLimits, ComputedLength, ContainingBlock, FlexBasis, ItemBasis, ItemSizing, LayoutContext,
+    LayoutError, LayoutNode, LayoutOutput, Margin, Margins, MeasureContext, Metrics, Origin, Query,
+    Result, Size, WidthLimits, border_extent,
 };
 use crate::length::UnitResolver;
 use crate::style::BoxSizing;
@@ -88,11 +88,11 @@ impl<E> StyledBody<E> {
         }
     }
 
-    pub(crate) fn size_limits(
+    pub(crate) fn item_sizing(
         &self,
         style: &Style,
         units: UnitResolver,
-    ) -> Result<Option<SizeLimits>> {
+    ) -> Result<Option<ItemSizing>> {
         let Some(layout) = &style.layout else {
             return Ok(None);
         };
@@ -112,7 +112,22 @@ impl<E> StyledBody<E> {
             }
         });
         let height = bounds(layout.min_height, layout.max_height, self.inset.height)?;
-        Ok((width.is_some() || height.is_some()).then_some(SizeLimits { width, height }))
+        let basis = units
+            .dimension(layout.flex_basis.unwrap_or_default())?
+            .map(|length| FlexBasis {
+                length,
+                extra: Size {
+                    width: self.sizing_extra(self.inset.width),
+                    height: self.sizing_extra(self.inset.height),
+                },
+            });
+        Ok(
+            (width.is_some() || height.is_some() || basis.is_some()).then_some(ItemSizing {
+                width,
+                height,
+                basis,
+            }),
+        )
     }
 }
 
@@ -136,13 +151,19 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
     fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
         let inner = |w: Pixels| w.saturating_sub(self.inset.width);
         let basis = cx.containing_block();
-        let width = border_extent(self.width, basis.width, self.sizing_extra(self.inset.width))?;
+        let width = match cx.item_basis {
+            ItemBasis::Width(width) => width,
+            _ => border_extent(self.width, basis.width, self.sizing_extra(self.inset.width))?,
+        };
         let range = cx.height_range;
-        let height = border_extent(
-            self.height,
-            basis.height,
-            self.sizing_extra(self.inset.height),
-        )?
+        let height = match cx.item_basis {
+            ItemBasis::Height(height) => height,
+            _ => border_extent(
+                self.height,
+                basis.height,
+                self.sizing_extra(self.inset.height),
+            )?,
+        }
         .map(|h| range.clamp(h))
         .or_else(|| range.fixed());
         let content_query = match (query, width) {

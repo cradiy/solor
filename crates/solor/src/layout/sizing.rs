@@ -1,5 +1,5 @@
 //! Conversion from declared box dimensions to child measurement constraints.
-use super::{LayoutError, Pixels, Query, Result};
+use super::{ContainingBlock, ItemQuery, LayoutError, Pixels, Query, Result, Size};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ComputedLength {
@@ -45,9 +45,11 @@ impl WidthLimits {
         &self,
         query: Query,
         basis: Option<Pixels>,
-        direct: bool,
+        mode: ItemQuery,
+        item_basis: ItemBasis,
     ) -> Result<Option<(Query, Pixels)>> {
         query.validate()?;
+        let direct = matches!(mode, ItemQuery::Direct);
         let SizeRange { min, max } = self.bounds.resolve(basis)?;
         if (min.is_none() && max.is_none()) || (direct && matches!(query, Query::Exact(_))) {
             return Ok(None);
@@ -67,6 +69,7 @@ impl WidthLimits {
             None => Query::Natural,
         };
         if !matches!(query, Query::Exact(_))
+            && !matches!(item_basis, ItemBasis::Width(_))
             && let Some(preferred) = border_extent(self.preferred, basis, self.bounds.extra)?
         {
             query = Query::Exact(query.resolve(preferred).max(min));
@@ -75,7 +78,39 @@ impl WidthLimits {
     }
 }
 
-pub(crate) struct SizeLimits {
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) enum ItemBasis {
+    #[default]
+    Preferred,
+    Width(Option<Pixels>),
+    Height(Option<Pixels>),
+}
+
+pub(crate) struct FlexBasis {
+    pub(crate) length: ComputedLength,
+    pub(crate) extra: Size,
+}
+
+impl FlexBasis {
+    pub(super) fn resolve(&self, mode: ItemQuery, parent: ContainingBlock) -> Result<ItemBasis> {
+        Ok(match mode {
+            ItemQuery::Row(_) => ItemBasis::Width(border_extent(
+                Some(self.length),
+                parent.width,
+                self.extra.width,
+            )?),
+            ItemQuery::Column(_, _) => ItemBasis::Height(border_extent(
+                Some(self.length),
+                parent.height,
+                self.extra.height,
+            )?),
+            _ => ItemBasis::Preferred,
+        })
+    }
+}
+
+pub(crate) struct ItemSizing {
+    pub(crate) basis: Option<FlexBasis>,
     pub(crate) width: Option<WidthLimits>,
     pub(crate) height: Option<AxisLimits>,
 }
@@ -103,6 +138,10 @@ impl AxisLimits {
 }
 
 impl SizeRange {
+    pub(super) fn upper(self) -> Option<Pixels> {
+        self.max.map(|max| max.max(self.min.unwrap_or_default()))
+    }
+
     pub(crate) fn fixed(self) -> Option<Pixels> {
         self.min
             .filter(|&min| self.max.is_some_and(|max| max <= min))

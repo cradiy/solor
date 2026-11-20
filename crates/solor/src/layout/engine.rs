@@ -14,7 +14,7 @@ use super::tree::NodeId;
 
 #[path = "sizing.rs"]
 pub(super) mod sizing;
-use sizing::{AxisLimits, SizeLimits, SizeRange};
+use sizing::{AxisLimits, ItemBasis, ItemSizing, SizeRange};
 
 use super::Align;
 use super::column::Margins;
@@ -279,7 +279,7 @@ pub enum Read {
         containing_block: ContainingBlock,
         metrics: Metrics,
         margins: Option<Margins>,
-        column_align: Option<Align>,
+        mode: ItemQuery,
     },
     Layout {
         node: NodeId,
@@ -324,9 +324,25 @@ impl ReadSet {
     }
 }
 
-struct Measurement {
-    containing_block: ContainingBlock,
+#[derive(Clone, Copy, PartialEq)]
+struct MeasureInput {
     query: Query,
+    containing_block: ContainingBlock,
+    item_basis: ItemBasis,
+}
+
+impl MeasureInput {
+    fn direct(query: Query) -> Self {
+        Self {
+            query,
+            containing_block: ContainingBlock::default(),
+            item_basis: ItemBasis::Preferred,
+        }
+    }
+}
+
+struct Measurement {
+    input: MeasureInput,
     metrics: Metrics,
 }
 
@@ -355,6 +371,7 @@ impl DependencyRecords {
 
 #[derive(Clone, Copy)]
 pub(crate) struct FlexItemStyle {
+    pub(crate) grow: f32,
     pub(crate) align_self: Align,
     pub(crate) auto_width: bool,
     pub(crate) auto_height: bool,
@@ -363,6 +380,7 @@ pub(crate) struct FlexItemStyle {
 impl Default for FlexItemStyle {
     fn default() -> Self {
         Self {
+            grow: 0.0,
             align_self: Align::Auto,
             auto_width: true,
             auto_height: true,
@@ -384,6 +402,7 @@ pub(crate) struct MeasuredItem {
     pub(crate) metrics: Metrics,
     pub(crate) margins: Margins,
     pub(crate) style: FlexItemStyle,
+    pub(crate) growth_limit: Option<Pixels>,
     height_limits: Option<AxisLimits>,
 }
 
@@ -400,17 +419,18 @@ impl MeasuredItem {
     }
 }
 
-#[derive(Clone, Copy)]
-enum ItemQuery {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ItemQuery {
     Direct,
     Stack,
-    Column(Align),
+    Row(Option<Pixels>),
+    Column(Align, Option<Pixels>),
 }
 
 struct Entry {
     // Immutable for the lifetime of this attachment.
     item_style: FlexItemStyle,
-    size_limits: Option<Box<SizeLimits>>,
+    item_sizing: Option<Box<ItemSizing>>,
     body: Box<dyn LayoutNode>,
     // Cache hits restore metrics, not the behavior's private measurement state.
     measure_cache: [Option<Measurement>; MEASUREMENT_CACHE_SLOTS],
@@ -429,11 +449,11 @@ impl Entry {
     fn new(
         body: impl LayoutNode,
         item_style: FlexItemStyle,
-        size_limits: Option<SizeLimits>,
+        item_sizing: Option<ItemSizing>,
     ) -> Self {
         Self {
             item_style,
-            size_limits: size_limits.map(Box::new),
+            item_sizing: item_sizing.map(Box::new),
             body: Box::new(body),
             measure_cache: std::array::from_fn(|_| None),
             #[cfg(feature = "layout-audit")]
@@ -481,6 +501,7 @@ impl Entry {
 /// Access to children during a preferred-size calculation.
 pub struct MeasureContext<'a, 'store> {
     pub(crate) height_range: SizeRange,
+    pub(crate) item_basis: ItemBasis,
     containing_block: ContainingBlock,
     child_basis: ContainingBlock,
     access: &'a mut Context<'store, Entry>,
@@ -522,22 +543,7 @@ impl MeasureContext<'_, '_> {
         Ok(self.measure_item(index, query, ItemQuery::Stack)?.stack())
     }
 
-    pub(crate) fn measure_row_item(&mut self, index: usize, query: Query) -> Result<MeasuredItem> {
-        self.measure_item(index, query, ItemQuery::Stack)
-    }
-
-    pub(crate) fn measure_column_item(
-        &mut self,
-        index: usize,
-        query: Query,
-        align: Align,
-    ) -> Result<(Metrics, Margins)> {
-        Ok(self
-            .measure_item(index, query, ItemQuery::Column(align))?
-            .stack())
-    }
-
-    fn measure_item(
+    pub(super) fn measure_item(
         &mut self,
         index: usize,
         query: Query,
@@ -551,14 +557,29 @@ impl MeasureContext<'_, '_> {
             .access
             .child(index)
             .ok_or(LayoutError::MissingChild(index))?;
-        let (result, style, height_limits) = self.access.execute_child(id, |entry, access| {
-            Ok((
-                measure_item(entry, access, query, self.child_basis, self.force, mode),
-                entry.item_style,
-                entry.size_limits.as_ref().and_then(|limits| limits.height),
-            ))
-        })?;
+        let (result, style, height_limits, main_limits) =
+            self.access.execute_child(id, |entry, access| {
+                let main_limits = match (entry.item_style.grow > 0.0, mode, &entry.item_sizing) {
+                    (true, ItemQuery::Row(_), Some(s)) => {
+                        s.width.as_ref().map(|w| (w.bounds, self.child_basis.width))
+                    }
+                    (true, ItemQuery::Column(_, _), Some(s)) => {
+                        s.height.map(|h| (h, self.child_basis.height))
+                    }
+                    _ => None,
+                };
+                Ok((
+                    measure_item(entry, access, query, self.child_basis, self.force, mode),
+                    entry.item_style,
+                    entry.item_sizing.as_ref().and_then(|limits| limits.height),
+                    main_limits,
+                ))
+            })?;
         let (metrics, margins) = result?;
+        let growth_limit = match main_limits {
+            Some((limits, basis)) => limits.resolve(basis)?.upper(),
+            None => None,
+        };
         #[cfg(feature = "layout-audit")]
         self.reads.push(Read::Measure {
             node: id,
@@ -566,10 +587,7 @@ impl MeasureContext<'_, '_> {
             query,
             metrics,
             margins: (!matches!(mode, ItemQuery::Direct)).then_some(margins),
-            column_align: match mode {
-                ItemQuery::Column(align) => Some(align),
-                _ => None,
-            },
+            mode,
         });
         self.failed = false;
         Ok(MeasuredItem {
@@ -577,6 +595,7 @@ impl MeasureContext<'_, '_> {
             margins,
             style,
             height_limits,
+            growth_limit,
         })
     }
 }
@@ -594,7 +613,7 @@ fn measure_item(
             Query::Exact(width) => Some(width),
             _ => None,
         })?;
-        let stretch = matches!(mode, ItemQuery::Column(align)
+        let stretch = matches!(mode, ItemQuery::Column(align, _)
             if entry.item_style.auto_width && entry.item_style.alignment(align) == Align::Stretch);
         let query = match query {
             Query::Exact(width) if stretch && !margins.has_auto_horizontal() => {
@@ -609,30 +628,70 @@ fn measure_item(
     } else {
         (query, Margins::default())
     };
-    if let Some(limits) = entry.size_limits.as_ref().and_then(|v| v.width.as_ref())
-        && let Some((bounded, min)) =
-            limits.constrain(query, basis.width, matches!(mode, ItemQuery::Direct))?
+    let item_basis = match mode {
+        ItemQuery::Row(Some(width)) => ItemBasis::Width(Some(width)),
+        ItemQuery::Column(_, Some(height)) => ItemBasis::Height(Some(height)),
+        _ => match entry
+            .item_sizing
+            .as_ref()
+            .and_then(|sizing| sizing.basis.as_ref())
+        {
+            Some(value) => value.resolve(mode, basis)?,
+            None => ItemBasis::Preferred,
+        },
+    };
+    let query = match item_basis {
+        ItemBasis::Width(Some(width)) => Query::Exact(width),
+        _ => query,
+    };
+    let input = MeasureInput {
+        query,
+        containing_block: basis,
+        item_basis,
+    };
+    if let Some(limits) = entry.item_sizing.as_ref().and_then(|v| v.width.as_ref())
+        && let Some((bounded, min)) = limits.constrain(query, basis.width, mode, item_basis)?
     {
-        let mut metrics = measure(entry, access, bounded, basis, force)?;
+        let mut metrics = measure(
+            entry,
+            access,
+            MeasureInput {
+                query: bounded,
+                ..input
+            },
+            force,
+        )?;
         if !matches!(bounded, Query::Exact(_))
             && (metrics.size.width < min || access.child_count() > 0)
         {
             // Descendant percentages and wrapping need a definite containing width.
             let used = metrics.size.width.max(min);
-            metrics = measure(entry, access, Query::Exact(used), basis, force)?;
+            metrics = measure(
+                entry,
+                access,
+                MeasureInput {
+                    query: Query::Exact(used),
+                    ..input
+                },
+                force,
+            )?;
         }
         return Ok((metrics, margins));
     }
-    Ok((measure(entry, access, query, basis, force)?, margins))
+    Ok((measure(entry, access, input, force)?, margins))
 }
 
 fn measure(
     entry: &mut Entry,
     access: &mut Context<'_, Entry>,
-    query: Query,
-    containing_block: ContainingBlock,
+    input: MeasureInput,
     force: bool,
 ) -> Result<Metrics> {
+    let MeasureInput {
+        query,
+        containing_block,
+        item_basis,
+    } = input;
     query.validate()?;
     if containing_block
         .width
@@ -654,7 +713,7 @@ fn measure(
         entry.replacement = 0;
     } else if !force {
         for cached in entry.measure_cache.iter().flatten() {
-            if cached.query == query && cached.containing_block == containing_block {
+            if cached.input == input {
                 entry.counts.cache_hits += 1;
                 return Ok(cached.metrics);
             }
@@ -665,8 +724,9 @@ fn measure(
     #[cfg(feature = "layout-audit")]
     let mut reads = ReadSet::default();
     let mut cx = MeasureContext {
+        item_basis,
         height_range: entry
-            .size_limits
+            .item_sizing
             .as_ref()
             .and_then(|v| v.height)
             .map(|limits| limits.resolve(containing_block.height))
@@ -684,24 +744,16 @@ fn measure(
     if cx.failed {
         return Err(LayoutError::FailedChildOperation);
     }
-    if let Some(slot) = entry.measure_cache.iter().position(|slot| {
-        slot.as_ref().is_some_and(|cached| {
-            cached.query == query && cached.containing_block == containing_block
-        })
-    }) {
-        entry.measure_cache[slot] = Some(Measurement {
-            query,
-            containing_block,
-            metrics,
-        });
+    if let Some(slot) = entry
+        .measure_cache
+        .iter()
+        .position(|slot| slot.as_ref().is_some_and(|cached| cached.input == input))
+    {
+        entry.measure_cache[slot] = Some(Measurement { input, metrics });
         #[cfg(feature = "layout-audit")]
         entry.set_measurement_reads(slot, reads);
     } else {
-        entry.measure_cache[entry.replacement] = Some(Measurement {
-            query,
-            containing_block,
-            metrics,
-        });
+        entry.measure_cache[entry.replacement] = Some(Measurement { input, metrics });
         #[cfg(feature = "layout-audit")]
         entry.set_measurement_reads(entry.replacement, reads);
         entry.replacement = (entry.replacement + 1) % entry.measure_cache.len();
@@ -820,20 +872,7 @@ impl LayoutContext<'_, '_> {
         Ok(self.measure_item(index, query, ItemQuery::Stack)?.stack())
     }
 
-    pub(crate) fn measure_flex_item(
-        &mut self,
-        index: usize,
-        query: Query,
-        column_align: Option<Align>,
-    ) -> Result<MeasuredItem> {
-        self.measure_item(
-            index,
-            query,
-            column_align.map_or(ItemQuery::Stack, ItemQuery::Column),
-        )
-    }
-
-    fn measure_item(
+    pub(super) fn measure_item(
         &mut self,
         index: usize,
         query: Query,
@@ -845,6 +884,7 @@ impl LayoutContext<'_, '_> {
         self.failed = true;
         let metrics = MeasureContext {
             height_range: SizeRange::default(),
+            item_basis: ItemBasis::Preferred,
             containing_block: ContainingBlock::default(),
             child_basis: self.child_basis,
             access: self.access,
@@ -1051,13 +1091,7 @@ fn layout_root(
     let size = match request {
         RootRequest::Measure(query, assigned) => {
             let metrics = store.execute(root, |entry, access| {
-                Ok(measure(
-                    entry,
-                    access,
-                    query,
-                    ContainingBlock::default(),
-                    force,
-                ))
+                Ok(measure(entry, access, MeasureInput::direct(query), force))
             })??;
             assigned.unwrap_or(metrics.size)
         }
@@ -1209,14 +1243,14 @@ impl Scene {
         index: Option<usize>,
         body: impl LayoutNode,
         item_style: FlexItemStyle,
-        size_limits: Option<SizeLimits>,
+        item_sizing: Option<ItemSizing>,
     ) -> Result<NodeId> {
         #[cfg(feature = "layout-audit")]
         let revision = self
             .topology_revision
             .checked_add(1)
             .ok_or(LayoutError::RevisionExhausted)?;
-        let node = self.insert_entry(parent, index, Entry::new(body, item_style, size_limits))?;
+        let node = self.insert_entry(parent, index, Entry::new(body, item_style, item_sizing))?;
         #[cfg(feature = "layout-audit")]
         {
             self.topology_revision = revision;
@@ -1464,13 +1498,7 @@ impl Scene {
     /// Query preferred metrics without publishing geometry.
     pub fn probe(&mut self, node: NodeId, query: Query) -> Result<Metrics> {
         self.store.execute(node, |entry, access| {
-            Ok(measure(
-                entry,
-                access,
-                query,
-                ContainingBlock::default(),
-                false,
-            ))
+            Ok(measure(entry, access, MeasureInput::direct(query), false))
         })?
     }
 }

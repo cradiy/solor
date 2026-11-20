@@ -398,9 +398,17 @@ impl AnyElement {
             {
                 return Err(crate::layout::LayoutError::InvalidSize.into());
             }
+            let grow = style
+                .layout
+                .as_ref()
+                .and_then(|layout| layout.flex_grow)
+                .unwrap_or_default();
+            if !grow.is_finite() || grow < 0.0 {
+                return Err(crate::layout::LayoutError::InvalidSize.into());
+            }
             node.body.prepare_content(&style)?;
             let body = StyledBody::new(node.body, &style, units)?;
-            let size_limits = body.size_limits(&style, units)?;
+            let item_sizing = body.item_sizing(&style, units)?;
             let id = match target {
                 Target::Root(slot) => slot.insert(Scene::new(body)).root(),
                 Target::Child {
@@ -415,11 +423,12 @@ impl AnyElement {
                         .and_then(|layout| layout.align_self)
                         .unwrap_or(Align::Auto);
                     let item = crate::layout::FlexItemStyle {
+                        grow,
                         align_self,
                         auto_width: style.width == crate::Length::Auto,
                         auto_height: style.height == crate::Length::Auto,
                     };
-                    scene.mount_entry(parent, Some(index), body, item, size_limits)?
+                    scene.mount_entry(parent, Some(index), body, item, item_sizing)?
                 }
             };
             Ok(Installation {

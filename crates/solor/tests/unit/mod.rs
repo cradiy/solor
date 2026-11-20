@@ -433,3 +433,64 @@ fn borrowed_state_survives_remount_and_stale_input_rolls_back_mount() -> Result<
     );
     Ok(())
 }
+
+#[test]
+fn intrinsic_flex_basis_and_direct_probes_keep_separate_measurements() -> Result<()> {
+    use crate::layout::Query;
+
+    let mut ui = Ui::new();
+    let view = ui.mount(component(|_| {
+        div().child(div().h(px(70.0)).flex_basis(rem(2.0))).child(
+            div()
+                .h(px(99.0))
+                .flex_basis(percent(50.0))
+                .child(div().size(px(8.0))),
+        )
+    }))?;
+    let instance = ui.instances.get_mut(&view).unwrap();
+    let root = instance.scene.root();
+    let absolute = instance.node_at(&[0]).unwrap();
+    let relative = instance.node_at(&[1]).unwrap();
+    assert_eq!(
+        instance.scene.probe(absolute, Query::Natural)?.size.height,
+        px(70.0)
+    );
+    assert_eq!(
+        instance.scene.probe(root, Query::Natural)?.size.height,
+        px(40.0)
+    );
+    assert_eq!(
+        instance.scene.probe(relative, Query::Natural)?.size.height,
+        px(99.0)
+    );
+    Ok(())
+}
+
+#[cfg(feature = "layout-audit")]
+#[test]
+fn audit_replays_the_basis_and_grown_width_used_to_measure_a_label() -> Result<()> {
+    use crate::layout::{
+        Query,
+        validation::{CheckOutcome, CheckTarget},
+    };
+
+    let mut ui = test_ui();
+    let view = ui.mount(component(|_| {
+        div().flex_row().child(
+            text("Audio settings")
+                .w(px(160.0))
+                .flex_basis(px(40.0))
+                .max_w(px(100.0))
+                .flex_grow(1.0),
+        )
+    }))?;
+    let scene = &mut ui.instances.get_mut(&view).unwrap().scene;
+    let query = Query::Exact(px(180.0));
+    scene.run(query, None, false)?;
+    let target = CheckTarget::Measure(query);
+    let checkpoint = scene.capture_dependencies(scene.root(), target)?.unwrap();
+    let report = scene.check_dependencies(&checkpoint, target)?;
+    assert!(report.checked_reads >= 2);
+    assert_eq!(report.outcome, CheckOutcome::Unchanged);
+    Ok(())
+}
