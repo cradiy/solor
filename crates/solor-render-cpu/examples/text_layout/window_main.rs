@@ -57,7 +57,6 @@ fn main() -> std::process::ExitCode {
 #[cfg(target_os = "linux")]
 fn run(title: &str, app_id: &str, view: window_content::Content) -> anyhow::Result<()> {
     use solor::{
-        layout::Size,
         platform::{Platform, WindowOptions},
         px,
     };
@@ -68,14 +67,9 @@ fn run(title: &str, app_id: &str, view: window_content::Content) -> anyhow::Resu
         trace_submissions: true,
     };
     platform.run_window(
-        WindowOptions {
-            title,
-            app_id,
-            size: Size {
-                width: px(320.0),
-                height: px(100.0),
-            },
-        },
+        WindowOptions::new(title)
+            .app_id(app_id)
+            .size(px(320.0), px(100.0)),
         Box::new(window_renderer::Renderer::new(view, audit)),
     )
 }

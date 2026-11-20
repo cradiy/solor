@@ -29,8 +29,14 @@ fn primary_release_updates_pixels_and_an_idle_frame_has_no_damage() -> anyhow::R
         modifiers: Default::default(),
     };
     for button in [PointerButton::Secondary, PointerButton::Primary] {
-        assert!(!window.event(WindowEvent::Pointer(PointerInput::Down(sample, button)))?);
-        let dirty = window.event(WindowEvent::Pointer(PointerInput::Up(sample, button)))?;
+        assert!(
+            !window
+                .event(WindowEvent::Pointer(PointerInput::Down(sample, button)))?
+                .redraw
+        );
+        let dirty = window
+            .event(WindowEvent::Pointer(PointerInput::Up(sample, button)))?
+            .redraw;
         assert_eq!(dirty, button == PointerButton::Primary);
     }
     let open = window.frame(size, RasterScale::ONE)?;

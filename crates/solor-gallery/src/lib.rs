@@ -89,6 +89,17 @@ fn brand() -> Div {
         .child(label("Solor", 19.0, 24.0).text_color(PAPER))
 }
 
+fn header_button(title: &'static str) -> Div {
+    div()
+        .h(px(30.0))
+        .px(px(10.0))
+        .justify_center()
+        .rounded(px(8.0))
+        .bg(MUTED)
+        .text_color(PAPER)
+        .child(label(title, 13.0, 18.0))
+}
+
 /// Creates the gallery UI with its specimen font and its unmounted root component.
 pub fn gallery() -> Result<(Ui, impl Render)> {
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
@@ -105,14 +116,29 @@ pub fn gallery() -> Result<(Ui, impl Render)> {
             let geometry = Selection::new(cx, 0);
             let alignment = Selection::new(cx, 1);
             let header = div()
+                .window_drag_region()
                 .flex_row()
                 .items_center()
                 .justify_between()
                 .bg(INK)
                 .px(px(18.0))
                 .h(px(58.0))
-                .child(brand())
-                .child(pages.buttons(PAGES, true));
+                .child(
+                    div()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(16.0))
+                        .child(brand())
+                        .child(header_button("Toggle frame").window_decorations_toggle()),
+                )
+                .child(
+                    div()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(14.0))
+                        .child(pages.buttons(PAGES, true))
+                        .child(header_button("Close").window_close_button()),
+                );
             div()
                 .items_stretch()
                 .bg(PAPER)

@@ -9,7 +9,8 @@ use super::{
     PointerInput, PointerSample, frame::HitGeometry,
 };
 use crate::{
-    Context, Instance, NodeId, Result, Ui, ViewId, element::MountedNode, text::SharedEngine,
+    Context, Instance, NodeId, Result, Ui, ViewId, WindowControl, element::MountedNode,
+    text::SharedEngine,
 };
 
 struct Press {
@@ -107,18 +108,22 @@ impl Delivery<'_> {
         Ok(event)
     }
 
-    fn down(&mut self, sample: PointerSample, button: PointerButton) -> Result<()> {
+    fn down(
+        &mut self,
+        sample: PointerSample,
+        button: PointerButton,
+    ) -> Result<Option<WindowControl>> {
         let router = &self.instance.pointer;
         if router
             .presses
             .get(&sample.id)
             .is_some_and(|active| active.iter().any(|p| p.button == button))
         {
-            return Ok(());
+            return Ok(None);
         }
         let capture = router.capture(sample.id);
         let Some(owner) = capture.or_else(|| self.hit(sample)) else {
-            return Ok(());
+            return Ok(None);
         };
         let event = self.event(owner, sample, Some(button))?;
         let node = self
@@ -135,10 +140,17 @@ impl Delivery<'_> {
             down(&event, &mut cx)?;
         }
         let captured = cx.capture && capture.is_none();
+        if button == PointerButton::Primary
+            && capture.is_none()
+            && !captured
+            && handlers.control == Some(WindowControl::Drag)
+        {
+            return Ok(Some(WindowControl::Drag));
+        }
         let eligible = button == PointerButton::Primary
             && capture.is_none()
             && !captured
-            && handlers.click.is_some();
+            && (handlers.click.is_some() || handlers.control.is_some());
         let presses = self.instance.pointer.presses.entry(sample.id).or_default();
         if captured {
             for press in presses.iter_mut() {
@@ -151,7 +163,7 @@ impl Delivery<'_> {
             captured,
             eligible,
         });
-        Ok(())
+        Ok(None)
     }
 
     fn moved(&mut self, sample: PointerSample) -> Result<()> {
@@ -178,13 +190,17 @@ impl Delivery<'_> {
         Ok(())
     }
 
-    fn up(&mut self, sample: PointerSample, button: PointerButton) -> Result<()> {
+    fn up(
+        &mut self,
+        sample: PointerSample,
+        button: PointerButton,
+    ) -> Result<Option<WindowControl>> {
         let capture = self.instance.pointer.capture(sample.id);
         let Some(press) = self.instance.pointer.release(sample.id, button) else {
-            return Ok(());
+            return Ok(None);
         };
         let Some(target) = capture.or_else(|| self.hit(sample)) else {
-            return Ok(());
+            return Ok(None);
         };
         let event = self.event(target, sample, Some(button))?;
         let node = self
@@ -196,13 +212,13 @@ impl Delivery<'_> {
         if let Some(up) = &handlers.up {
             up(&event, &mut cx)?;
         }
-        if press.eligible
-            && target == press.owner
-            && let Some(click) = &handlers.click
-        {
-            click(&mut cx)?;
+        if press.eligible && target == press.owner {
+            if let Some(click) = &handlers.click {
+                click(&mut cx)?;
+            }
+            return Ok(handlers.control);
         }
-        Ok(())
+        Ok(None)
     }
 
     fn cancel_ids(&mut self, ids: Vec<PointerId>) -> Result<()> {
@@ -277,19 +293,26 @@ impl Ui {
         delivery.cancel_ids(canceled)
     }
 
-    /// Delivers host input against the view's accepted frame. Signal delivery occurs at flush.
-    pub fn dispatch_pointer(&mut self, view: ViewId, input: PointerInput) -> Result<()> {
+    /// Delivers host input against the view's accepted frame. Returns the native operation requested by this event.
+    pub fn dispatch_pointer(
+        &mut self,
+        view: ViewId,
+        input: PointerInput,
+    ) -> Result<Option<WindowControl>> {
         let mut delivery = self.pointer_delivery(view)?;
         match input {
-            PointerInput::Down(sample, button) => delivery.down(sample.validated()?, button),
+            PointerInput::Down(sample, button) => {
+                return delivery.down(sample.validated()?, button);
+            }
             PointerInput::Move(sample) => delivery.moved(sample.validated()?),
-            PointerInput::Up(sample, button) => delivery.up(sample.validated()?, button),
+            PointerInput::Up(sample, button) => return delivery.up(sample.validated()?, button),
             PointerInput::Cancel(id) => delivery.cancel(id),
             PointerInput::Leave(id) if delivery.instance.pointer.capture(id).is_none() => {
                 delivery.cancel(id)
             }
             PointerInput::Leave(_) => Ok(()),
-        }
+        }?;
+        Ok(None)
     }
 
     /// Cancels every active pointer on view deactivation, even if a callback reports an error.

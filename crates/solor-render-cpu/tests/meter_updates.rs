@@ -112,7 +112,7 @@ fn meter_damage_covers_old_and_new_ink_and_matches_full_replay() -> Result<()> {
     for n in 0..18 {
         if n != 0 {
             let input = movement(n);
-            assert!(window.event(WindowEvent::Pointer(input))?);
+            assert!(window.event(WindowEvent::Pointer(input))?.redraw);
             ui.dispatch_pointer(view, input)?;
         }
         let frame = window.frame(SIZE, SCALE)?;

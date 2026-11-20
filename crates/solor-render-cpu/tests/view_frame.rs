@@ -63,7 +63,8 @@ fn nested_paint_and_input_share_the_published_origin() -> Result<()> {
     };
     let click = |ui: &mut Ui| -> Result<()> {
         ui.dispatch_pointer(view, PointerInput::Down(sample, PointerButton::Primary))?;
-        ui.dispatch_pointer(view, PointerInput::Up(sample, PointerButton::Primary))
+        ui.dispatch_pointer(view, PointerInput::Up(sample, PointerButton::Primary))?;
+        Ok(())
     };
     click(&mut ui)?;
     assert!(!*ui.context().read(clicked)?);

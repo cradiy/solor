@@ -52,14 +52,16 @@ fn rejected_resize_keeps_old_hit_geometry_until_retry_is_submitted() -> Result<(
             p,
             PointerButton::Primary,
         )))?;
-        window.event(WindowEvent::Pointer(PointerInput::Up(
-            p,
-            PointerButton::Primary,
-        )))
+        window
+            .event(WindowEvent::Pointer(PointerInput::Up(
+                p,
+                PointerButton::Primary,
+            )))
+            .map(|response| response.redraw)
     };
     window.frame(small, RasterScale::ONE)?;
     window.frame_submitted()?;
-    assert!(!window.event(WindowEvent::FrameReady)?);
+    assert!(!window.event(WindowEvent::FrameReady)?.redraw);
 
     window.frame(large, RasterScale::ONE)?;
     // The platform rejects this buffer. A failed preparation supersedes it, too.
@@ -77,7 +79,7 @@ fn rejected_resize_keeps_old_hit_geometry_until_retry_is_submitted() -> Result<(
     let closed = window.frame(large, RasterScale::ONE)?;
     assert_eq!(&closed.rgba[sample..sample + 4], [255; 4]);
     window.frame_submitted()?;
-    assert!(!window.event(WindowEvent::FrameReady)?);
+    assert!(!window.event(WindowEvent::FrameReady)?.redraw);
     Ok(())
 }
 

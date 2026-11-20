@@ -209,8 +209,8 @@ fn retained_sibling_repaints_only_on_change_while_meter_starts_and_stops() -> Re
     let mut window = mixed_window(&samples, false, 4)?;
     window.frame(SIZE, RasterScale::ONE)?;
     window.frame_submitted()?;
-    assert!(!window.event(WindowEvent::FrameReady)?);
-    assert!(window.event(pointer(1))?);
+    assert!(!window.event(WindowEvent::FrameReady)?.redraw);
+    assert!(window.event(pointer(1))?.redraw);
     for width in [16, 16, 37, 28] {
         samples.latest.set(width - 1);
         samples.latest.set(width);
@@ -222,8 +222,8 @@ fn retained_sibling_repaints_only_on_change_while_meter_starts_and_stops() -> Re
         );
         assert_eq!(pixel(frame.rgba, usize::from(width), 10), [255; 4]);
         window.frame_submitted()?;
-        assert!(window.event(WindowEvent::FrameReady)?);
-        assert!(!window.event(WindowEvent::FrameReady)?);
+        assert!(window.event(WindowEvent::FrameReady)?.redraw);
+        assert!(!window.event(WindowEvent::FrameReady)?.redraw);
     }
     assert_eq!(
         (samples.slow_paints.get(), samples.fast_paints.get()),
@@ -235,7 +235,7 @@ fn retained_sibling_repaints_only_on_change_while_meter_starts_and_stops() -> Re
     let last = window.frame(SIZE, RasterScale::ONE)?;
     assert_eq!(pixel(last.rgba, 22, 4), [0x21, 0x68, 0xc4, 255]);
     window.frame_submitted()?;
-    assert!(!window.event(WindowEvent::FrameReady)?);
+    assert!(!window.event(WindowEvent::FrameReady)?.redraw);
     assert!(window.frame(SIZE, RasterScale::ONE)?.damage.is_none());
     window.frame_submitted()?;
     assert_eq!(
@@ -248,7 +248,7 @@ fn retained_sibling_repaints_only_on_change_while_meter_starts_and_stops() -> Re
     }
     window.frame(SIZE, RasterScale::ONE)?;
     window.frame_submitted()?;
-    assert!(window.event(WindowEvent::FrameReady)?);
+    assert!(window.event(WindowEvent::FrameReady)?.redraw);
     assert_eq!(
         (samples.slow_paints.get(), samples.fast_paints.get()),
         (2, 7)
@@ -297,17 +297,17 @@ fn animation_wakeup_belongs_to_the_submitted_frame() -> Result<()> {
 
     window.event(pointer(1))?;
     window.frame(SIZE, RasterScale::ONE)?;
-    assert!(!window.event(WindowEvent::FrameReady)?);
+    assert!(!window.event(WindowEvent::FrameReady)?.redraw);
     window.frame(SIZE, RasterScale::ONE)?;
     window.frame_submitted()?;
 
     // The host drops the first stopped frame. The previously accepted wakeup is still live.
     window.event(pointer(0))?;
     window.frame(SIZE, RasterScale::ONE)?;
-    assert!(window.event(WindowEvent::FrameReady)?);
+    assert!(window.event(WindowEvent::FrameReady)?.redraw);
     window.frame(SIZE, RasterScale::ONE)?;
     window.frame_submitted()?;
-    assert!(!window.event(WindowEvent::FrameReady)?);
+    assert!(!window.event(WindowEvent::FrameReady)?.redraw);
     Ok(())
 }
 
@@ -326,7 +326,7 @@ fn mixed_updates_at_120_hz() -> Result<()> {
         std::thread::sleep((start + tick(n)).saturating_duration_since(Instant::now()));
         let begin = Instant::now();
         samples.latest.set((n * 37 % 237) as u16);
-        assert!(window.event(WindowEvent::FrameReady)?);
+        assert!(window.event(WindowEvent::FrameReady)?.redraw);
         if n.is_multiple_of(60) {
             window.event(pointer(20 + n as u16 / 60))?;
         }
@@ -407,7 +407,7 @@ fn measure_native_cadence(window: CpuWindow, samples: Rc<Samples>) -> Result<()>
         pending: Option<Instant>,
     }
     impl WindowHandler<Rgba8> for Probe {
-        fn event(&mut self, event: WindowEvent) -> Result<bool> {
+        fn event(&mut self, event: WindowEvent) -> Result<solor::platform::EventResponse> {
             if matches!(event, WindowEvent::FrameReady) {
                 let now = Instant::now();
                 let mut timings = self.timings.borrow_mut();
@@ -423,7 +423,7 @@ fn measure_native_cadence(window: CpuWindow, samples: Rc<Samples>) -> Result<()>
                 }
                 return self.window.event(event);
             }
-            Ok(false)
+            Ok(Default::default())
         }
         fn frame(&mut self, size: Size, scale: RasterScale) -> Result<RasterFrame<'_>> {
             let frame = self.window.frame(size, scale)?;
@@ -455,11 +455,9 @@ fn measure_native_cadence(window: CpuWindow, samples: Rc<Samples>) -> Result<()>
         ..Default::default()
     };
     let outcome = platform.run_window(
-        WindowOptions {
-            title: "Solor frame cadence",
-            app_id: "solor.refresh-measurement",
-            size: SIZE,
-        },
+        WindowOptions::new("Solor frame cadence")
+            .app_id("solor.refresh-measurement")
+            .size(SIZE.width, SIZE.height),
         Box::new(probe),
     );
     match outcome {

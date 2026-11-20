@@ -1,5 +1,6 @@
 use solor::px;
 mod buffer;
+mod decorations;
 mod pointer;
 mod presentation;
 
@@ -8,7 +9,7 @@ use std::{io, time::Instant};
 use wayland_client::{
     Connection, Dispatch, QueueHandle, delegate_noop,
     globals::registry_queue_init,
-    protocol::{wl_buffer, wl_callback, wl_compositor, wl_shm, wl_shm_pool, wl_surface},
+    protocol::{wl_buffer, wl_callback, wl_compositor, wl_seat, wl_shm, wl_shm_pool, wl_surface},
 };
 use wayland_protocols::wp::{
     fractional_scale::v1::client::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1},
@@ -20,7 +21,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use buffer::Buffer;
 use solor::{
     layout::Size,
-    platform::{Platform, WindowEvent, WindowHandler, WindowOptions},
+    platform::{Platform, WindowControl, WindowEvent, WindowHandler, WindowOptions},
     raster::{Clip, DeviceSize, RasterFrame, RasterScale, Rgba8},
 };
 
@@ -34,6 +35,10 @@ pub struct Wayland {
 }
 
 struct Window {
+    top: xdg_toplevel::XdgToplevel,
+    decorations: Option<decorations::Decorations>,
+    maximized: bool,
+    pending_maximized: bool,
     presentation: Option<wp_presentation::WpPresentation>,
     viewport: wp_viewport::WpViewport,
     scale_120: u32,
@@ -123,6 +128,7 @@ impl Platform for Wayland {
     ) -> anyhow::Result<()> {
         let WindowOptions {
             title,
+            native_decorations,
             app_id,
             size,
         } = options;
@@ -154,8 +160,11 @@ impl Platform for Wayland {
         let fractional = manager.get_fractional_scale(&surface, &qh, ());
         let role = shell.get_xdg_surface(&surface, &qh, ());
         let top = role.get_toplevel(&qh, ());
+        let decorations = decorations::Decorations::bind(&globals, &qh, &top, native_decorations)?;
         top.set_title(title.into());
-        top.set_app_id(app_id.into());
+        if let Some(app_id) = app_id {
+            top.set_app_id(app_id.into());
+        }
         surface.commit();
 
         let presentation = if self.trace_submissions {
@@ -164,6 +173,10 @@ impl Platform for Wayland {
             None
         };
         let mut window = Window {
+            top,
+            decorations,
+            maximized: false,
+            pending_maximized: false,
             presentation,
             viewport,
             scale_120: 120,
@@ -201,7 +214,8 @@ impl Platform for Wayland {
             }
             window.present(&qh)?;
         }
-        top.destroy();
+        drop(window.decorations.take());
+        window.top.destroy();
         role.destroy();
         fractional.destroy();
         window.viewport.destroy();
@@ -217,11 +231,37 @@ impl Platform for Wayland {
 
 impl Window {
     fn event(&mut self, event: WindowEvent) {
-        if self.failure.is_none() {
-            match self.view.event(event) {
-                Ok(changed) => self.dirty |= changed,
-                Err(error) => self.failure = Some(error),
+        self.dispatch(event, None);
+    }
+
+    fn dispatch(&mut self, event: WindowEvent, press: Option<(wl_seat::WlSeat, u32)>) {
+        if self.failure.is_some() || self.closed {
+            return;
+        }
+        match self.view.event(event) {
+            Ok(response) => {
+                self.dirty |= response.redraw;
+                match response.window_control {
+                    Some(WindowControl::Drag) => {
+                        if let Some((seat, serial)) = press {
+                            self.top._move(&seat, serial);
+                        }
+                    }
+                    Some(WindowControl::ToggleDecorations) => {
+                        if let Some(decorations) = &mut self.decorations {
+                            decorations.toggle();
+                        }
+                    }
+                    Some(WindowControl::Close) => self.closed = true,
+                    Some(WindowControl::Minimize) => self.top.set_minimized(),
+                    Some(WindowControl::ToggleMaximize) if self.maximized => {
+                        self.top.unset_maximized()
+                    }
+                    Some(WindowControl::ToggleMaximize) => self.top.set_maximized(),
+                    None => {}
+                }
             }
+            Err(error) => self.failure = Some(error),
         }
     }
 
@@ -414,7 +454,16 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for Window {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            xdg_toplevel::Event::Configure { width, height, .. } => {
+            xdg_toplevel::Event::Configure {
+                width,
+                height,
+                states,
+                ..
+            } => {
+                state.pending_maximized = states
+                    .as_chunks::<4>()
+                    .0
+                    .contains(&(xdg_toplevel::State::Maximized as u32).to_ne_bytes());
                 state.pending_size = Some(Size {
                     width: if width > 0 {
                         px(width as f32)
@@ -446,12 +495,20 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for Window {
         if let xdg_surface::Event::Configure { serial } = event {
             surface.ack_configure(serial);
             state.configured = true;
+            state.maximized = state.pending_maximized;
+            let decorations_configured = state
+                .decorations
+                .as_mut()
+                .is_some_and(|d| d.take_configure());
             if let Some(size) = state.pending_size.take()
                 && size != state.size
             {
                 state.size = size;
                 state.full_damage = true;
                 state.dirty = true;
+            } else if decorations_configured && state.commits != 0 && !state.full_damage {
+                // Apply a decoration-only configure even when the retained view is idle.
+                state.surface.commit();
             }
         }
     }

@@ -3,7 +3,7 @@ use anyhow::Result;
 use solor::{
     Draw, Render, Ui, ViewId,
     layout::Size,
-    platform::{WindowEvent, WindowHandler},
+    platform::{EventResponse, WindowEvent, WindowHandler},
     pointer::PointerFrame,
     raster::{Clip, RasterFrame, RasterScale, Rgba8},
 };
@@ -44,13 +44,17 @@ impl CpuWindow {
 }
 
 impl WindowHandler<Rgba8> for CpuWindow {
-    fn event(&mut self, event: WindowEvent) -> Result<bool> {
+    fn event(&mut self, event: WindowEvent) -> Result<EventResponse> {
+        let mut response = EventResponse::default();
         match event {
-            WindowEvent::Pointer(input) => self.ui.dispatch_pointer(self.view, input)?,
-            WindowEvent::FrameReady if std::mem::take(&mut self.animate) => return Ok(true),
+            WindowEvent::Pointer(input) => {
+                response.window_control = self.ui.dispatch_pointer(self.view, input)?
+            }
+            WindowEvent::FrameReady => response.redraw = std::mem::take(&mut self.animate),
             _ => {}
         }
-        Ok(self.ui.has_pending_bindings())
+        response.redraw |= self.ui.has_pending_bindings();
+        Ok(response)
     }
 
     fn frame(&mut self, size: Size, scale: RasterScale) -> Result<RasterFrame<'_>> {

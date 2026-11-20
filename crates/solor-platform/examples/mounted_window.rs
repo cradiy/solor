@@ -1,9 +1,12 @@
 //! Opens a mounted settings component on the current platform.
 fn main() -> anyhow::Result<()> {
-    use solor::{Styled, Ui, component, div, layout::Size, px, rgb, text};
+    use solor::{Styled, Ui, component, div, px, rgb, text};
     use solor_platform::{WindowOptions, current_platform};
 
     let platform = current_platform()?;
+    let window = WindowOptions::new("Audio settings")
+        .app_id("solor.mounted-window")
+        .size(px(260.0), px(110.0));
 
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
     let ui = Ui::with_font(font.to_vec(), "en")?;
@@ -34,16 +37,5 @@ fn main() -> anyhow::Result<()> {
                     .on_click(move |cx| cx.set(open, false))
             })
     });
-    platform.run_window(
-        WindowOptions {
-            title: "Audio settings",
-            app_id: "solor.mounted-window",
-            size: Size {
-                width: px(260.0),
-                height: px(110.0),
-            },
-        },
-        ui,
-        settings,
-    )
+    platform.run_window(window, ui, settings)
 }

@@ -141,6 +141,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
         else {
             return;
         };
+        let mut press = None;
         let event = match event {
             wl_pointer::Event::Enter {
                 surface,
@@ -187,6 +188,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
             }
             // Linux evdev BTN_LEFT. Wayland surface coordinates are already logical.
             wl_pointer::Event::Button {
+                serial,
                 button,
                 state: WEnum::Value(button_state),
                 ..
@@ -204,13 +206,18 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
                     },
                 };
                 match button_state {
-                    wl_pointer::ButtonState::Pressed => PointerInput::Down(p, button),
+                    wl_pointer::ButtonState::Pressed => {
+                        if button == PointerButton::Primary {
+                            press = Some((seat.seat.clone(), serial));
+                        }
+                        PointerInput::Down(p, button)
+                    }
                     wl_pointer::ButtonState::Released => PointerInput::Up(p, button),
                     _ => return,
                 }
             }
             _ => return,
         };
-        state.event(WindowEvent::Pointer(event));
+        state.dispatch(WindowEvent::Pointer(event), press);
     }
 }

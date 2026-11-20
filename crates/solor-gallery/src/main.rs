@@ -1,20 +1,13 @@
 //! Launches the gallery on the current system platform.
-use solor::{layout::Size, px};
+use solor::px;
 use solor_platform::{WindowOptions, current_platform};
 
 fn main() -> anyhow::Result<()> {
     let platform = current_platform()?;
+    let window = WindowOptions::new("Solor Gallery")
+        .without_decorations()
+        .app_id("solor.gallery")
+        .size(px(800.0), px(560.0));
     let (ui, gallery) = solor_gallery::gallery()?;
-    platform.run_window(
-        WindowOptions {
-            title: "Solor Gallery",
-            app_id: "solor.gallery",
-            size: Size {
-                width: px(800.0),
-                height: px(560.0),
-            },
-        },
-        ui,
-        gallery,
-    )
+    platform.run_window(window, ui, gallery)
 }

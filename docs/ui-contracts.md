@@ -30,6 +30,34 @@ owns the pairing of the window system with a compatible renderer. The same
 application entry point compiles on other targets. Platform selection returns
 an unsupported-platform error where a host is unavailable.
 
+`WindowOptions::new("Settings")` requests an 800 × 600 logical-pixel window.
+Use `.size(px(480.0), px(320.0))` for a different preference and
+`.app_id("org.example.settings")` to identify the application to the window system.
+
+Windows request the native frame and title bar by default. Pass a boolean to
+`WindowOptions::new("Settings").decorations(enabled)` or use
+`.without_decorations()` to start with a frameless window. A title bar can be composed from ordinary elements.
+
+```rust
+div()
+    .flex_row()
+    .items_center()
+    .justify_between()
+    .window_drag_region()
+    .child(text("Settings"))
+    .child(div().window_decorations_toggle().child(text("Toggle frame")))
+    .child(div().window_close_button().child(text("Close")))
+```
+
+A primary press in the drag region requests an interactive move with the
+originating input event. Interactive children receive their own input.
+`window_minimize_button()`, `window_maximize_button()` and `window_close_button()`
+act on a completed click. Maximize toggles the compositor-confirmed state.
+The host uses the same submitted hit geometry for window controls and application buttons.
+A completed click on `window_decorations_toggle()` reverses the decoration
+preference for that open window. On Wayland the compositor chooses the final
+mode. Without decoration negotiation the window remains client-decorated.
+
 The Linux host pairs Wayland with the CPU renderer and runs one XDG toplevel
 until close. The driver accepts a `WindowHandler<Rgba8>` and borrows its
 output for one submission.

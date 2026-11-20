@@ -140,6 +140,7 @@ type CancelHandler = Box<dyn Fn(PointerId, &mut Context<'_>) -> Result<()>>;
 
 #[derive(Default)]
 pub(crate) struct Handlers {
+    control: Option<crate::WindowControl>,
     down: Option<DownHandler>,
     moved: Option<PositionHandler>,
     up: Option<PositionHandler>,
@@ -156,7 +157,35 @@ macro_rules! pointer_handlers {
         }
     )+};
 }
+macro_rules! window_controls {
+    ($($(#[$doc:meta])* $method:ident => $control:ident;)+) => {$(
+        $(#[$doc])*
+        pub fn $method(self) -> Self {
+            self.window_control(crate::WindowControl::$control)
+        }
+    )+};
+}
+
 impl<E: crate::Element> crate::Node<E> {
+    window_controls! {
+        /// Starts a native window drag on primary press.
+        window_drag_region => Drag;
+        /// Closes the window on a completed click.
+        window_close_button => Close;
+        /// Minimizes the window on a completed click.
+        window_minimize_button => Minimize;
+        /// Switches this window's native decorations on or off on a completed click.
+        window_decorations_toggle => ToggleDecorations;
+        /// Toggles maximization on a completed click.
+        window_maximize_button => ToggleMaximize;
+    }
+
+    /// Assigns a native window operation to this element. Interactive children receive their own input.
+    pub fn window_control(mut self, control: crate::WindowControl) -> Self {
+        self.handlers.get_or_insert_with(Default::default).control = Some(control);
+        self
+    }
+
     pointer_handlers! {
         /// Handles a button press on this element. The callback can capture the pointer.
         on_pointer_down => down (&PointerEvent, &mut PointerDownContext<'_>);

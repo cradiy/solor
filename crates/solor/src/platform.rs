@@ -1,15 +1,72 @@
 //! Window lifecycle and input shared by platform implementations.
-use crate::{Pixels, layout::Size, pointer::PointerInput, raster::RasterScale};
+use crate::{Pixels, layout::Size, pointer::PointerInput, px, raster::RasterScale};
 use anyhow::Result;
 
+/// Native window operation assigned to an element in a custom title bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowControl {
+    /// Begin an interactive move on primary press.
+    Drag,
+    /// Minimize this window on click.
+    Minimize,
+    /// Switch between maximized and restored on click.
+    ToggleMaximize,
+    /// Toggle the preference for native decorations on click.
+    ToggleDecorations,
+    /// Close this window on click.
+    Close,
+}
+
 /// Initial identity and preferred logical size of a window.
+#[derive(Clone, Copy, Debug)]
+#[must_use]
 pub struct WindowOptions<'a> {
+    /// Whether to request the native window frame and title bar. Defaults to true.
+    pub native_decorations: bool,
     /// Human-readable window title.
     pub title: &'a str,
-    /// Application identifier used by the window system.
-    pub app_id: &'a str,
+    /// Optional application identifier used by the window system to group windows.
+    pub app_id: Option<&'a str>,
     /// Preferred content size before the host supplies an allocation.
     pub size: Size,
+}
+
+impl<'a> WindowOptions<'a> {
+    /// Creates a titled window configuration with an 800 × 600 logical-pixel preference.
+    pub const fn new(title: &'a str) -> Self {
+        Self {
+            native_decorations: true,
+            title,
+            app_id: None,
+            size: Size {
+                width: px(800.0),
+                height: px(600.0),
+            },
+        }
+    }
+
+    /// Requests the native frame and title bar when enabled.
+    pub const fn decorations(mut self, enabled: bool) -> Self {
+        self.native_decorations = enabled;
+        self
+    }
+
+    /// Requests a window without the native frame or title bar.
+    pub const fn without_decorations(self) -> Self {
+        self.decorations(false)
+    }
+
+    /// Associates the window with an application identifier.
+    pub const fn app_id(mut self, id: &'a str) -> Self {
+        self.app_id = Some(id);
+        self
+    }
+
+    /// Sets the preferred content size. The window system supplies the actual allocation.
+    pub const fn size(mut self, width: Pixels, height: Pixels) -> Self {
+        self.size = Size { width, height };
+        self
+    }
 }
 
 /// Input or a frame opportunity delivered on the window's event thread.
@@ -41,10 +98,19 @@ pub trait Platform {
     ) -> Result<()>;
 }
 
+/// Work requested by a handler while processing one window event.
+#[derive(Default)]
+pub struct EventResponse {
+    /// Schedule a frame for pending UI changes.
+    pub redraw: bool,
+    /// Apply this operation to the originating window during dispatch.
+    pub window_control: Option<WindowControl>,
+}
+
 /// Application side of a single window. All calls are serialized on its event thread.
 pub trait WindowHandler<T: Presentation> {
-    /// Handles an event and reports whether the window needs a frame.
-    fn event(&mut self, event: WindowEvent) -> Result<bool>;
+    /// Handles an event and returns any requested redraw and native window operation.
+    fn event(&mut self, event: WindowEvent) -> Result<EventResponse>;
 
     /// Prepares output for the current logical allocation and device scale.
     fn frame(&mut self, size: Size, scale: RasterScale) -> Result<T::Frame<'_>>;

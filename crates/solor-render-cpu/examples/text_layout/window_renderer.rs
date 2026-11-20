@@ -1,7 +1,7 @@
 use anyhow::Result;
 use solor::{
     layout::Size,
-    platform::{WindowEvent, WindowHandler},
+    platform::{EventResponse, WindowEvent, WindowHandler},
     pointer::{PointerButton, PointerInput, PointerSample},
     raster::{Clip, RasterFrame, RasterScale, Rgba8},
 };
@@ -20,12 +20,12 @@ pub(super) struct Renderer {
 }
 
 impl WindowHandler<Rgba8> for Renderer {
-    fn event(&mut self, event: WindowEvent) -> Result<bool> {
+    fn event(&mut self, event: WindowEvent) -> Result<EventResponse> {
         let point = |p: PointerSample| Point {
             x: p.position.x.into(),
             y: p.position.y.into(),
         };
-        Ok(match event {
+        let redraw = match event {
             WindowEvent::FrameReady => self.view.frame_ready(),
             WindowEvent::Scroll(delta) => self.view.scroll_by(delta.into()),
             WindowEvent::Pointer(input) => {
@@ -40,10 +40,14 @@ impl WindowHandler<Rgba8> for Renderer {
                     PointerInput::Cancel(id) | PointerInput::Leave(id) => {
                         PointerEvent::Cancel(id.0)
                     }
-                    _ => return Ok(false),
+                    _ => return Ok(EventResponse::default()),
                 };
                 self.view.pointer(event)
             }
+        };
+        Ok(EventResponse {
+            redraw,
+            ..Default::default()
         })
     }
 
