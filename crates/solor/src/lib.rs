@@ -168,6 +168,7 @@ struct Instance {
     repaints: Repaints,
     scene: Scene,
     bodies: HashMap<NodeId, MountedNode>,
+    visible_nodes: usize,
     nodes: BTreeMap<Path, NodeId>,
     branches: BTreeMap<Path, Branch>,
 }
@@ -227,7 +228,9 @@ impl Instance {
             self.scene.edit_layout::<StyledBody<Text>>(node, |body| {
                 body.content.replace_content(value.clone())
             })?;
-            self.repaints.borrow_mut().invalidate(node);
+            if self.bodies[&node].visible {
+                self.repaints.borrow_mut().invalidate(node);
+            }
         }
         Ok(())
     }
@@ -255,8 +258,9 @@ impl Instance {
                 .get_mut(&parent)
                 .expect("mounted node")
                 .binding_target = Some(target);
+            let repaints = self.bodies[&parent].visible.then_some(&self.repaints);
             for watch in watches {
-                watch(cx, target, parent, &self.repaints)?;
+                watch(cx, target, parent, repaints)?;
             }
         }
         self.register_children(parent, path, children, cx)
@@ -328,6 +332,8 @@ impl Instance {
         drop(mount);
         node.offset = *path.last().expect("child position");
         let id = node.id;
+        node.visible &= self.bodies[&parent].visible;
+        self.visible_nodes += usize::from(node.visible);
         self.bodies.insert(id, node);
         self.nodes.insert(path.to_vec(), id);
         self.invalidate_geometry();
@@ -352,6 +358,7 @@ impl Instance {
         for key in subtree_keys(&self.nodes, path) {
             let node = self.nodes.remove(&key).expect("mounted node");
             let node = self.bodies.remove(&node).expect("mounted body");
+            self.visible_nodes -= usize::from(node.visible);
             self.pointer.retire(node.id);
             if let Some(bindings) = self.observers.get_mut().remove(&node.id) {
                 for (_, binding) in bindings {
@@ -489,6 +496,7 @@ impl Ui {
             units,
             repaints: Repaints::default(),
             scene,
+            visible_nodes: usize::from(root_node.visible),
             bodies: HashMap::from([(root, root_node)]),
             nodes: BTreeMap::from([(Vec::new(), root)]),
             branches: BTreeMap::new(),

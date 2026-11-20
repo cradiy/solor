@@ -107,10 +107,13 @@ impl Ui {
 impl HitGeometry {
     fn from_layout(instance: &Instance) -> Result<Self> {
         let mut frame = Self {
-            entries: Vec::with_capacity(instance.nodes.len()),
+            entries: Vec::with_capacity(instance.visible_nodes),
             interactive: HashMap::new(),
         };
         let root = &instance.bodies[&instance.scene.root()];
+        if !root.visible {
+            return Ok(frame);
+        }
         let mut pending = vec![(root, Origin::default(), None)];
         while let Some((body, offset, inherited)) = pending.pop() {
             let id = body.id;
@@ -146,7 +149,10 @@ impl HitGeometry {
             });
             let start = pending.len();
             for child in instance.scene.children(id)? {
-                pending.push((&instance.bodies[&child], origin, recipient));
+                let child = &instance.bodies[&child];
+                if child.visible {
+                    pending.push((child, origin, recipient));
+                }
             }
             let siblings = &mut pending[start..];
             if !siblings.is_sorted_by_key(|(child, _, _)| child.z_index) {

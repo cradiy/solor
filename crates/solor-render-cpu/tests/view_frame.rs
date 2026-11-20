@@ -677,3 +677,69 @@ fn multiline_ellipsis_marks_only_the_last_visible_line() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn invisible_overlay_keeps_flow_space_and_exposes_the_button_underneath() -> Result<()> {
+    use solor::RefreshMode;
+
+    let size = DeviceSize {
+        width: 40,
+        height: 40,
+    };
+    let mut ui = Ui::new();
+    let clicks = ui.context().signal(0);
+    let show = ui.context().signal(false);
+    let view = ui.mount(component(|_| {
+        div()
+            .child(
+                div()
+                    .size(px(10.0))
+                    .bg(rgb(0xff0000))
+                    .on_click(move |cx| cx.update(clicks, |n| *n += 1)),
+            )
+            .child_when(show, || {
+                div()
+                    .invisible()
+                    .mt(px(-10.0))
+                    .size(px(20.0))
+                    .bg(rgb(0x00ff00))
+                    .child(
+                        div()
+                            .visible()
+                            .size(px(20.0))
+                            .bg(rgb(0x00ff00))
+                            .refresh_mode(RefreshMode::Continuous)
+                            .on_click(|_| panic!("invisible descendant received a click")),
+                    )
+            })
+            .child(div().size(px(4.0)).bg(rgb(0x0000ff)))
+    }))?;
+    let click = PointerSample {
+        id: PointerId(1),
+        kind: PointerKind::Mouse,
+        position: Origin {
+            x: px(2.0),
+            y: px(2.0),
+        },
+        modifiers: Default::default(),
+    };
+    for (i, attached) in [false, true, false, true].into_iter().enumerate() {
+        ui.context().set(show, attached)?;
+        ui.flush()?;
+        ui.layout(view, size.at_unit_scale())?;
+        let frame = ui.record_frame(view)?;
+        assert!(!frame.requests_animation_frame());
+        let image = Surface::draw_view(&frame, size, RasterScale::ONE)?;
+        assert_eq!(pixel(&image, 2, 2), [255, 0, 0, 255]);
+        assert_eq!(pixel(&image, 2, 16), [255; 4]);
+        assert_eq!(
+            pixel(&image, 2, if attached { 20 } else { 10 }),
+            [0, 0, 255, 255]
+        );
+        ui.accept_pointer_frame(frame.into_pointer_frame())?;
+        ui.dispatch_pointer(view, PointerInput::Down(click, PointerButton::Primary))?;
+        ui.dispatch_pointer(view, PointerInput::Up(click, PointerButton::Primary))?;
+        assert_eq!(*ui.context().read(clicks)?, i + 1);
+    }
+    Ok(())
+}

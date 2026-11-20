@@ -10,8 +10,8 @@ use super::{Attachment, Context, Repaints, Result, SharedString, ViewId};
 use crate::layout::{FlexDirection, FlexLayout};
 use crate::length::UnitResolver;
 use crate::pointer::Handlers;
-use crate::style::PointerEvents;
 use crate::style::{Align, Background, Corners, TextStyleRefinement};
+use crate::style::{PointerEvents, Visibility};
 use crate::text::{Paragraph, Text, TextStyle};
 use crate::{Fill, Pixels, Rgba, Style, StyleRefinement, Styled, StyledBody, px};
 
@@ -212,6 +212,7 @@ pub(super) struct MountedNode {
     pub(super) id: NodeId,
     pub(super) offset: usize,
     pub(super) fixed_label: bool,
+    pub(super) visible: bool,
     paint_mode: RefreshPolicy,
     pub(super) text_style: TextStyleRefinement,
     text_color: Rgba,
@@ -236,6 +237,8 @@ impl MountedNode {
         Self {
             id,
             offset: 0,
+            visible: style.appearance.as_deref().and_then(|a| a.visibility)
+                != Some(Visibility::Hidden),
             fixed_label: fixed_label
                 && style.background.is_none()
                 && matches!(paint_mode, RefreshPolicy::Fixed(RefreshMode::OnDemand)),
@@ -277,10 +280,13 @@ impl MountedNode {
         if scene.is_pending() {
             anyhow::bail!("layout pending");
         }
+        reads.borrow_mut().clear();
+        if !self.visible {
+            return Ok(false);
+        }
         let geometry = scene.geometry(self.id).context("missing layout geometry")?;
         let start = commands.len();
         let size = geometry.metrics.size;
-        reads.borrow_mut().clear();
         let mut cx = PaintContext {
             origin: Origin::default(),
             size,
@@ -354,7 +360,7 @@ impl Drop for PaintSubscription {
 }
 
 pub(super) type Watch =
-    Box<dyn FnOnce(&mut Attachment<'_>, NodeId, NodeId, &Repaints) -> Result<()>>;
+    Box<dyn FnOnce(&mut Attachment<'_>, NodeId, NodeId, Option<&Repaints>) -> Result<()>>;
 type Install = Box<dyn FnOnce(Target<'_>, &mut Context<'_>, UnitResolver) -> Result<Installation>>;
 
 enum Target<'a> {
@@ -639,7 +645,9 @@ impl IntoElement for Label {
                     cx.state.bind(signal, target, move |_, _| {
                         pending.borrow_mut().insert((view, id), signal);
                     })?;
-                    repaints.borrow_mut().invalidate(id);
+                    if let Some(repaints) = repaints {
+                        repaints.borrow_mut().invalidate(id);
+                    }
                     Ok(())
                 }));
             }

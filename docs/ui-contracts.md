@@ -13,7 +13,7 @@ stage consumes it, and how a host learns about the resulting work.
 | Composition and ownership | A component renders once per attachment. A conditional owns its branch. Retiring a node releases its subscriptions and local signals. The host owns application signals. |
 | Box layout | Lengths in logical pixels, rems and percentages resolve to floating-point geometry. Every primitive supports box sizing and per-edge padding. Content layout, painting and child origins use the inner bounds. A container applies the gap on its main axis. |
 | Style refinements | Later declarations override individual specified fields. Text size, line height, alignment and color propagate into fixed and conditional descendants. Each element resolves its own box and background at mount. |
-| Text | A fixed or signal-bound label owns a shared string and caches shaped paragraphs by width. Updating bound text keeps the element ID. A changed label schedules layout and local paint. |
+| Text | A fixed or signal-bound label owns a shared string and caches shaped paragraphs by width. Updating bound text keeps the element ID. A changed label schedules layout and, when visible, local paint. |
 | Fill | A straight-alpha sRGB color has named channels. Every gradient shares an ordered, variable-length stop sequence. Four geometries sample it in sRGB or Oklab. Backgrounds and custom fills carry the same fill value. Equal offsets describe hard edges. Rounded fills use the assigned dimensions. |
 | Paint scheduling | Each successful paint subscribes the element to the signals it read. Repeated writes coalesce. Elements default to on-demand recording. A fixed or signal-driven continuous mode samples every host frame. |
 | Pointer input | The host accepts a border-box snapshot for hit testing. Positioned events deliver local logical coordinates. A press can capture its pointer until release or cancellation. See [pointer input](pointer-input.md). |
@@ -240,6 +240,13 @@ percentages use the parent's content height. Left and top take precedence
 over right and bottom when both opposing offsets are definite. An automatic
 edge defers to its opposite. The parent includes the shifted subtree's far
 edges in its content extent. The view root stays at the viewport origin.
+
+Use `.invisible()` to keep a subtree mounted and reserve its layout space.
+A hidden meter can receive layout updates while its painting and frame
+requests are suspended. Signal-bound text still reflows and can move visible
+siblings. The host omits the entire subtree from drawing and pointer hit
+testing, including children attached later. Visibility is resolved at
+attachment. A child marked `.visible()` appears only under visible ancestors.
 
 Use `.z_index(i32)` to order overlapping siblings. Each parent paints its own
 content first, then its child subtrees in ascending layer order. The default

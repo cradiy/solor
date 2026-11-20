@@ -70,6 +70,7 @@ snapshot for input, even if the view has already prepared a different layout.
 Hit testing visits axis-aligned border boxes in reverse paint order within the
 view rectangle. Higher sibling `z_index` values are in front. For ties the
 later sibling is in front. Children stay within their parent's layer.
+An invisible subtree leaves the visible boxes behind it eligible for hits.
 `PointerEvents::None` skips that box as a target while its children remain
 eligible. Captured motion looks up its owner directly.
 The host supplies `Leave` on surface exit, `Cancel` on loss of one pointer,

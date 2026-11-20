@@ -560,3 +560,56 @@ fn content_box_label_wraps_and_paints_at_the_constrained_inner_width() -> Result
     assert_eq!(line_counts[0], line_counts[2]);
     Ok(())
 }
+
+#[test]
+fn invisible_root_keeps_label_bindings_and_skips_local_paint_subscriptions() -> Result<()> {
+    use solor::RefreshMode;
+
+    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let caption = ui.context().signal(SharedString::from_static("A"));
+    let fill = ui.context().signal(Fill::from(ACCENT));
+    let add_label = ui.context().signal(true);
+    let view = ui.mount(component(|_| {
+        div()
+            .invisible()
+            .bg(INK)
+            .refresh_mode(RefreshMode::Continuous)
+            .child_when(add_label, move || {
+                text(caption).visible().bg(fill).line_height(px(20.0))
+            })
+            .child(div().size(px(5.0)))
+    }))?;
+    for (value, lines) in [("A", 1.0), ("A\nB\nC", 3.0)] {
+        ui.context()
+            .set(caption, SharedString::from_static(value))?;
+        ui.flush()?;
+        ui.layout(
+            view,
+            Size {
+                width: px(100.0),
+                height: px(60.0),
+            },
+        )?;
+        let root = ui.root(view)?;
+        let mut nodes = ui.children(view, root)?;
+        let label = nodes.next().unwrap();
+        let marker = nodes.next().unwrap();
+        assert_eq!(
+            ui.geometry(view, marker).unwrap().origin.y,
+            px(lines * 20.0)
+        );
+        let mut dirty = Vec::new();
+        ui.collect_repaints(view, &mut dirty)?;
+        assert!(dirty.is_empty());
+        let mut draws = Vec::new();
+        ui.paint(view, root, &mut draws)?;
+        ui.paint(view, label, &mut draws)?;
+        assert!(draws.is_empty());
+        let frame = ui.record_frame(view)?;
+        assert!(frame.draws().is_empty());
+        assert!(!frame.requests_animation_frame());
+    }
+    ui.context().set(fill, Fill::from(INK))?;
+    assert!(!ui.has_pending_bindings());
+    Ok(())
+}
