@@ -1,4 +1,5 @@
 //! Device pixel coordinates shared by renderers and presentation targets.
+pub use crate::fill::OpaqueLinearGradient;
 use std::io::{Error, Result};
 /// Integer extent of a raster buffer in device pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

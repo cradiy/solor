@@ -141,3 +141,46 @@ fn prepared_sampling_matches_individual_samples_across_hard_edges_and_reverse_tr
     }
     Ok(())
 }
+
+#[test]
+fn clipped_linear_spans_match_independent_pixel_centers() -> Result<()> {
+    use solor::{
+        layout::Origin,
+        px,
+        raster::{OpaqueLinearGradient, RasterScale},
+    };
+    let size = Size {
+        width: px(64.0),
+        height: px(19.5),
+    };
+    let origin = Origin {
+        x: px(3.5),
+        y: px(-1.25),
+    };
+    let stops = [
+        color_stop(rgb(0x221133), 0.125),
+        color_stop(rgb(0xff8165), 0.5),
+        color_stop(rgb(0x624acc), 0.5),
+        color_stop(rgb(0x193323), 0.501),
+        color_stop(rgb(0x8cfe70), 0.875),
+    ];
+    for angle in [0.0, 90.0, 110.0, 180.0, 270.0] {
+        let gradient = linear_gradient(angle, stops)?;
+        for scale in [RasterScale::ONE, RasterScale(1.5), RasterScale(2.0)] {
+            let spans = OpaqueLinearGradient::new(&gradient, origin, size, scale).unwrap();
+            let local = |device: u32, origin: solor::Pixels| {
+                ((f64::from(device) - f64::from(origin) * scale.0 + 0.5) / scale.0) as f32
+            };
+            for (x, y, width) in [(0, 0, 144), (17, 13, 49), (35, 5, 1), (6, 9, 0)] {
+                let mut pixels = vec![[0; 4]; width];
+                spans.write_span(x, y, &mut pixels)?;
+                for (column, pixel) in (x..).zip(pixels) {
+                    let c =
+                        gradient.sample_at(local(column, origin.x), local(y, origin.y), size)?;
+                    assert_eq!(pixel, [c.red, c.green, c.blue, c.alpha]);
+                }
+            }
+        }
+    }
+    Ok(())
+}

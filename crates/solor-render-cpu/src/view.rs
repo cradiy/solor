@@ -8,12 +8,13 @@ use crate::pixels::{Clip, DeviceSize, RasterScale, Surface, TextRaster, blend};
 use solor::{
     Draw, Fill, Pixels, ViewFrame,
     layout::{Origin, Size},
+    raster::OpaqueLinearGradient,
     style::Corners,
 };
 
-enum Brush<F> {
+enum Brush<'a, F> {
     Solid(solor::Rgba),
-    Gradient(F),
+    Gradient(F, Option<OpaqueLinearGradient<'a>>),
 }
 
 impl Surface {
@@ -115,7 +116,13 @@ impl Surface {
         let mut brush = match fill {
             Fill::Solid(color) => Brush::Solid(*color),
             Fill::Gradient(gradient) => {
-                Brush::Gradient(gradient.sampler(size).map_err(Error::other)?)
+                // Tiny damage on a dense ramp should not scan the complete stop list.
+                let spans = if gradient.stops().len() <= (clip.right - clip.left) as usize {
+                    OpaqueLinearGradient::new(gradient, origin, size, scale)
+                } else {
+                    None
+                };
+                Brush::Gradient(gradient.sampler(size).map_err(Error::other)?, spans)
             }
             _ => {
                 return Err(Error::new(
@@ -158,7 +165,10 @@ impl Surface {
                         blend(pixel, *c, 255);
                     }
                 }
-                Brush::Gradient(sample) => {
+                Brush::Gradient(_, Some(linear)) => linear
+                    .write_span(from as u32, y as u32, middle)
+                    .map_err(Error::other)?,
+                Brush::Gradient(sample, None) => {
                     for (x, pixel) in (from..to).zip(middle) {
                         let c = sample(local_x(x), local_y).map_err(Error::other)?;
                         if c.alpha == 255 {
@@ -180,7 +190,7 @@ impl Surface {
                     if coverage != 0 {
                         let c = match &mut brush {
                             Brush::Solid(c) => *c,
-                            Brush::Gradient(sample) => {
+                            Brush::Gradient(sample, _) => {
                                 sample(local_x(x), local_y).map_err(Error::other)?
                             }
                         };
@@ -334,6 +344,27 @@ fn coverage(x: f64, y: f64, width: f64, height: f64, row_height: f64, radii: Cor
     let inside_corner = |dx: f64, dy: f64, r: f64| {
         dx >= r || dy >= r || (r - dx).powi(2) + (r - dy).powi(2) <= r * r
     };
+    // Moving inward along either axis can only increase corner coverage.
+    // Test the extremes of the same sample grid before counting boundary samples.
+    let all_corners = |left, top, right, bottom| {
+        inside_corner(left, top, radii.top_left)
+            && inside_corner(right, top, radii.top_right)
+            && inside_corner(right, bottom, radii.bottom_right)
+            && inside_corner(left, bottom, radii.bottom_left)
+    };
+    let (left_min, top_min, right_min, bottom_min) =
+        (x + 0.125, y + 0.125, right - 0.875, bottom - 0.875);
+    if left_min >= 0.0
+        && top_min >= 0.0
+        && right_min >= 0.0
+        && bottom_min >= 0.0
+        && all_corners(left_min, top_min, right_min, bottom_min)
+    {
+        return 255;
+    }
+    if !all_corners(x + 0.875, y + 0.875, right - 0.125, bottom - 0.125) {
+        return 0;
+    }
     let mut inside = 0;
     for sy in [0.125, 0.375, 0.625, 0.875] {
         for sx in [0.125, 0.375, 0.625, 0.875] {
@@ -343,10 +374,7 @@ fn coverage(x: f64, y: f64, width: f64, height: f64, row_height: f64, radii: Cor
                     && right >= 0.0
                     && top >= 0.0
                     && bottom >= 0.0
-                    && inside_corner(left, top, radii.top_left)
-                    && inside_corner(right, top, radii.top_right)
-                    && inside_corner(right, bottom, radii.bottom_right)
-                    && inside_corner(left, bottom, radii.bottom_left),
+                    && all_corners(left, top, right, bottom),
             );
         }
     }

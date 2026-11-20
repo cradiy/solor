@@ -110,6 +110,59 @@ fn clipped_gradient_samples_use_the_entire_box() -> Result<()> {
 }
 
 #[test]
+fn translucent_gradient_spans_composite_over_the_previous_fill() -> Result<()> {
+    use solor::ColorSpace;
+
+    let ramp = gradient_left_to_right([
+        color_stop(rgb(0xff9061), 0.0),
+        color_stop(rgba(0x4880c800), 0.5),
+        color_stop(rgba(0xcd40cc88), 1.0),
+    ])?;
+    let under = rgb(0x594a6b);
+    let size = DeviceSize {
+        width: 35,
+        height: 4,
+    };
+    let scale = RasterScale(1.5);
+    for space in [ColorSpace::Srgb, ColorSpace::Oklab] {
+        let gradient = ramp.clone().color_space(space);
+        let mut ui = Ui::new();
+        let view = ui.mount(component(|_| {
+            div()
+                .bg(under)
+                .child(div().w(px(35.0)).h(px(4.0)).bg(gradient.clone()))
+        }))?;
+        ui.layout(view, size.at_unit_scale())?;
+        let image = Surface::draw_view(
+            &ui.record_frame(view)?,
+            scale.buffer_size(size.at_unit_scale())?,
+            scale,
+        )?;
+        for x in 0..52 {
+            let sample = gradient.sample_at(
+                ((x as f64 + 0.5) / scale.0) as f32,
+                1.0,
+                size.at_unit_scale(),
+            )?;
+            let blend = |src: u8, dst: u8| {
+                let a = u32::from(sample.alpha);
+                ((u32::from(src) * a + u32::from(dst) * (255 - a) + 127) / 255) as u8
+            };
+            assert_eq!(
+                pixel(&image, x, 1),
+                [
+                    blend(sample.red, under.red),
+                    blend(sample.green, under.green),
+                    blend(sample.blue, under.blue),
+                    255
+                ]
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn late_recording_failure_preserves_earlier_nodes_repaint_requests() -> Result<()> {
     let mut ui = Ui::new();
     let source = Cell::new(None);
@@ -289,6 +342,33 @@ fn overlapping_subtrees_share_paint_and_accepted_hit_order() -> Result<()> {
     let closed = ui.record_frame(view)?;
     ui.accept_pointer_frame(closed.into_pointer_frame())?;
     assert_eq!(click(&mut ui)?, 3);
+    Ok(())
+}
+
+#[test]
+fn fractional_rounded_edges_preserve_sample_coverage_at_each_corner() -> Result<()> {
+    let mut ui = Ui::new();
+    let view = ui.mount(component(|_| {
+        div()
+            .p(px(0.5))
+            .child(div().w(px(14.0)).h(px(12.0)).rounded(px(4.0)).bg(rgb(0)))
+    }))?;
+    let size = DeviceSize {
+        width: 15,
+        height: 13,
+    };
+    ui.layout(view, size.at_unit_scale())?;
+    let image = Surface::draw_view(&ui.record_frame(view)?, size, RasterScale::ONE)?;
+
+    // The arc meets a half-pixel horizontal edge. These pixels cover
+    // respectively 0, 3, 15, 16 and 8 of the sixteen sample positions.
+    for (x, y, shade) in [(0, 0, 255), (1, 1, 207), (2, 1, 16), (2, 2, 0), (4, 0, 127)] {
+        for row in [y, 12 - y] {
+            for column in [x, 14 - x] {
+                assert_eq!(pixel(&image, column, row), [shade, shade, shade, 255]);
+            }
+        }
+    }
     Ok(())
 }
 

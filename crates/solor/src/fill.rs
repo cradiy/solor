@@ -2,6 +2,7 @@
 use std::{error::Error, fmt, sync::Arc};
 
 mod sampler;
+pub use sampler::OpaqueLinearGradient;
 
 /// Straight (unpremultiplied) 8-bit sRGB channels with linear alpha.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
