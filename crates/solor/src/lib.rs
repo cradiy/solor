@@ -7,6 +7,8 @@ use crate::layout::Scene;
 use crate::state::{BindingId, Runtime, SignalId};
 use anyhow::Result;
 
+mod clip;
+pub use clip::ContentClip;
 mod column;
 mod element;
 mod fill;
@@ -743,7 +745,13 @@ impl Ui {
             .get(&node)
             .ok_or(crate::tree::TreeError::InvalidNode(node))?;
         let mut state = self.state.try_borrow_mut()?;
-        body.paint(&instance.scene, &state, &instance.paint_reads, commands)?;
+        body.paint(
+            &instance.scene,
+            &state,
+            &instance.paint_reads,
+            None,
+            commands,
+        )?;
         instance.observe_paint(node, &mut state)?;
         let mut repaints = instance.repaints.borrow_mut();
         repaints.commands.remove(&node);

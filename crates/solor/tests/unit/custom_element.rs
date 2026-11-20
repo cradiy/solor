@@ -19,7 +19,7 @@ impl crate::element::MountedNode {
         state: &crate::state::Runtime<()>,
     ) -> Result<Vec<Draw>> {
         let mut commands = Vec::new();
-        self.paint(scene, state, &Default::default(), &mut commands)?;
+        self.paint(scene, state, &Default::default(), None, &mut commands)?;
         Ok(commands)
     }
 }
@@ -138,6 +138,7 @@ fn custom_element_layout_paint_and_input_follow_the_mounted_instance() -> Result
         assert_eq!(
             node.record(&i.scene, &host.state.borrow())?,
             [Draw::Fill {
+                clip: None,
                 origin: Origin::default(),
                 size: Size {
                     width: px(width as f32 * 0.75),
@@ -284,12 +285,14 @@ fn failed_paint_keeps_prior_commands_and_rejects_a_retired_signal() -> Result<()
         commands,
         [
             Draw::Fill {
+                clip: None,
                 origin: Origin::default(),
                 size,
                 fill: [0; 4].into(),
                 corner_radii: Default::default()
             },
             Draw::Fill {
+                clip: None,
                 origin: Origin::default(),
                 size,
                 fill: [255; 4].into(),

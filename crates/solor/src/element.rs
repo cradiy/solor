@@ -1,6 +1,10 @@
 //! Composition, conversion at attachment, and retained element behavior.
+use crate::{
+    ContentClip,
+    clip::{NodeClips, OverflowClip},
+};
 use anyhow::Context as _;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use crate::layout::{LayoutNode, Origin, Query, Scene, Size};
 use crate::state::{Runtime, Signal, SignalId};
@@ -94,6 +98,7 @@ impl Element for Text {
     }
     fn paint(&self, cx: &mut PaintContext) -> Result<()> {
         cx.commands.push(Draw::Text {
+            clip: cx.clip.clone(),
             origin: cx.origin,
             size: cx.size,
             paragraph: self.resolve(Query::Exact(cx.size.width))?,
@@ -108,6 +113,8 @@ impl Element for Text {
 pub enum Draw {
     /// Fills a rounded rectangle.
     Fill {
+        /// Effective clip in the same coordinates as the origin.
+        clip: Option<Arc<ContentClip>>,
         /// Upper-left corner of the fill.
         origin: Origin,
         /// Extent of the rectangle.
@@ -119,6 +126,8 @@ pub enum Draw {
     },
     /// Draws a shaped paragraph.
     Text {
+        /// Effective clip in the same coordinates as the origin.
+        clip: Option<Arc<ContentClip>>,
         /// Upper-left corner of the paragraph.
         origin: Origin,
         /// Assigned content box used to clip glyphs.
@@ -138,6 +147,7 @@ pub struct PaintContext<'a> {
     /// Resolved foreground color for this element.
     pub text_color: Rgba,
     commands: &'a mut Vec<Draw>,
+    clip: Option<Arc<ContentClip>>,
     next_frame: bool,
     state: &'a Runtime<()>,
     reads: &'a RefCell<Vec<SignalId>>,
@@ -163,6 +173,7 @@ impl PaintContext<'_> {
     /// Records a rectangle at the content origin.
     pub fn fill(&mut self, size: Size, fill: impl Into<Fill>) {
         self.commands.push(Draw::Fill {
+            clip: self.clip.clone(),
             origin: self.origin,
             size,
             fill: fill.into(),
@@ -224,6 +235,7 @@ pub(super) struct MountedNode {
     pub(crate) handlers: Option<Box<Handlers>>,
     pub(super) z_index: i32,
     pub(crate) hit_testable: bool,
+    pub(crate) overflow_clip: OverflowClip,
 }
 
 impl MountedNode {
@@ -252,6 +264,7 @@ impl MountedNode {
                 .as_deref()
                 .and_then(|a| a.z_index)
                 .unwrap_or_default(),
+            overflow_clip: OverflowClip::from_layout(style.layout.as_deref()),
             hit_testable: style.appearance.as_deref().and_then(|a| a.pointer_events)
                 != Some(PointerEvents::None),
             text_style,
@@ -277,6 +290,7 @@ impl MountedNode {
         scene: &Scene,
         state: &Runtime<()>,
         reads: &RefCell<Vec<SignalId>>,
+        frame_clips: Option<&NodeClips>,
         commands: &mut Vec<Draw>,
     ) -> Result<bool> {
         if scene.is_pending() {
@@ -289,7 +303,16 @@ impl MountedNode {
         let geometry = scene.geometry(self.id).context("missing layout geometry")?;
         let start = commands.len();
         let size = geometry.metrics.size;
+        let local_clips;
+        let clips = match frame_clips {
+            Some(clips) => clips,
+            None => {
+                local_clips = self.overflow_clip.resolve(None, Origin::default(), size)?;
+                &local_clips
+            }
+        };
         let mut cx = PaintContext {
+            clip: clips.content.clone(),
             origin: Origin::default(),
             size,
             text_color: self.text_color,
@@ -309,6 +332,7 @@ impl MountedNode {
                 Background::Bound(signal) => cx.read(*signal)?.clone(),
             };
             cx.commands.push(Draw::Fill {
+                clip: clips.inherited.clone(),
                 origin: Origin::default(),
                 size,
                 fill,

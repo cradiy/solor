@@ -51,7 +51,7 @@ view-local position in floating-point logical pixels. Down and up carry the
 changed button. The primary action is the primary mouse button, touch contact
 or pen tip. A cancel needs only the pointer ID. For positioned events the
 router derives border-box-local coordinates and bounds from the same accepted
-frame. Captured coordinates may fall outside the box.
+frame. Captured coordinates may fall outside the box and its ancestor clips.
 
 ## Host boundary
 
@@ -70,6 +70,9 @@ snapshot for input, even if the view has already prepared a different layout.
 Hit testing visits axis-aligned border boxes in reverse paint order within the
 view rectangle. Higher sibling `z_index` values are in front. For ties the
 later sibling is in front. Children stay within their parent's layer.
+An ancestor with hidden overflow limits descendant hits on the specified axes,
+including the leading edge and excluding the trailing edge. A newly sized clip
+takes effect for input when the host accepts that frame.
 An invisible subtree leaves the visible boxes behind it eligible for hits.
 `PointerEvents::None` skips that box as a target while its children remain
 eligible. Captured motion looks up its owner directly.

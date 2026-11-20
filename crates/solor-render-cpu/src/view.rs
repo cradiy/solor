@@ -45,6 +45,7 @@ impl Surface {
                     size,
                     fill,
                     corner_radii,
+                    ..
                 } => {
                     self.fill_box(*origin, *size, fill, *corner_radii, scale, bounds)?;
                 }
@@ -53,6 +54,7 @@ impl Surface {
                     size: allocated,
                     paragraph,
                     color,
+                    ..
                 } => {
                     let raster = match &mut text {
                         Some(raster) => raster,
@@ -62,11 +64,10 @@ impl Surface {
                                 .ok_or_else(|| Error::other("text without a font face"))?,
                             scale,
                             (0, 0),
-                            clip,
                             None,
                         )?),
                     };
-                    raster.draw(self, *origin, *allocated, paragraph, *color)?;
+                    raster.draw(self, *origin, *allocated, paragraph, *color, bounds)?;
                 }
             }
         }
@@ -130,6 +131,22 @@ impl Surface {
 
 // Fill coverage includes fractional edge pixels. Text is clipped to rounded layout edges.
 fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
+    let mut bounds = primitive_bounds(draw, scale)?;
+    let (Draw::Fill { clip, .. } | Draw::Text { clip, .. }) = draw;
+    if let Some(clip) = clip {
+        if let Some(x) = &clip.x {
+            bounds.left = bounds.left.max(scale.edge(f64::from(x.start)));
+            bounds.right = bounds.right.min(scale.edge(f64::from(x.end)));
+        }
+        if let Some(y) = &clip.y {
+            bounds.top = bounds.top.max(scale.edge(f64::from(y.start)));
+            bounds.bottom = bounds.bottom.min(scale.edge(f64::from(y.end)));
+        }
+    }
+    Ok(bounds)
+}
+
+fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     match draw {
         Draw::Text { origin, size, .. } => Ok(scale.bounds(*origin, *size)),
         Draw::Fill {
@@ -177,14 +194,22 @@ fn same_draw(a: &Draw, b: &Draw) -> bool {
                 size,
                 color,
                 paragraph,
+                clip,
             },
             Draw::Text {
                 origin: at,
                 size: extent,
                 color: ink,
                 paragraph: shaped,
+                clip: other_clip,
             },
-        ) => origin == at && size == extent && color == ink && Rc::ptr_eq(paragraph, shaped),
+        ) => {
+            origin == at
+                && size == extent
+                && color == ink
+                && clip == other_clip
+                && Rc::ptr_eq(paragraph, shaped)
+        }
         _ => a == b,
     }
 }

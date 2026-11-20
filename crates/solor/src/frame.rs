@@ -8,7 +8,8 @@ use std::{
 use anyhow::{Context as _, Result};
 
 use crate::{
-    Draw, Instance, Rgba, Ui, ViewId,
+    ContentClip, Draw, Instance, Rgba, Ui, ViewId,
+    clip::NodeClips,
     element::MountedNode,
     layout::{Origin, Size},
     pointer::PointerFrame,
@@ -23,6 +24,7 @@ pub(super) struct FixedLabels {
 }
 
 struct FixedLabel {
+    clip: Option<Arc<ContentClip>>,
     index: usize,
     origin: Origin,
     size: Size,
@@ -34,6 +36,7 @@ impl FixedLabel {
     fn from_commands(index: usize, commands: &[Draw]) -> Option<Self> {
         let [
             Draw::Text {
+                clip,
                 origin,
                 size,
                 paragraph,
@@ -44,6 +47,7 @@ impl FixedLabel {
             return None;
         };
         Some(Self {
+            clip: clip.clone(),
             index,
             origin: *origin,
             size: *size,
@@ -54,6 +58,7 @@ impl FixedLabel {
 
     fn draw(&self) -> Draw {
         Draw::Text {
+            clip: self.clip.clone(),
             origin: self.origin,
             size: self.size,
             paragraph: self.paragraph.clone(),
@@ -102,6 +107,7 @@ impl MountedNode {
     fn paint_at(
         &self,
         offset: Origin,
+        clips: &NodeClips,
         instance: &Instance,
         state: &mut Runtime<()>,
         draws: &mut Vec<Draw>,
@@ -113,7 +119,13 @@ impl MountedNode {
             return Ok(false);
         }
         let start = draws.len();
-        let next_frame = self.paint(&instance.scene, state, &instance.paint_reads, draws)?;
+        let next_frame = self.paint(
+            &instance.scene,
+            state,
+            &instance.paint_reads,
+            Some(clips),
+            draws,
+        )?;
         for draw in &mut draws[start..] {
             let origin = match draw {
                 Draw::Fill { origin, .. } | Draw::Text { origin, .. } => origin,
@@ -153,20 +165,20 @@ impl Ui {
         if let Some(labels) = cache.labels.get() {
             draws.reserve(labels.len());
             let mut labels = labels.iter().peekable();
-            for (index, (id, offset)) in pointer.paint_order().enumerate() {
+            for (index, (id, offset, clips)) in pointer.paint_order().enumerate() {
                 if let Some(label) = labels.next_if(|label| label.index == index) {
                     draws.push(label.draw());
                 } else {
-                    next_frame |=
-                        instance.bodies[&id].paint_at(offset, instance, &mut state, &mut draws)?;
+                    next_frame |= instance.bodies[&id]
+                        .paint_at(offset, clips, instance, &mut state, &mut draws)?;
                 }
             }
         } else if cache.recorded.get() {
             let mut labels = Vec::new();
-            for (index, (id, offset)) in pointer.paint_order().enumerate() {
+            for (index, (id, offset, clips)) in pointer.paint_order().enumerate() {
                 let start = draws.len();
                 let body = &instance.bodies[&id];
-                next_frame |= body.paint_at(offset, instance, &mut state, &mut draws)?;
+                next_frame |= body.paint_at(offset, clips, instance, &mut state, &mut draws)?;
                 if body.fixed_label
                     && let Some(label) = FixedLabel::from_commands(index, &draws[start..])
                 {
@@ -176,9 +188,9 @@ impl Ui {
             cache.labels.get_or_init(|| labels);
         } else {
             // Keep one-off layouts allocation-free with respect to the label cache.
-            for (id, offset) in pointer.paint_order() {
-                next_frame |=
-                    instance.bodies[&id].paint_at(offset, instance, &mut state, &mut draws)?;
+            for (id, offset, clips) in pointer.paint_order() {
+                next_frame |= instance.bodies[&id]
+                    .paint_at(offset, clips, instance, &mut state, &mut draws)?;
             }
             cache.recorded.set(true);
         }

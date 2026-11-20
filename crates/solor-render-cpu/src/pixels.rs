@@ -85,7 +85,7 @@ impl Surface {
                 .saturating_add(scale.edge(f64::from(frame.scroll_y))),
         );
         let viewport = Clip::canvas(size).intersect(clip);
-        let mut text = TextRaster::new(frame.font, scale, origin, viewport, cache)?;
+        let mut text = TextRaster::new(frame.font, scale, origin, cache)?;
         for draw in &frame.draws {
             text.draw(
                 &mut surface,
@@ -93,6 +93,7 @@ impl Surface {
                 draw.allocated,
                 &draw.paragraph,
                 draw.color,
+                viewport,
             )?;
         }
         Ok(surface)
@@ -156,7 +157,6 @@ pub(super) struct TextRaster<'a> {
     scratch: Image,
     scale: RasterScale,
     origin: (i64, i64),
-    viewport: Clip,
     cache: Option<&'a mut GlyphMasks>,
 }
 
@@ -165,7 +165,6 @@ impl<'a> TextRaster<'a> {
         bytes: &'a [u8],
         scale: RasterScale,
         origin: (i64, i64),
-        viewport: Clip,
         cache: Option<&'a mut GlyphMasks>,
     ) -> Result<Self> {
         let font =
@@ -176,7 +175,6 @@ impl<'a> TextRaster<'a> {
             scratch: Image::new(),
             scale,
             origin,
-            viewport,
             cache,
         })
     }
@@ -188,11 +186,12 @@ impl<'a> TextRaster<'a> {
         allocated: solor::layout::Size,
         paragraph: &solor::text::Paragraph,
         color: solor::Rgba,
+        viewport: Clip,
     ) -> Result<()> {
         let scale = self.scale;
         let origin = self.origin;
         let device = scale.bounds(at, allocated);
-        let bounds = self.viewport.intersect(Clip {
+        let bounds = viewport.intersect(Clip {
             left: device.left.saturating_sub(origin.0),
             top: device.top.saturating_sub(origin.1),
             right: device.right.saturating_sub(origin.0),

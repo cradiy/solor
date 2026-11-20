@@ -743,3 +743,93 @@ fn invisible_overlay_keeps_flow_space_and_exposes_the_button_underneath() -> Res
     }
     Ok(())
 }
+
+#[test]
+fn nested_axis_clips_crop_text_and_gradient_and_limit_hits_at_the_same_edges() -> Result<()> {
+    use solor::style::Overflow;
+
+    let viewport = DeviceSize {
+        width: 48,
+        height: 40,
+    }
+    .at_unit_scale();
+    let scale = RasterScale(1.5);
+    let physical = scale.buffer_size(viewport)?;
+    let ramp = gradient_left_to_right([
+        color_stop(rgb(0xff3311), 0.0),
+        color_stop(rgb(0x2288ff), 1.0),
+    ])?;
+    let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
+    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    let clicked = ui.context().signal(0);
+    let scene = |clipped| {
+        let ramp = ramp.clone();
+        component(move |_| {
+            div().p(px(2.5)).child(
+                div()
+                    .w(px(18.0))
+                    .h(px(12.0))
+                    .when(clipped, |d| d.overflow_x(Overflow::Hidden))
+                    .child(
+                        div()
+                            .relative()
+                            .left(px(-2.0))
+                            .top(px(4.0))
+                            .min_w(px(25.0))
+                            .h(px(16.0))
+                            .when(clipped, |d| d.overflow_y(Overflow::Hidden))
+                            .child(
+                                div()
+                                    .relative()
+                                    .left(px(-0.5))
+                                    .top(px(-6.5))
+                                    .min_w(px(34.0))
+                                    .h(px(30.0))
+                                    .bg(ramp)
+                                    .child(text("ABC").whitespace_nowrap().text_color(rgb(0)))
+                                    .on_click(move |cx| cx.update(clicked, |n| *n += 1)),
+                            ),
+                    ),
+            )
+        })
+    };
+    let plain = ui.mount(scene(false))?;
+    let clipped = ui.mount(scene(true))?;
+    ui.layout(plain, viewport)?;
+    ui.layout(clipped, viewport)?;
+    let reference = Surface::draw_view(&ui.record_frame(plain)?, physical, scale)?;
+    // Exercise the cold, warming and cached fixed-label recording paths.
+    for _ in 0..3 {
+        let frame = ui.record_frame(clipped)?;
+        let image = Surface::draw_view(&frame, physical, scale)?;
+        for y in 0..physical.height as usize {
+            for x in 0..physical.width as usize {
+                let expected = if (4..31).contains(&x) && (10..34).contains(&y) {
+                    pixel(&reference, x, y)
+                } else {
+                    &[255; 4]
+                };
+                assert_eq!(pixel(&image, x, y), expected, "pixel ({x}, {y})");
+            }
+        }
+        ui.accept_pointer_frame(frame.into_pointer_frame())?;
+    }
+    for (x, y, expected) in [
+        (2.49, 10.0, 0),
+        (2.5, 6.5, 1),
+        (20.5, 10.0, 1),
+        (10.0, 22.5, 1),
+        (19.0, 20.0, 2),
+    ] {
+        let point = PointerSample {
+            id: PointerId(1),
+            kind: PointerKind::Mouse,
+            position: Origin { x: px(x), y: px(y) },
+            modifiers: Default::default(),
+        };
+        ui.dispatch_pointer(clipped, PointerInput::Down(point, PointerButton::Primary))?;
+        ui.dispatch_pointer(clipped, PointerInput::Up(point, PointerButton::Primary))?;
+        assert_eq!(*ui.context().read(clicked)?, expected);
+    }
+    Ok(())
+}

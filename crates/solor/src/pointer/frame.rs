@@ -4,6 +4,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{Context as _, ensure};
 
 use super::{PointerButton, PointerEvent, PointerSample};
+use crate::clip::NodeClips;
 use crate::{
     Instance, NodeId, Result, Ui, ViewId,
     layout::{Origin, Size},
@@ -27,6 +28,7 @@ struct Entry {
     area: HitBox,
     recipient: Option<NodeId>,
     testable: bool,
+    clips: NodeClips,
 }
 
 /// Immutable input geometry prepared alongside a view's pending presentation.
@@ -41,11 +43,11 @@ pub(super) struct HitGeometry {
 }
 
 impl PointerFrame {
-    pub(crate) fn paint_order(&self) -> impl Iterator<Item = (NodeId, Origin)> + '_ {
+    pub(crate) fn paint_order(&self) -> impl Iterator<Item = (NodeId, Origin, &NodeClips)> + '_ {
         self.geometry
             .entries
             .iter()
-            .map(|entry| (entry.node, entry.area.origin))
+            .map(|entry| (entry.node, entry.area.origin, &entry.clips))
     }
 
     pub(super) fn has_recipient(&self, node: NodeId) -> bool {
@@ -56,12 +58,15 @@ impl PointerFrame {
         if !self.geometry.entries.first()?.area.contains(p) {
             return None;
         }
-        let hit = self
-            .geometry
-            .entries
-            .iter()
-            .rev()
-            .find(|entry| entry.testable && entry.area.contains(p))?;
+        let hit = self.geometry.entries.iter().rev().find(|entry| {
+            entry.testable
+                && entry.area.contains(p)
+                && entry
+                    .clips
+                    .inherited
+                    .as_deref()
+                    .is_none_or(|clip| clip.contains(p))
+        })?;
         Some((hit.node, hit.recipient?))
     }
 
@@ -114,8 +119,8 @@ impl HitGeometry {
         if !root.visible {
             return Ok(frame);
         }
-        let mut pending = vec![(root, Origin::default(), None)];
-        while let Some((body, offset, inherited)) = pending.pop() {
+        let mut pending = vec![(root, Origin::default(), None, None)];
+        while let Some((body, offset, inherited, inherited_clip)) = pending.pop() {
             let id = body.id;
             let geometry = instance
                 .scene
@@ -141,7 +146,12 @@ impl HitGeometry {
             } else {
                 inherited
             };
+            let clips = body
+                .overflow_clip
+                .resolve(inherited_clip, origin, area.size)?;
+            let child_clip = clips.content.clone();
             frame.entries.push(Entry {
+                clips,
                 node: id,
                 area,
                 recipient,
@@ -151,12 +161,12 @@ impl HitGeometry {
             for child in instance.scene.children(id)? {
                 let child = &instance.bodies[&child];
                 if child.visible {
-                    pending.push((child, origin, recipient));
+                    pending.push((child, origin, recipient, child_clip.clone()));
                 }
             }
             let siblings = &mut pending[start..];
-            if !siblings.is_sorted_by_key(|(child, _, _)| child.z_index) {
-                siblings.sort_by_key(|(child, _, _)| child.z_index);
+            if !siblings.is_sorted_by_key(|(child, ..)| child.z_index) {
+                siblings.sort_by_key(|(child, ..)| child.z_index);
             }
             // Pop lower layers first, visiting each entire subtree before the next sibling.
             siblings.reverse();
