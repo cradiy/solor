@@ -11,7 +11,7 @@ use crate::layout::{FlexDirection, FlexLayout};
 use crate::length::UnitResolver;
 use crate::pointer::Handlers;
 use crate::style::PointerEvents;
-use crate::style::{Background, Corners, TextAlign, TextStyleRefinement};
+use crate::style::{Background, Corners, TextStyleRefinement};
 use crate::text::{Paragraph, Text, TextStyle};
 use crate::{Fill, Pixels, Rgba, Style, StyleRefinement, Styled, StyledBody, px};
 
@@ -91,14 +91,7 @@ impl Element for Text {
             size: style.text.size,
             line_height: style.text.line_height,
         })?;
-        self.set_alignment(
-            style
-                .text
-                .attributes
-                .as_ref()
-                .and_then(|attributes| attributes.text_align)
-                .unwrap_or(TextAlign::Start),
-        );
+        self.set_paragraph_style(style.text.attributes.as_deref());
         Ok(())
     }
     fn paint(&self, cx: &mut PaintContext) -> Result<()> {

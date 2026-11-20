@@ -181,7 +181,7 @@ pub trait Styled: Sized {
         font_style { italic: FontStyle::Italic };
         white_space { whitespace_nowrap: WhiteSpace::NoWrap, whitespace_normal: WhiteSpace::Normal };
         text_align { text_start: TextAlign::Start, text_end: TextAlign::End, text_left: TextAlign::Left, text_right: TextAlign::Right, text_center: TextAlign::Center, text_justify: TextAlign::Justify };
-        text_overflow { text_ellipsis: TextOverflow::Ellipsis };
+        text_overflow { text_ellipsis: TextOverflow::Ellipsis, text_ellipsis_start: TextOverflow::EllipsisStart, text_ellipsis_middle: TextOverflow::EllipsisMiddle };
         cursor { cursor_pointer: Cursor::Pointer, cursor_text: Cursor::Text };
     }
     color_setters! {

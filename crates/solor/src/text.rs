@@ -1,11 +1,15 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::num::NonZeroUsize;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::style::TextAlign;
+use crate::style::{TextAlign, TextAttributes, TextOverflow, WhiteSpace};
 use crate::{Pixels, SharedString, px};
-use cosmic_text::{Align, Attrs, Buffer, Family, FontSystem, Shaping, Wrap, fontdb};
+use cosmic_text::{
+    Align, Attrs, Buffer, Ellipsize, EllipsizeHeightLimit, Family, FontSystem, Shaping, Wrap,
+    fontdb,
+};
 
 use crate::layout::{
     LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext, Metrics, Query, Result,
@@ -46,9 +50,9 @@ impl TextStyle {
 /// Shaped glyph and the source cluster it represents.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Glyph {
-    /// Start byte of the cluster within its source line.
+    /// Start byte from the beginning of the visual line's source paragraph.
     pub start: usize,
-    /// Exclusive end byte of the cluster within its source line.
+    /// Exclusive end byte in the source paragraph. An ellipsis has an empty range at the elision boundary.
     pub end: usize,
     /// Glyph index in the selected face.
     pub id: u16,
@@ -67,7 +71,7 @@ pub struct Glyph {
 /// One visual line in a shaped paragraph.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Line {
-    /// Index of the source line that produced this visual line.
+    /// Index of the source paragraph. Folding line breaks makes the entire input one paragraph.
     pub source_line: usize,
     /// Top edge in paragraph-local coordinates.
     pub top: f32,
@@ -88,7 +92,7 @@ pub struct Paragraph {
     pub text: SharedString,
     /// Font metrics used to shape these lines.
     pub style: TextStyle,
-    /// Visual lines after wrapping.
+    /// Visible visual lines after wrapping and applying the line limit.
     pub lines: Vec<Line>,
     /// Logical-pixel extent of the shaped content.
     pub content: Size,
@@ -130,6 +134,67 @@ pub struct Counts {
     pub hits: usize,
     /// Number of shaping operations.
     pub shapes: usize,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct ParagraphStyle {
+    alignment: TextAlign,
+    line_clamp: Option<NonZeroUsize>,
+    white_space: WhiteSpace,
+    overflow: TextOverflow,
+}
+
+impl ParagraphStyle {
+    fn from_attributes(attrs: Option<&TextAttributes>) -> Self {
+        Self {
+            alignment: attrs.and_then(|a| a.text_align).unwrap_or(TextAlign::Start),
+            line_clamp: attrs.and_then(|a| a.line_clamp.flatten()),
+            white_space: attrs
+                .and_then(|a| a.white_space)
+                .unwrap_or(WhiteSpace::PreWrap),
+            overflow: attrs
+                .and_then(|a| a.text_overflow)
+                .unwrap_or(TextOverflow::Clip),
+        }
+    }
+}
+
+// Each display byte boundary maps back into the unmodified UTF-8 source.
+struct CollapsedText {
+    display: String,
+    offsets: Vec<usize>,
+}
+
+impl CollapsedText {
+    fn new(source: &str) -> Option<Self> {
+        let bytes = source.as_bytes();
+        let needs_folding = bytes.iter().enumerate().any(|(i, &b)| {
+            b.is_ascii_whitespace()
+                && (b != b' ' || i == 0 || i + 1 == bytes.len() || bytes[i - 1] == b' ')
+        });
+        if !needs_folding {
+            return None;
+        }
+        let mut display = String::with_capacity(bytes.len());
+        let mut offsets = Vec::with_capacity(bytes.len() + 1);
+        let mut space_start = None;
+        for (i, ch) in source.char_indices() {
+            if ch.is_ascii_whitespace() {
+                space_start.get_or_insert(i);
+                continue;
+            }
+            if let Some(start) = space_start.take()
+                && !display.is_empty()
+            {
+                display.push(' ');
+                offsets.push(start);
+            }
+            display.push(ch);
+            offsets.extend(i..i + ch.len_utf8());
+        }
+        offsets.push(space_start.unwrap_or(bytes.len()));
+        Some(Self { display, offsets })
+    }
 }
 
 /// Single-face shaping engine shared between text nodes.
@@ -185,20 +250,43 @@ impl Engine {
         &mut self,
         text: &SharedString,
         style: TextStyle,
-        alignment: TextAlign,
+        paragraph: ParagraphStyle,
         width: Option<Pixels>,
     ) -> Result<Paragraph> {
         let mut buffer = Buffer::new_empty(cosmic_text::Metrics::new(
             style.size.get(),
             style.line_height.get(),
         ));
-        buffer.set_wrap(Wrap::WordOrGlyph);
-        buffer.set_size(width.map(Pixels::get), None);
+        let nowrap = matches!(paragraph.white_space, WhiteSpace::NoWrap | WhiteSpace::Pre);
+        let collapsed = match paragraph.white_space {
+            WhiteSpace::Normal | WhiteSpace::NoWrap => CollapsedText::new(text),
+            _ => None,
+        };
+        let display = collapsed
+            .as_ref()
+            .map_or(text.as_str(), |c| c.display.as_str());
+        buffer.set_wrap(if nowrap {
+            Wrap::None
+        } else {
+            Wrap::WordOrGlyph
+        });
+        if nowrap && width.is_some() {
+            let limit = EllipsizeHeightLimit::Lines(1);
+            buffer.set_ellipsize(match paragraph.overflow {
+                TextOverflow::Ellipsis => Ellipsize::End(limit),
+                TextOverflow::EllipsisStart => Ellipsize::Start(limit),
+                TextOverflow::EllipsisMiddle => Ellipsize::Middle(limit),
+                TextOverflow::Clip => Ellipsize::None,
+            });
+        }
+        let line_clamp = paragraph.line_clamp;
+        let height = line_clamp.map(|count| count.get() as f32 * style.line_height.get());
+        buffer.set_size(width.map(Pixels::get), height);
         buffer.set_text(
-            text,
+            display,
             &Attrs::new().family(Family::SansSerif),
             Shaping::Advanced,
-            match alignment {
+            match paragraph.alignment {
                 TextAlign::Start => None,
                 TextAlign::End => Some(Align::End),
                 TextAlign::Left => Some(Align::Left),
@@ -211,7 +299,10 @@ impl Engine {
         self.counts.shapes += 1;
         let mut lines = Vec::new();
         let mut content = Size::default();
-        for run in buffer.layout_runs() {
+        for run in buffer
+            .layout_runs()
+            .take(line_clamp.map_or(usize::MAX, NonZeroUsize::get))
+        {
             let mut glyphs = Vec::with_capacity(run.glyphs.len());
             for glyph in run.glyphs {
                 // Missing glyphs are errors, never silent evidence of CJK support.
@@ -219,8 +310,12 @@ impl Engine {
                     return Err(LayoutError::Node("glyph unavailable"));
                 }
                 glyphs.push(Glyph {
-                    start: glyph.start,
-                    end: glyph.end,
+                    start: collapsed
+                        .as_ref()
+                        .map_or(glyph.start, |c| c.offsets[glyph.start]),
+                    end: collapsed
+                        .as_ref()
+                        .map_or(glyph.end, |c| c.offsets[glyph.end]),
                     id: glyph.glyph_id,
                     x: glyph.x,
                     y: glyph.y,
@@ -263,7 +358,7 @@ pub struct Text {
     engine: SharedEngine,
     content: SharedString,
     style: TextStyle,
-    alignment: TextAlign,
+    paragraph: ParagraphStyle,
     cache: RefCell<VecDeque<Cached>>,
     cache_enabled: bool,
 }
@@ -282,7 +377,7 @@ impl Text {
             engine,
             content: content.into(),
             style,
-            alignment: TextAlign::Start,
+            paragraph: ParagraphStyle::from_attributes(None),
             cache: RefCell::default(),
             cache_enabled,
         })
@@ -329,9 +424,10 @@ impl Text {
         self.style
     }
 
-    pub(crate) fn set_alignment(&mut self, alignment: TextAlign) {
-        if self.alignment != alignment {
-            self.alignment = alignment;
+    pub(crate) fn set_paragraph_style(&mut self, attributes: Option<&TextAttributes>) {
+        let paragraph = ParagraphStyle::from_attributes(attributes);
+        if self.paragraph != paragraph {
+            self.paragraph = paragraph;
             self.release_cache();
         }
     }
@@ -370,7 +466,7 @@ impl Text {
             engine.counts.hits += 1;
             return Ok(Rc::clone(&cached.paragraph));
         }
-        let paragraph = Rc::new(engine.shape(&self.content, self.style, self.alignment, width)?);
+        let paragraph = Rc::new(engine.shape(&self.content, self.style, self.paragraph, width)?);
         if self.cache_enabled {
             if cache.len() == CACHE_SLOTS {
                 cache.pop_front();

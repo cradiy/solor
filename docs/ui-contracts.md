@@ -122,6 +122,25 @@ A label can override it with `.text_left()` or `.text_right()`. The default,
 writing direction. `.text_justify()` distributes extra space between words on
 wrapped lines and leaves the last line at the start edge.
 
+Use `.line_clamp(n)` to limit a label to a nonzero number of visual lines.
+Wrapped lines and explicit line breaks count toward the same limit. The label
+measures and paints the visible lines, so a shorter value also takes less
+height when the box is auto-sized. The paragraph retains the full source
+string. Descendant labels inherit the limit and can remove it with
+`.clear_line_clamp()`.
+
+Use `.truncate()` for a single-line label with a trailing ellipsis. For a
+filename whose extension matters, use `.truncate().text_ellipsis_middle()` to
+keep both ends, or `.truncate().text_ellipsis_start()` to keep the suffix.
+The marker appears when the line exceeds its content width. The full source
+string and original UTF-8 offsets remain available in the recorded paragraph.
+
+Labels preserve explicit line breaks and wrap by default. Both
+`.whitespace_nowrap()` and `.whitespace_normal()` fold runs of ASCII whitespace
+into a single space and trim the ends. The former keeps the result on one
+line, and the latter allows wrapping. `WhiteSpace::Pre` preserves whitespace
+and disables soft wrapping. Ellipsis placement applies to unwrapped lines.
+
 Use `.z_index(i32)` to order overlapping siblings. Each parent paints its own
 content first, then its child subtrees in ascending layer order. The default
 layer is zero. Equal layers keep declaration order. A child's layer applies

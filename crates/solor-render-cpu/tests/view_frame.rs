@@ -459,3 +459,125 @@ fn logical_alignment_follows_paragraph_direction_and_justification_skips_last_li
     assert_eq!(justified[1].glyphs, left[1].glyphs);
     Ok(())
 }
+
+#[test]
+fn inherited_line_clamp_sizes_and_paints_only_visible_lines() -> Result<()> {
+    use solor::{Draw, SharedString, percent};
+    use std::num::NonZeroUsize;
+
+    let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
+    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    let value = ui.context().signal(SharedString::from("A"));
+    let view = ui.mount(component(|_| {
+        div()
+            .line_clamp(NonZeroUsize::new(2).unwrap())
+            .child(text(value).w(percent(100.0)))
+            .child(div().w(percent(100.0)).h(px(2.0)).bg(rgb(0xff0000)))
+            .child(text(value).w(percent(100.0)).clear_line_clamp())
+    }))?;
+    for (width, source, clipped) in [
+        (60, "Output level Output level", true),
+        (240, "Output level Output level", false),
+        (80, "A\n\nB", true),
+        (80, "B", false),
+    ] {
+        ui.context().set(value, SharedString::from(source))?;
+        ui.flush()?;
+        let size = DeviceSize { width, height: 240 };
+        ui.layout(view, size.at_unit_scale())?;
+        let frame = ui.record_frame(view)?;
+        let [
+            Draw::Text {
+                paragraph: preview, ..
+            },
+            Draw::Fill {
+                origin: divider, ..
+            },
+            Draw::Text {
+                origin: below,
+                paragraph: full,
+                ..
+            },
+        ] = frame.draws()
+        else {
+            panic!("expected two labels separated by a divider");
+        };
+        assert_eq!(full.lines.len() > 2, clipped);
+        assert_eq!(preview.lines, full.lines[..full.lines.len().min(2)]);
+        assert_eq!(preview.text.as_str(), source);
+        let height = preview.lines.len() * 24;
+        assert_eq!(preview.content.height, px(height as f32));
+        assert_eq!(divider.y, preview.content.height);
+        assert_eq!(below.y, divider.y + px(2.0));
+        let image = Surface::draw_view(&frame, size, RasterScale::ONE)?;
+        let stride = width as usize * 4;
+        assert_eq!(pixel(&image, 0, height), [255, 0, 0, 255]);
+        assert_eq!(
+            image.rgba[..height * stride],
+            image.rgba[(height + 2) * stride..(2 * height + 2) * stride]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn single_line_ellipsis_keeps_source_ranges_across_resize_and_edits() -> Result<()> {
+    use solor::{Draw, SharedString, percent};
+
+    let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
+    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    let source = ui.context().signal(SharedString::default());
+    let view = ui.mount(component(|_| {
+        div()
+            .truncate()
+            .child(text(source).w(percent(100.0)))
+            .child(text(source).w(percent(100.0)).text_ellipsis_start())
+            .child(text(source).w(percent(100.0)).text_ellipsis_middle())
+    }))?;
+    for (width, value, clipped) in [
+        (80, "1234567890中文世界", true),
+        (240, "1234567890中文世界", false),
+        (80, "  A\r\n\t 中  ", false),
+    ] {
+        ui.context().set(source, SharedString::from(value))?;
+        ui.flush()?;
+        let size = DeviceSize { width, height: 72 };
+        ui.layout(view, size.at_unit_scale())?;
+        let frame = ui.record_frame(view)?;
+        let image = Surface::draw_view(&frame, size, RasterScale::ONE)?;
+        assert_eq!(frame.draws().len(), 3);
+        for (index, draw) in frame.draws().iter().enumerate() {
+            let Draw::Text { paragraph, .. } = draw else {
+                panic!("expected label");
+            };
+            assert_eq!(paragraph.text.as_str(), value);
+            let [line] = paragraph.lines.as_slice() else {
+                panic!("expected one line");
+            };
+            let slices: Vec<_> = line.glyphs.iter().map(|g| &value[g.start..g.end]).collect();
+            if clipped {
+                let marker = slices
+                    .iter()
+                    .position(|s| s.is_empty())
+                    .expect("ellipsis at elision boundary");
+                let prefix = slices[..marker].concat();
+                let suffix = slices[marker..].concat();
+                assert!(value.starts_with(&prefix) && value.ends_with(&suffix));
+                assert_eq!(prefix.is_empty(), index == 1);
+                assert_eq!(suffix.is_empty(), index == 0);
+                assert!(prefix.len() + suffix.len() < value.len());
+                assert!(line.width <= width as f32);
+            } else if value.starts_with(' ') {
+                assert_eq!(slices, ["A", "\r\n\t ", "中"]);
+            } else {
+                assert_eq!(slices.concat(), value);
+            }
+        }
+        let row = 24 * width as usize * 4;
+        let images: Vec<_> = image.rgba.chunks_exact(row).collect();
+        assert!(images[0].iter().any(|&v| v != 255));
+        assert_eq!(images[0] != images[1], clipped);
+        assert_eq!(images[0] != images[2], clipped);
+    }
+    Ok(())
+}
