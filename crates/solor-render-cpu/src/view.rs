@@ -11,6 +11,11 @@ use solor::{
     style::Corners,
 };
 
+enum Brush<F> {
+    Solid(solor::Rgba),
+    Gradient(F),
+}
+
 impl Surface {
     /// Replays a complete mounted view in paint order onto an opaque white surface.
     pub fn draw_view(frame: &ViewFrame, size: DeviceSize, scale: RasterScale) -> Result<Self> {
@@ -107,39 +112,81 @@ impl Surface {
         let radii = corner_radii.map(|radius| f64::from(radius) * scale.0);
         let top_radius = radii.top_left.max(radii.top_right);
         let bottom_radius = radii.bottom_left.max(radii.bottom_right);
+        let mut brush = match fill {
+            Fill::Solid(color) => Brush::Solid(*color),
+            Fill::Gradient(gradient) => {
+                Brush::Gradient(gradient.sampler(size).map_err(Error::other)?)
+            }
+            _ => {
+                return Err(Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "unsupported CPU fill",
+                ));
+            }
+        };
+        let stride = self.size.width as usize * 4;
         for y in clip.top..clip.bottom {
             let dy = y as f64 - top;
             let row_has_arcs = (top_radius > 0.0 && dy < top_radius)
                 || (bottom_radius > 0.0 && height - dy - 1.0 < bottom_radius);
             let row_height = ((dy + 1.0).min(height) - dy.max(0.0)).clamp(0.0, 1.0);
-            for x in clip.left..clip.right {
-                let dx = x as f64 - left;
-                let coverage = if row_has_arcs {
-                    coverage(dx, dy, width, height, row_height, radii)
+            let row_start = y as usize * stride;
+            let row = &mut self.rgba
+                [row_start + clip.left as usize * 4..row_start + clip.right as usize * 4];
+            let pixels = row.as_chunks_mut::<4>().0;
+            let local_y = ((dy + 0.5) / scale.0) as f32;
+            let local_x = |x: i64| ((x as f64 - left + 0.5) / scale.0) as f32;
+            // Only the fractional edges and corner regions need per-pixel coverage.
+            let (from, to) = if row_height == 1.0 {
+                let inset = if row_has_arcs {
+                    top_radius.max(bottom_radius)
                 } else {
-                    rectangle_coverage(dx, width, row_height)
+                    0.0
                 };
-                if coverage == 0 {
-                    continue;
-                }
-                let color = match fill {
-                    Fill::Solid(color) => *color,
-                    Fill::Gradient(gradient) => gradient
-                        .sample_at(
-                            ((dx + 0.5) / scale.0) as f32,
-                            ((dy + 0.5) / scale.0) as f32,
-                            size,
-                        )
-                        .map_err(Error::other)?,
-                    _ => {
-                        return Err(Error::new(
-                            std::io::ErrorKind::Unsupported,
-                            "unsupported CPU fill",
-                        ));
+                let from = ((left + inset).ceil() as i64).clamp(clip.left, clip.right);
+                let to = ((left + width - inset).floor() as i64).clamp(from, clip.right);
+                (from, to)
+            } else {
+                (clip.left, clip.left)
+            };
+            let (leading, rest) = pixels.split_at_mut((from - clip.left) as usize);
+            let (middle, trailing) = rest.split_at_mut((to - from) as usize);
+            match &mut brush {
+                Brush::Solid(c) if c.alpha == 255 => middle.fill([c.red, c.green, c.blue, 255]),
+                Brush::Solid(c) => {
+                    for pixel in middle {
+                        blend(pixel, *c, 255);
                     }
-                };
-                let i = (y as usize * self.size.width as usize + x as usize) * 4;
-                blend(&mut self.rgba[i..i + 4], color, coverage);
+                }
+                Brush::Gradient(sample) => {
+                    for (x, pixel) in (from..to).zip(middle) {
+                        let c = sample(local_x(x), local_y).map_err(Error::other)?;
+                        if c.alpha == 255 {
+                            *pixel = [c.red, c.green, c.blue, 255];
+                        } else {
+                            blend(pixel, c, 255);
+                        }
+                    }
+                }
+            }
+            for (start, edge) in [(clip.left, leading), (to, trailing)] {
+                for (x, pixel) in (start..).zip(edge) {
+                    let dx = x as f64 - left;
+                    let coverage = if row_has_arcs {
+                        coverage(dx, dy, width, height, row_height, radii)
+                    } else {
+                        rectangle_coverage(dx, width, row_height)
+                    };
+                    if coverage != 0 {
+                        let c = match &mut brush {
+                            Brush::Solid(c) => *c,
+                            Brush::Gradient(sample) => {
+                                sample(local_x(x), local_y).map_err(Error::other)?
+                            }
+                        };
+                        blend(pixel, c, coverage);
+                    }
+                }
             }
         }
         Ok(())

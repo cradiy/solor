@@ -1,6 +1,8 @@
 //! Immutable sRGB colors and fills for local drawing commands.
 use std::{error::Error, fmt, sync::Arc};
 
+mod sampler;
+
 /// Straight (unpremultiplied) 8-bit sRGB channels with linear alpha.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Rgba {
@@ -335,37 +337,7 @@ impl Gradient {
         y: f32,
         size: crate::layout::Size,
     ) -> Result<Rgba, GradientError> {
-        if !size.width.is_extent()
-            || !size.height.is_extent()
-            || size.width.get() == 0.0
-            || size.height.get() == 0.0
-            || !x.is_finite()
-            || !y.is_finite()
-        {
-            return Err(GradientError::InvalidParameter);
-        }
-        let (w, h) = (size.width.get(), size.height.get());
-        let (x, y) = (x - w * 0.5, y - h * 0.5);
-        let (qx, qy) = (2.0 * x / w, 2.0 * y / h);
-        let angle = (self.angle - 90.0).to_radians();
-        let (sin, cos) = angle.sin_cos();
-        let t = match self.kind {
-            GradientKind::Linear => {
-                let (dx, dy) = (cos * w / w.max(h), sin * h / w.max(h));
-                let extent = if dx.abs() > dy.abs() { w } else { h };
-                0.5 + (dx * x + dy * y) / (dx.hypot(dy) * extent)
-            }
-            GradientKind::Radial => qx.hypot(qy),
-            GradientKind::Angular => {
-                ((qy.atan2(qx) - angle) / std::f32::consts::TAU).rem_euclid(1.0)
-            }
-            GradientKind::Diamond => (qx * cos + qy * sin).abs() + (qy * cos - qx * sin).abs(),
-        };
-        if self.phase.is_some() {
-            self.sample(t.rem_euclid(1.0))
-        } else {
-            self.sample(t.clamp(0.0, 1.0))
-        }
+        self.sample(self.projector(size)?(x, y)?)
     }
 
     /// Samples the one-dimensional gradient ramp.

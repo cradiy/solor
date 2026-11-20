@@ -102,3 +102,42 @@ fn segment_hints_interpolation_space_and_animation_leave_shared_stops_intact() -
     assert_eq!(seamless.sample(0.0)?, seamless.sample(1.0)?);
     Ok(())
 }
+
+#[test]
+fn prepared_sampling_matches_individual_samples_across_hard_edges_and_reverse_traversal()
+-> Result<()> {
+    let size = Size {
+        width: solor::px(128.0),
+        height: solor::px(32.0),
+    };
+    let ramp = gradient_left_to_right([
+        color_stop(rgb(0xc2755c), 0.125),
+        color_stop(rgb(0xe0a31b), 0.5),
+        color_stop(rgb(0x132cfe), 0.5),
+        color_stop(solor::rgba(0x8acf3100), 0.75),
+        color_stop(rgb(0xafbbfe), 0.875),
+    ])?;
+    for gradient in [
+        ramp.clone(),
+        ramp.clone().gradient_kind(GradientKind::Diamond),
+        ramp.clone()
+            .gradient_kind(GradientKind::Radial)
+            .opacity(0.7)?,
+        ramp.clone()
+            .gradient_kind(GradientKind::Angular)
+            .angular_seam_width(0.25)?,
+        ramp.clone().gradient_midpoint(0, 0.25)?,
+        ramp.clone().color_space(ColorSpace::Oklab),
+        ramp.phase(0.125)?,
+    ] {
+        let mut prepared = gradient.sampler(size)?;
+        for x in (-16..=272).chain((-16..=272).rev()).map(|x| x as f32 * 0.5) {
+            assert_eq!(prepared(x, 11.5)?, gradient.sample_at(x, 11.5, size)?);
+        }
+        assert_eq!(
+            prepared(f32::NAN, 0.0),
+            Err(GradientError::InvalidParameter)
+        );
+    }
+    Ok(())
+}
