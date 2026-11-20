@@ -156,6 +156,8 @@ impl PaintState {
 }
 
 type Repaints = Rc<RefCell<PaintState>>;
+type VisibilityBatch = BTreeMap<Rc<[usize]>, (NodeId, bool)>;
+type VisibilityUpdates = Rc<RefCell<HashMap<ViewId, VisibilityBatch>>>;
 type LabelUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), Signal<SharedString>>>>;
 
 struct Instance {
@@ -178,6 +180,7 @@ struct Attachment<'a> {
     state: &'a mut Runtime<()>,
     pending: &'a Pending,
     labels: &'a LabelUpdates,
+    visibility: &'a VisibilityUpdates,
     engine: Option<&'a SharedEngine>,
 }
 
@@ -216,10 +219,65 @@ impl Instance {
         Ok(())
     }
 
+    fn unobserve_paint(&mut self, node: NodeId, state: &mut Runtime<()>) {
+        if let Some(bindings) = self.observers.get_mut().remove(&node) {
+            for (_, binding) in bindings {
+                let _ = state.unbind(binding);
+            }
+        }
+    }
+
     fn invalidate_geometry(&mut self) {
         self.pointer.invalidate_geometry();
         self.fixed_labels = Default::default();
         self.repaints.borrow_mut().commands.clear();
+    }
+
+    fn apply_visibility(
+        &mut self,
+        updates: VisibilityBatch,
+        state: &mut Runtime<()>,
+    ) -> Result<()> {
+        // Resolve all local declarations before propagating from parents to children.
+        // A branch may have retired or replaced the mount that queued an update.
+        for &(id, visible) in updates.values() {
+            if let Some(body) = self.bodies.get_mut(&id) {
+                body.local_visible = visible;
+            }
+        }
+        let mut pending = Vec::new();
+        let mut changed = false;
+        for (path, (id, _)) in updates {
+            if !self.bodies.contains_key(&id) {
+                continue;
+            }
+            let parent_visible = path
+                .split_last()
+                .is_none_or(|(_, path)| self.bodies[&self.nodes[path]].visible);
+            pending.push((id, parent_visible));
+            while let Some((id, parent_visible)) = pending.pop() {
+                let body = self.bodies.get_mut(&id).expect("mounted visibility target");
+                let visible = body.local_visible && parent_visible;
+                if body.visible == visible {
+                    continue;
+                }
+                body.visible = visible;
+                if visible {
+                    self.visible_nodes += 1;
+                } else {
+                    self.visible_nodes -= 1;
+                    self.unobserve_paint(id, state);
+                }
+                changed = true;
+                self.repaints.borrow_mut().invalidate(id);
+                pending.extend(self.scene.children(id)?.map(|child| (child, visible)));
+            }
+        }
+        if changed {
+            self.pointer.invalidate_geometry();
+            self.fixed_labels = Default::default();
+        }
+        Ok(())
     }
 
     fn update_label(&mut self, node: NodeId, value: &SharedString) -> Result<()> {
@@ -260,7 +318,7 @@ impl Instance {
                 .binding_target = Some(target);
             let repaints = self.bodies[&parent].visible.then_some(&self.repaints);
             for watch in watches {
-                watch(cx, target, parent, repaints)?;
+                watch(cx, target, parent, path, repaints)?;
             }
         }
         self.register_children(parent, path, children, cx)
@@ -360,11 +418,7 @@ impl Instance {
             let node = self.bodies.remove(&node).expect("mounted body");
             self.visible_nodes -= usize::from(node.visible);
             self.pointer.retire(node.id);
-            if let Some(bindings) = self.observers.get_mut().remove(&node.id) {
-                for (_, binding) in bindings {
-                    let _ = cx.state.unbind(binding);
-                }
-            }
+            self.unobserve_paint(node.id, cx.state);
             self.repaints.borrow_mut().dirty.remove(&node.id);
             if let Some(target) = node.binding_target {
                 cx.state.remove_subtree(target)?;
@@ -433,6 +487,7 @@ pub struct Ui {
     instances: HashMap<ViewId, Instance>,
     pending: Pending,
     labels: LabelUpdates,
+    visibility: VisibilityUpdates,
 }
 
 impl Default for Ui {
@@ -443,6 +498,7 @@ impl Default for Ui {
             instances: HashMap::new(),
             pending: Pending::default(),
             labels: LabelUpdates::default(),
+            visibility: VisibilityUpdates::default(),
         }
     }
 }
@@ -506,6 +562,7 @@ impl Ui {
             state: self.state.get_mut(),
             pending: &self.pending,
             labels: &self.labels,
+            visibility: &self.visibility,
             engine: self.engine.as_ref(),
         };
         if let Err(error) = instance.finish_attachment(root, &[], watches, children, &mut cx) {
@@ -551,15 +608,21 @@ impl Ui {
         self.state.borrow().pending_count() != 0
             || !self.pending.borrow().is_empty()
             || !self.labels.borrow().is_empty()
+            || !self.visibility.borrow().is_empty()
     }
 
-    /// Applies structural, label and paint bindings. Returns the number of branch positions visited.
+    /// Applies structural, visibility, label and paint bindings. Returns the number of branch positions visited.
     pub fn flush(&mut self) -> Result<usize> {
         let mut visited = 0;
         loop {
             self.state.get_mut().flush();
             let batch = std::mem::take(&mut *self.pending.borrow_mut());
             if batch.is_empty() {
+                for (view, updates) in self.visibility.borrow_mut().drain() {
+                    if let Some(instance) = self.instances.get_mut(&view) {
+                        instance.apply_visibility(updates, self.state.get_mut())?;
+                    }
+                }
                 self.flush_labels()?;
                 return Ok(visited);
             }
@@ -574,6 +637,7 @@ impl Ui {
                     state: self.state.get_mut(),
                     pending: &self.pending,
                     labels: &self.labels,
+                    visibility: &self.visibility,
                     engine: self.engine.as_ref(),
                 };
                 // Lexicographic paths apply parent removals before updates to their descendants.
@@ -694,6 +758,7 @@ impl Ui {
         }
         self.state.get_mut().remove_subtree(scope.0)?;
         self.pending.borrow_mut().remove(&scope.0);
+        self.visibility.borrow_mut().remove(&scope);
         self.labels
             .borrow_mut()
             .retain(|(view, _), _| *view != scope);

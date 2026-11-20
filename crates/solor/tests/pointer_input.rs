@@ -331,3 +331,51 @@ fn relative_subtree_draws_and_clicks_follow_the_accepted_frame_across_resize() -
     assert_eq!(*ui.context().read(clicks)?, 2);
     Ok(())
 }
+
+#[test]
+fn hiding_a_captured_target_takes_effect_when_the_frame_is_accepted() -> Result<()> {
+    let mut ui = Ui::new();
+    let show = ui.context().signal(true);
+    let released = ui.context().signal(0);
+    let canceled = ui.context().signal(0);
+    let clicks = ui.context().signal(0);
+    let view = ui.mount(component(|_| {
+        div()
+            .child(
+                div()
+                    .size(px(20.0))
+                    .on_click(move |cx| cx.update(clicks, |n| *n += 1)),
+            )
+            .child(
+                div()
+                    .visible_when(show)
+                    .mt(px(-20.0))
+                    .size(px(20.0))
+                    .on_pointer_down(|_, cx| {
+                        cx.capture_pointer();
+                        Ok(())
+                    })
+                    .on_pointer_up(move |_, cx| cx.update(released, |n| *n += 1))
+                    .on_pointer_cancel(move |_, cx| cx.update(canceled, |n| *n += 1)),
+            )
+    }))?;
+    accept(&mut ui, view, 40.0)?;
+    let p = sample(1, 5.0, 5.0);
+    ui.dispatch_pointer(view, Down(p, Primary))?;
+    ui.context().set(show, false)?;
+    ui.flush()?;
+    let hidden = ui.record_frame(view)?.into_pointer_frame();
+    assert_eq!(*ui.context().read(canceled)?, 0);
+    ui.dispatch_pointer(view, Up(p, Primary))?;
+    assert_eq!(*ui.context().read(released)?, 1);
+    assert_eq!(*ui.context().read(clicks)?, 0);
+
+    ui.dispatch_pointer(view, Down(p, Primary))?;
+    ui.accept_pointer_frame(hidden)?;
+    assert_eq!(*ui.context().read(canceled)?, 1);
+    ui.dispatch_pointer(view, Up(p, Primary))?;
+    ui.dispatch_pointer(view, Down(p, Primary))?;
+    ui.dispatch_pointer(view, Up(p, Primary))?;
+    assert_eq!(*ui.context().read(clicks)?, 1);
+    Ok(())
+}

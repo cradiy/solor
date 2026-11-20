@@ -245,8 +245,17 @@ Use `.invisible()` to keep a subtree mounted and reserve its layout space.
 A hidden meter can receive layout updates while its painting and frame
 requests are suspended. Signal-bound text still reflows and can move visible
 siblings. The host omits the entire subtree from drawing and pointer hit
-testing, including children attached later. Visibility is resolved at
-attachment. A child marked `.visible()` appears only under visible ancestors.
+testing, including children attached later. A child marked `.visible()` appears
+only under visible ancestors.
+
+Use `.visible_when(show_meter)` with a boolean signal to switch visibility on
+an existing mount. The initial value applies at attachment. `Ui::flush()`
+applies later writes together, preserving the node's identity and layout.
+Hidden elements release their paint subscriptions. Showing an element records
+its current values and resumes its refresh policy. A local recorder can use
+`collect_repaints` to find changed nodes and replace a hidden node's commands
+with the empty result of `Ui::paint`. Pointer targeting switches when the
+host accepts the new frame.
 
 Use `.z_index(i32)` to order overlapping siblings. Each parent paints its own
 content first, then its child subtrees in ascending layer order. The default

@@ -1,6 +1,6 @@
 //! Values used in portable style declarations.
 pub use crate::layout::FlexDirection;
-use crate::{AbsoluteLength, Length, Rgba};
+use crate::{AbsoluteLength, Length, Rgba, Signal};
 
 macro_rules! keywords {
     ($(#[doc = $doc:literal] $name:ident { $($variant:ident: $meaning:literal),+ $(,)? })+) => {$(
@@ -15,8 +15,6 @@ macro_rules! keywords {
 keywords! {
     /// Formatting model used for an element and its children.
     Display { Block: "Block layout.", Flex: "Flexible box layout.", Grid: "Grid layout.", None: "Omit the box from layout." }
-    /// Whether a laid-out element is visible.
-    Visibility { Visible: "Show the box.", Hidden: "Keep its layout space while hiding it." }
     /// How the element participates in flow and interprets offsets.
     Position {
         Static: "Normal flow without offsets.", Relative: "Shift from the normal flow position.",
@@ -51,6 +49,17 @@ keywords! {
     Cursor { Auto: "Platform default.", Default: "Standard arrow.", Pointer: "Clickable target.", Text: "Text selection.", Crosshair: "Crosshair.", Move: "Move target.", Grab: "Grabbable.", Grabbing: "Dragging.", NotAllowed: "Unavailable action.", Wait: "Busy.", Progress: "Working in the background.", ColResize: "Resize columns.", RowResize: "Resize rows.", None: "Hide the cursor." }
     /// Participation in pointer hit testing.
     PointerEvents { Auto: "Participate in hit testing.", None: "Ignore the box for pointer targeting." }
+}
+
+/// Visibility of a mounted subtree that retains its layout space.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Visibility {
+    /// Show the subtree when its ancestors are visible.
+    Visible,
+    /// Hide the subtree.
+    Hidden,
+    /// Show the subtree while the signal is true and its ancestors are visible.
+    When(Signal<bool>),
 }
 
 /// Minimum breadth of a grid track.

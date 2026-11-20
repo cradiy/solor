@@ -192,6 +192,10 @@ pub trait Styled: Sized {
         margin_x => mx, margin_y => my, margin_top => mt, margin_right => mr,
         margin_bottom => mb, margin_left => ml
     }
+    /// Shows the mounted subtree while the signal is true, preserving its layout space.
+    fn visible_when(self, source: Signal<bool>) -> Self {
+        self.visibility(Visibility::When(source))
+    }
     /// Limits the number of visible lines.
     fn line_clamp(mut self, lines: NonZeroUsize) -> Self {
         self.style().attributes_mut().line_clamp = Some(Some(lines));

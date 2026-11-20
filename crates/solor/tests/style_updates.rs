@@ -613,3 +613,60 @@ fn invisible_root_keeps_label_bindings_and_skips_local_paint_subscriptions() -> 
     assert!(!ui.has_pending_bindings());
     Ok(())
 }
+
+#[test]
+fn visibility_bindings_retire_with_branches_and_refresh_cached_text_order() -> Result<()> {
+    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let attached = ui.context().signal(true);
+    let show = ui.context().signal(true);
+    let view = ui.mount(component(|_| {
+        div()
+            .child_when(attached, move || {
+                text("A").visible_when(show).text_color(ACCENT)
+            })
+            .child(text("B").text_color(INK))
+    }))?;
+    let colors = |ui: &Ui| -> Result<Vec<_>> {
+        Ok(ui
+            .record_frame(view)?
+            .draws()
+            .iter()
+            .map(|draw| match draw {
+                Draw::Text { color, .. } => *color,
+                _ => panic!("expected text"),
+            })
+            .collect())
+    };
+    let size = Size {
+        width: px(100.0),
+        height: px(100.0),
+    };
+    ui.flush()?;
+    ui.layout(view, size)?;
+    for _ in 0..3 {
+        assert_eq!(colors(&ui)?, [ACCENT, INK]);
+    }
+    ui.context().set(show, false)?;
+    ui.flush()?;
+    for _ in 0..3 {
+        assert_eq!(colors(&ui)?, [INK]);
+    }
+    ui.context().set(show, true)?;
+    ui.context().set(attached, false)?;
+    ui.flush()?;
+    ui.layout(view, size)?;
+    assert_eq!(colors(&ui)?, [INK]);
+    ui.context().set(show, false)?;
+    assert!(!ui.has_pending_bindings());
+    ui.context().set(attached, true)?;
+    ui.flush()?;
+    ui.layout(view, size)?;
+    assert_eq!(colors(&ui)?, [INK]);
+    ui.context().set(show, true)?;
+    ui.flush()?;
+    assert_eq!(colors(&ui)?, [ACCENT, INK]);
+    ui.unmount(view)?;
+    ui.context().set(show, false)?;
+    assert!(!ui.has_pending_bindings());
+    Ok(())
+}

@@ -213,6 +213,7 @@ pub(super) struct MountedNode {
     pub(super) offset: usize,
     pub(super) fixed_label: bool,
     pub(super) visible: bool,
+    pub(super) local_visible: bool,
     paint_mode: RefreshPolicy,
     pub(super) text_style: TextStyleRefinement,
     text_color: Rgba,
@@ -233,12 +234,13 @@ impl MountedNode {
         style: Style,
         fixed_label: bool,
         paint_mode: RefreshPolicy,
+        local_visible: bool,
     ) -> Self {
         Self {
             id,
             offset: 0,
-            visible: style.appearance.as_deref().and_then(|a| a.visibility)
-                != Some(Visibility::Hidden),
+            local_visible,
+            visible: local_visible,
             fixed_label: fixed_label
                 && style.background.is_none()
                 && matches!(paint_mode, RefreshPolicy::Fixed(RefreshMode::OnDemand)),
@@ -360,7 +362,7 @@ impl Drop for PaintSubscription {
 }
 
 pub(super) type Watch =
-    Box<dyn FnOnce(&mut Attachment<'_>, NodeId, NodeId, Option<&Repaints>) -> Result<()>>;
+    Box<dyn FnOnce(&mut Attachment<'_>, NodeId, NodeId, &[usize], Option<&Repaints>) -> Result<()>>;
 type Install = Box<dyn FnOnce(Target<'_>, &mut Context<'_>, UnitResolver) -> Result<Installation>>;
 
 enum Target<'a> {
@@ -417,6 +419,27 @@ impl AnyElement {
             if [grow, shrink].iter().any(|f| !f.is_finite() || *f < 0.0) {
                 return Err(crate::layout::LayoutError::InvalidSize.into());
             }
+            let local_visible = match style.appearance.as_deref().and_then(|a| a.visibility) {
+                Some(Visibility::Hidden) => false,
+                Some(Visibility::When(source)) => {
+                    let initial = *cx.read(source)?;
+                    node.watches.push(Box::new(move |cx, target, id, path, _| {
+                        let updates = Rc::clone(cx.visibility);
+                        let view = ViewId(cx.scope);
+                        let path: Rc<[usize]> = path.into();
+                        cx.state.bind(source, target, move |visible, _| {
+                            updates
+                                .borrow_mut()
+                                .entry(view)
+                                .or_default()
+                                .insert(Rc::clone(&path), (id, *visible));
+                        })?;
+                        Ok(())
+                    }));
+                    initial
+                }
+                _ => true,
+            };
             node.body.prepare_content(&style)?;
             let body = StyledBody::new(node.body, &style, units)?;
             let item_sizing = body.item_sizing(&style, units)?;
@@ -451,6 +474,7 @@ impl AnyElement {
                     style,
                     fixed_label,
                     node.paint_mode,
+                    local_visible,
                 ),
                 children: node.children,
                 watches: node.watches,
@@ -639,17 +663,18 @@ impl IntoElement for Label {
             )?);
             node.style = self.style;
             if let Some(signal) = source {
-                node.watches.push(Box::new(move |cx, target, id, repaints| {
-                    let pending = Rc::clone(cx.labels);
-                    let view = ViewId(cx.scope);
-                    cx.state.bind(signal, target, move |_, _| {
-                        pending.borrow_mut().insert((view, id), signal);
-                    })?;
-                    if let Some(repaints) = repaints {
-                        repaints.borrow_mut().invalidate(id);
-                    }
-                    Ok(())
-                }));
+                node.watches
+                    .push(Box::new(move |cx, target, id, _, repaints| {
+                        let pending = Rc::clone(cx.labels);
+                        let view = ViewId(cx.scope);
+                        cx.state.bind(signal, target, move |_, _| {
+                            pending.borrow_mut().insert((view, id), signal);
+                        })?;
+                        if let Some(repaints) = repaints {
+                            repaints.borrow_mut().invalidate(id);
+                        }
+                        Ok(())
+                    }));
             }
             Ok(node)
         })

@@ -34,6 +34,14 @@ impl<S> Signal<S> {
     }
 }
 
+impl<S> PartialEq for Signal<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl<S> Eq for Signal<S> {}
+
 impl<S> Copy for Signal<S> {}
 
 impl<S> Clone for Signal<S> {

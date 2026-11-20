@@ -494,3 +494,77 @@ fn measure_native_cadence(window: CpuWindow, samples: Rc<Samples>) -> Result<()>
 #[cfg(target_os = "linux")]
 #[path = "refresh_modes/presentation.rs"]
 mod presentation;
+
+#[test]
+fn visibility_signal_suspends_paint_reads_and_resumes_the_same_meter() -> Result<()> {
+    let mut ui = Ui::new();
+    let show_panel = ui.context().signal(false);
+    let show_meter = ui.context().signal(true);
+    let level = ui.context().signal(12u16);
+    let meter_paints = Rc::new(Cell::new(0usize));
+    let sibling_paints = Rc::new(Cell::new(0usize));
+    let meter = meter_paints.clone();
+    let sibling = sibling_paints.clone();
+    let view = ui.mount(component(move |_| {
+        div()
+            .child(
+                div().visible_when(show_panel).child(
+                    bar(move |cx| {
+                        meter.update(|n| n + 1);
+                        Ok(*cx.read(level)?)
+                    })
+                    .visible_when(show_meter)
+                    .refresh_mode(RefreshMode::Continuous),
+                ),
+            )
+            .child(bar(move |_| {
+                sibling.update(|n| n + 1);
+                Ok(4)
+            }))
+    }))?;
+    ui.flush()?;
+    ui.layout(view, SIZE)?;
+    let panel = ui.children(view, ui.root(view)?)?.next().unwrap();
+    let meter = ui.children(view, panel)?.next().unwrap();
+    let geometry = ui.geometry(view, meter).unwrap();
+    assert!(!ui.record_frame(view)?.requests_animation_frame());
+    assert_eq!(meter_paints.get(), 0);
+
+    ui.context().set(show_panel, true)?;
+    ui.flush()?;
+    assert_eq!(ui.layout(view, SIZE)?, 0);
+    assert!(ui.record_frame(view)?.requests_animation_frame());
+    assert_eq!(meter_paints.get(), 1);
+
+    ui.context().set(show_panel, false)?;
+    ui.flush()?;
+    let mut dirty = Vec::new();
+    ui.collect_repaints(view, &mut dirty)?;
+    assert!(dirty.contains(&meter));
+    let mut local = Vec::new();
+    ui.paint(view, meter, &mut local)?;
+    assert!(local.is_empty());
+    assert!(!ui.record_frame(view)?.requests_animation_frame());
+    ui.context().set(level, 42)?;
+    assert!(!ui.has_pending_bindings());
+
+    // Change both declarations in the same flush. The child stays hidden.
+    ui.context().set(show_panel, true)?;
+    ui.context().set(show_meter, false)?;
+    ui.flush()?;
+    dirty.clear();
+    ui.collect_repaints(view, &mut dirty)?;
+    assert_eq!(dirty, [panel]);
+    assert!(!ui.record_frame(view)?.requests_animation_frame());
+    assert_eq!(meter_paints.get(), 1);
+
+    ui.context().set(show_meter, true)?;
+    ui.flush()?;
+    assert_eq!(ui.geometry(view, meter), Some(geometry));
+    let frame = ui.record_frame(view)?;
+    assert!(frame.requests_animation_frame());
+    assert!(matches!(&frame.draws()[0], solor::Draw::Fill { size, .. } if size.width == px(42.0)));
+    assert_eq!(meter_paints.get(), 2);
+    assert_eq!(sibling_paints.get(), 1);
+    Ok(())
+}
