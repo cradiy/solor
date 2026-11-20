@@ -60,9 +60,10 @@ dispatches pointer events against the accepted layout and requests a frame
 when signal bindings have work to flush. Each frame records the view and
 compares the ordered commands with the previous submission. The window keeps
 one RGBA surface and repairs the bounding rectangle of changed commands,
-including the space vacated by shrinking or removed content. Unchanged draws
-overlapping that area are replayed in paint order. Identical commands produce
-empty damage. Changes to the allocation or scale and retries after a discarded
+including the space vacated by shrinking or removed content. Inserting or removing
+a command leaves an unchanged suffix outside the damage calculation. Draws
+overlapping the damaged area are replayed in paint order. Identical commands
+produce empty damage. Changes to the allocation or scale and retries after a discarded
 prepared image require full damage. The platform acknowledges successful
 submission before the handler publishes its prepared hit geometry. On the next
 frame callback the window continues if the submitted frame requested another

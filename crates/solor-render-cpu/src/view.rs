@@ -220,6 +220,19 @@ pub(super) fn damage(
     scale: RasterScale,
     canvas: Clip,
 ) -> Result<Option<Clip>> {
+    // An insertion or removal can shift identical trailing commands to new indices.
+    // They still replay in paint order wherever the changed draws cause damage.
+    let suffix = if old.len() != new.len() {
+        old.iter()
+            .rev()
+            .zip(new.iter().rev())
+            .take_while(|(before, after)| same_draw(before, after))
+            .count()
+    } else {
+        0
+    };
+    let old = &old[..old.len() - suffix];
+    let new = &new[..new.len() - suffix];
     let mut area: Option<Clip> = None;
     for i in 0..old.len().max(new.len()) {
         let (before, after) = (old.get(i), new.get(i));

@@ -338,6 +338,64 @@ fn repair_replays_overlapping_text_and_rejected_pixels_require_full_damage() -> 
 }
 
 #[test]
+fn toggling_a_fill_repairs_only_its_clip_under_unchanged_labels() -> Result<()> {
+    use solor::raster::Clip;
+
+    fn panel(cx: &mut Context<'_>) -> impl IntoElement + use<> {
+        let shown = cx.signal(true);
+        div()
+            .bg(rgb(0xf4f4f4))
+            .on_pointer_move(move |event, cx| cx.set(shown, event.local_position().x > px(60.0)))
+            .child(
+                div().w(px(24.0)).h(px(16.0)).overflow_hidden().child(
+                    div()
+                        .min_w(px(40.0))
+                        .h(px(16.0))
+                        .bg(rgb(0x2255aa))
+                        .visible_when(shown),
+                ),
+            )
+            .child(
+                text("Output level")
+                    .mt(px(-16.0))
+                    .text_color(rgba(0x33001199)),
+            )
+            .child(text("System device").mt(px(40.0)))
+    }
+
+    let mut window = CpuWindow::mount(Ui::with_font(FONT.to_vec(), "en")?, component(panel))?;
+    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let view = ui.mount(component(panel))?;
+    let physical = SCALE.buffer_size(SIZE)?;
+    let meter = Clip {
+        left: 0,
+        top: 0,
+        right: 30,
+        bottom: 20,
+    };
+    for step in [None, Some(1), Some(2), Some(1)] {
+        if let Some(n) = step {
+            let input = movement(n);
+            window.event(WindowEvent::Pointer(input))?;
+            ui.dispatch_pointer(view, input)?;
+        }
+        let frame = window.frame(SIZE, SCALE)?;
+        ui.flush()?;
+        ui.layout(view, SIZE)?;
+        let reference = ui.record_frame(view)?;
+        let full = Surface::draw_view(&reference, physical, SCALE)?;
+        assert_eq!(frame.rgba, full.rgba);
+        assert_eq!(
+            frame.damage,
+            Some(step.map_or(Clip::canvas(physical), |_| meter))
+        );
+        ui.accept_pointer_frame(reference.into_pointer_frame())?;
+        window.frame_submitted()?;
+    }
+    Ok(())
+}
+
+#[test]
 #[ignore = "release timing workload"]
 fn time_resizing_meter() -> Result<()> {
     let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
