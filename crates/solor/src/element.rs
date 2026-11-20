@@ -14,7 +14,7 @@ use super::{Attachment, Context, Repaints, Result, SharedString, ViewId};
 use crate::layout::{FlexDirection, FlexLayout};
 use crate::length::UnitResolver;
 use crate::pointer::Handlers;
-use crate::style::{Align, Background, Corners, TextStyleRefinement};
+use crate::style::{Align, Background, Corners, Foreground, TextStyleRefinement};
 use crate::style::{PointerEvents, Visibility};
 use crate::text::{Paragraph, Text, TextStyle};
 use crate::{Fill, Pixels, Rgba, Style, StyleRefinement, Styled, StyledBody, px};
@@ -102,7 +102,7 @@ impl Element for Text {
             origin: cx.origin,
             size: cx.size,
             paragraph: self.resolve(Query::Exact(cx.size.width))?,
-            color: cx.text_color,
+            color: cx.text_color()?,
         });
         Ok(())
     }
@@ -144,8 +144,7 @@ pub struct PaintContext<'a> {
     origin: Origin,
     /// Assigned content area after removing padding.
     pub size: Size,
-    /// Resolved foreground color for this element.
-    pub text_color: Rgba,
+    text_color: Foreground,
     commands: &'a mut Vec<Draw>,
     clip: Option<Arc<ContentClip>>,
     next_frame: bool,
@@ -154,6 +153,14 @@ pub struct PaintContext<'a> {
 }
 
 impl PaintContext<'_> {
+    /// Reads the inherited foreground and tracks a bound color for repaint.
+    pub fn text_color(&self) -> Result<Rgba> {
+        match self.text_color {
+            Foreground::Fixed(color) => Ok(color),
+            Foreground::Bound(signal) => self.read(signal).copied(),
+        }
+    }
+
     /// Samples a signal and subscribes this element to changes after successful paint.
     pub fn read<T: 'static>(&self, signal: Signal<T>) -> Result<&T> {
         let value = self.state.read(signal)?;
@@ -227,7 +234,7 @@ pub(super) struct MountedNode {
     pub(super) local_visible: bool,
     paint_mode: RefreshPolicy,
     pub(super) text_style: TextStyleRefinement,
-    text_color: Rgba,
+    text_color: Foreground,
     background: Option<Box<MountedBackground>>,
     pub(super) binding_target: Option<NodeId>,
     record: fn(&Scene, NodeId, &mut PaintContext) -> Result<()>,
@@ -255,6 +262,7 @@ impl MountedNode {
             visible: local_visible,
             fixed_label: fixed_label
                 && style.background.is_none()
+                && matches!(style.text.color, Foreground::Fixed(_))
                 && matches!(paint_mode, RefreshPolicy::Fixed(RefreshMode::OnDemand)),
             paint_mode,
             binding_target: None,

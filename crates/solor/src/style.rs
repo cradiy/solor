@@ -30,6 +30,27 @@ impl From<Signal<Fill>> for Background {
     }
 }
 
+/// Inherited foreground sampled by text and custom content during paint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Foreground {
+    /// Use this color for the lifetime of the declaration.
+    Fixed(Rgba),
+    /// Read the current color when an element paints with the foreground.
+    Bound(Signal<Rgba>),
+}
+
+impl<T: Into<Rgba>> From<T> for Foreground {
+    fn from(color: T) -> Self {
+        Self::Fixed(color.into())
+    }
+}
+
+impl From<Signal<Rgba>> for Foreground {
+    fn from(signal: Signal<Rgba>) -> Self {
+        Self::Bound(signal)
+    }
+}
+
 /// Font metrics and foreground color for content.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Typography {
@@ -40,7 +61,7 @@ pub struct Typography {
     /// Vertical distance between successive lines.
     pub line_height: Pixels,
     /// Foreground used to record glyphs.
-    pub color: Rgba,
+    pub color: Foreground,
 }
 impl Default for Typography {
     fn default() -> Self {
@@ -48,7 +69,7 @@ impl Default for Typography {
             attributes: None,
             size: px(16.0),
             line_height: px(24.0),
-            color: Rgba::new(0, 0, 0, 255),
+            color: Foreground::Fixed(Rgba::new(0, 0, 0, 255)),
         }
     }
 }
@@ -63,7 +84,7 @@ pub struct TextStyleRefinement {
     /// Local line-height override.
     pub line_height: Option<AbsoluteLength>,
     /// Local foreground-color override.
-    pub color: Option<Rgba>,
+    pub color: Option<Foreground>,
 }
 impl TextStyleRefinement {
     fn overlay(&self, higher: &Self) -> Self {

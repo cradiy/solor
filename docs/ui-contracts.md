@@ -206,6 +206,11 @@ all four edges use the column's content width. Their intrinsic contribution
 is zero while that width is indefinite, and placement resolves them against
 the assigned width. Root margins do not change the host's viewport allocation.
 
+Use `.text_color(ink)` with a color or a `Signal<Rgba>` on a label or an
+ancestor. Descendants inherit the source until they supply their own color.
+Custom elements read it with `cx.text_color()?` during paint. A color change
+repaints the elements that read it and reuses their shaped paragraphs and layout.
+
 Paragraph alignment uses the label's content width after padding. Set
 `.text_center()` on a container to center each visual line in its labels.
 A label can override it with `.text_left()` or `.text_right()`. The default,

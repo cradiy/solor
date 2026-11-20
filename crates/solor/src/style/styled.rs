@@ -341,8 +341,8 @@ pub trait Styled: Sized {
         self.style().corner_radii = Corners::all(Some(radius.into()));
         self
     }
-    /// Sets the foreground inherited by descendant text.
-    fn text_color(mut self, color: impl Into<Rgba>) -> Self {
+    /// Sets the inherited foreground to a fixed color or a color signal.
+    fn text_color(mut self, color: impl Into<Foreground>) -> Self {
         self.style().text.color = Some(color.into());
         self
     }

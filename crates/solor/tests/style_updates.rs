@@ -123,6 +123,60 @@ fn conditional_label_inherits_style_and_keeps_identity_when_it_wraps() -> Result
 }
 
 #[test]
+fn inherited_color_only_repaints_consumers_and_reuses_shaped_text() -> Result<()> {
+    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let ink = ui.context().signal(INK);
+    let attached = ui.context().signal(true);
+    let view = ui.mount(component(|_| {
+        div()
+            .text_color(ink)
+            .child_when(attached, || text("Output"))
+            .child(text("System").text_color(INK))
+    }))?;
+    let size = Size {
+        width: px(120.0),
+        height: px(60.0),
+    };
+    ui.flush()?;
+    ui.layout(view, size)?;
+    let label = ui.children(view, ui.root(view)?)?.next().unwrap();
+    let paragraph = |ui: &Ui, expected: Rgba| -> Result<_> {
+        let frame = ui.record_frame(view)?;
+        let [
+            Draw::Text {
+                color, paragraph, ..
+            },
+            Draw::Text { color: fixed, .. },
+        ] = frame.draws()
+        else {
+            panic!("expected two labels")
+        };
+        assert_eq!((*color, *fixed), (expected, INK));
+        Ok(Rc::clone(paragraph))
+    };
+    let original = paragraph(&ui, INK)?;
+    paragraph(&ui, INK)?;
+    ui.context().set(ink, Rgba::new(100, 80, 60, 170))?;
+    ui.context().set(ink, ACCENT)?;
+    ui.flush()?;
+    let mut dirty = Vec::new();
+    ui.collect_repaints(view, &mut dirty)?;
+    assert_eq!(dirty, [label]);
+    assert!(Rc::ptr_eq(&original, &paragraph(&ui, ACCENT)?));
+    assert_eq!(ui.layout(view, size)?, 0);
+
+    ui.context().set(attached, false)?;
+    ui.flush()?;
+    ui.context().set(ink, INK)?;
+    assert!(!ui.has_pending_bindings());
+    ui.context().set(attached, true)?;
+    ui.flush()?;
+    ui.layout(view, size)?;
+    paragraph(&ui, INK)?;
+    Ok(())
+}
+
+#[test]
 fn gradient_updates_share_all_stops_and_only_queue_the_live_background() -> Result<()> {
     let gradient = linear_gradient(
         90.0,
@@ -231,7 +285,7 @@ fn custom_content_gets_the_shared_box_and_gradient_without_style_hooks() -> Resu
     }
     impl Element for Badge {
         fn paint(&self, cx: &mut PaintContext) -> Result<()> {
-            cx.fill(cx.size, cx.text_color);
+            cx.fill(cx.size, cx.text_color()?);
             Ok(())
         }
     }
@@ -241,13 +295,14 @@ fn custom_content_gets_the_shared_box_and_gradient_without_style_hooks() -> Resu
         ColorStop::new(0.4, ACCENT),
         ColorStop::new(1.0, INK),
     ])?;
+    let mut ui = Ui::with_font(FONT.to_vec(), "zh-CN")?;
+    let tint = ui.context().signal(ACCENT);
     let base = StyleRefinement::default()
         .size(px(40.0))
         .px_2()
         .py(px(3.0))
         .bg(gradient.clone())
-        .text_color(ACCENT);
-    let mut ui = Ui::with_font(FONT.to_vec(), "zh-CN")?;
+        .text_color(tint);
     let view = ui.mount(component(|_| {
         div().child(
             element(Badge).with_style(&base).pl(px(10.0)).child(
@@ -283,6 +338,21 @@ fn custom_content_gets_the_shared_box_and_gradient_without_style_hooks() -> Resu
         Draw::Fill {size: inner_size, origin: inner, fill: Fill::Solid(c), ..},
         Draw::Text {color, ..},
     ] if *outer_size == (Size {width:px(40.0),height:px(40.0)}) && *inner_size == (Size {width:px(22.0),height:px(34.0)}) && *origin == Origin::default() && *inner == inset && *color == ACCENT && *c == ACCENT && g == &gradient));
+    ui.context().set(tint, INK)?;
+    ui.flush()?;
+    let mut dirty = Vec::new();
+    ui.collect_repaints(view, &mut dirty)?;
+    assert_eq!(dirty.len(), 2);
+    assert!(dirty.contains(&badge) && dirty.contains(&label));
+    commands.clear();
+    ui.paint(view, badge, &mut commands)?;
+    assert!(matches!(
+        commands.last(),
+        Some(Draw::Fill {
+            fill: Fill::Solid(INK),
+            ..
+        })
+    ));
     Ok(())
 }
 
