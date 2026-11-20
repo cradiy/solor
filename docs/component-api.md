@@ -294,10 +294,12 @@ sizing, composition, input, text, richer paint and platform adapters.
 ## High-frequency updates
 
 Elements default to `RefreshMode::OnDemand`. During paint, `cx.read(signal)?`
-samples the current value and records a dependency for that element. Each
-successful paint replaces its previous set of dependencies. A conditional
-read therefore follows the active branch. Equal writes leave the element clean,
-and multiple changes before a flush coalesce. Reads in event handlers are
+borrows the current value for the paint pass and records a dependency for that
+element. A chart can iterate over borrowed samples while issuing draw commands.
+Each successful paint replaces its previous set of dependencies. A conditional
+read therefore follows the active branch. Equal writes through `set` leave the
+element clean. An `update_in_place` schedules its subscribers after every edit,
+and multiple notifications before a flush coalesce. Reads in event handlers are
 ordinary reads. Layout or attachment changes can also require fresh paint.
 
 A panel can mix both cadences in one retained tree:

@@ -207,7 +207,7 @@ fn validate_points(points: &[Origin]) -> Result<()> {
     Ok(())
 }
 
-impl PaintContext<'_> {
+impl<'paint> PaintContext<'paint> {
     /// Reads the inherited foreground and tracks a bound color for repaint.
     pub fn text_color(&self) -> Result<Rgba> {
         match self.text_color {
@@ -217,7 +217,8 @@ impl PaintContext<'_> {
     }
 
     /// Samples a signal and subscribes this element to changes after successful paint.
-    pub fn read<T: 'static>(&self, signal: Signal<T>) -> Result<&T> {
+    /// The value can stay borrowed while recording drawing commands.
+    pub fn read<T: 'static>(&self, signal: Signal<T>) -> Result<&'paint T> {
         let value = self.state.read(signal)?;
         let mut reads = self.reads.borrow_mut();
         if !reads.contains(&signal.id()) {

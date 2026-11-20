@@ -49,6 +49,19 @@ impl Element for Chart {
         let (lo, hi) = tape.range();
         let inset = 1.0_f32.min(w * 0.5).min(h * 0.5);
         let plot_height = h - 2.0 * inset;
+        for line in 0..5 {
+            cx.fill_rect(
+                Origin {
+                    x: px(0.0),
+                    y: px(inset + (plot_height - 1.0).max(0.0) * line as f32 / 4.0),
+                },
+                Size {
+                    width: px(w),
+                    height: px(1.0),
+                },
+                rgb(0x2b333e),
+            )?;
+        }
         let y = |value| {
             if hi == lo {
                 px(h * 0.5)
@@ -74,20 +87,6 @@ impl Element for Chart {
                 y: y(sample.average),
             });
         }
-        let guide_y = y(tape.price as f32);
-        for line in 0..5 {
-            cx.fill_rect(
-                Origin {
-                    x: px(0.0),
-                    y: px(inset + (plot_height - 1.0).max(0.0) * line as f32 / 4.0),
-                },
-                Size {
-                    width: px(w),
-                    height: px(1.0),
-                },
-                rgb(0x2b333e),
-            )?;
-        }
         let mut area = Vec::with_capacity(count + 2);
         area.extend_from_slice(&prices);
         let baseline = px(h - inset);
@@ -104,7 +103,7 @@ impl Element for Chart {
             cx.fill_rect(
                 Origin {
                     x: px(0.0),
-                    y: guide_y.min(px(h - 1.0)),
+                    y: y(tape.price as f32).min(px(h - 1.0)),
                 },
                 Size {
                     width: px(w),

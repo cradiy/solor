@@ -127,9 +127,11 @@ fn pixel(rgba: &[u8], x: usize, y: usize) -> &[u8] {
 
 #[test]
 fn paint_dependencies_follow_successful_branches_and_retire_with_the_element() -> Result<()> {
+    struct History(Vec<u16>);
+
     let mut ui = Ui::new();
     let first = ui.context().signal(10u16);
-    let second = ui.context().signal(20u16);
+    let second = ui.context().signal(History(vec![20]));
     let use_second = ui.context().signal(false);
     let visible = ui.context().signal(true);
     let event_only = ui.context().signal(0u8);
@@ -141,8 +143,21 @@ fn paint_dependencies_follow_successful_branches_and_retire_with_the_element() -
                 let fail_for_click = fail.clone();
                 let fail = fail.clone();
                 bar(move |cx| {
-                    let source = if *cx.read(use_second)? { second } else { first };
-                    let value = *cx.read(source)?;
+                    let value = if *cx.read(use_second)? {
+                        let history = cx.read(second)?;
+                        for &sample in &history.0 {
+                            cx.fill(
+                                Size {
+                                    width: px(f32::from(sample)),
+                                    ..cx.size
+                                },
+                                rgb(0x999999),
+                            );
+                        }
+                        *history.0.last().unwrap()
+                    } else {
+                        *cx.read(first)?
+                    };
                     anyhow::ensure!(!fail.replace(false), "paint interrupted");
                     Ok(value)
                 })
@@ -176,7 +191,8 @@ fn paint_dependencies_follow_successful_branches_and_retire_with_the_element() -
     ui.context().set(use_second, true)?;
     ui.flush()?;
     assert!(ui.record_frame(view).is_err());
-    ui.context().set(second, 21)?;
+    ui.context()
+        .update_in_place(second, |history| history.0.push(21))?;
     assert!(!ui.has_pending_bindings());
     ui.record_frame(view)?;
 
@@ -187,15 +203,29 @@ fn paint_dependencies_follow_successful_branches_and_retire_with_the_element() -
     assert_eq!(ready, [children[0]]);
     ui.record_frame(view)?;
 
-    ui.context().set(second, 22)?;
+    ui.context()
+        .update_in_place(second, |history| history.0.push(22))?;
     ui.flush()?;
     ready.clear();
     ui.collect_repaints(view, &mut ready)?;
     assert_eq!(ready, [children[1]]);
+    let frame = ui.record_frame(view)?;
+    let widths: Vec<_> = frame
+        .draws()
+        .iter()
+        .filter_map(|draw| match draw {
+            solor::Draw::Fill { size, fill, .. } if *fill == rgb(0x999999).into() => {
+                Some(size.width)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(widths, [px(20.0), px(21.0), px(22.0)]);
 
     ui.context().set(visible, false)?;
     ui.flush()?;
-    ui.context().set(second, 23)?;
+    ui.context()
+        .update_in_place(second, |history| history.0.push(23))?;
     assert!(!ui.has_pending_bindings());
     ready.clear();
     ui.collect_repaints(view, &mut ready)?;
