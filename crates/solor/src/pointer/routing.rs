@@ -6,7 +6,8 @@ use anyhow::{Context as _, ensure};
 
 use super::{
     Handlers, PointerButton, PointerDownContext, PointerEvent, PointerFrame, PointerId,
-    PointerInput, PointerSample, frame::HitGeometry,
+    PointerInput, PointerSample, ScrollDelta, ScrollEvent,
+    frame::{HitGeometry, Recipients},
 };
 use crate::{
     Context, Instance, NodeId, Result, Ui, ViewId, WindowControl, element::MountedNode,
@@ -86,8 +87,13 @@ fn context_and_handlers<'a>(
 }
 
 impl Delivery<'_> {
-    fn hit(&self, sample: PointerSample) -> Option<NodeId> {
-        let (leaf, recipient) = self.instance.pointer.frame.as_ref()?.hit(sample.position)?;
+    fn hit(
+        &self,
+        sample: PointerSample,
+        select: impl FnOnce(Recipients) -> Option<NodeId>,
+    ) -> Option<NodeId> {
+        let (leaf, recipients) = self.instance.pointer.frame.as_ref()?.hit(sample.position)?;
+        let recipient = select(recipients)?;
         // A retired frontmost hit blocks everything underneath, even if its ancestor survives.
         (self.instance.bodies.contains_key(&leaf) && self.instance.bodies.contains_key(&recipient))
             .then_some(recipient)
@@ -127,7 +133,7 @@ impl Delivery<'_> {
             return Ok(None);
         }
         let capture = router.capture(sample.id);
-        let Some(owner) = capture.or_else(|| self.hit(sample)) else {
+        let Some(owner) = capture.or_else(|| self.hit(sample, |r| r.pointer)) else {
             return Ok(None);
         };
         let event = self.event(owner, sample, Some(button))?;
@@ -171,9 +177,33 @@ impl Delivery<'_> {
         Ok(None)
     }
 
+    fn scroll(&mut self, sample: PointerSample, delta: ScrollDelta) -> Result<()> {
+        ensure!(
+            delta.x.get().is_finite() && delta.y.get().is_finite(),
+            "invalid scroll distance"
+        );
+        if delta == ScrollDelta::default() {
+            return Ok(());
+        }
+        let Some(owner) = self.hit(sample, |r| r.scroll) else {
+            return Ok(());
+        };
+        let pointer = self.event(owner, sample, None)?;
+        let node = self
+            .instance
+            .bodies
+            .get_mut(&owner)
+            .expect("live scroll recipient");
+        let (handlers, mut cx) = context_and_handlers(node, self.state, self.engine);
+        if let Some(scroll) = &handlers.scroll {
+            scroll(&ScrollEvent { pointer, delta }, &mut cx)?;
+        }
+        Ok(())
+    }
+
     fn moved(&mut self, sample: PointerSample) -> Result<()> {
         let capture = self.instance.pointer.capture(sample.id);
-        let target = capture.or_else(|| self.hit(sample));
+        let target = capture.or_else(|| self.hit(sample, |r| r.pointer));
         if let Some(presses) = self.instance.pointer.presses.get_mut(&sample.id) {
             for press in presses {
                 press.eligible &= target == Some(press.owner);
@@ -204,7 +234,7 @@ impl Delivery<'_> {
         let Some(press) = self.instance.pointer.release(sample.id, button) else {
             return Ok(None);
         };
-        let Some(target) = capture.or_else(|| self.hit(sample)) else {
+        let Some(target) = capture.or_else(|| self.hit(sample, |r| r.pointer)) else {
             return Ok(None);
         };
         let event = self.event(target, sample, Some(button))?;
@@ -309,6 +339,7 @@ impl Ui {
             PointerInput::Down(sample, button) => {
                 return delivery.down(sample.validated()?, button);
             }
+            PointerInput::Scroll(sample, delta) => delivery.scroll(sample.validated()?, delta),
             PointerInput::Move(sample) => delivery.moved(sample.validated()?),
             PointerInput::Up(sample, button) => return delivery.up(sample.validated()?, button),
             PointerInput::Cancel(id) => delivery.cancel(id),

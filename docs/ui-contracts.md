@@ -10,7 +10,7 @@ Run `cargo run -p solor-gallery --release` in a Linux Wayland session to compare
 letter spacing, OpenType ligatures, gradient geometry and flex distribution.
 The Markets tab runs a deterministic feed of six instruments. Each host frame
 advances 32 ticks per instrument and rolls one candle into each 96-period
-history. Select an instrument to inspect its candles and volume. Pause freezes
+history. Scroll vertically over the plot to zoom its latest 12 to 96 candles. The price axis retains the full history range. Select an instrument to inspect its candles and volume. Pause freezes
 the feed and releases its frame request. Callback FPS counts intervals between
 host frame opportunities over at least one second of elapsed monotonic time.
 
@@ -74,8 +74,8 @@ until close. The driver accepts a `WindowHandler<Rgba8>` and borrows its
 output for one submission.
 
 Pointer positions and scroll distances arrive in logical pixels. The Linux
-adapter currently delivers mouse buttons, motion, cancellation and vertical
-wheel input. Keyboard modifiers are currently reported as empty. An event
+adapter currently delivers mouse buttons, motion, cancellation and two-axis
+scroll input. Keyboard modifiers are currently reported as empty. An event
 handler can request a redraw. The host supplies the logical allocation and
 device scale at frame preparation, validates the returned buffer, then
 acknowledges submission with `frame_submitted`. A successful empty-damage

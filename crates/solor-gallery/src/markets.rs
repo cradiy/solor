@@ -2,7 +2,11 @@
 mod chart;
 use chart::Chart;
 
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Duration,
+};
 
 use anyhow::Result;
 use solor::{
@@ -312,6 +316,9 @@ pub(super) fn market() -> impl IntoElement {
                 .child(div().size(px(6.0)).rounded(px(2.0)).bg(color))
                 .child(label(name, 11.0, 18.0).text_color(DIM))
         };
+        let visible = cx.signal(PERIODS);
+        let candle_count = cx.signal(SharedString::from(format!("{PERIODS} candles")));
+        let zoom = Cell::new(PERIODS as f32);
         let detail = div()
             .flex_1()
             .items_stretch()
@@ -383,12 +390,24 @@ pub(super) fn market() -> impl IntoElement {
                     .flex_row()
                     .items_stretch()
                     .gap(px(6.0))
+                    .on_scroll(move |event, cx| {
+                        let next =
+                            (zoom.get() + event.delta.y.get() * 0.5).clamp(12.0, PERIODS as f32);
+                        zoom.set(next);
+                        let count = next.round() as usize;
+                        if count != *cx.read(visible)? {
+                            cx.set(visible, count)?;
+                            cx.set(candle_count, format!("{count} candles").into())?;
+                        }
+                        Ok(())
+                    })
                     .child_when(running, {
                         let feed = feed.clone();
                         move || {
                             element(Chart {
                                 feed: feed.clone(),
                                 selected: quotes.selected,
+                                visible,
                             })
                             .flex_1()
                             .refresh_mode(RefreshMode::Continuous)
@@ -405,6 +424,7 @@ pub(super) fn market() -> impl IntoElement {
                             element(Chart {
                                 feed: feed.clone(),
                                 selected: quotes.selected,
+                                visible,
                             })
                             .flex_1()
                         }
@@ -435,7 +455,13 @@ pub(super) fn market() -> impl IntoElement {
                     .flex_row()
                     .justify_between()
                     .text_color(DIM)
-                    .child(label("96 candles", 11.0, 18.0))
+                    .child(
+                        div()
+                            .flex_row()
+                            .gap(px(12.0))
+                            .child(text(candle_count).text_size(px(11.0)).line_height(px(18.0)))
+                            .child(label("Scroll to zoom", 11.0, 18.0)),
+                    )
                     .child(label("Latest candle", 11.0, 18.0)),
             );
         let rows = watchlist(quotes, feed.clone());

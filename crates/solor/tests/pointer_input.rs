@@ -379,3 +379,120 @@ fn hiding_a_captured_target_takes_effect_when_the_frame_is_accepted() -> Result<
     assert_eq!(*ui.context().read(clicks)?, 1);
     Ok(())
 }
+
+#[test]
+fn scroll_uses_its_nearest_listener_and_preserves_press_and_capture() -> Result<()> {
+    use solor::pointer::{PointerInput::Scroll, ScrollDelta};
+    let mut ui = Ui::new();
+    let clicks = ui.context().signal(0);
+    let received = ui.context().signal(Vec::new());
+    let view = ui.mount(component(|_| {
+        div()
+            .p(px(4.0))
+            .items_stretch()
+            .on_click(move |cx| cx.update(clicks, |n| *n += 1))
+            .on_scroll(move |event, cx| {
+                cx.update(received, |log| {
+                    log.push((0, event.pointer.local_position(), event.delta))
+                })
+            })
+            .child(div().h(px(10.0)).on_pointer_down(|_, cx| {
+                cx.capture_pointer();
+                Ok(())
+            }))
+            .child(div().h(px(10.0)).on_scroll(move |event, cx| {
+                cx.update(received, |log| {
+                    log.push((1, event.pointer.local_position(), event.delta))
+                })
+            }))
+    }))?;
+    let a = sample(1, 7.0, 9.0);
+    let b = sample(1, 7.0, 17.5);
+    let delta = ScrollDelta {
+        x: px(-1.25),
+        y: px(2.5),
+    };
+    ui.dispatch_pointer(view, Scroll(b, delta))?;
+    accept(&mut ui, view, 80.0)?;
+    ui.dispatch_pointer(view, Down(a, Primary))?;
+    ui.dispatch_pointer(view, Scroll(a, delta))?;
+    ui.dispatch_pointer(view, Scroll(b, delta))?;
+    ui.dispatch_pointer(view, Up(b, Primary))?;
+    ui.dispatch_pointer(view, Down(b, Primary))?;
+    ui.dispatch_pointer(view, Scroll(b, ScrollDelta::default()))?;
+    ui.dispatch_pointer(view, Up(b, Primary))?;
+    assert_eq!(*ui.context().read(clicks)?, 1);
+    assert_eq!(
+        ui.context().read(received)?.as_slice(),
+        &[
+            (0, a.position, delta),
+            (
+                1,
+                Origin {
+                    x: px(3.0),
+                    y: px(3.5)
+                },
+                delta
+            ),
+        ]
+    );
+    assert!(
+        ui.dispatch_pointer(
+            view,
+            Scroll(
+                a,
+                ScrollDelta {
+                    x: px(f32::INFINITY),
+                    ..delta
+                }
+            )
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn scroll_respects_clipping_and_keeps_a_retired_leaf_from_exposing_its_parent() -> Result<()> {
+    use solor::pointer::{PointerInput::Scroll, ScrollDelta};
+    let mut ui = Ui::new();
+    let enabled = ui.context().signal(true);
+    let parent = ui.context().signal(0);
+    let child = ui.context().signal(0);
+    let view = ui.mount(component(|_| {
+        div()
+            .on_scroll(move |_, cx| cx.update(parent, |n| *n += 1))
+            .child(
+                div()
+                    .size(px(15.0))
+                    .overflow_hidden()
+                    .child_when(enabled, move || {
+                        div()
+                            .w(px(40.0))
+                            .h(px(10.0))
+                            .on_scroll(move |_, cx| cx.update(child, |n| *n += 1))
+                    }),
+            )
+    }))?;
+    let scroll = |x| {
+        Scroll(
+            sample(1, x, 2.0),
+            ScrollDelta {
+                x: px(0.0),
+                y: px(2.0),
+            },
+        )
+    };
+    accept(&mut ui, view, 64.0)?;
+    ui.dispatch_pointer(view, scroll(2.0))?;
+    ui.dispatch_pointer(view, scroll(20.0))?;
+    ui.context().set(enabled, false)?;
+    ui.flush()?;
+    ui.dispatch_pointer(view, scroll(2.0))?;
+    assert_eq!(*ui.context().read(child)?, 1);
+    assert_eq!(*ui.context().read(parent)?, 1);
+    accept(&mut ui, view, 64.0)?;
+    ui.dispatch_pointer(view, scroll(2.0))?;
+    assert_eq!(*ui.context().read(parent)?, 2);
+    Ok(())
+}

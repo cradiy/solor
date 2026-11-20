@@ -23,10 +23,16 @@ impl HitBox {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+pub(super) struct Recipients {
+    pub pointer: Option<NodeId>,
+    pub scroll: Option<NodeId>,
+}
+
 struct Entry {
     node: NodeId,
     area: HitBox,
-    recipient: Option<NodeId>,
+    recipients: Recipients,
     testable: bool,
     clips: NodeClips,
 }
@@ -59,7 +65,7 @@ impl PointerFrame {
         self.geometry.interactive.contains_key(&node)
     }
 
-    pub(super) fn hit(&self, p: Origin) -> Option<(NodeId, NodeId)> {
+    pub(super) fn hit(&self, p: Origin) -> Option<(NodeId, Recipients)> {
         if !self.geometry.entries.first()?.area.contains(p) {
             return None;
         }
@@ -72,7 +78,7 @@ impl PointerFrame {
                     .as_deref()
                     .is_none_or(|clip| clip.contains(p))
         })?;
-        Some((hit.node, hit.recipient?))
+        Some((hit.node, hit.recipients))
     }
 
     pub(super) fn event(
@@ -125,7 +131,7 @@ impl HitGeometry {
         if !root.visible {
             return Ok(frame);
         }
-        let mut pending = vec![(root, Origin::default(), None, None)];
+        let mut pending = vec![(root, Origin::default(), Recipients::default(), None)];
         while let Some((body, offset, inherited, inherited_clip)) = pending.pop() {
             let id = body.id;
             if instance.frame_handlers.contains_key(&id) {
@@ -149,12 +155,18 @@ impl HitGeometry {
                 origin,
                 size: geometry.metrics.size,
             };
-            let recipient = if body.hit_testable && body.handlers.is_some() {
+            let mut recipients = inherited;
+            if body.hit_testable
+                && let Some(handlers) = body.handlers.as_deref()
+            {
                 frame.interactive.insert(id, area);
-                Some(id)
-            } else {
-                inherited
-            };
+                if handlers.handles_pointer() {
+                    recipients.pointer = Some(id);
+                }
+                if handlers.scroll.is_some() {
+                    recipients.scroll = Some(id);
+                }
+            }
             let clips = body
                 .overflow_clip
                 .resolve(inherited_clip, origin, area.size)?;
@@ -163,14 +175,14 @@ impl HitGeometry {
                 clips,
                 node: id,
                 area,
-                recipient,
+                recipients,
                 testable: body.hit_testable,
             });
             let start = pending.len();
             for child in instance.scene.children(id)? {
                 let child = &instance.bodies[&child];
                 if child.visible {
-                    pending.push((child, origin, recipient, child_clip.clone()));
+                    pending.push((child, origin, recipients, child_clip.clone()));
                 }
             }
             let siblings = &mut pending[start..];

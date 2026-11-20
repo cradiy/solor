@@ -65,11 +65,31 @@ pub struct PointerSample {
     pub modifiers: Modifiers,
 }
 
+/// Scroll distance in logical pixels. Positive values move right and down.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ScrollDelta {
+    /// Horizontal distance.
+    pub x: crate::Pixels,
+    /// Vertical distance.
+    pub y: crate::Pixels,
+}
+
+/// Scroll delivered to the nearest listening element under the pointer.
+#[derive(Clone, Copy, Debug)]
+pub struct ScrollEvent {
+    /// Location and bounds in the listening element's accepted frame.
+    pub pointer: PointerEvent,
+    /// Logical distance requested by the input device.
+    pub delta: ScrollDelta,
+}
+
 /// Normalized input sent by a platform adapter.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PointerInput {
     /// A button was pressed.
     Down(PointerSample, PointerButton),
+    /// A wheel or trackpad scrolled at this position.
+    Scroll(PointerSample, ScrollDelta),
     /// The pointer moved.
     Move(PointerSample),
     /// A button was released.
@@ -136,6 +156,7 @@ impl DerefMut for PointerDownContext<'_> {
 
 type DownHandler = Box<dyn Fn(&PointerEvent, &mut PointerDownContext<'_>) -> Result<()>>;
 type PositionHandler = Box<dyn Fn(&PointerEvent, &mut Context<'_>) -> Result<()>>;
+type ScrollHandler = Box<dyn Fn(&ScrollEvent, &mut Context<'_>) -> Result<()>>;
 type CancelHandler = Box<dyn Fn(PointerId, &mut Context<'_>) -> Result<()>>;
 
 #[derive(Default)]
@@ -143,9 +164,21 @@ pub(crate) struct Handlers {
     control: Option<crate::WindowControl>,
     down: Option<DownHandler>,
     moved: Option<PositionHandler>,
+    scroll: Option<ScrollHandler>,
     up: Option<PositionHandler>,
     cancel: Option<CancelHandler>,
     pub(crate) click: Option<crate::element::Click>,
+}
+
+impl Handlers {
+    fn handles_pointer(&self) -> bool {
+        self.down.is_some()
+            || self.moved.is_some()
+            || self.up.is_some()
+            || self.cancel.is_some()
+            || self.click.is_some()
+            || self.control.is_some()
+    }
 }
 
 macro_rules! pointer_handlers {
@@ -187,6 +220,8 @@ impl<E: crate::Element> crate::Node<E> {
     }
 
     pointer_handlers! {
+        /// Handles positioned scroll input over this element and its descendants without a closer scroll listener.
+        on_scroll => scroll (&ScrollEvent, &mut Context<'_>);
         /// Handles a button press on this element. The callback can capture the pointer.
         on_pointer_down => down (&PointerEvent, &mut PointerDownContext<'_>);
         /// Handles pointer motion over this element or during its capture.

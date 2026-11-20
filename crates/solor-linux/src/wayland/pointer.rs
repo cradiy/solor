@@ -8,7 +8,7 @@ use super::Window;
 use solor::{
     layout::Origin,
     platform::WindowEvent,
-    pointer::{PointerButton, PointerId, PointerInput, PointerKind, PointerSample},
+    pointer::{PointerButton, PointerId, PointerInput, PointerKind, PointerSample, ScrollDelta},
     px,
 };
 fn sample(id: u32, x: f64, y: f64) -> PointerSample {
@@ -28,13 +28,13 @@ pub(super) struct Seat {
     seat: wl_seat::WlSeat,
     pointer: Option<wl_pointer::WlPointer>,
     position: Option<PointerSample>,
-    pending_axis_y: f64,
+    scroll: Option<(PointerSample, ScrollDelta)>,
 }
 
 impl Seat {
     fn release_pointer(&mut self) {
         self.position = None;
-        self.pending_axis_y = 0.0;
+        self.scroll = None;
         if let Some(pointer) = self.pointer.take()
             && pointer.version() >= 3
         {
@@ -57,7 +57,7 @@ impl Window {
                 seat: registry.bind(name, version.min(5), qh, name),
                 pointer: None,
                 position: None,
-                pending_axis_y: 0.0,
+                scroll: None,
             });
         }
     }
@@ -155,7 +155,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
             }
             wl_pointer::Event::Leave { .. } => {
                 seat.position = None;
-                seat.pending_axis_y = 0.0;
+                seat.scroll = None;
                 PointerInput::Cancel(PointerId((*name).into()))
             }
             wl_pointer::Event::Motion {
@@ -168,23 +168,29 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
                 PointerInput::Move(p)
             }
             wl_pointer::Event::Axis {
-                axis: WEnum::Value(wl_pointer::Axis::VerticalScroll),
+                axis: WEnum::Value(axis),
                 value,
                 ..
-            } if seat.position.is_some() => {
-                if pointer.version() >= 5 {
-                    seat.pending_axis_y += value;
-                } else {
-                    state.event(WindowEvent::Scroll(px(value as f32)));
+            } => {
+                let Some(p) = seat.position else { return };
+                let (sample, delta) = seat.scroll.get_or_insert((p, ScrollDelta::default()));
+                match axis {
+                    wl_pointer::Axis::HorizontalScroll => delta.x += px(value as f32),
+                    wl_pointer::Axis::VerticalScroll => delta.y += px(value as f32),
+                    _ => return,
                 }
-                return;
+                if pointer.version() >= 5 {
+                    return;
+                }
+                let event = PointerInput::Scroll(*sample, *delta);
+                seat.scroll = None;
+                event
             }
             wl_pointer::Event::Frame => {
-                let delta = std::mem::take(&mut seat.pending_axis_y);
-                if delta != 0.0 {
-                    state.event(WindowEvent::Scroll(px(delta as f32)));
-                }
-                return;
+                let Some((p, delta)) = seat.scroll.take() else {
+                    return;
+                };
+                PointerInput::Scroll(p, delta)
             }
             // Linux evdev BTN_LEFT. Wayland surface coordinates are already logical.
             wl_pointer::Event::Button {

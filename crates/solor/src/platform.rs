@@ -73,8 +73,6 @@ impl<'a> WindowOptions<'a> {
 pub enum WindowEvent {
     /// A positioned sample or the end of a pointer sequence.
     Pointer(PointerInput),
-    /// Vertical scroll distance in logical pixels.
-    Scroll(Pixels),
     /// A requested frame opportunity, timestamped at dispatch from a monotonic host clock.
     /// Timestamps in one window share an origin and can be subtracted to measure cadence.
     FrameReady(std::time::Duration),

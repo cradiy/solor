@@ -12,6 +12,7 @@ use super::{DOWN, Feed, PERIODS, TICKS, UP};
 pub(super) struct Chart {
     pub(super) feed: Feed,
     pub(super) selected: Signal<usize>,
+    pub(super) visible: Signal<usize>,
 }
 
 impl LayoutNode for Chart {
@@ -44,6 +45,7 @@ impl Element for Chart {
         if w < 1.0 || h < 1.0 {
             return Ok(());
         }
+        let count = *cx.read(self.visible)?;
         let mut rect = |x, y, width, height, color| {
             cx.fill_rect(
                 Origin { x: px(x), y: px(y) },
@@ -59,11 +61,12 @@ impl Element for Chart {
         for line in 0..5 {
             rect(0.0, line as f32 * h * 0.77 / 4.0, w, 1.0, rgb(0x2b333e))?;
         }
-        let step = w / PERIODS as f32;
+        let step = w / count as f32;
         let body = step * 0.70;
         for (i, c) in tape.candles[tape.next..]
             .iter()
             .chain(&tape.candles[..tape.next])
+            .skip(PERIODS - count)
             .enumerate()
         {
             let center = (i as f32 + 0.5) * step;

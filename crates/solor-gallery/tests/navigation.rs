@@ -188,6 +188,35 @@ fn market_advances_freezes_and_retires_its_frame_listener() -> Result<()> {
             .redraw
     );
     assert!(paused == sample(&mut window)?);
+    let scroll = |window: &mut CpuWindow, x, dy| -> Result<bool> {
+        let sample = PointerSample {
+            id: PointerId(1),
+            kind: PointerKind::Mouse,
+            position: Origin {
+                x: px(x),
+                y: px(330.0),
+            },
+            modifiers: Default::default(),
+        };
+        let delta = solor::pointer::ScrollDelta {
+            x: px(0.0),
+            y: px(dy),
+        };
+        Ok(window
+            .event(WindowEvent::Pointer(PointerInput::Scroll(sample, delta)))?
+            .redraw)
+    };
+    assert!(!scroll(&mut window, 90.0, -12.0)?);
+    assert!(scroll(&mut window, 480.0, -200.0)?);
+    assert!(paused != sample(&mut window)?);
+    assert!(!scroll(&mut window, 480.0, -1.0)?);
+    assert!(
+        !window
+            .event(WindowEvent::FrameReady(Duration::from_secs(3)))?
+            .redraw
+    );
+    assert!(scroll(&mut window, 480.0, 200.0)?);
+    assert!(paused == sample(&mut window)?);
     click(&mut window, 92.0, 233.0)?;
     assert!(paused != sample(&mut window)?);
     assert!(

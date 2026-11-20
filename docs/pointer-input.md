@@ -46,6 +46,11 @@ div()
     })
 ```
 
+Use `.on_scroll(|event, cx| ...)` on any element to handle wheel or trackpad
+input. `event.delta.x` and `event.delta.y` are signed logical pixels, positive
+right and down. `event.pointer.local_position()` gives the position inside the
+listening element. On Wayland, axes reported in one pointer frame arrive together.
+
 The adapter supplies a view-scoped pointer ID, device kind, modifiers and
 view-local position in floating-point logical pixels. Down and up carry the
 changed button. The primary action is the primary mouse button, touch contact
@@ -84,6 +89,7 @@ and calls `cancel_pointers(view)` on deactivation.
 | Event | Behavior |
 | --- | --- |
 | Down | Hit-test the host's accepted frame. Resolve the frontmost hit to its nearest live interactive ancestor within the view, including the hit node itself. Keep one recipient for the primary press so a text label inside a button activates the button. A stale frontmost hit consumes the hit without targeting an element underneath. |
+| Scroll | Hit-test the accepted frame and deliver once to the nearest scroll listener on that branch. A child button can receive clicks while its parent receives scroll. Capture affects the press sequence independently. |
 | Move | Route to the current hit unless this pointer is captured. Capture routes moves to its owner and suppresses click recognition for that press. For an uncaptured press, leaving its target cancels click eligibility through release. |
 | Up | Deliver the raw up first, to the capture owner or the current hit. After a successful callback, a matching primary release over the original, still-eligible target invokes its click handler once. The release of the initiating button ends capture even on callback failure. An unmatched up cannot activate a target. |
 | Cancel | Device loss, host cancellation or view deactivation clears the sequence. Notify its live owner once. A late up after cancel has no action. |
