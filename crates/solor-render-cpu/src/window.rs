@@ -60,6 +60,10 @@ impl WindowHandler<Rgba8> for CpuWindow {
         Ok(response)
     }
 
+    fn next_redraw(&self) -> Option<std::time::Instant> {
+        self.ui.next_redraw(self.view)
+    }
+
     fn frame(&mut self, size: Size, scale: RasterScale) -> Result<RasterFrame<'_>> {
         // An unacknowledged image cannot be the baseline for the platform's next damage.
         if self.prepared.take().is_some() {

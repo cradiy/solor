@@ -108,6 +108,16 @@ fn submitted_header_routes_drag_and_close_separately() -> Result<()> {
     );
 
     let toggle = point(150.0);
+    let hover = window.event(WindowEvent::Pointer(PointerInput::Move(toggle)))?;
+    assert!(hover.redraw);
+    window.frame(
+        Size {
+            width: px(800.0),
+            height: px(560.0),
+        },
+        RasterScale::ONE,
+    )?;
+    window.frame_submitted()?;
     for _ in 0..2 {
         let down = window.event(WindowEvent::Pointer(PointerInput::Down(
             toggle,

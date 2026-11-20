@@ -27,6 +27,7 @@ impl HitBox {
 pub(super) struct Recipients {
     pub pointer: Option<NodeId>,
     pub scroll: Option<NodeId>,
+    hover: Option<NodeId>,
 }
 
 struct Entry {
@@ -47,6 +48,7 @@ pub(super) struct HitGeometry {
     frame_listeners: Vec<NodeId>,
     entries: Vec<Entry>,
     interactive: HashMap<NodeId, HitBox>,
+    hover_parents: HashMap<NodeId, Option<NodeId>>,
 }
 
 impl PointerFrame {
@@ -79,6 +81,30 @@ impl PointerFrame {
                     .is_none_or(|clip| clip.contains(p))
         })?;
         Some((hit.node, hit.recipients))
+    }
+
+    pub(super) fn same_geometry(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.geometry, &other.geometry)
+    }
+
+    pub(super) fn hover_path(
+        &self,
+        p: Origin,
+        live: impl Fn(NodeId) -> bool,
+    ) -> impl Iterator<Item = NodeId> + '_ {
+        let owner = (!self.geometry.hover_parents.is_empty())
+            .then(|| self.hit(p))
+            .flatten()
+            .filter(|(leaf, _)| live(*leaf))
+            .and_then(|(_, r)| r.hover);
+        std::iter::successors(owner, |id| self.geometry.hover_parents[id])
+    }
+
+    pub(super) fn bounds(&self, node: NodeId) -> Option<(Origin, Size)> {
+        self.geometry
+            .interactive
+            .get(&node)
+            .map(|b| (b.origin, b.size))
     }
 
     pub(super) fn event(
@@ -126,6 +152,7 @@ impl HitGeometry {
             frame_listeners: Vec::new(),
             entries: Vec::with_capacity(instance.visible_nodes),
             interactive: HashMap::new(),
+            hover_parents: HashMap::new(),
         };
         let root = &instance.bodies[&instance.scene.root()];
         if !root.visible {
@@ -160,6 +187,10 @@ impl HitGeometry {
                 && let Some(handlers) = body.handlers.as_deref()
             {
                 frame.interactive.insert(id, area);
+                if handlers.hover.is_some() || handlers.tooltip.is_some() {
+                    frame.hover_parents.insert(id, recipients.hover);
+                    recipients.hover = Some(id);
+                }
                 if handlers.handles_pointer() {
                     recipients.pointer = Some(id);
                 }

@@ -134,6 +134,11 @@ pub trait WindowHandler<T: Presentation> {
     /// Handles an event and returns any requested redraw and native window operation.
     fn event(&mut self, event: WindowEvent) -> Result<EventResponse>;
 
+    /// Earliest monotonic deadline for an on-demand redraw. Recheck after input or submission.
+    fn next_redraw(&self) -> Option<std::time::Instant> {
+        None
+    }
+
     /// Prepares output for the current logical allocation and device scale.
     fn frame(&mut self, size: Size, scale: RasterScale) -> Result<T::Frame<'_>>;
 

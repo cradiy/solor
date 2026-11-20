@@ -543,3 +543,120 @@ fn resize_grip_delegates_to_children_and_respects_pointer_capture() -> Result<()
     }
     Ok(())
 }
+
+#[test]
+fn hover_without_a_tooltip_tracks_mouse_presence_across_accepted_frames() -> Result<()> {
+    use std::cell::RefCell;
+
+    let mut ui = Ui::new();
+    let show = ui.context().signal(true);
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let listen = |name| {
+        let log = log.clone();
+        move |inside, _: &mut solor::Context<'_>| {
+            log.borrow_mut().push((name, inside));
+            Ok(())
+        }
+    };
+    let view = ui.mount(component(|_| {
+        div().on_hover(listen("outer")).child(
+            div()
+                .size(px(20.0))
+                .visible_when(show)
+                .on_hover(listen("inner")),
+        )
+    }))?;
+    let one = sample(1, 5.0, 5.0);
+    let two = sample(2, 6.0, 6.0);
+    ui.dispatch_pointer(view, Move(one))?;
+    assert!(log.borrow().is_empty());
+    accept(&mut ui, view, 80.0)?;
+    assert_eq!(log.take(), [("outer", true), ("inner", true)]);
+    ui.dispatch_pointer(view, Move(two))?;
+    ui.dispatch_pointer(view, Leave(one.id))?;
+    ui.dispatch_pointer(view, Move(two))?;
+    assert!(log.borrow().is_empty());
+    assert!(ui.next_redraw(view).is_none());
+    ui.context().set(show, false)?;
+    ui.flush()?;
+    ui.layout(
+        view,
+        Size {
+            width: px(80.0),
+            height: px(40.0),
+        },
+    )?;
+    let prepared = ui.prepare_pointer_frame(view)?;
+    assert!(log.borrow().is_empty());
+    ui.accept_pointer_frame(prepared)?;
+    assert_eq!(log.take(), [("inner", false)]);
+    ui.cancel_pointers(view)?;
+    assert_eq!(log.take(), [("outer", false)]);
+    ui.dispatch_pointer(
+        view,
+        Move(PointerSample {
+            kind: PointerKind::Touch,
+            ..one
+        }),
+    )?;
+    assert!(log.borrow().is_empty());
+    Ok(())
+}
+
+#[test]
+fn tooltip_without_a_callback_waits_cancels_and_draws_above_the_owner() -> Result<()> {
+    use solor::Draw;
+    let mut ui = Ui::with_font(
+        include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf").to_vec(),
+        "en",
+    )?;
+    let show = ui.context().signal(true);
+    let view = ui.mount(component(|_| {
+        div()
+            .tooltip("Outer hint")
+            .items_end()
+            .justify_end()
+            .child_when(show, || {
+                div().size(px(10.0)).overflow_hidden().tooltip("Inner hint")
+            })
+    }))?;
+    accept(&mut ui, view, 140.0)?;
+    let mouse = sample(1, 135.0, 35.0);
+    ui.dispatch_pointer(view, Move(mouse))?;
+    let first = ui.next_redraw(view).unwrap();
+    ui.dispatch_pointer(view, Move(mouse))?;
+    assert_eq!(ui.next_redraw(view), Some(first));
+    assert!(ui.record_frame(view)?.draws().is_empty());
+    ui.dispatch_pointer(view, Leave(mouse.id))?;
+    assert!(ui.next_redraw(view).is_none());
+    ui.dispatch_pointer(view, Move(mouse))?;
+    let due = ui.next_redraw(view).unwrap();
+    std::thread::sleep(due.saturating_duration_since(std::time::Instant::now()));
+    let frame = ui.record_frame(view)?;
+    let [
+        Draw::Fill {
+            origin, size, clip, ..
+        },
+        Draw::Text { paragraph, .. },
+    ] = frame.draws()
+    else {
+        panic!("expected a tooltip overlay")
+    };
+    assert_eq!(paragraph.text.as_str(), "Inner hint");
+    assert!(clip.is_none() && origin.x >= px(0.0) && origin.x + size.width <= px(140.0));
+    assert!(origin.y >= px(0.0) && origin.y + size.height <= px(30.0));
+    assert!(ui.next_redraw(view).is_none());
+    ui.dispatch_pointer(view, Down(mouse, Primary))?;
+    assert!(ui.next_redraw(view).unwrap() <= std::time::Instant::now());
+    assert!(ui.record_frame(view)?.draws().is_empty());
+    ui.dispatch_pointer(view, Move(mouse))?;
+    assert!(ui.next_redraw(view).is_none());
+    ui.dispatch_pointer(view, Up(mouse, Primary))?;
+    ui.dispatch_pointer(view, Move(mouse))?;
+    ui.context().set(show, false)?;
+    accept(&mut ui, view, 140.0)?;
+    assert!(ui.next_redraw(view).unwrap() > std::time::Instant::now());
+    ui.dispatch_pointer(view, Cancel(mouse.id))?;
+    assert!(ui.next_redraw(view).is_none());
+    Ok(())
+}

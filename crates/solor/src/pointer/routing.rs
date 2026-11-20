@@ -26,6 +26,8 @@ pub(crate) struct PointerRouter {
     pub(super) frame: Option<PointerFrame>,
     pub(super) geometry: OnceCell<Arc<HitGeometry>>,
     presses: HashMap<PointerId, Vec<Press>>,
+    pub(super) hover: super::hover::Hover,
+    pub(crate) tooltips: super::tooltip::Tooltips,
 }
 
 impl PointerRouter {
@@ -39,6 +41,8 @@ impl PointerRouter {
     }
 
     pub(crate) fn retire(&mut self, node: NodeId) {
+        self.hover.retire(node);
+        self.tooltips.retire(node);
         self.presses.retain(|_, presses| {
             presses.retain(|press| press.owner != node);
             !presses.is_empty()
@@ -87,6 +91,29 @@ fn context_and_handlers<'a>(
 }
 
 impl Delivery<'_> {
+    fn hover_changed(&mut self) -> Result<()> {
+        let router = &mut self.instance.pointer;
+        let changes = router
+            .hover
+            .reconcile(router.frame.as_ref(), &self.instance.bodies);
+        router
+            .tooltips
+            .reconcile(&router.hover, &self.instance.bodies);
+        let mut result = Ok(());
+        for (id, entered) in changes {
+            let node = self
+                .instance
+                .bodies
+                .get_mut(&id)
+                .expect("live hover listener");
+            let (handlers, mut cx) = context_and_handlers(node, self.state, self.engine);
+            if let Some(handler) = &handlers.hover {
+                result = result.and(handler(entered, &mut cx));
+            }
+        }
+        result
+    }
+
     fn hit(
         &self,
         sample: PointerSample,
@@ -179,13 +206,6 @@ impl Delivery<'_> {
     }
 
     fn scroll(&mut self, sample: PointerSample, delta: ScrollDelta) -> Result<()> {
-        ensure!(
-            delta.x.get().is_finite() && delta.y.get().is_finite(),
-            "invalid scroll distance"
-        );
-        if delta == ScrollDelta::default() {
-            return Ok(());
-        }
         let Some(owner) = self.hit(sample, |r| r.scroll) else {
             return Ok(());
         };
@@ -291,13 +311,24 @@ impl Delivery<'_> {
     }
 }
 
-impl PointerSample {
-    fn validated(self) -> Result<Self> {
+impl PointerInput {
+    fn validate(self) -> Result<()> {
+        let sample = match self {
+            Self::Scroll(p, delta) => {
+                ensure!(
+                    delta.x.get().is_finite() && delta.y.get().is_finite(),
+                    "invalid scroll distance"
+                );
+                p
+            }
+            Self::Move(p) | Self::Down(p, _) | Self::Up(p, _) => p,
+            Self::Leave(_) | Self::Cancel(_) => return Ok(()),
+        };
         ensure!(
-            self.position.x.get().is_finite() && self.position.y.get().is_finite(),
+            sample.position.x.get().is_finite() && sample.position.y.get().is_finite(),
             "invalid pointer position"
         );
-        Ok(self)
+        Ok(())
     }
 }
 
@@ -314,6 +345,16 @@ impl Ui {
         })
     }
 
+    /// Earliest time an idle host should record this view for pointer feedback.
+    /// A host rechecks this after input and after accepting a frame.
+    pub fn next_redraw(&self, view: ViewId) -> Option<std::time::Instant> {
+        let instance = self.instances.get(&view)?;
+        if self.has_pending_bindings() {
+            return Some(std::time::Instant::now());
+        }
+        instance.pointer.tooltips.deadline()
+    }
+
     /// Makes this submission's snapshot authoritative for input. Active sequences whose
     /// recipients disappear from the accepted frame are canceled after the switch.
     pub fn accept_pointer_frame(&mut self, frame: PointerFrame) -> Result<()> {
@@ -325,8 +366,17 @@ impl Ui {
             .filter(|(_, presses)| presses.iter().any(|p| !frame.has_recipient(p.owner)))
             .map(|(&id, _)| id)
             .collect();
+        let changed = router
+            .frame
+            .as_ref()
+            .is_none_or(|old| !old.same_geometry(&frame));
         router.frame = Some(frame);
-        delivery.cancel_ids(canceled)
+        let result = delivery.cancel_ids(canceled);
+        if changed {
+            result.and(delivery.hover_changed())
+        } else {
+            result
+        }
     }
 
     /// Delivers host input against the view's accepted frame. Returns the native operation requested by this event.
@@ -336,26 +386,33 @@ impl Ui {
         input: PointerInput,
     ) -> Result<Option<WindowControl>> {
         let mut delivery = self.pointer_delivery(view)?;
-        match input {
-            PointerInput::Down(sample, button) => {
-                return delivery.down(sample.validated()?, button);
-            }
-            PointerInput::Scroll(sample, delta) => delivery.scroll(sample.validated()?, delta),
-            PointerInput::Move(sample) => delivery.moved(sample.validated()?),
-            PointerInput::Up(sample, button) => return delivery.up(sample.validated()?, button),
-            PointerInput::Cancel(id) => delivery.cancel(id),
+        input.validate()?;
+        if matches!(input, PointerInput::Scroll(_, d) if d == ScrollDelta::default()) {
+            return Ok(None);
+        }
+        let router = &mut delivery.instance.pointer;
+        router.hover.observe(input);
+        router.tooltips.observe(input, &router.hover);
+        let hover = delivery.hover_changed();
+        let routed = match input {
+            PointerInput::Down(sample, button) => delivery.down(sample, button),
+            PointerInput::Scroll(sample, delta) => delivery.scroll(sample, delta).map(|()| None),
+            PointerInput::Move(sample) => delivery.moved(sample).map(|()| None),
+            PointerInput::Up(sample, button) => delivery.up(sample, button),
+            PointerInput::Cancel(id) => delivery.cancel(id).map(|()| None),
             PointerInput::Leave(id) if delivery.instance.pointer.capture(id).is_none() => {
-                delivery.cancel(id)
+                delivery.cancel(id).map(|()| None)
             }
-            PointerInput::Leave(_) => Ok(()),
-        }?;
-        Ok(None)
+            PointerInput::Leave(_) => Ok(None),
+        };
+        hover.and(routed)
     }
 
     /// Cancels every active pointer on view deactivation, even if a callback reports an error.
     pub fn cancel_pointers(&mut self, view: ViewId) -> Result<()> {
         let mut delivery = self.pointer_delivery(view)?;
         let ids = delivery.instance.pointer.presses.keys().copied().collect();
-        delivery.cancel_ids(ids)
+        delivery.instance.pointer.hover.clear();
+        delivery.hover_changed().and(delivery.cancel_ids(ids))
     }
 }

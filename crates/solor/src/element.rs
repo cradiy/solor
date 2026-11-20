@@ -658,6 +658,14 @@ impl AnyElement {
                 }
                 _ => true,
             };
+            if let Some(tip) = node
+                .handlers
+                .as_deref()
+                .and_then(|handlers| handlers.tooltip.as_ref())
+            {
+                anyhow::ensure!(cx.engine.is_some(), "text tooltip requires a font");
+                Text::validate_content(tip.as_str())?;
+            }
             node.body.prepare_content(&style)?;
             let body = StyledBody::new(node.body, &style, units)?;
             let item_sizing = body.item_sizing(&style, units)?;

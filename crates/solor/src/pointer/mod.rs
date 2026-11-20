@@ -1,6 +1,8 @@
 //! View-local pointer input, capture and accepted-frame hit testing.
 mod frame;
+mod hover;
 mod routing;
+mod tooltip;
 
 use std::ops::{Deref, DerefMut};
 
@@ -154,6 +156,8 @@ impl DerefMut for PointerDownContext<'_> {
     }
 }
 
+type HoverHandler = Box<dyn Fn(bool, &mut Context<'_>) -> Result<()>>;
+
 type DownHandler = Box<dyn Fn(&PointerEvent, &mut PointerDownContext<'_>) -> Result<()>>;
 type PositionHandler = Box<dyn Fn(&PointerEvent, &mut Context<'_>) -> Result<()>>;
 type ScrollHandler = Box<dyn Fn(&ScrollEvent, &mut Context<'_>) -> Result<()>>;
@@ -161,6 +165,8 @@ type CancelHandler = Box<dyn Fn(PointerId, &mut Context<'_>) -> Result<()>>;
 
 #[derive(Default)]
 pub(crate) struct Handlers {
+    hover: Option<HoverHandler>,
+    pub(crate) tooltip: Option<crate::SharedString>,
     control: Option<crate::WindowControl>,
     down: Option<DownHandler>,
     moved: Option<PositionHandler>,
@@ -224,7 +230,18 @@ impl<E: crate::Element> crate::Node<E> {
         self
     }
 
+    /// Shows a text hint after a mouse dwells on this element or its descendants.
+    /// The hint is drawn above the view and leaves pointer targeting unchanged.
+    pub fn tooltip(mut self, text: impl Into<crate::SharedString>) -> Self {
+        let text = text.into();
+        self.handlers.get_or_insert_with(Default::default).tooltip =
+            (!text.as_str().is_empty()).then_some(text);
+        self
+    }
+
     pointer_handlers! {
+        /// Notifies when the first mouse enters this subtree or the last mouse leaves it.
+        on_hover => hover (bool, &mut Context<'_>);
         /// Handles positioned scroll input over this element and its descendants without a closer scroll listener.
         on_scroll => scroll (&ScrollEvent, &mut Context<'_>);
         /// Handles a button press on this element. The callback can capture the pointer.

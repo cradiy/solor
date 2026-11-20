@@ -51,6 +51,27 @@ input. `event.delta.x` and `event.delta.y` are signed logical pixels, positive
 right and down. `event.pointer.local_position()` gives the position inside the
 listening element. On Wayland, axes reported in one pointer frame arrive together.
 
+Use `.on_hover(|inside, cx| ...)` on any element to react to mouse presence.
+Entering a child keeps its ancestors hovered. The first mouse to enter a
+subtree triggers `true`. The last one to leave triggers `false`. Motion within
+the subtree is silent. A stationary mouse is hit-tested again when the host
+accepts changed geometry. Capture controls drag delivery independently.
+
+```rust
+let fill = cx.signal(Fill::from(rgb(0x526058)));
+div().bg(fill).on_hover(move |inside, cx| {
+    cx.set(fill, Fill::from(if inside { rgb(0x687970) } else { rgb(0x526058) }))
+})
+```
+
+### Text tooltips
+
+Attach `.tooltip("Show or hide the native window frame")` to a control in a
+text-enabled UI. The deepest hint on the hovered branch appears after 500 ms.
+The text is shaped on demand and drawn in a passive overlay within the viewport.
+A press, scroll or exit dismisses the hint. Removing its owner cancels it.
+Hosts use `WindowHandler::next_redraw()` to wake once at the deadline.
+
 The adapter supplies a view-scoped pointer ID, device kind, modifiers and
 view-local position in floating-point logical pixels. Down and up carry the
 changed button. The primary action is the primary mouse button, touch contact
@@ -98,8 +119,7 @@ and calls `cancel_pointers(view)` on deactivation.
 Capture is per pointer within a view. On ordinary surface leave, cancel an
 uncaptured press. A host that can continue tracking a captured pointer delivers
 its moves and release outside the surface. A host that loses the sequence
-sends cancel. Handler storage belongs to the mount. The router needs records
-only for active presses or captures.
+sends cancel. Handler storage belongs to the mount. The router keeps mouse positions until surface exit, cancellation or deactivation.
 
 ## Input and signal delivery
 

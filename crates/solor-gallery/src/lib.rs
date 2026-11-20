@@ -90,13 +90,21 @@ fn brand() -> Div {
         .child(label("Solor", 19.0, 24.0).text_color(PAPER))
 }
 
-fn header_button(title: &'static str) -> Div {
+fn header_button(title: &'static str, hint: &'static str, cx: &mut Context<'_>) -> Div {
+    let background = cx.signal(Fill::from(MUTED));
     div()
         .h(px(30.0))
         .px(px(10.0))
         .justify_center()
         .rounded(px(8.0))
-        .bg(MUTED)
+        .bg(background)
+        .on_hover(move |inside, cx| {
+            cx.set(
+                background,
+                Fill::from(if inside { rgb(0x687970) } else { MUTED }),
+            )
+        })
+        .tooltip(hint)
         .text_color(PAPER)
         .child(label(title, 13.0, 18.0))
 }
@@ -130,7 +138,14 @@ pub fn gallery() -> Result<(Ui, impl Render)> {
                         .items_center()
                         .gap(px(16.0))
                         .child(brand())
-                        .child(header_button("Toggle frame").window_decorations_toggle()),
+                        .child(
+                            header_button(
+                                "Toggle frame",
+                                "Show or hide the native window frame",
+                                cx,
+                            )
+                            .window_decorations_toggle(),
+                        ),
                 )
                 .child(
                     div()
@@ -138,7 +153,9 @@ pub fn gallery() -> Result<(Ui, impl Render)> {
                         .items_center()
                         .gap(px(14.0))
                         .child(pages.buttons(PAGES, true))
-                        .child(header_button("Close").window_close_button()),
+                        .child(
+                            header_button("Close", "Close this window", cx).window_close_button(),
+                        ),
                 );
             div()
                 .items_stretch()

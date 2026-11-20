@@ -7,7 +7,7 @@ mod presentation;
 use std::{io, time::Instant};
 
 use wayland_client::{
-    Connection, Dispatch, QueueHandle, delegate_noop,
+    Connection, Dispatch, EventQueue, QueueHandle, delegate_noop,
     globals::registry_queue_init,
     protocol::{wl_buffer, wl_callback, wl_compositor, wl_seat, wl_shm, wl_shm_pool, wl_surface},
 };
@@ -214,7 +214,19 @@ impl Platform for Wayland {
             }
         }
         loop {
-            queue.blocking_dispatch(&mut window)?;
+            if !window.dirty
+                && !window.waiting
+                && window.configured
+                && let Some(deadline) = window.view.next_redraw()
+            {
+                dispatch_until(&mut queue, &mut window, deadline)?;
+                window.dirty |= window
+                    .view
+                    .next_redraw()
+                    .is_some_and(|time| time <= Instant::now());
+            } else {
+                queue.blocking_dispatch(&mut window)?;
+            }
             if let Some(error) = window.failure.take() {
                 return Err(error);
             }
@@ -236,6 +248,38 @@ impl Platform for Wayland {
         }
         Ok(())
     }
+}
+
+// A pending hint can wake an otherwise idle window. Input queued before the
+// deadline gets the opportunity to cancel or replace it before presentation.
+fn dispatch_until(
+    queue: &mut EventQueue<Window>,
+    window: &mut Window,
+    deadline: Instant,
+) -> anyhow::Result<()> {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    use wayland_client::backend::WaylandError;
+
+    if queue.dispatch_pending(window)? != 0 {
+        return Ok(());
+    }
+    queue.flush()?;
+    if let Some(guard) = queue.prepare_read() {
+        let fd = guard.connection_fd();
+        let mut fds = [PollFd::new(&fd, PollFlags::IN)];
+        let timeout = Timespec::try_from(deadline.saturating_duration_since(Instant::now()))?;
+        match poll(&mut fds, Some(&timeout)) {
+            Ok(0) | Err(rustix::io::Errno::INTR) => return Ok(()),
+            Err(error) => return Err(error.into()),
+            Ok(_) => match guard.read() {
+                Ok(_) => {}
+                Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(error) => return Err(error.into()),
+            },
+        }
+    }
+    queue.dispatch_pending(window)?;
+    Ok(())
 }
 
 impl Window {

@@ -12,6 +12,6 @@ workspace = true
 solor.workspace = true
 smallvec.workspace = true
 anyhow.workspace = true
-rustix = { version = "1", features = ["fs", "time"] }
+rustix = { version = "1", features = ["fs", "time", "event"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }

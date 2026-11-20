@@ -226,6 +226,10 @@ impl Ui {
             }
             cache.recorded.set(true);
         }
+        instance
+            .pointer
+            .tooltips
+            .paint(&pointer, instance, self.engine.as_ref(), &mut draws)?;
         let font = self
             .engine
             .as_ref()

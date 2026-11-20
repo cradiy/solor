@@ -7,6 +7,8 @@
 - Before implementing a subsystem, state the concrete problem, scope, acceptance
   criteria, and excluded work. Complete one bounded milestone at a time.
 - Validate architectural assumptions before building dependent systems.
+- When designing GUI features, study how GPUI handles the same interaction.
+  Adopt the parts that fit Solor's ownership, input, and rendering model.
 - Do not expand the requested scope without an agreed need.
 - Keep decisions easy to revise. Avoid speculative extension points,
   compatibility layers for uncommitted designs, and unused infrastructure.
