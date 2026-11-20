@@ -25,6 +25,7 @@ impl ContentClip {
     }
 }
 
+#[derive(PartialEq, Eq)]
 pub(crate) struct OverflowClip {
     x: bool,
     y: bool,

@@ -465,7 +465,7 @@ pub enum ItemQuery {
 }
 
 struct Entry {
-    // Immutable for the lifetime of this attachment.
+    // Replaced together with the box inputs during a style update.
     item_style: FlexItemStyle,
     item_sizing: Option<Box<ItemSizing>>,
     body: Box<dyn LayoutNode>,
@@ -1420,6 +1420,18 @@ impl Scene {
         Ok(())
     }
 
+    pub(crate) fn set_item_style(
+        &mut self,
+        node: NodeId,
+        style: FlexItemStyle,
+        sizing: Option<ItemSizing>,
+    ) -> Result<()> {
+        let entry = self.store.get_mut(node)?;
+        entry.item_style = style;
+        entry.item_sizing = sizing.map(Box::new);
+        Ok(())
+    }
+
     /// Read node data for presentation. Layout-affecting changes must use `edit_layout`.
     pub fn body<N: LayoutNode>(&self, node: NodeId) -> Result<&N> {
         (self.store.get(node)?.body.as_ref() as &dyn Any)
@@ -1427,7 +1439,8 @@ impl Scene {
             .ok_or(LayoutError::WrongNodeType)
     }
 
-    pub(super) fn body_mut<N: LayoutNode>(&mut self, node: NodeId) -> Result<&mut N> {
+    /// Edits content without invalidating its layout. Use only for paint-only changes.
+    pub(crate) fn body_mut<N: LayoutNode>(&mut self, node: NodeId) -> Result<&mut N> {
         (self.store.get_mut(node)?.body.as_mut() as &mut dyn Any)
             .downcast_mut()
             .ok_or(LayoutError::WrongNodeType)

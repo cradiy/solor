@@ -169,6 +169,34 @@ The fixture stores `open` and `muted` as separate booleans alongside a numeric
 volume and an owned device name. Its event update helper clones the selected
 value before editing it and uses `Runtime::set` to suppress equal writes.
 
+### Signal-backed properties
+
+Style setters accept fixed values or signals. A fixed value is captured during
+construction. A signal installs a subscription on the mounted element. Inherited
+text properties follow the winning declaration on each descendant, including
+children attached later.
+
+```rust
+let family = cx.signal(GenericFontFamily::SystemUi);
+let width = cx.signal(px(240.0));
+div().w(width).font_family(family)
+    .child(text("Audio settings"))
+    .child(text("48 kHz").font_family(GenericFontFamily::Monospace))
+```
+
+A flush applies the latest values in place and preserves node identity. Font and
+box changes invalidate layout. Built-in text decorations and colors can repaint
+using the current geometry. Custom elements receive updated values through
+`prepare_content` and can use them for measurement.
+
+A signal can own any `'static` type. For large buffers, use
+`cx.update_in_place(samples, |s| s.push(sample))?`. The closure borrows the
+stored value mutably and its return value is passed back to the caller. Each
+call schedules subscribers even if the closure leaves the value unchanged.
+Use `cx.notify(samples)?` after an external or interior-mutable edit. Repeated
+notifications before a flush coalesce. `cx.update` also remains available for
+cloneable values where equality should suppress a redundant publication.
+
 ### Lifecycle checks
 
 The fixture uses the [state runtime](state-updates.md), column layout and

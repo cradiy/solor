@@ -10,6 +10,10 @@ use crate::{Edges, Length, Pixels, Style, px};
 
 pub(crate) struct StyledBody<E> {
     pub content: E,
+    pub(crate) bounds: BoxModel,
+}
+
+pub(crate) struct BoxModel {
     padding: Edges,
     margins: Option<Box<Edges<Option<ComputedLength>>>>,
     inset: Size,
@@ -34,6 +38,33 @@ fn map_edges<T, U>(edges: Edges<T>, mut f: impl FnMut(T) -> Result<U>) -> Result
 
 impl<E> StyledBody<E> {
     pub fn new(content: E, style: &Style, units: UnitResolver) -> Result<Self> {
+        Ok(Self {
+            content,
+            bounds: BoxModel::resolve(style, units)?,
+        })
+    }
+
+    pub fn origin(&self) -> Origin {
+        Origin {
+            x: self.bounds.padding.left,
+            y: self.bounds.padding.top,
+        }
+    }
+    pub fn content_size(&self, size: Size) -> Size {
+        Size {
+            width: size.width.saturating_sub(self.bounds.inset.width),
+            height: size.height.saturating_sub(self.bounds.inset.height),
+        }
+    }
+    fn baseline(&self, baseline: Option<Pixels>) -> Result<Option<Pixels>> {
+        baseline
+            .map(|v| add(v, self.bounds.padding.top))
+            .transpose()
+    }
+}
+
+impl BoxModel {
+    pub(crate) fn resolve(style: &Style, units: UnitResolver) -> Result<Self> {
         let aspect_ratio = style.layout.as_ref().and_then(|layout| layout.aspect_ratio);
         if aspect_ratio.is_some_and(|ratio| !ratio.is_finite() || ratio <= 0.0) {
             return Err(LayoutError::InvalidSize);
@@ -55,7 +86,6 @@ impl<E> StyledBody<E> {
             .map(Box::new);
         Ok(Self {
             margins,
-            content,
             aspect_ratio,
             padding: p,
             box_sizing: style
@@ -70,21 +100,6 @@ impl<E> StyledBody<E> {
                 height: add(p.top, p.bottom)?,
             },
         })
-    }
-    pub fn origin(&self) -> Origin {
-        Origin {
-            x: self.padding.left,
-            y: self.padding.top,
-        }
-    }
-    pub fn content_size(&self, size: Size) -> Size {
-        Size {
-            width: size.width.saturating_sub(self.inset.width),
-            height: size.height.saturating_sub(self.inset.height),
-        }
-    }
-    fn baseline(&self, baseline: Option<Pixels>) -> Result<Option<Pixels>> {
-        baseline.map(|v| add(v, self.padding.top)).transpose()
     }
 
     fn sizing_extra(&self, inset: Pixels) -> Pixels {
@@ -156,7 +171,7 @@ impl<E> StyledBody<E> {
 
 impl<E: LayoutNode> LayoutNode for StyledBody<E> {
     fn margins(&self, inline_width: Option<Pixels>) -> Result<Margins> {
-        let Some(margins) = &self.margins else {
+        let Some(margins) = &self.bounds.margins else {
             return Ok(Margins::default());
         };
         map_edges(**margins, |value| {
@@ -172,30 +187,34 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
         })
     }
     fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
-        let inner = |w: Pixels| w.saturating_sub(self.inset.width);
+        let inner = |w: Pixels| w.saturating_sub(self.bounds.inset.width);
         let basis = cx.containing_block();
         let mut width = match cx.item_basis {
             ItemBasis::Width(width) => width,
-            _ => border_extent(self.width, basis.width, self.sizing_extra(self.inset.width))?,
+            _ => border_extent(
+                self.bounds.width,
+                basis.width,
+                self.bounds.sizing_extra(self.bounds.inset.width),
+            )?,
         };
         let range = cx.height_range;
         let mut height = match cx.item_basis {
             ItemBasis::Height(height) => height,
             _ => border_extent(
-                self.height,
+                self.bounds.height,
                 basis.height,
-                self.sizing_extra(self.inset.height),
+                self.bounds.sizing_extra(self.bounds.inset.height),
             )?,
         }
         .map(|h| range.clamp(h))
         .or_else(|| range.fixed());
-        if let Some(ratio) = self.aspect_ratio {
+        if let Some(ratio) = self.bounds.aspect_ratio {
             let used_width = match query {
                 Query::Exact(w) => Some(w),
                 _ => width.map(|w| query.resolve(w)),
             };
-            let inset_x = self.sizing_extra(self.inset.width);
-            let inset_y = self.sizing_extra(self.inset.height);
+            let inset_x = self.bounds.sizing_extra(self.bounds.inset.width);
+            let inset_y = self.bounds.sizing_extra(self.bounds.inset.height);
             match (used_width, height) {
                 (Some(w), None) => {
                     let derived = add(w.saturating_sub(inset_x) / ratio, inset_y)?;
@@ -219,7 +238,7 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
                     Query::Exact(w) => Some(w),
                     _ => None,
                 },
-                height: height.map(|h| h.saturating_sub(self.inset.height)),
+                height: height.map(|h| h.saturating_sub(self.bounds.inset.height)),
             });
             self.content
                 .measure(cx, content_query)?
@@ -229,7 +248,7 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
         let height = match height {
             Some(h) => h,
             None => {
-                let natural = add(metrics.size.height, self.inset.height)?;
+                let natural = add(metrics.size.height, self.bounds.inset.height)?;
                 let used = range.clamp(natural);
                 if range.reaches_limit(natural) && cx.child_count() > 0 {
                     metrics = measure(cx, Some(used))?;
@@ -239,7 +258,7 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
         };
         let width = match width {
             Some(w) => w,
-            None => add(metrics.size.width, self.inset.width)?,
+            None => add(metrics.size.width, self.bounds.inset.width)?,
         };
         Ok(Metrics {
             size: Size {
@@ -259,8 +278,8 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
         }
         Ok(LayoutOutput {
             content: Size {
-                width: add(out.content.width, self.inset.width)?,
-                height: add(out.content.height, self.inset.height)?,
+                width: add(out.content.width, self.bounds.inset.width)?,
+                height: add(out.content.height, self.bounds.inset.height)?,
             },
             baseline: self
                 .baseline(out.baseline)?

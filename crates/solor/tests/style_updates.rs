@@ -85,7 +85,7 @@ fn tracked_clamped_line_starts_at_the_same_position_as_the_full_line() -> Result
             .letter_spacing(px(2.25))
             .child(
                 text("ABC\nD")
-                    .line_clamp(1.try_into().unwrap())
+                    .line_clamp(std::num::NonZeroUsize::new(1).unwrap())
                     .text_ellipsis(),
             )
             .child(text("ABC"))

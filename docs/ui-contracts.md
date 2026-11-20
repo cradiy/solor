@@ -28,7 +28,7 @@ Window-system upload and display timing are outside this benchmark.
 | --- | --- |
 | Composition and ownership | A component renders once per attachment. A conditional owns its branch. Retiring a node releases its subscriptions and local signals. The host owns application signals. |
 | Box layout | Lengths in logical pixels, rems and percentages resolve to floating-point geometry. Every primitive supports box sizing and per-edge padding. Content layout, painting and child origins use the inner bounds. A container applies the gap on its main axis. |
-| Style refinements | Later declarations override individual specified fields. Text size, line height, alignment and color propagate into fixed and conditional descendants. Each element resolves its own box and background at mount. |
+| Style refinements | Later declarations override individual specified fields. Text size, line height, alignment and color propagate into fixed and conditional descendants. A bound property follows its signal for the lifetime of its mount. |
 | Text | A fixed or signal-bound label owns a shared string and caches shaped paragraphs by width. Updating bound text keeps the element ID. A changed label schedules layout and, when visible, local paint. |
 | Fill | A straight-alpha sRGB color has named channels. Every gradient shares an ordered, variable-length stop sequence. Four geometries sample it in sRGB or Oklab. Backgrounds and custom fills carry the same fill value. Equal offsets describe hard edges. Rounded fills use the assigned dimensions. |
 | Paint scheduling | Each successful paint subscribes the element to the signals it read. Repeated writes coalesce. Elements default to on-demand recording. A fixed or signal-driven continuous mode samples every host frame. |
@@ -160,8 +160,8 @@ logical pixels, rems, percentages and automatic values.
 | Paint | Per-edge border widths, fills and patterns, individual corner radii, outlines, shadow layers, opacity, backdrop blur, a 2D transform list and origin, object fit and position |
 | Text | Family, fallbacks, OpenType features, weight, slant, spacing, alignment, whitespace, truncation, line limit, run background, underline and strikethrough |
 
-At attachment, a custom element receives its local layout and appearance
-declarations in `Element::prepare_content`. Text attributes cascade from the
+A custom element receives its resolved style in `Element::prepare_content` at
+attachment and when a bound style input changes. Text attributes cascade from the
 parent, including when a conditional child is attached later. An explicit
 `clear_line_clamp()` removes an inherited line limit.
 

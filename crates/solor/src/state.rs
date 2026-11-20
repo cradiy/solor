@@ -264,14 +264,41 @@ impl<N> Runtime<N> {
             return Ok(false);
         }
         let old = std::mem::replace(stored, value);
+        self.queue_subscribers(signal.id.key);
+        drop(old);
+        Ok(true)
+    }
+
+    /// Mutates the stored value directly and queues subscribers for the next flush.
+    /// Every call publishes, including edits that unwind after partially modifying the value.
+    pub fn update_in_place<S: 'static, R>(
+        &mut self,
+        signal: Signal<S>,
+        edit: impl FnOnce(&mut S) -> R,
+    ) -> Result<R, StateError> {
+        self.notify(signal)?;
+        let stored = self.signals[signal.id.key]
+            .value
+            .downcast_mut::<S>()
+            .expect("signal type matches its handle");
+        Ok(edit(stored))
+    }
+
+    /// Queues subscribers after an edit through shared or interior-mutable state.
+    pub fn notify<S: 'static>(&mut self, signal: Signal<S>) -> Result<(), StateError> {
+        self.signal(signal.id)?;
+        self.queue_subscribers(signal.id.key);
+        Ok(())
+    }
+
+    fn queue_subscribers(&mut self, key: SignalKey) {
+        let entry = &mut self.signals[key];
         if !entry.all_queued {
             for &key in &entry.bindings {
                 self.bindings.queue(key);
             }
             entry.all_queued = true;
         }
-        drop(old);
-        Ok(true)
     }
 
     /// Registers a callback and queues its initial application for the next flush.

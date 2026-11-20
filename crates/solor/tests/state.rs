@@ -356,3 +356,55 @@ fn old_signal_value_destructor_panic_does_not_lose_notifications() {
     assert_eq!(runtime.flush(), 1);
     assert_eq!(runtime.tree().get(root).unwrap().value, 2);
 }
+
+#[test]
+fn in_place_edits_and_explicit_notifications_deliver_one_latest_value() {
+    struct Samples {
+        values: Vec<u32>,
+        offset: Cell<usize>,
+    }
+    let mut state = Runtime::new(Payload::default());
+    let root = state.tree().root();
+    let signal = state.create_signal(Samples {
+        values: vec![0; 65_536],
+        offset: Cell::new(0),
+    });
+    let storage = state.read(signal).unwrap().values.as_ptr();
+    state
+        .bind(signal, root, |samples, target| {
+            target.calls += 1;
+            target.value = samples.values[samples.offset.get()] as usize;
+        })
+        .unwrap();
+    state.flush();
+    let length = state
+        .update_in_place(signal, |samples| {
+            samples.values[17] = 42;
+            samples.values.len()
+        })
+        .unwrap();
+    assert_eq!(length, 65_536);
+    state.read(signal).unwrap().offset.set(17);
+    state.notify(signal).unwrap();
+    assert_eq!(state.flush(), 1);
+    assert_eq!(state.tree().get(root).unwrap().value, 42);
+    assert_eq!(state.read(signal).unwrap().values.as_ptr(), storage);
+
+    let failed = catch_unwind(AssertUnwindSafe(|| {
+        state
+            .update_in_place(signal, |samples| {
+                samples.values[17] = 70;
+                panic!("edit interrupted");
+            })
+            .unwrap()
+    }));
+    assert!(failed.is_err());
+    assert_eq!(state.flush(), 1);
+    assert_eq!(state.tree().get(root).unwrap().value, 70);
+    state.remove_signal(signal).unwrap();
+    assert_eq!(state.notify(signal), Err(StateError::InvalidSignal));
+    assert_eq!(
+        state.update_in_place(signal, |_| {}),
+        Err(StateError::InvalidSignal)
+    );
+}

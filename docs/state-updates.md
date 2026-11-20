@@ -23,6 +23,10 @@ limitation as the [node tree](node-tree.md).
 - Creating a binding queues its initial application; it does not run user code.
 - `set` compares the current and new values using `PartialEq`. An equal value does
   not schedule work. Changed values are visible to `read` immediately.
+- `update_in_place` passes a mutable borrow to the closure, returns its result
+  and queues subscribers unconditionally. The stored value can be non-cloneable.
+  An unwinding closure can leave a partial edit visible to the next flush.
+- `notify` queues subscribers explicitly after an edit through interior mutability.
 - A changed signal queues only its subscribed bindings. Each binding appears at
   most once in the pending queue, including after multiple writes before a flush.
 - `flush` executes pending bindings with the latest signal values and returns the

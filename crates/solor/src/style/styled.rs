@@ -3,20 +3,87 @@ use crate::{FontFamily, percent, rem};
 use std::num::NonZeroUsize;
 
 // Macros expand inside Styled so all authoring primitives receive the same methods.
+// A field's key and presence check also govern cascade and shorthand precedence.
+macro_rules! declare {
+    ($style:expr, $value:expr, $group:ident, $($field:ident).+) => {{
+        let field = binding::Field {
+            key: stringify!($group.$($field).+),
+            inherited: inheritable!($group),
+            layout: affects_layout!($group.$($field).+),
+            specified: |s| group_ref!(s, $group).is_some_and(|g| g.$($field).+.is_some()),
+        };
+        $value.declare($style, field, |s, v| s.$group().$($field).+ = Some(v),
+            |s| s.$group().$($field).+ = None);
+    }};
+    ($style:expr, $value:expr, $($field:ident).+) => {{
+        let field = binding::Field {
+            key: stringify!($($field).+),
+            inherited: inheritable!($($field).+),
+            layout: affects_layout!($($field).+),
+            specified: |s| s.$($field).+.is_some(),
+        };
+        $value.declare($style, field, |s, v| s.$($field).+ = Some(v), |s| s.$($field).+ = None);
+    }};
+}
+macro_rules! affects_layout {
+    (appearance_mut.$($field:ident).+) => {
+        false
+    };
+    (corner_radii.$side:ident) => {
+        false
+    };
+    (layout_mut.overflow_x) => {
+        false
+    };
+    (layout_mut.overflow_y) => {
+        false
+    };
+    (attributes_mut.text_background) => {
+        false
+    };
+    (attributes_mut.underline) => {
+        false
+    };
+    (attributes_mut.strikethrough) => {
+        false
+    };
+    (attributes_mut.decoration_color) => {
+        false
+    };
+    (attributes_mut.decoration_thickness) => {
+        false
+    };
+    ($($field:ident).+) => {
+        true
+    };
+}
+macro_rules! inheritable {
+    (attributes_mut) => {
+        true
+    };
+    (text.$field:ident) => {
+        true
+    };
+    ($($field:ident).+) => {
+        false
+    };
+}
+macro_rules! group_ref {
+    ($s:expr, layout_mut) => {
+        $s.layout.as_deref()
+    };
+    ($s:expr, appearance_mut) => {
+        $s.appearance.as_deref()
+    };
+    ($s:expr, attributes_mut) => {
+        $s.text.attributes.as_deref()
+    };
+}
 macro_rules! property_setters {
     ($group:ident; $($name:ident => $field:ident: $ty:ty),+ $(,)?) => {$(
-        #[doc = concat!("Sets the `", stringify!($field), "` declaration.")]
-        fn $name(mut self, value: $ty) -> Self {
-            self.style().$group().$field = Some(value);
-            self
-        }
-    )+};
-}
-macro_rules! converting_setters {
-    ($group:ident; $($name:ident => $field:ident: $ty:ty),+ $(,)?) => {$(
-        #[doc = concat!("Sets the element's `", stringify!($field), "` declaration.")]
-        fn $name(mut self, value: impl Into<$ty>) -> Self {
-            self.style().$group().$field = Some(value.into());
+        #[doc = concat!("Sets the `", stringify!($field), "` declaration from a value or signal.")]
+        fn $name(mut self, value: impl Into<Property<$ty>>) -> Self {
+            declare!(self.style(), value.into(), $group, $field);
             self
         }
     )+};
@@ -30,10 +97,9 @@ macro_rules! keyword_setters {
 macro_rules! side_setters {
     ($group:ident, $field:ident: $ty:ty; $($name:ident => [$($edge:ident),+]);+ $(;)?) => {$(
         #[doc = concat!("Sets `", stringify!($field), "` on the ", stringify!($($edge),+), " edges.")]
-        fn $name(mut self, value: impl Into<$ty>) -> Self {
+        fn $name(mut self, value: impl Into<Property<$ty>>) -> Self {
             let value = value.into();
-            let edges = &mut self.style().$group().$field;
-            $(edges.$edge = Some(value.clone());)+
+            $(declare!(self.style(), value.clone(), $group, $field.$edge);)+
             self
         }
     )+};
@@ -42,13 +108,13 @@ macro_rules! side_setters {
 macro_rules! color_setters {
     ($($name:ident => $setter:ident),+ $(,)?) => {$(
         #[doc = concat!("Sets a solid color with [`", stringify!($setter), "`](Self::", stringify!($setter), ").")]
-        fn $name(self, value: impl Into<Rgba>) -> Self { self.$setter(value.into()) }
+        fn $name(self, value: impl Into<Property<Rgba>>) -> Self { self.$setter(value.into().map(Fill::from)) }
     )+};
 }
 macro_rules! margin_aliases {
     ($($name:ident => $setter:ident),+ $(,)?) => {$(
         #[doc = concat!("Sets the same margins as [`", stringify!($setter), "`](Self::", stringify!($setter), ").")]
-        fn $name(self, value: impl Into<Length>) -> Self { self.$setter(value) }
+        fn $name(self, value: impl Into<Property<Length>>) -> Self { self.$setter(value) }
     )+};
 }
 
@@ -56,14 +122,13 @@ macro_rules! margin_aliases {
 macro_rules! box_methods {
     ($field:ident; $($name:ident, $long:ident => [$($edge:ident),+];)+) => {$(
         #[doc = concat!("Sets ", stringify!($field), " for ", stringify!($($edge),+), ".")]
-        fn $name(mut self, value: impl Into<AbsoluteLength>) -> Self {
+        fn $name(mut self, value: impl Into<Property<AbsoluteLength>>) -> Self {
             let value = value.into();
-            let edges = &mut self.style().$field;
-            $(edges.$edge = Some(value);)+
+            $(declare!(self.style(), value.clone(), $field.$edge);)+
             self
         }
         #[doc = concat!("Sets ", stringify!($field), " for ", stringify!($($edge),+), ".")]
-        fn $long(self, value: impl Into<AbsoluteLength>) -> Self { self.$name(value) }
+        fn $long(self, value: impl Into<Property<AbsoluteLength>>) -> Self { self.$name(value) }
     )+};
 }
 
@@ -115,7 +180,7 @@ pub trait Styled: Sized {
         col_start => grid_column_start: GridLine, col_end => grid_column_end: GridLine,
         row_start => grid_row_start: GridLine, row_end => grid_row_end: GridLine
     }
-    converting_setters! { layout_mut;
+    property_setters! { layout_mut;
         min_w => min_width: Length, max_w => max_width: Length,
         min_h => min_height: Length, max_h => max_height: Length,
         flex_basis => flex_basis: Length, scrollbar_width => scrollbar_width: AbsoluteLength,
@@ -135,7 +200,7 @@ pub trait Styled: Sized {
         visibility => visibility: Visibility, z_index => z_index: i32,
         opacity => opacity: f32, cursor => cursor: Cursor, pointer_events => pointer_events: PointerEvents
     }
-    converting_setters! { appearance_mut;
+    property_setters! { appearance_mut;
         outline_width => outline_width: AbsoluteLength, outline_offset => outline_offset: AbsoluteLength,
         outline_color => outline_color: Rgba, object_position_x => object_position_x: Length,
         object_position_y => object_position_y: Length, shadow => shadows: Rc<[BoxShadow]>, backdrop_blur => backdrop_blur: AbsoluteLength,
@@ -160,7 +225,7 @@ pub trait Styled: Sized {
          text_underline => underline: bool,
         text_strikethrough => strikethrough: bool
     }
-    converting_setters! { attributes_mut;
+    property_setters! { attributes_mut;
         font_features => font_features: Rc<[FontFeature]>, font_family => font_family: FontFamily, font_fallbacks => font_fallbacks: Rc<[FontFamily]>,
         letter_spacing => letter_spacing: AbsoluteLength, text_bg => text_background: Rgba,
         decoration_color => decoration_color: Rgba, decoration_thickness => decoration_thickness: AbsoluteLength
@@ -197,21 +262,21 @@ pub trait Styled: Sized {
         self.visibility(Visibility::When(source))
     }
     /// Limits the number of visible lines.
-    fn line_clamp(mut self, lines: NonZeroUsize) -> Self {
-        self.style().attributes_mut().line_clamp = Some(Some(lines));
+    fn line_clamp(mut self, lines: impl Into<Property<Option<NonZeroUsize>>>) -> Self {
+        declare!(self.style(), lines.into(), attributes_mut, line_clamp);
         self
     }
     /// Removes a line limit from a reusable or inherited style.
-    fn clear_line_clamp(mut self) -> Self {
-        self.style().attributes_mut().line_clamp = Some(None);
-        self
+    fn clear_line_clamp(self) -> Self {
+        self.line_clamp(None)
     }
     /// Sets overflow on both axes.
-    fn overflow(self, value: Overflow) -> Self {
-        self.overflow_x(value).overflow_y(value)
+    fn overflow(self, value: impl Into<Property<Overflow>>) -> Self {
+        let value = value.into();
+        self.overflow_x(value.clone()).overflow_y(value)
     }
     /// Sets all four margins.
-    fn m(self, value: impl Into<Length>) -> Self {
+    fn m(self, value: impl Into<Property<Length>>) -> Self {
         self.margin(value)
     }
     /// Requests the full containing width.
@@ -285,45 +350,43 @@ pub trait Styled: Sized {
     }
 
     /// Sets the preferred width of the box selected by `box_sizing`.
-    fn w(mut self, width: impl Into<Length>) -> Self {
-        self.style().width = Some(width.into());
+    fn w(mut self, width: impl Into<Property<Length>>) -> Self {
+        declare!(self.style(), width.into(), width);
         self
     }
     /// Sets the preferred height of the box selected by `box_sizing`.
-    fn h(mut self, height: impl Into<Length>) -> Self {
-        self.style().height = Some(height.into());
+    fn h(mut self, height: impl Into<Property<Length>>) -> Self {
+        declare!(self.style(), height.into(), height);
         self
     }
     /// Sets both dimensions to the same length.
-    fn size(self, side: impl Into<Length>) -> Self {
+    fn size(self, side: impl Into<Property<Length>>) -> Self {
         let side = side.into();
-        self.w(side).h(side)
+        self.w(side.clone()).h(side)
     }
     /// Derives preferred width from content.
-    fn w_auto(mut self) -> Self {
-        self.style().width = Some(Length::Auto);
-        self
+    fn w_auto(self) -> Self {
+        self.w(Length::Auto)
     }
     /// Derives preferred height from content.
-    fn h_auto(mut self) -> Self {
-        self.style().height = Some(Length::Auto);
-        self
+    fn h_auto(self) -> Self {
+        self.h(Length::Auto)
     }
     /// Sets the spacing between adjacent items.
-    fn gap(mut self, gap: impl Into<AbsoluteLength>) -> Self {
+    fn gap(mut self, gap: impl Into<Property<AbsoluteLength>>) -> Self {
         let gap = gap.into();
-        self.style().row_gap = Some(gap);
-        self.style().column_gap = Some(gap);
+        declare!(self.style(), gap.clone(), row_gap);
+        declare!(self.style(), gap, column_gap);
         self
     }
     /// Sets the spacing between columns.
-    fn gap_x(mut self, gap: impl Into<AbsoluteLength>) -> Self {
-        self.style().column_gap = Some(gap.into());
+    fn gap_x(mut self, gap: impl Into<Property<AbsoluteLength>>) -> Self {
+        declare!(self.style(), gap.into(), column_gap);
         self
     }
     /// Sets the spacing between rows.
-    fn gap_y(mut self, gap: impl Into<AbsoluteLength>) -> Self {
-        self.style().row_gap = Some(gap.into());
+    fn gap_y(mut self, gap: impl Into<Property<AbsoluteLength>>) -> Self {
+        declare!(self.style(), gap.into(), row_gap);
         self
     }
     /// Paints the assigned box with a fixed or signal-bound fill.
@@ -337,9 +400,12 @@ pub trait Styled: Sized {
         self
     }
     /// Sets the radius of the background corners.
-    fn rounded(mut self, radius: impl Into<AbsoluteLength>) -> Self {
-        self.style().corner_radii = Corners::all(Some(radius.into()));
-        self
+    fn rounded(self, radius: impl Into<Property<AbsoluteLength>>) -> Self {
+        let r = radius.into();
+        self.rounded_tl(r.clone())
+            .rounded_tr(r.clone())
+            .rounded_bl(r.clone())
+            .rounded_br(r)
     }
     /// Sets the inherited foreground to a fixed color or a color signal.
     fn text_color(mut self, color: impl Into<Foreground>) -> Self {
@@ -347,13 +413,13 @@ pub trait Styled: Sized {
         self
     }
     /// Sets the inherited font size.
-    fn text_size(mut self, size: impl Into<AbsoluteLength>) -> Self {
-        self.style().text.size = Some(size.into());
+    fn text_size(mut self, size: impl Into<Property<AbsoluteLength>>) -> Self {
+        declare!(self.style(), size.into(), text.size);
         self
     }
     /// Sets the inherited line height.
-    fn line_height(mut self, height: impl Into<AbsoluteLength>) -> Self {
-        self.style().text.line_height = Some(height.into());
+    fn line_height(mut self, height: impl Into<Property<AbsoluteLength>>) -> Self {
+        declare!(self.style(), height.into(), text.line_height);
         self
     }
 }

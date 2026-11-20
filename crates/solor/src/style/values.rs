@@ -62,6 +62,12 @@ pub enum Visibility {
     When(Signal<bool>),
 }
 
+impl From<bool> for Visibility {
+    fn from(visible: bool) -> Self {
+        if visible { Self::Visible } else { Self::Hidden }
+    }
+}
+
 /// Minimum breadth of a grid track.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TrackMin {

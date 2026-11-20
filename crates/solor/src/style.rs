@@ -1,4 +1,7 @@
 //! Resolved box properties and field-wise declaration refinements.
+mod binding;
+pub use binding::Bindings;
+pub use binding::Property;
 mod properties;
 mod styled;
 mod values;
@@ -18,6 +21,8 @@ pub enum Background {
     Fixed(Fill),
     /// Paint read from the signal at recording time.
     Bound(Signal<Fill>),
+    /// Solid color sampled during paint.
+    Color(Signal<Rgba>),
 }
 impl<T: Into<Fill>> From<T> for Background {
     fn from(fill: T) -> Self {
@@ -27,6 +32,12 @@ impl<T: Into<Fill>> From<T> for Background {
 impl From<Signal<Fill>> for Background {
     fn from(signal: Signal<Fill>) -> Self {
         Self::Bound(signal)
+    }
+}
+
+impl From<Signal<Rgba>> for Background {
+    fn from(signal: Signal<Rgba>) -> Self {
+        Self::Color(signal)
     }
 }
 
@@ -94,7 +105,7 @@ pub struct TextStyleRefinement {
     pub color: Option<Foreground>,
 }
 impl TextStyleRefinement {
-    fn overlay(&self, higher: &Self) -> Self {
+    pub(crate) fn overlay(&self, higher: &Self) -> Self {
         let mut attributes = self.attributes.clone();
         overlay_group(&mut attributes, &higher.attributes);
         Self {
@@ -142,6 +153,8 @@ pub struct Style {
 /// Each outer option denotes a declaration. For nullable properties, Some(None) clears it.
 #[derive(Clone, Debug, Default)]
 pub struct StyleRefinement {
+    /// Signal sources installed by the property builders.
+    pub bindings: Bindings,
     /// Local placement and container layout declarations.
     pub layout: Option<Rc<LayoutProperties>>,
     /// Local paint and interaction declarations.
@@ -234,6 +247,14 @@ impl StyleRefinement {
 
     /// Overlays specified fields while retaining other declarations.
     pub fn refine(&mut self, later: &Self) {
+        let higher = later.bindings.without_fixed_overrides(later);
+        let mut bindings = self
+            .bindings
+            .without_fixed_overrides(self)
+            .unshadowed(later);
+        bindings.extend(&higher);
+        self.bindings = bindings;
+        higher.clear_fixed(self);
         macro_rules! overlay {
             ($($($field:ident).+),+) => {$(if later.$($field).+.is_some() {
                 self.$($field).+ = later.$($field).+.clone();

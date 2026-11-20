@@ -1,4 +1,6 @@
 //! Composition, conversion at attachment, and retained element behavior.
+mod style_binding;
+
 use crate::{
     ContentClip,
     clip::{NodeClips, OverflowClip},
@@ -403,6 +405,12 @@ impl From<Signal<RefreshMode>> for RefreshPolicy {
     }
 }
 
+#[derive(Clone, Default)]
+pub(super) struct InheritedText {
+    fixed: TextStyleRefinement,
+    bindings: crate::style::Bindings,
+}
+
 pub(super) struct MountedNode {
     pub(super) id: NodeId,
     pub(super) offset: usize,
@@ -410,7 +418,7 @@ pub(super) struct MountedNode {
     pub(super) visible: bool,
     pub(super) local_visible: bool,
     paint_mode: RefreshPolicy,
-    pub(super) text_style: TextStyleRefinement,
+    pub(super) text_style: InheritedText,
     text_color: Foreground,
     background: Option<Box<MountedBackground>>,
     pub(super) binding_target: Option<NodeId>,
@@ -427,7 +435,7 @@ impl MountedNode {
     fn new<E: Element>(
         id: NodeId,
         handlers: Option<Box<Handlers>>,
-        text_style: TextStyleRefinement,
+        text_style: InheritedText,
         style: Style,
         fixed_label: bool,
         paint_mode: RefreshPolicy,
@@ -522,6 +530,7 @@ impl MountedNode {
             let fill = match &paint.source {
                 Background::Fixed(fill) => fill.clone(),
                 Background::Bound(signal) => cx.read(*signal)?.clone(),
+                Background::Color(signal) => Fill::from(*cx.read(*signal)?),
             };
             cx.commands.push(Draw::Fill {
                 clip: clips.inherited.clone(),
@@ -590,7 +599,7 @@ enum Target<'a> {
         scene: &'a mut Scene,
         parent: NodeId,
         index: usize,
-        inherited: TextStyleRefinement,
+        inherited: InheritedText,
     },
 }
 
@@ -605,61 +614,12 @@ impl AnyElement {
         Self(Box::new(move |target, cx, units| {
             let mut node = make(cx)?;
             let inherited = match &target {
-                Target::Root(_) => &TextStyleRefinement::default(),
+                Target::Root(_) => &InheritedText::default(),
                 Target::Child { inherited, .. } => inherited,
             };
-            let mut style = node.body.base_style();
-            let text = style.refine(&node.style, inherited, units);
-            if !style.text.letter_spacing.get().is_finite()
-                || [
-                    style.corner_radii.top_left,
-                    style.corner_radii.top_right,
-                    style.corner_radii.bottom_left,
-                    style.corner_radii.bottom_right,
-                    style.column_gap,
-                    style.row_gap,
-                    style.text.size,
-                    style.text.line_height,
-                ]
-                .iter()
-                .any(|v| !v.is_extent())
-            {
-                return Err(crate::layout::LayoutError::InvalidSize.into());
-            }
-            let grow = style
-                .layout
-                .as_ref()
-                .and_then(|layout| layout.flex_grow)
-                .unwrap_or_default();
-            let shrink = style
-                .layout
-                .as_ref()
-                .and_then(|layout| layout.flex_shrink)
-                .unwrap_or_default();
-            if [grow, shrink].iter().any(|f| !f.is_finite() || *f < 0.0) {
-                return Err(crate::layout::LayoutError::InvalidSize.into());
-            }
-            let local_visible = match style.appearance.as_deref().and_then(|a| a.visibility) {
-                Some(Visibility::Hidden) => false,
-                Some(Visibility::When(source)) => {
-                    let initial = *cx.read(source)?;
-                    node.watches.push(Box::new(move |cx, target, id, path, _| {
-                        let updates = Rc::clone(cx.visibility);
-                        let view = ViewId(cx.scope);
-                        let path: Rc<[usize]> = path.into();
-                        cx.state.bind(source, target, move |visible, _| {
-                            updates
-                                .borrow_mut()
-                                .entry(view)
-                                .or_default()
-                                .insert(Rc::clone(&path), (id, *visible));
-                        })?;
-                        Ok(())
-                    }));
-                    initial
-                }
-                _ => true,
-            };
+            let mounted = style_binding::prepare(&mut node, inherited, cx, units)?;
+            let style = mounted.style;
+            let item = style_binding::item_style(&style)?;
             if let Some(tip) = node
                 .handlers
                 .as_deref()
@@ -670,7 +630,7 @@ impl AnyElement {
             }
             node.body.prepare_content(&style)?;
             let body = StyledBody::new(node.body, &style, units)?;
-            let item_sizing = body.item_sizing(&style, units)?;
+            let item_sizing = body.bounds.item_sizing(&style, units)?;
             let id = match target {
                 Target::Root(slot) => slot.insert(Scene::new(body)).root(),
                 Target::Child {
@@ -678,32 +638,18 @@ impl AnyElement {
                     parent,
                     index,
                     ..
-                } => {
-                    let align_self = style
-                        .layout
-                        .as_ref()
-                        .and_then(|layout| layout.align_self)
-                        .unwrap_or(Align::Auto);
-                    let item = crate::layout::FlexItemStyle {
-                        grow,
-                        shrink,
-                        align_self,
-                        auto_width: style.width == crate::Length::Auto,
-                        auto_height: style.height == crate::Length::Auto,
-                    };
-                    scene.mount_entry(parent, Some(index), body, item, item_sizing)?
-                }
+                } => scene.mount_entry(parent, Some(index), body, item, item_sizing)?,
             };
             Ok(Installation {
                 on_frame: node.on_frame,
                 node: MountedNode::new::<E>(
                     id,
                     node.handlers,
-                    text,
+                    mounted.text,
                     style,
-                    fixed_label,
+                    fixed_label && mounted.fixed,
                     node.paint_mode,
-                    local_visible,
+                    mounted.visible,
                 ),
                 children: node.children,
                 watches: node.watches,
@@ -729,7 +675,7 @@ impl AnyElement {
         scene: &mut Scene,
         parent: NodeId,
         index: usize,
-        inherited: TextStyleRefinement,
+        inherited: InheritedText,
         units: UnitResolver,
         cx: &mut Context<'_>,
     ) -> Result<Installation> {

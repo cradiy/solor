@@ -111,6 +111,20 @@ impl Context<'_> {
         Ok(())
     }
 
+    /// Edits the stored value directly and publishes it unconditionally at the next flush.
+    pub fn update_in_place<T: 'static, R>(
+        &mut self,
+        signal: Signal<T>,
+        edit: impl FnOnce(&mut T) -> R,
+    ) -> Result<R> {
+        Ok(self.state.update_in_place(signal, edit)?)
+    }
+
+    /// Schedules subscribers after the application mutates shared signal data separately.
+    pub fn notify<T: 'static>(&mut self, signal: Signal<T>) -> Result<()> {
+        Ok(self.state.notify(signal)?)
+    }
+
     /// Edits a clone of the value and publishes it on change.
     pub fn update<T: Clone + PartialEq + 'static>(
         &mut self,
@@ -163,6 +177,8 @@ impl PaintState {
 type Repaints = Rc<RefCell<PaintState>>;
 type VisibilityBatch = BTreeMap<Rc<[usize]>, (NodeId, bool)>;
 type VisibilityUpdates = Rc<RefCell<HashMap<ViewId, VisibilityBatch>>>;
+type Restyle = Rc<dyn Fn(&mut Instance, NodeId, &mut Runtime<()>, bool) -> Result<()>>;
+type StyleUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), (Restyle, bool)>>>;
 type LabelUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), Signal<SharedString>>>>;
 
 struct Instance {
@@ -185,6 +201,7 @@ struct Attachment<'a> {
     scope: NodeId,
     state: &'a mut Runtime<()>,
     pending: &'a Pending,
+    styles: &'a StyleUpdates,
     labels: &'a LabelUpdates,
     visibility: &'a VisibilityUpdates,
     engine: &'a TextSystem,
@@ -433,6 +450,7 @@ impl Instance {
             self.repaints.borrow_mut().dirty.remove(&node.id);
             if let Some(target) = node.binding_target {
                 cx.state.remove_subtree(target)?;
+                cx.styles.borrow_mut().remove(&(ViewId(cx.scope), node.id));
                 cx.labels.borrow_mut().remove(&(ViewId(cx.scope), node.id));
             }
             for signal in node.owned {
@@ -498,6 +516,7 @@ pub struct Ui {
     engine: TextSystem,
     instances: HashMap<ViewId, Instance>,
     pending: Pending,
+    styles: StyleUpdates,
     labels: LabelUpdates,
     visibility: VisibilityUpdates,
 }
@@ -510,6 +529,7 @@ impl Default for Ui {
             engine: TextSystem::default(),
             instances: HashMap::new(),
             pending: Pending::default(),
+            styles: Default::default(),
             labels: LabelUpdates::default(),
             visibility: VisibilityUpdates::default(),
         }
@@ -593,6 +613,7 @@ impl Ui {
             scope,
             state: self.state.get_mut(),
             pending: &self.pending,
+            styles: &self.styles,
             labels: &self.labels,
             visibility: &self.visibility,
             engine: &self.engine,
@@ -639,6 +660,7 @@ impl Ui {
     pub fn has_pending_bindings(&self) -> bool {
         self.state.borrow().pending_count() != 0
             || !self.pending.borrow().is_empty()
+            || !self.styles.borrow().is_empty()
             || !self.labels.borrow().is_empty()
             || !self.visibility.borrow().is_empty()
     }
@@ -650,13 +672,31 @@ impl Ui {
             self.state.get_mut().flush();
             let batch = std::mem::take(&mut *self.pending.borrow_mut());
             if batch.is_empty() {
+                let mut failure = None;
+                self.styles
+                    .borrow_mut()
+                    .retain(|&(view, id), (apply, layout)| {
+                        if let Some(instance) = self.instances.get_mut(&view)
+                            && let Err(error) = apply(instance, id, self.state.get_mut(), *layout)
+                        {
+                            failure.get_or_insert(error);
+                            return true;
+                        }
+                        false
+                    });
                 for (view, updates) in self.visibility.borrow_mut().drain() {
                     if let Some(instance) = self.instances.get_mut(&view) {
                         instance.apply_visibility(updates, self.state.get_mut())?;
                     }
                 }
+                if let Some(error) = failure {
+                    return Err(error);
+                }
                 self.flush_labels()?;
-                return Ok(visited);
+                if self.state.get_mut().pending_count() == 0 {
+                    return Ok(visited);
+                }
+                continue;
             }
             let mut failure = None;
             for (scope, updates) in batch {
@@ -668,6 +708,7 @@ impl Ui {
                     scope,
                     state: self.state.get_mut(),
                     pending: &self.pending,
+                    styles: &self.styles,
                     labels: &self.labels,
                     visibility: &self.visibility,
                     engine: &self.engine,
@@ -797,6 +838,9 @@ impl Ui {
         self.state.get_mut().remove_subtree(scope.0)?;
         self.pending.borrow_mut().remove(&scope.0);
         self.visibility.borrow_mut().remove(&scope);
+        self.styles
+            .borrow_mut()
+            .retain(|(view, _), _| *view != scope);
         self.labels
             .borrow_mut()
             .retain(|(view, _), _| *view != scope);
