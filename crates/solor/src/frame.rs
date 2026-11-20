@@ -129,6 +129,7 @@ impl MountedNode {
         for draw in &mut draws[start..] {
             let origin = match draw {
                 Draw::Fill { origin, .. }
+                | Draw::Polygon { origin, .. }
                 | Draw::Polyline { origin, .. }
                 | Draw::Text { origin, .. } => origin,
             };

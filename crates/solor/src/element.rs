@@ -138,6 +138,17 @@ pub enum Draw {
         /// Circular radii in logical pixels, fitted to the fill bounds.
         corner_radii: Corners<Pixels>,
     },
+    /// Fills a closed contour using the even-odd rule.
+    Polygon {
+        /// Effective clip in view coordinates.
+        clip: Option<Arc<ContentClip>>,
+        /// Content origin for the local vertices.
+        origin: Origin,
+        /// Vertices in contour order. The last vertex connects to the first.
+        points: Rc<[Origin]>,
+        /// Paint mapped to the complete polygon bounds.
+        fill: Fill,
+    },
     /// Strokes an open polyline with round caps and joins.
     Polyline {
         /// Effective clip in view coordinates.
@@ -177,6 +188,16 @@ pub struct PaintContext<'a> {
     next_frame: bool,
     state: &'a Runtime<()>,
     reads: &'a RefCell<Vec<SignalId>>,
+}
+
+fn validate_points(points: &[Origin]) -> Result<()> {
+    anyhow::ensure!(
+        points
+            .iter()
+            .all(|p| p.x.get().is_finite() && p.y.get().is_finite()),
+        "invalid path point"
+    );
+    Ok(())
 }
 
 impl PaintContext<'_> {
@@ -246,6 +267,27 @@ impl PaintContext<'_> {
         }
     }
 
+    /// Fills a polygon in local logical pixels, implicitly closing the contour.
+    /// The even-odd rule determines the interior, including at self-intersections.
+    /// Gradients use the polygon's unclipped bounding box.
+    pub fn fill_polygon(
+        &mut self,
+        points: impl Into<Rc<[Origin]>>,
+        fill: impl Into<Fill>,
+    ) -> Result<()> {
+        let points = points.into();
+        validate_points(&points)?;
+        if points.len() >= 3 {
+            self.commands.push(Draw::Polygon {
+                origin: self.origin,
+                clip: self.clip.clone(),
+                points,
+                fill: fill.into(),
+            });
+        }
+        Ok(())
+    }
+
     /// Strokes consecutive local points with a solid color and round caps and joins.
     /// Fewer than two points or a zero-width stroke produces no drawing.
     pub fn stroke_polyline(
@@ -256,12 +298,7 @@ impl PaintContext<'_> {
     ) -> Result<()> {
         let points = points.into();
         anyhow::ensure!(width.is_extent(), "invalid stroke width");
-        anyhow::ensure!(
-            points
-                .iter()
-                .all(|p| p.x.get().is_finite() && p.y.get().is_finite()),
-            "invalid stroke point"
-        );
+        validate_points(&points)?;
         if points.len() >= 2 && width.get() > 0.0 && color.alpha != 0 {
             self.commands.push(Draw::Polyline {
                 origin: self.origin,

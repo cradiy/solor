@@ -110,6 +110,14 @@ impl Surface {
                 } => {
                     self.fill_box(*origin, *size, fill, *corner_radii, scale, bounds)?;
                 }
+                Draw::Polygon {
+                    origin,
+                    points,
+                    fill,
+                    ..
+                } => {
+                    self.fill_polygon(*origin, points, fill, scale, bounds)?;
+                }
                 Draw::Polyline {
                     origin,
                     points,
@@ -253,7 +261,10 @@ impl Surface {
 // Fill coverage includes fractional edge pixels. Text is clipped to rounded layout edges.
 fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     let mut bounds = primitive_bounds(draw, scale)?;
-    let (Draw::Fill { clip, .. } | Draw::Polyline { clip, .. } | Draw::Text { clip, .. }) = draw;
+    let (Draw::Fill { clip, .. }
+    | Draw::Polygon { clip, .. }
+    | Draw::Polyline { clip, .. }
+    | Draw::Text { clip, .. }) = draw;
     if let Some(clip) = clip {
         if let Some(x) = &clip.x {
             bounds.left = bounds.left.max(scale.edge(f64::from(x.start)));
@@ -269,6 +280,9 @@ fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
 
 fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     match draw {
+        Draw::Polygon { origin, points, .. } => {
+            crate::path::PathBounds::new(*origin, points, scale)?.clip(0.0)
+        }
         Draw::Polyline {
             origin,
             points,

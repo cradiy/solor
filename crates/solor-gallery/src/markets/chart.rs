@@ -4,7 +4,7 @@ use solor::{
     layout::{
         self, LayoutContext, LayoutNode, LayoutOutput, MeasureContext, Metrics, Origin, Query, Size,
     },
-    px, rgb,
+    px, rgb, rgba,
 };
 
 use super::{AVERAGE_INK, Feed, PERIODS, UP};
@@ -87,6 +87,18 @@ impl Element for Chart {
                 y: y(sample.average),
             });
         }
+        let mut area = Vec::with_capacity(count + 2);
+        area.extend_from_slice(&prices);
+        let baseline = px(h - inset);
+        area.push(Origin {
+            x: px(w - inset),
+            y: baseline,
+        });
+        area.push(Origin {
+            x: px(inset),
+            y: baseline,
+        });
+        cx.fill_polygon(area, rgba(0x40ce9420))?;
         cx.stroke_polyline(prices, px(2.0), UP)?;
         cx.stroke_polyline(averages, px(1.5), AVERAGE_INK)
     }

@@ -6,12 +6,7 @@ use solor::{
     raster::{Clip, RasterScale},
 };
 
-fn device(point: Origin, origin: Origin, scale: RasterScale) -> (f64, f64) {
-    (
-        (f64::from(point.x) + f64::from(origin.x)) * scale.0,
-        (f64::from(point.y) + f64::from(origin.y)) * scale.0,
-    )
-}
+use crate::path::{PathBounds, device};
 
 pub(super) fn bounds(
     origin: Origin,
@@ -19,27 +14,7 @@ pub(super) fn bounds(
     width: Pixels,
     scale: RasterScale,
 ) -> std::io::Result<Clip> {
-    let margin = f64::from(width) * scale.0 * 0.5 + 0.5;
-    let (mut left, mut top) = (f64::INFINITY, f64::INFINITY);
-    let (mut right, mut bottom) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
-    for &point in points {
-        let (x, y) = device(point, origin, scale);
-        left = left.min(x);
-        top = top.min(y);
-        right = right.max(x);
-        bottom = bottom.max(y);
-    }
-    if !margin.is_finite() || !(right - left).hypot(bottom - top).is_finite() {
-        return Err(std::io::Error::other(
-            "stroke exceeds device coordinate range",
-        ));
-    }
-    Ok(Clip {
-        left: (left - margin).floor() as i64,
-        top: (top - margin).floor() as i64,
-        right: (right + margin).ceil() as i64,
-        bottom: (bottom + margin).ceil() as i64,
-    })
+    PathBounds::new(origin, points, scale)?.clip(f64::from(width) * scale.0 * 0.5 + 0.5)
 }
 
 impl Surface {

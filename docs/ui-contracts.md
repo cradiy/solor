@@ -11,7 +11,7 @@ letter spacing, OpenType ligatures, gradient geometry and flex distribution.
 The Markets tab runs a deterministic feed of six instruments. Each host frame
 advances 32 ticks per instrument and appends the latest price to a 96-sample
 history. The green price line and amber 16-sample moving average share the same
-axis. Scroll vertically over the plot to zoom its latest 12 to 96 samples.
+axis. A translucent polygon marks the area under the price line. Scroll vertically over the plot to zoom its latest 12 to 96 samples.
 The price axis retains the full history range. Pause freezes
 the feed and releases its frame request. Callback FPS counts intervals between
 host frame opportunities over at least one second of elapsed monotonic time.
@@ -104,6 +104,11 @@ image on each call.
 relative to the element's content origin. Width is in logical pixels. The CPU
 backend antialiases round caps and joins, clips the stroke to inherited overflow
 bounds and composites a translucent stroke once at self-intersections.
+
+`PaintContext::fill_polygon(points, fill)` closes the contour between the last
+and first vertices. An odd number of edge crossings places a sample inside the
+polygon. Solid colors and gradients use the same antialiased contour. Gradient
+coordinates cover the full vertex bounds and stay fixed during partial repairs.
 
 ## Presenting a mounted view
 
