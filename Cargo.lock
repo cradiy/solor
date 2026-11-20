@@ -431,7 +431,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "solor",
- "solor-linux",
+ "solor-platform",
  "solor-render-cpu",
 ]
 
@@ -444,6 +444,16 @@ dependencies = [
  "solor",
  "wayland-client",
  "wayland-protocols",
+]
+
+[[package]]
+name = "solor-platform"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "solor",
+ "solor-linux",
+ "solor-render-cpu",
 ]
 
 [[package]]

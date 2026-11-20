@@ -20,15 +20,19 @@ letter spacing, OpenType ligatures, gradient geometry and flex distribution.
 | Fill | A straight-alpha sRGB color has named channels. Every gradient shares an ordered, variable-length stop sequence. Four geometries sample it in sRGB or Oklab. Backgrounds and custom fills carry the same fill value. Equal offsets describe hard edges. Rounded fills use the assigned dimensions. |
 | Paint scheduling | Each successful paint subscribes the element to the signals it read. Repeated writes coalesce. Elements default to on-demand recording. A fixed or signal-driven continuous mode samples every host frame. |
 | Pointer input | The host accepts a border-box snapshot for hit testing. Positioned events deliver local logical coordinates. A press can capture its pointer until release or cancellation. See [pointer input](pointer-input.md). |
-| Platform boundary | `solor` owns the GUI and the platform traits. `solor-linux` owns the Wayland event loop and buffer submission. `solor-render-cpu` rasterizes shaped text. The window example pairs them using the RGBA8 presentation format. |
+| Platform boundary | `solor` owns the GUI and the platform traits. `solor-linux` owns the Wayland event loop and buffer submission. `solor-render-cpu` rasterizes shaped text. `solor-platform` selects the window system and its rendering backend. |
 
 ## Platform and renderer ownership
 
-`Platform::run_window` takes a window handler for the platform's presentation
-format. The Linux implementation drives one XDG toplevel until close. Its
-handler implements `WindowHandler<Rgba8>` and can borrow a retained image for
-one submission. Rendering code depends on the presentation format. Only the
-application entry point selects Wayland.
+Applications obtain a host with `solor_platform::current_platform()?` and
+call `platform.run_window(options, ui, root)`. The host mounts the root and
+owns the pairing of the window system with a compatible renderer. The same
+application entry point compiles on other targets. Platform selection returns
+an unsupported-platform error where a host is unavailable.
+
+The Linux host pairs Wayland with the CPU renderer and runs one XDG toplevel
+until close. The driver accepts a `WindowHandler<Rgba8>` and borrows its
+output for one submission.
 
 Pointer positions and scroll distances arrive in logical pixels. The Linux
 adapter currently delivers mouse buttons, motion, cancellation and vertical
@@ -57,8 +61,8 @@ image on each call.
 
 ## Presenting a mounted view
 
-`CpuWindow::mount(ui, component)` owns the UI and mounts the root once. Pass
-the resulting handler to `Platform::run_window` on an RGBA8 platform. It
+Inside the Linux host, `CpuWindow::mount(ui, component)` owns the UI and
+mounts the root once. The host passes this handler to the Wayland driver. It
 dispatches pointer events against the accepted layout and requests a frame
 when signal bindings have work to flush. Each frame records the view and
 compares the ordered commands with the previous submission. The window keeps
@@ -77,7 +81,7 @@ Each window owns a cache for its font face, keyed by glyph and device font size.
 It retains up to 64 masks and 32 KiB of mask pixel storage. Text color and
 clip are applied when compositing each mask.
 
-Run `cargo run -p solor-render-cpu --example mounted_window` in a Linux
+Run `cargo run -p solor-platform --example mounted_window` in a Linux
 Wayland session. Click **Audio settings** to expand the row, then click
 **Close settings** to collapse it. The newly mounted row has its own handler.
 

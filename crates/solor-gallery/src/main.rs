@@ -1,12 +1,11 @@
-//! Native launcher for the Solor Gallery.
-#[cfg(target_os = "linux")]
+//! Launches the gallery on the current system platform.
+use solor::{layout::Size, px};
+use solor_platform::{WindowOptions, current_platform};
+
 fn main() -> anyhow::Result<()> {
-    use solor::{
-        layout::Size,
-        platform::{Platform, WindowOptions},
-        px,
-    };
-    solor_linux::Wayland::default().run_window(
+    let platform = current_platform()?;
+    let (ui, gallery) = solor_gallery::gallery()?;
+    platform.run_window(
         WindowOptions {
             title: "Solor Gallery",
             app_id: "solor.gallery",
@@ -15,11 +14,7 @@ fn main() -> anyhow::Result<()> {
                 height: px(560.0),
             },
         },
-        Box::new(solor_gallery::window()?),
+        ui,
+        gallery,
     )
-}
-
-#[cfg(not(target_os = "linux"))]
-fn main() -> anyhow::Result<()> {
-    anyhow::bail!("Solor Gallery requires the Linux Wayland platform")
 }

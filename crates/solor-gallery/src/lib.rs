@@ -3,10 +3,9 @@ mod specimens;
 
 use anyhow::Result;
 use solor::{
-    Context, Div, Fill, IntoElement, Rgba, Signal, Styled, Ui, color_stop, component, div,
+    Context, Div, Fill, IntoElement, Render, Rgba, Signal, Styled, Ui, color_stop, component, div,
     linear_gradient, px, rgb, text,
 };
-use solor_render_cpu::CpuWindow;
 
 const PAPER: Rgba = rgb(0xf8f7f2);
 const INK: Rgba = rgb(0x252e29);
@@ -90,15 +89,15 @@ fn brand() -> Div {
         .child(label("Solor", 19.0, 24.0).text_color(PAPER))
 }
 
-/// Mounts the gallery using the CPU renderer and the bundled specimen font.
-pub fn window() -> Result<CpuWindow> {
+/// Creates the gallery UI with its specimen font and its unmounted root component.
+pub fn gallery() -> Result<(Ui, impl Render)> {
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
     let ui = Ui::with_font(font.to_vec(), "en")?;
     let ramp = linear_gradient(
         110.0,
         specimens::STOPS.map(|(at, color, _)| color_stop(color, at)),
     )?;
-    CpuWindow::mount(
+    Ok((
         ui,
         component(move |cx| {
             let pages = Selection::new(cx, 0);
@@ -123,7 +122,7 @@ pub fn window() -> Result<CpuWindow> {
                 .child_when(pages.0[1], move || specimens::paint(geometry, &ramp))
                 .child_when(pages.0[2], move || specimens::layout(alignment))
         }),
-    )
+    ))
 }
 
 fn page(title: &'static str, control: Div, sample: Div, details: Div) -> Div {

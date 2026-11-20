@@ -1,14 +1,9 @@
-//! Opens a mounted settings component on a Wayland window.
-#[cfg(target_os = "linux")]
+//! Opens a mounted settings component on the current platform.
 fn main() -> anyhow::Result<()> {
-    use solor::{
-        Styled, Ui, component, div,
-        layout::Size,
-        platform::{Platform, WindowOptions},
-        px, rgb, text,
-    };
-    use solor_linux::Wayland;
-    use solor_render_cpu::CpuWindow;
+    use solor::{Styled, Ui, component, div, layout::Size, px, rgb, text};
+    use solor_platform::{WindowOptions, current_platform};
+
+    let platform = current_platform()?;
 
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
     let ui = Ui::with_font(font.to_vec(), "en")?;
@@ -39,11 +34,7 @@ fn main() -> anyhow::Result<()> {
                     .on_click(move |cx| cx.set(open, false))
             })
     });
-    Wayland {
-        verify_shm: std::env::var_os("SOLOR_VERIFY_SHM").is_some(),
-        trace_submissions: std::env::var_os("SOLOR_TRACE_SUBMISSIONS").is_some(),
-    }
-    .run_window(
+    platform.run_window(
         WindowOptions {
             title: "Audio settings",
             app_id: "solor.mounted-window",
@@ -52,11 +43,7 @@ fn main() -> anyhow::Result<()> {
                 height: px(110.0),
             },
         },
-        Box::new(CpuWindow::mount(ui, settings)?),
+        ui,
+        settings,
     )
-}
-
-#[cfg(not(target_os = "linux"))]
-fn main() -> anyhow::Result<()> {
-    anyhow::bail!("mounted_window requires Linux with a Wayland compositor")
 }

@@ -39,7 +39,8 @@ fn controls_change_the_specimen_and_choices_survive_navigation() -> Result<()> {
         assert!(!window.event(WindowEvent::FrameReady)?);
         Ok(pixels)
     };
-    let mut window = solor_gallery::window()?;
+    let (ui, gallery) = solor_gallery::gallery()?;
+    let mut window = CpuWindow::mount(ui, gallery)?;
     let normal = specimen(&mut window)?;
     click(&mut window, 269.0, 154.0)?;
     let wide = specimen(&mut window)?;

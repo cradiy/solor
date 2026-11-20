@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/solor", "crates/solor-gallery", "crates/solor-linux", "crates/solor-render-cpu"]
+members = ["crates/solor", "crates/solor-gallery", "crates/solor-linux", "crates/solor-platform", "crates/solor-render-cpu"]
 resolver = "3"
 
 [workspace.package]
@@ -8,6 +8,7 @@ publish = false
 
 [workspace.dependencies]
 solor = { path = "crates/solor" }
+solor-platform = { path = "crates/solor-platform" }
 anyhow = "1"
 slotmap = "1.1.1"
 
