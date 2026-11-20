@@ -371,42 +371,29 @@ offset in content-local logical pixels and an extent.
 The [pointer input interface](pointer-input.md) shows how a seek bar can
 track one drag across its bounds and share the signal update path with a button.
 
-The same builder syntax should leave room for an element whose appearance
-depends on allocated space. Here the caller supplies playback progress in
-the range 0 to 1 and a function accepting a fractional seek position.
+A container can draw directly into its content box. The paint callback runs
+after its background and before its children. Coordinates are relative to the
+content origin, and `cx.size` excludes padding. Reading a signal subscribes the
+container to updates.
 
 ```rust
-fn seek_bar(
-    progress: Signal<f32>,
-    seek: impl Fn(f32) + 'static,
-) -> impl IntoElement {
+fn progress_bar(progress: Signal<f32>) -> Div {
     div()
         .w_full()
-        .h(px(20.0))
-        .paint(move |p| {
-            let fraction = *p.read(progress)?;
-            let track = p.bounds().centered_strip(4);
-            p.fill_rect(track, rgb(0x343434));
-            p.fill_rect(track.with_width(track.width() * fraction), rgb(0x72aaff));
-        })
-        .on_drag(move |drag| {
-            let width = drag.bounds().width();
-            if width > 0.0 {
-                seek((drag.local_x() / width).clamp(0.0, 1.0));
-            }
+        .h(px(4.0))
+        .bg(rgb(0x343434))
+        .paint(move |cx| {
+            let fraction = cx.read(progress)?.clamp(0.0, 1.0);
+            let size = Size { width: cx.size.width * fraction, ..cx.size };
+            cx.fill(size, rgb(0x72aaff));
+            Ok(())
         })
 }
 ```
 
-In this sketch the paint callback reads playback progress and records in local
-logical coordinates. A progress update invalidates the element’s drawing. An
-allocation change also invalidates its bounds-dependent drawing. Drag positions
-use the accepted frame's local coordinates and bounds. Retirement cancels the
-active drag. The caller decides when a seek changes the playback signal.
-
 ## Framework boundary
 
-The seek bar is an application function built with the same container as the
+The progress bar is an application function built with the same container as the
 expandable section. Its caller can use that container directly to paint a
 waveform, add a child label, or choose different pointer handling. A paint
 callback records the element's own content before its children are drawn.

@@ -412,6 +412,15 @@ pub(super) struct InheritedText {
     bindings: crate::style::Bindings,
 }
 
+type Record = Box<dyn Fn(&Scene, NodeId, &mut PaintContext) -> Result<()>>;
+
+fn record_content<E: Element>(scene: &Scene, id: NodeId, cx: &mut PaintContext) -> Result<()> {
+    let body = scene.body::<StyledBody<E>>(id)?;
+    cx.size = body.content_size(cx.size);
+    cx.origin = body.origin();
+    body.content.paint(cx)
+}
+
 pub(super) struct MountedNode {
     pub(super) id: NodeId,
     pub(super) offset: usize,
@@ -423,7 +432,7 @@ pub(super) struct MountedNode {
     text_color: Foreground,
     background: Option<Box<MountedBackground>>,
     pub(super) binding_target: Option<NodeId>,
-    record: fn(&Scene, NodeId, &mut PaintContext) -> Result<()>,
+    record: Record,
     pub(super) owned: Vec<SignalId>,
     pub(crate) handlers: Option<Box<Handlers>>,
     pub(super) z_index: i32,
@@ -433,21 +442,22 @@ pub(super) struct MountedNode {
 }
 
 impl MountedNode {
-    fn new<E: Element>(
+    fn new(
         id: NodeId,
         handlers: Option<Box<Handlers>>,
-        text_style: InheritedText,
-        style: Style,
+        mounted: style_binding::PreparedStyle,
         fixed_label: bool,
         paint_mode: RefreshPolicy,
-        local_visible: bool,
+        record: Record,
     ) -> Self {
+        let style = mounted.style;
         Self {
             id,
             offset: 0,
-            local_visible,
-            visible: local_visible,
+            local_visible: mounted.visible,
+            visible: mounted.visible,
             fixed_label: fixed_label
+                && mounted.fixed
                 && style.background.is_none()
                 && !style.text.attributes.as_deref().is_some_and(|a| {
                     a.underline == Some(true)
@@ -468,7 +478,7 @@ impl MountedNode {
             cursor: style.appearance.as_deref().and_then(|a| a.cursor),
             hit_testable: style.appearance.as_deref().and_then(|a| a.pointer_events)
                 != Some(PointerEvents::None),
-            text_style,
+            text_style: mounted.text,
             text_color: style.text.color,
             background: style.background.map(|source| {
                 Box::new(MountedBackground {
@@ -477,12 +487,7 @@ impl MountedNode {
                 })
             }),
             owned: Vec::new(),
-            record: |scene, id, cx| {
-                let body = scene.body::<StyledBody<E>>(id)?;
-                cx.size = body.content_size(cx.size);
-                cx.origin = body.origin();
-                body.content.paint(cx)
-            },
+            record,
         }
     }
 
@@ -640,8 +645,8 @@ impl AnyElement {
                 Target::Child { inherited, .. } => inherited,
             };
             let mounted = style_binding::prepare(&mut node, inherited, cx, units)?;
-            let style = mounted.style;
-            let item = style_binding::item_style(&style)?;
+            let style = &mounted.style;
+            let item = style_binding::item_style(style)?;
             if let Some(tip) = node
                 .handlers
                 .as_deref()
@@ -650,9 +655,9 @@ impl AnyElement {
                 Text::validate_content(tip.text.as_str())?;
                 tip.resolve(&crate::TooltipStyle::default()).validate()?;
             }
-            node.body.prepare_content(&style)?;
-            let body = StyledBody::new(node.body, &style, units)?;
-            let item_sizing = body.bounds.item_sizing(&style, units)?;
+            node.body.prepare_content(style)?;
+            let body = StyledBody::new(node.body, style, units)?;
+            let item_sizing = body.bounds.item_sizing(style, units)?;
             let id = match target {
                 Target::Root(slot) => slot.insert(Scene::new(body)).root(),
                 Target::Child {
@@ -664,14 +669,13 @@ impl AnyElement {
             };
             Ok(Installation {
                 on_frame: node.on_frame,
-                node: MountedNode::new::<E>(
+                node: MountedNode::new(
                     id,
                     node.handlers,
-                    mounted.text,
-                    style,
-                    fixed_label && mounted.fixed,
+                    mounted,
+                    fixed_label,
                     node.paint_mode,
-                    mounted.visible,
+                    node.record,
                 ),
                 children: node.children,
                 watches: node.watches,
@@ -729,6 +733,7 @@ pub(super) enum Child {
 
 /// A primitive and the children, handlers and styles to attach with it.
 pub struct Node<E> {
+    record: Record,
     on_frame: Option<FrameHandler>,
     paint_mode: RefreshPolicy,
     style: StyleRefinement,
@@ -741,6 +746,7 @@ pub struct Node<E> {
 /// Wraps a custom layout body in the common element builder.
 pub fn element<E: Element>(body: E) -> Node<E> {
     Node {
+        record: Box::new(record_content::<E>),
         on_frame: None,
         paint_mode: RefreshMode::OnDemand.into(),
         style: StyleRefinement::default(),
@@ -906,6 +912,18 @@ impl IntoElement for Label {
 
 /// A general-purpose container with children, styles and event handlers.
 pub type Div = Node<FlexLayout>;
+
+impl Div {
+    /// Sets the drawing callback for this container's content box.
+    /// It runs after the background and before the children. Signal reads track repaint.
+    pub fn paint(mut self, draw: impl Fn(&mut PaintContext) -> Result<()> + 'static) -> Self {
+        self.record = Box::new(move |scene, id, cx| {
+            record_content::<FlexLayout>(scene, id, cx)?;
+            draw(cx)
+        });
+        self
+    }
+}
 
 /// Creates a container that stacks children vertically by default.
 pub fn div() -> Div {

@@ -1,51 +1,24 @@
-use anyhow::Result;
 use solor::{
-    Element, PaintContext, Signal,
-    layout::{
-        self, LayoutContext, LayoutNode, LayoutOutput, MeasureContext, Metrics, Origin, Query, Size,
-    },
+    Div, Signal, div,
+    layout::{Origin, Size},
     px, rgb, rgba,
 };
 
 use super::{AVERAGE_INK, Feed, PERIODS, UP};
 
-pub(super) struct Chart {
-    pub(super) feed: Feed,
-    pub(super) selected: Signal<usize>,
-    pub(super) visible: Signal<usize>,
-    pub(super) show_latest: Signal<bool>,
-}
-
-impl LayoutNode for Chart {
-    fn measure(&mut self, _: &mut MeasureContext<'_, '_>, query: Query) -> layout::Result<Metrics> {
-        Ok(Metrics {
-            size: Size {
-                width: query.resolve(px(360.0)),
-                height: px(220.0),
-            },
-            baseline: None,
-        })
-    }
-    fn layout(
-        &mut self,
-        _: &mut LayoutContext<'_, '_>,
-        size: Size,
-    ) -> layout::Result<LayoutOutput> {
-        Ok(LayoutOutput {
-            content: size,
-            baseline: None,
-        })
-    }
-}
-
-impl Element for Chart {
-    fn paint(&self, cx: &mut PaintContext) -> Result<()> {
+pub(super) fn chart(
+    feed: Feed,
+    selected: Signal<usize>,
+    visible: Signal<usize>,
+    show_latest: Signal<bool>,
+) -> Div {
+    div().paint(move |cx| {
         let (w, h) = (cx.size.width.get(), cx.size.height.get());
         if w < 1.0 || h < 1.0 {
             return Ok(());
         }
-        let count = *cx.read(self.visible)?;
-        let tape = cx.read(self.feed[*cx.read(self.selected)?])?;
+        let count = *cx.read(visible)?;
+        let tape = cx.read(feed[*cx.read(selected)?])?;
         let (lo, hi) = tape.range();
         let inset = 1.0_f32.min(w * 0.5).min(h * 0.5);
         let plot_height = h - 2.0 * inset;
@@ -99,7 +72,7 @@ impl Element for Chart {
             y: baseline,
         });
         cx.fill_polygon(area, rgba(0x40ce9420))?;
-        if *cx.read(self.show_latest)? {
+        if *cx.read(show_latest)? {
             cx.fill_rect(
                 Origin {
                     x: px(0.0),
@@ -114,5 +87,5 @@ impl Element for Chart {
         }
         cx.stroke_polyline(prices, px(2.0), UP)?;
         cx.stroke_polyline(averages, px(1.5), AVERAGE_INK)
-    }
+    })
 }

@@ -1,13 +1,12 @@
 //! A deterministic quote feed driven by the window's frame opportunities.
 mod chart;
-use chart::Chart;
+use chart::chart;
 
 use std::{cell::Cell, time::Duration};
 
 use anyhow::Result;
 use solor::{
-    Context, Div, Fill, IntoElement, SharedString, Signal, Styled, component, div, element, px,
-    rgb, text,
+    Context, Div, Fill, IntoElement, SharedString, Signal, Styled, component, div, px, rgb, text,
 };
 
 use crate::label;
@@ -410,14 +409,9 @@ pub(super) fn market() -> impl IntoElement {
                         Ok(())
                     })
                     .child(
-                        element(Chart {
-                            feed,
-                            selected: quotes.selected,
-                            visible,
-                            show_latest,
-                        })
-                        .flex_1()
-                        .on_frame_when(running, live_updates(feed, quotes, fps, timing)),
+                        chart(feed, quotes.selected, visible, show_latest)
+                            .flex_1()
+                            .on_frame_when(running, live_updates(feed, quotes, fps, timing)),
                     )
                     .child(
                         div()

@@ -1,9 +1,85 @@
-//! Fixed and signal-controlled children within the same declaration.
+//! Children and local drawing within a retained container.
 use anyhow::Result;
-use solor::{Div, Styled, Ui, component, div, layout::Size, px};
+use solor::{
+    Div, Draw, Styled, Ui, component, div,
+    layout::{Origin, Size},
+    px, rgb,
+};
 
 fn item(width: f32) -> Div {
     div().w(px(width)).h(px(1.0))
+}
+
+#[test]
+fn container_paint_uses_its_content_box_between_background_and_children() -> Result<()> {
+    let mut ui = Ui::new();
+    let tint = ui.context().signal(rgb(0x123456));
+    let view = ui.mount(component(|_| {
+        div()
+            .p(px(2.5))
+            .bg(rgb(0x222222))
+            .paint(move |cx| {
+                cx.fill(cx.size, *cx.read(tint)?);
+                Ok(())
+            })
+            .child(div().size(px(4.0)).bg(rgb(0xffffff)))
+    }))?;
+    let viewport = Size {
+        width: px(20.0),
+        height: px(12.0),
+    };
+    let root = ui.root(view)?;
+    ui.flush()?;
+    ui.layout(view, viewport)?;
+    let check_frame = |ui: &Ui, color: solor::Rgba| -> Result<()> {
+        let frame = ui.record_frame(view)?;
+        let mut fills = Vec::new();
+        for command in frame.draws() {
+            let Draw::Fill {
+                origin, size, fill, ..
+            } = command
+            else {
+                panic!("expected a rectangle");
+            };
+            fills.push((*origin, *size, fill.clone()));
+        }
+        let inset = Origin {
+            x: px(2.5),
+            y: px(2.5),
+        };
+        assert_eq!(
+            fills,
+            [
+                (Origin::default(), viewport, rgb(0x222222).into()),
+                (
+                    inset,
+                    Size {
+                        width: px(15.0),
+                        height: px(7.0)
+                    },
+                    color.into()
+                ),
+                (
+                    inset,
+                    Size {
+                        width: px(4.0),
+                        height: px(4.0)
+                    },
+                    rgb(0xffffff).into()
+                ),
+            ]
+        );
+        assert!(!frame.requests_animation_frame());
+        Ok(())
+    };
+    check_frame(&ui, rgb(0x123456))?;
+    ui.context().set(tint, rgb(0xabcdef))?;
+    ui.flush()?;
+    let mut dirty = Vec::new();
+    ui.collect_repaints(view, &mut dirty)?;
+    assert_eq!(dirty, [root]);
+    check_frame(&ui, rgb(0xabcdef))?;
+    Ok(())
 }
 
 #[test]
