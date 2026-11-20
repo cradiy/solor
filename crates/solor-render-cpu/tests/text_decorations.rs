@@ -101,6 +101,7 @@ fn wrapped_ellipsized_strokes_clip_to_content_and_replay_at_fractional_scale() -
                 .text_ellipsis()
                 .text_color(rgba(0))
                 .decoration_color(ink)
+                .text_bg(rgb(0xf2dbad))
                 .decoration_thickness(px(80.0))
                 .underline(),
         )
@@ -112,11 +113,28 @@ fn wrapped_ellipsized_strokes_clip_to_content_and_replay_at_fractional_scale() -
     .at_unit_scale();
     ui.layout(view, size)?;
     let frame = ui.record_frame(view)?;
-    let [one, two, Draw::Text { paragraph, .. }] = frame.draws() else {
+    let [first_bg, second_bg, one, two, Draw::Text { paragraph, .. }] = frame.draws() else {
         panic!("expected two decorated lines")
     };
     assert_eq!(paragraph.lines.len(), 2);
     assert!(paragraph.lines[1].glyphs.iter().any(|g| g.start == g.end));
+    for (bg, stroke) in [(first_bg, one), (second_bg, two)] {
+        let (
+            Draw::Fill {
+                origin, size, fill, ..
+            },
+            Draw::Fill {
+                origin: under,
+                size: extent,
+                ..
+            },
+        ) = (bg, stroke)
+        else {
+            panic!("expected highlight and underline");
+        };
+        assert_eq!(fill, &Fill::Solid(rgb(0xf2dbad)));
+        assert_eq!((origin.x, size.width), (under.x, extent.width));
+    }
     for draw in [one, two] {
         let Draw::Fill { origin, size, .. } = draw else {
             panic!("missing decoration")
@@ -133,5 +151,71 @@ fn wrapped_ellipsized_strokes_clip_to_content_and_replay_at_fractional_scale() -
     assert_eq!(at(8usize, 12usize), ink);
     assert_eq!(at(4, 12), rgb(0xffffff));
     assert_eq!(at(8, 66), rgb(0xffffff));
+    Ok(())
+}
+
+#[test]
+fn inherited_highlight_follows_aligned_ink_and_clips_the_last_line() -> Result<()> {
+    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let highlight = rgba(0xff000080);
+    let view = ui.mount(component(|_| {
+        div()
+            .text_bg(highlight)
+            .text_color(rgba(0))
+            .decoration_thickness(px(0.0))
+            .p(px(4.0))
+            .child(
+                text("ABC\n\nA")
+                    .text_right()
+                    .text_size(px(14.0))
+                    .line_height(px(20.0))
+                    .w(px(80.0))
+                    .h(px(45.0)),
+            )
+            .child(text("Clear").text_bg(rgba(0)))
+    }))?;
+    let size = DeviceSize {
+        width: 100,
+        height: 80,
+    }
+    .at_unit_scale();
+    ui.layout(view, size)?;
+    for _ in 0..3 {
+        let frame = ui.record_frame(view)?;
+        let [
+            Draw::Fill {
+                origin: a,
+                size: first,
+                ..
+            },
+            Draw::Fill {
+                origin: b,
+                size: last,
+                ..
+            },
+            Draw::Text { .. },
+            Draw::Text { .. },
+        ] = frame.draws()
+        else {
+            panic!("expected a highlight for each nonempty line of the first label");
+        };
+        assert_eq!((a.y, first.height), (px(4.0), px(20.0)));
+        assert_eq!((b.y, last.height), (px(44.0), px(5.0)));
+        assert!(b.x > a.x && a.x > px(4.0));
+        for (x, width) in [(a.x, first.width), (b.x, last.width)] {
+            assert!((x.get() + width.get() - 84.0).abs() < 0.01);
+        }
+        let scale = RasterScale(1.5);
+        let image = Surface::draw_view(&frame, scale.buffer_size(size)?, scale)?;
+        let pixel = |x: usize, y: usize| {
+            let offset = 4 * (y * image.size.width as usize + x);
+            &image.rgba[offset..offset + 4]
+        };
+        assert_eq!(pixel(124, 12), [255, 127, 127, 255]);
+        assert_eq!(pixel(15, 12), [255; 4]);
+        assert_eq!(pixel(124, 42), [255; 4]);
+        assert_eq!(pixel(124, 72), [255, 127, 127, 255]);
+        assert_eq!(pixel(124, 74), [255; 4]);
+    }
     Ok(())
 }

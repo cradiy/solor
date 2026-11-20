@@ -276,6 +276,11 @@ Descendants inherit the ordered list. A local list replaces it, and
 `.font_features([])` uses the font's shaping defaults. Measurement, wrapping
 and painting use the same shaped glyphs.
 
+Use `.text_bg(color)` to highlight the occupied width of each visual line.
+The highlight fills the line height behind glyphs and decorations and clips
+to the label's content box. Empty lines leave a gap. Descendants inherit the
+color and can clear it with `.text_bg(rgba(0))`.
+
 Use `.underline()` and `.line_through()` independently or together. Each
 visible line is decorated across its shaped advances inside the text content
 box. The face supplies the baseline offsets and natural thickness, with

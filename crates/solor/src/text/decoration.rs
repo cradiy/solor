@@ -44,6 +44,7 @@ impl FontStrokes {
 }
 
 pub(crate) struct Decorations {
+    pub background: Option<Rgba>,
     pub underline: Option<Stroke>,
     pub strike: Option<Stroke>,
     pub thickness: Option<Pixels>,
@@ -56,14 +57,16 @@ impl Text {
             return Err(LayoutError::InvalidSize);
         }
         self.decorations = text.attributes.as_deref().and_then(|attrs| {
-            let underline = attrs.underline == Some(true);
-            let strike = attrs.strikethrough == Some(true);
-            if (!underline && !strike) || text.decoration_thickness.is_some_and(|v| v.get() == 0.0)
-            {
+            let background = attrs.text_background.filter(|color| color.alpha != 0);
+            let strokes_visible = !text.decoration_thickness.is_some_and(|v| v.get() == 0.0);
+            let underline = strokes_visible && attrs.underline == Some(true);
+            let strike = strokes_visible && attrs.strikethrough == Some(true);
+            if background.is_none() && !underline && !strike {
                 return None;
             }
             let engine = self.engine.borrow();
             Some(Box::new(Decorations {
+                background,
                 underline: underline.then_some(engine.strokes.underline),
                 strike: strike.then_some(engine.strokes.strike),
                 thickness: text.decoration_thickness,

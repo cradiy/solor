@@ -69,6 +69,7 @@ pub(super) fn typography(spacing: Selection<3>) -> Div {
             div().flex_row().gap(px(9.0)).children([
                 label("Draft", 17.0, 32.0).line_through().text_color(MUTED),
                 label("Final", 17.0, 32.0)
+                    .text_bg(CITRON)
                     .underline()
                     .decoration_color(rgb(0x507448))
                     .decoration_thickness(px(1.5)),

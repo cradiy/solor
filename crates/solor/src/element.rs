@@ -16,7 +16,7 @@ use crate::length::UnitResolver;
 use crate::pointer::Handlers;
 use crate::style::{Align, Background, Corners, Foreground, TextStyleRefinement};
 use crate::style::{PointerEvents, Visibility};
-use crate::text::{Paragraph, Text, TextStyle};
+use crate::text::{Line, Paragraph, Text, TextStyle};
 use crate::{Fill, Pixels, Rgba, Style, StyleRefinement, Styled, StyledBody, px};
 
 /// Builds an element declaration when a component is attached.
@@ -101,6 +101,11 @@ impl Element for Text {
         let paragraph = self.resolve(Query::Exact(cx.size.width))?;
         let color = cx.text_color()?;
         let decorations = self.decorations.as_deref();
+        if let Some(background) = decorations.and_then(|d| d.background) {
+            cx.text_line_fills(&paragraph, background, |line| {
+                (line.top, line.top + line.height)
+            });
+        }
         if let Some(d) = decorations
             && let Some(stroke) = d.underline
         {
@@ -232,15 +237,27 @@ impl PaintContext<'_> {
         thickness: Option<Pixels>,
         color: Rgba,
     ) {
+        let em = paragraph.style.size.get();
+        let height = thickness.map_or(stroke.thickness * em, Pixels::get);
+        self.text_line_fills(paragraph, color, |line| {
+            let center = line.baseline - stroke.position * em;
+            (center - height * 0.5, center + height * 0.5)
+        });
+    }
+
+    fn text_line_fills(
+        &mut self,
+        paragraph: &Paragraph,
+        color: Rgba,
+        vertical_bounds: impl Fn(&Line) -> (f32, f32),
+    ) {
         if color.alpha == 0 {
             return;
         }
-        let em = paragraph.style.size.get();
-        let height = thickness.map_or(stroke.thickness * em, Pixels::get);
         for line in &paragraph.lines {
-            let center = line.baseline - stroke.position * em;
-            let top = (center - height * 0.5).max(0.0);
-            let bottom = (center + height * 0.5).min(self.size.height.get());
+            let (top, bottom) = vertical_bounds(line);
+            let top = top.max(0.0);
+            let bottom = bottom.min(self.size.height.get());
             let (left, right) = line
                 .glyphs
                 .iter()
@@ -422,11 +439,11 @@ impl MountedNode {
             visible: local_visible,
             fixed_label: fixed_label
                 && style.background.is_none()
-                && !style
-                    .text
-                    .attributes
-                    .as_deref()
-                    .is_some_and(|a| a.underline == Some(true) || a.strikethrough == Some(true))
+                && !style.text.attributes.as_deref().is_some_and(|a| {
+                    a.underline == Some(true)
+                        || a.strikethrough == Some(true)
+                        || a.text_background.is_some_and(|color| color.alpha != 0)
+                })
                 && matches!(style.text.color, Foreground::Fixed(_))
                 && matches!(paint_mode, RefreshPolicy::Fixed(RefreshMode::OnDemand)),
             paint_mode,
