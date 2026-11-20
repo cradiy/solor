@@ -253,6 +253,14 @@ Descendants inherit the ordered list. A local list replaces it, and
 `.font_features([])` uses the font's shaping defaults. Measurement, wrapping
 and painting use the same shaped glyphs.
 
+Use `.underline()` and `.line_through()` independently or together. Each
+visible line is decorated across its shaped advances inside the text content
+box. The face supplies the baseline offsets and natural thickness, with
+em-based defaults for missing metrics. Strokes follow the text foreground.
+Use `.decoration_color(color)` and `.decoration_thickness(px(1.5))` to override
+them. Thickness also accepts rem units. Children can disable an inherited
+stroke with `.text_underline(false)` or `.text_strikethrough(false)`.
+
 `.letter_spacing(px(0.75))` adds 0.75 logical pixels to each shaped
 glyph's advance, including the final advance in the line width. A ligature
 receives one adjustment. Negative values tighten the text. Values in rems
@@ -346,7 +354,7 @@ expresses placement but does not yet move a child or remove it from column flow.
 | 1. Frame composition, clipping and hit testing | Compose parent-local coordinates, scale, clips and sibling order into one accepted frame. Move a rounded card over another target, fail one submission, then retry. Pixels and click targets must agree with the last accepted frame. Old bounds must be repaired when a wrapped label moves its siblings. |
 | 2. Sizing, placement and scrolling | Apply positioning and per-edge borders during measurement and placement. Resolve scrolling and overflow. Validate a long label between a fixed icon and an action at narrow and wide widths. Scrolling must share the visual clip and hit-test transform. |
 | 3. Input and state-dependent styles | Connect platform pointer adapters and define propagation, keyboard focus, tab order and actions. Define precedence for hover, press, focus and disabled states, including removing an override. Validate a pressed element that moves, loses capture or unmounts before release. |
-| 4. Text, editing and semantics | Apply font selection and fallback, weight, wrapping/truncation and decoration. Define editable ranges, composition, caret bounds and accessibility actions. A bilingual field must expose the same selection to keyboard, IME and assistive input. Preserve explicit units when converting platform text ranges. |
+| 4. Text, editing and semantics | Apply font selection and fallback, weight and richer inline styles. Define editable ranges, composition, caret bounds and accessibility actions. A bilingual field must expose the same selection to keyboard, IME and assistive input. Preserve explicit units when converting platform text ranges. |
 | 5. Paint and animation | Define border and shadow paint order, opacity of overlapping descendants, transformed and rounded clipping, and animation timing. A frame-clock repaint must stop on unmount. CPU replay must draw every gradient stop, preserve hard edges and match the declared interpolation. A GPU representation needs equivalent output and a resource lifetime through submission. |
 | 6. Large collections and resources | Define keyed identity, viewport materialization, scroll anchoring, image/font resource ownership and cancellation. Replace and reorder items while keeping focus on a surviving key. Late resource completion must not invalidate a recycled node. |
 

@@ -62,6 +62,8 @@ pub struct Typography {
     pub line_height: Pixels,
     /// Additional horizontal advance per shaped glyph, in logical pixels.
     pub letter_spacing: Pixels,
+    /// Resolved stroke thickness. The selected face supplies the default.
+    pub decoration_thickness: Option<Pixels>,
     /// Foreground used to record glyphs.
     pub color: Foreground,
 }
@@ -72,6 +74,7 @@ impl Default for Typography {
             size: px(16.0),
             line_height: px(24.0),
             letter_spacing: px(0.0),
+            decoration_thickness: None,
             color: Foreground::Fixed(Rgba::new(0, 0, 0, 255)),
         }
     }
@@ -202,6 +205,14 @@ impl Style {
             .and_then(|a| a.letter_spacing)
         {
             self.text.letter_spacing = units.absolute(spacing);
+        }
+        if let Some(thickness) = self
+            .text
+            .attributes
+            .as_deref()
+            .and_then(|a| a.decoration_thickness)
+        {
+            self.text.decoration_thickness = Some(units.absolute(thickness));
         }
         text
     }

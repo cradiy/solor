@@ -94,16 +94,30 @@ impl Element for Text {
             line_height: style.text.line_height,
         })?;
         self.set_paragraph_style(style.text.attributes.as_deref(), style.text.letter_spacing);
+        self.set_decorations(&style.text)?;
         Ok(())
     }
     fn paint(&self, cx: &mut PaintContext) -> Result<()> {
+        let paragraph = self.resolve(Query::Exact(cx.size.width))?;
+        let color = cx.text_color()?;
+        let decorations = self.decorations.as_deref();
+        if let Some(d) = decorations
+            && let Some(stroke) = d.underline
+        {
+            cx.text_stroke(&paragraph, stroke, d.thickness, d.color.unwrap_or(color));
+        }
         cx.commands.push(Draw::Text {
             clip: cx.clip.clone(),
             origin: cx.origin,
             size: cx.size,
-            paragraph: self.resolve(Query::Exact(cx.size.width))?,
-            color: cx.text_color()?,
+            paragraph: Rc::clone(&paragraph),
+            color,
         });
+        if let Some(d) = decorations
+            && let Some(stroke) = d.strike
+        {
+            cx.text_stroke(&paragraph, stroke, d.thickness, d.color.unwrap_or(color));
+        }
         Ok(())
     }
 }
@@ -175,6 +189,48 @@ impl PaintContext<'_> {
     /// Call on each paint while animation is active. Requests from siblings coalesce.
     pub fn request_animation_frame(&mut self) {
         self.next_frame = true;
+    }
+
+    fn text_stroke(
+        &mut self,
+        paragraph: &Paragraph,
+        stroke: crate::text::Stroke,
+        thickness: Option<Pixels>,
+        color: Rgba,
+    ) {
+        if color.alpha == 0 {
+            return;
+        }
+        let em = paragraph.style.size.get();
+        let height = thickness.map_or(stroke.thickness * em, Pixels::get);
+        for line in &paragraph.lines {
+            let center = line.baseline - stroke.position * em;
+            let top = (center - height * 0.5).max(0.0);
+            let bottom = (center + height * 0.5).min(self.size.height.get());
+            let (left, right) = line
+                .glyphs
+                .iter()
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(left, right), g| {
+                    (left.min(g.x), right.max(g.x + g.width))
+                });
+            let left = left.max(0.0);
+            let right = right.min(self.size.width.get());
+            if right > left && bottom > top {
+                self.commands.push(Draw::Fill {
+                    origin: Origin {
+                        x: self.origin.x + px(left),
+                        y: self.origin.y + px(top),
+                    },
+                    size: Size {
+                        width: px(right - left),
+                        height: px(bottom - top),
+                    },
+                    fill: color.into(),
+                    clip: self.clip.clone(),
+                    corner_radii: Corners::default(),
+                });
+            }
+        }
     }
 
     /// Records a rectangle at the content origin.
@@ -262,6 +318,11 @@ impl MountedNode {
             visible: local_visible,
             fixed_label: fixed_label
                 && style.background.is_none()
+                && !style
+                    .text
+                    .attributes
+                    .as_deref()
+                    .is_some_and(|a| a.underline == Some(true) || a.strikethrough == Some(true))
                 && matches!(style.text.color, Foreground::Fixed(_))
                 && matches!(paint_mode, RefreshPolicy::Fixed(RefreshMode::OnDemand)),
             paint_mode,

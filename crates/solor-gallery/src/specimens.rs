@@ -41,21 +41,39 @@ pub(super) fn typography(spacing: Selection<3>) -> Div {
         div()
             .flex_row()
             .gap(px(12.0))
-            .children([("Enabled", 1), ("Disabled", 0)].map(|(name, value)| {
-                div()
-                    .flex_1()
-                    .rounded(px(10.0))
-                    .bg(rgb(0xeeeee6))
-                    .px(px(14.0))
-                    .py(px(8.0))
-                    .child(label(name, 12.0, 20.0).text_color(MUTED))
-                    .child(
-                        label("office  fi  fl", 25.0, 36.0).font_features([FontFeature {
-                            tag: *b"liga",
-                            value,
-                        }]),
-                    )
-            }));
+            .children(
+                [("Ligatures on", 1), ("Ligatures off", 0)].map(|(name, value)| {
+                    div()
+                        .flex_1()
+                        .rounded(px(10.0))
+                        .bg(rgb(0xeeeee6))
+                        .px(px(14.0))
+                        .py(px(8.0))
+                        .child(label(name, 12.0, 20.0).text_color(MUTED))
+                        .child(
+                            label("office  fi  fl", 25.0, 36.0).font_features([FontFeature {
+                                tag: *b"liga",
+                                value,
+                            }]),
+                        )
+                }),
+            );
+    let revision = div()
+        .flex_1()
+        .rounded(px(10.0))
+        .bg(rgb(0xe6ede4))
+        .px(px(14.0))
+        .py(px(8.0))
+        .child(label("Revision", 12.0, 20.0).text_color(MUTED))
+        .child(
+            div().flex_row().gap(px(9.0)).children([
+                label("Draft", 17.0, 32.0).line_through().text_color(MUTED),
+                label("Final", 17.0, 32.0)
+                    .underline()
+                    .decoration_color(rgb(0x507448))
+                    .decoration_thickness(px(1.5)),
+            ]),
+        );
     page(
         "Typography",
         control(
@@ -63,7 +81,7 @@ pub(super) fn typography(spacing: Selection<3>) -> Div {
             spacing.buttons(["Tight", "Natural", "Wide"], false),
         ),
         specimen,
-        details("Standard ligatures", comparison),
+        details("Text features", comparison.child(revision)),
     )
 }
 

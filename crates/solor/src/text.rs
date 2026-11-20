@@ -1,3 +1,7 @@
+mod decoration;
+pub(crate) use decoration::Stroke;
+use decoration::{Decorations, FontStrokes};
+
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::num::NonZeroUsize;
@@ -207,6 +211,7 @@ pub struct Engine {
     fonts: FontSystem,
     face: fontdb::ID,
     ellipsis: &'static str,
+    strokes: FontStrokes,
     /// Cumulative request, cache and shaping counts.
     pub counts: Counts,
 }
@@ -237,10 +242,10 @@ impl Engine {
             .ok_or(LayoutError::Node("font has no family"))?
             .0
             .clone();
-        let has_ellipsis = ttf_parser::Face::parse(bytes.as_slice(), face.index)
-            .map_err(|_| LayoutError::Node("invalid font face"))?
-            .glyph_index('…')
-            .is_some();
+        let parsed = ttf_parser::Face::parse(bytes.as_slice(), face.index)
+            .map_err(|_| LayoutError::Node("invalid font face"))?;
+        let has_ellipsis = parsed.glyph_index('…').is_some();
+        let strokes = FontStrokes::new(&parsed);
         let face = face.id;
         if faces.next().is_some() {
             return Err(LayoutError::Node("expected a single font face"));
@@ -249,6 +254,7 @@ impl Engine {
         db.set_sans_serif_family(family);
         Ok(Rc::new(RefCell::new(Self {
             bytes,
+            strokes,
             fonts: FontSystem::new_with_locale_and_db(locale.into(), db),
             face,
             ellipsis: if has_ellipsis { "…" } else { "..." },
@@ -451,6 +457,7 @@ pub struct Text {
     content: SharedString,
     style: TextStyle,
     paragraph: ParagraphStyle,
+    pub(crate) decorations: Option<Box<Decorations>>,
     cache: RefCell<VecDeque<Cached>>,
     cache_enabled: bool,
 }
@@ -470,6 +477,7 @@ impl Text {
             content: content.into(),
             style,
             paragraph: ParagraphStyle::from_attributes(None, px(0.0)),
+            decorations: None,
             cache: RefCell::default(),
             cache_enabled,
         })
