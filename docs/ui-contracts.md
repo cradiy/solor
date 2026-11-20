@@ -12,8 +12,11 @@ The Markets tab runs a deterministic feed of six instruments. Each host frame
 advances 32 ticks per instrument and appends the latest price to a 96-sample
 history. The green price line and amber 16-sample moving average share the same
 axis. A translucent polygon marks the area under the price line. Scroll vertically over the plot to zoom its latest 12 to 96 samples.
-The price axis retains the full history range. Pause freezes
-the feed and releases its frame request. Callback FPS counts intervals between
+The price axis retains the full history range. Each instrument owns a signal
+with a fixed-size history updated in place. The chart reads the selected
+instrument during paint. Its `on_frame_when(running, handler)` callback advances
+the feed while playing. Pausing releases the frame request and keeps the same
+chart mounted for selection, hover and zoom. Callback FPS counts intervals between
 host frame opportunities over at least one second of elapsed monotonic time.
 
 For unpaced CPU measurements, run

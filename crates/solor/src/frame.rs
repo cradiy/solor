@@ -165,8 +165,9 @@ impl Ui {
             if let Some(handler) = instance.frame_handlers.get_mut(id)
                 && let Some(node) = instance.bodies.get_mut(id)
                 && node.visible
+                && handler.is_enabled(self.state.get_mut())?
             {
-                handler(
+                (handler.callback)(
                     now,
                     &mut crate::Context {
                         state: self.state.get_mut(),
@@ -185,8 +186,14 @@ impl Ui {
         let instance = self.instance(view)?;
         let pointer = self.prepare_pointer_frame(view)?;
         let cache = &instance.fixed_labels;
-        let mut next_frame = !pointer.frame_listeners().is_empty();
         let mut state = self.state.try_borrow_mut()?;
+        let mut next_frame = false;
+        for id in pointer.frame_listeners() {
+            if instance.frame_handlers[id].is_enabled(&state)? {
+                next_frame = true;
+                break;
+            }
+        }
         let mut draws = Vec::new();
         if let Some(labels) = cache.labels.get() {
             draws.reserve(labels.len());

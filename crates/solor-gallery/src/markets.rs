@@ -2,19 +2,15 @@
 mod chart;
 use chart::Chart;
 
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-    time::Duration,
-};
+use std::{cell::Cell, time::Duration};
 
 use anyhow::Result;
 use solor::{
-    Context, Div, Fill, IntoElement, RefreshMode, SharedString, Signal, Styled, component, div,
-    element, px, rgb, text,
+    Context, Div, Fill, IntoElement, SharedString, Signal, Styled, component, div, element, px,
+    rgb, text,
 };
 
-use crate::{Selection, label};
+use crate::label;
 
 const SYMBOLS: [(&str, &str, i32); 6] = [
     ("ORBX", "Orbex Freight", 4895),
@@ -111,7 +107,7 @@ impl Tape {
     }
 }
 
-type Feed = Rc<RefCell<[Tape; SYMBOLS.len()]>>;
+type Feed = [Signal<Tape>; SYMBOLS.len()];
 
 #[derive(Clone, Copy)]
 struct Quotes {
@@ -135,13 +131,13 @@ fn price(cents: i32) -> SharedString {
 }
 
 impl Quotes {
-    fn detail(&self, cx: &mut Context<'_>, tape: &Tape) -> Result<()> {
-        let (lo, hi) = tape.range();
+    fn detail(&self, cx: &mut Context<'_>, i: usize, tape: Signal<Tape>) -> Result<()> {
+        let (lo, hi) = cx.read(tape)?.range();
         cx.set(self.high, price(hi))?;
         cx.set(self.low, price(lo))?;
-        cx.set(self.last, price(tape.price))?;
-        cx.set(self.change, tape.change())?;
-        cx.set(self.ink, tape.ink())
+        cx.set(self.last, cx.read(self.rows[i])?.clone())?;
+        cx.set(self.change, cx.read(self.row_change[i])?.clone())?;
+        cx.set(self.ink, *cx.read(self.row_ink[i])?)
     }
 }
 
@@ -157,7 +153,7 @@ fn watchlist(quotes: Quotes, feed: Feed) -> Div {
             .child(label("6 symbols", 11.0, 18.0).text_color(DIM)),
     );
     for (i, &(symbol, name, _)) in SYMBOLS.iter().enumerate() {
-        let feed = feed.clone();
+        let tape = feed[i];
         list = list.child(
             div()
                 .px(px(14.0))
@@ -197,7 +193,7 @@ fn watchlist(quotes: Quotes, feed: Feed) -> Div {
                     cx.set(quotes.symbol, symbol.into())?;
                     cx.set(quotes.name, name.into())?;
                     cx.set(quotes.reference, price(SYMBOLS[i].2))?;
-                    quotes.detail(cx, &feed.borrow()[i])
+                    quotes.detail(cx, i, tape)
                 }),
         );
     }
@@ -208,32 +204,36 @@ fn live_updates(
     feed: Feed,
     quotes: Quotes,
     fps: Signal<SharedString>,
+    timing: Signal<Option<(Duration, u32)>>,
 ) -> impl FnMut(Duration, &mut Context<'_>) -> Result<()> {
-    let mut start: Option<Duration> = None;
-    let mut intervals = 0u32;
     move |now, cx| {
-        let mut data = feed.borrow_mut();
-        for (i, tape) in data.iter_mut().enumerate() {
-            tape.advance();
-            cx.set(quotes.rows[i], price(tape.price))?;
-            cx.set(quotes.row_change[i], tape.change())?;
-            cx.set(quotes.row_ink[i], tape.ink())?;
+        for (i, tape) in feed.iter().copied().enumerate() {
+            let (last, change, ink) = cx.update_in_place(tape, |tape| {
+                tape.advance();
+                (price(tape.price), tape.change(), tape.ink())
+            })?;
+            cx.set(quotes.rows[i], last)?;
+            cx.set(quotes.row_change[i], change)?;
+            cx.set(quotes.row_ink[i], ink)?;
         }
         let i = *cx.read(quotes.selected)?;
-        quotes.detail(cx, &data[i])?;
-        if let Some(first) = start {
-            intervals += 1;
-            let elapsed = now.saturating_sub(first);
-            if elapsed >= Duration::from_secs(1) {
-                cx.set(
-                    fps,
-                    format!("{:.1}", f64::from(intervals) / elapsed.as_secs_f64()).into(),
-                )?;
-                start = Some(now);
-                intervals = 0;
+        quotes.detail(cx, i, feed[i])?;
+        let rate = cx.update_in_place(timing, |sample| {
+            let Some((start, intervals)) = sample else {
+                *sample = Some((now, 0));
+                return None;
+            };
+            *intervals += 1;
+            let elapsed = now.saturating_sub(*start);
+            if elapsed < Duration::from_secs(1) {
+                return None;
             }
-        } else {
-            start = Some(now);
+            let rate = f64::from(*intervals) / elapsed.as_secs_f64();
+            *sample = Some((now, 0));
+            Some(rate)
+        })?;
+        if let Some(rate) = rate {
+            cx.set(fps, format!("{rate:.1}").into())?;
         }
         Ok(())
     }
@@ -241,29 +241,29 @@ fn live_updates(
 
 pub(super) fn market() -> impl IntoElement {
     component(|cx| {
-        let feed: Feed = Rc::new(RefCell::new(std::array::from_fn(|i| {
-            Tape::new(SYMBOLS[i].2, 9127 + i as u32 * 31)
-        })));
-        let (lo, hi) = feed.borrow()[0].range();
+        let tapes: [Tape; SYMBOLS.len()] =
+            std::array::from_fn(|i| Tape::new(SYMBOLS[i].2, 9127 + i as u32 * 31));
+        let (lo, hi) = tapes[0].range();
         let quotes = Quotes {
             reference: cx.signal(price(SYMBOLS[0].2)),
             low: cx.signal(price(lo)),
             high: cx.signal(price(hi)),
-            row_change: std::array::from_fn(|i| cx.signal(feed.borrow()[i].change())),
-            row_ink: std::array::from_fn(|i| cx.signal(feed.borrow()[i].ink())),
+            row_change: std::array::from_fn(|i| cx.signal(tapes[i].change())),
+            row_ink: std::array::from_fn(|i| cx.signal(tapes[i].ink())),
             selected: cx.signal(0),
-            rows: std::array::from_fn(|i| cx.signal(price(feed.borrow()[i].price))),
+            rows: std::array::from_fn(|i| cx.signal(price(tapes[i].price))),
             highlight: std::array::from_fn(|i| {
                 cx.signal(if i == 0 { ACTIVE.into() } else { PANEL.into() })
             }),
             symbol: cx.signal(SYMBOLS[0].0.into()),
             name: cx.signal(SYMBOLS[0].1.into()),
-            last: cx.signal(price(feed.borrow()[0].price)),
-            change: cx.signal(feed.borrow()[0].change()),
-            ink: cx.signal(feed.borrow()[0].ink()),
+            last: cx.signal(price(tapes[0].price)),
+            change: cx.signal(tapes[0].change()),
+            ink: cx.signal(tapes[0].ink()),
         };
-        let playback = Selection::new(cx, 0);
-        let [running, paused] = playback.0;
+        let feed = tapes.map(|tape| cx.signal(tape));
+        let running = cx.signal(true);
+        let timing = cx.signal(None);
         let fps = cx.signal(SharedString::from("--"));
         let action = cx.signal(SharedString::from("Pause"));
         let toolbar = div()
@@ -307,7 +307,8 @@ pub(super) fn market() -> impl IntoElement {
                             .cursor_pointer()
                             .on_click(move |cx| {
                                 let run = !*cx.read(running)?;
-                                playback.select(usize::from(!run), cx)?;
+                                cx.set(running, run)?;
+                                cx.set(timing, None)?;
                                 cx.set(fps, "--".into())?;
                                 cx.set(action, if run { "Pause" } else { "Resume" }.into())
                             }),
@@ -408,36 +409,16 @@ pub(super) fn market() -> impl IntoElement {
                         }
                         Ok(())
                     })
-                    .child_when(running, {
-                        let feed = feed.clone();
-                        move || {
-                            element(Chart {
-                                feed: feed.clone(),
-                                selected: quotes.selected,
-                                visible,
-                                show_latest,
-                            })
-                            .flex_1()
-                            .refresh_mode(RefreshMode::Continuous)
-                            .on_frame(live_updates(
-                                feed.clone(),
-                                quotes,
-                                fps,
-                            ))
-                        }
-                    })
-                    .child_when(paused, {
-                        let feed = feed.clone();
-                        move || {
-                            element(Chart {
-                                feed: feed.clone(),
-                                selected: quotes.selected,
-                                visible,
-                                show_latest,
-                            })
-                            .flex_1()
-                        }
-                    })
+                    .child(
+                        element(Chart {
+                            feed,
+                            selected: quotes.selected,
+                            visible,
+                            show_latest,
+                        })
+                        .flex_1()
+                        .on_frame_when(running, live_updates(feed, quotes, fps, timing)),
+                    )
                     .child(
                         div()
                             .w(px(43.0))
@@ -461,7 +442,7 @@ pub(super) fn market() -> impl IntoElement {
                     )
                     .child(label("Latest price", 11.0, 18.0)),
             );
-        let rows = watchlist(quotes, feed.clone());
+        let rows = watchlist(quotes, feed);
         div()
             .flex_1()
             .items_stretch()

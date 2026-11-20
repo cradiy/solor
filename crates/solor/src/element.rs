@@ -548,7 +548,21 @@ impl MountedNode {
     }
 }
 
-pub(super) type FrameHandler = Box<dyn FnMut(std::time::Duration, &mut Context<'_>) -> Result<()>>;
+type FrameCallback = Box<dyn FnMut(std::time::Duration, &mut Context<'_>) -> Result<()>>;
+
+pub(super) struct FrameHandler {
+    enabled: Option<Signal<bool>>,
+    pub callback: FrameCallback,
+}
+
+impl FrameHandler {
+    pub fn is_enabled(&self, state: &Runtime<()>) -> Result<bool> {
+        match self.enabled {
+            Some(source) => Ok(*state.read(source)?),
+            None => Ok(true),
+        }
+    }
+}
 
 pub(super) struct Installation {
     pub on_frame: Option<FrameHandler>,
@@ -613,6 +627,13 @@ impl AnyElement {
     ) -> Self {
         Self(Box::new(move |target, cx, units| {
             let mut node = make(cx)?;
+            if let Some(source) = node.on_frame.as_ref().and_then(|handler| handler.enabled) {
+                node.watches.push(Box::new(move |cx, target, _, _, _| {
+                    // Wake an idle host. Frame scheduling reads the live gate directly.
+                    cx.state.observe(source.id(), target, || {})?;
+                    Ok(())
+                }));
+            }
             let inherited = match &target {
                 Target::Root(_) => &InheritedText::default(),
                 Target::Child { inherited, .. } => inherited,
@@ -770,7 +791,24 @@ impl<E: Element> Node<E> {
         mut self,
         handler: impl FnMut(std::time::Duration, &mut Context<'_>) -> Result<()> + 'static,
     ) -> Self {
-        self.on_frame = Some(Box::new(handler));
+        self.on_frame = Some(FrameHandler {
+            enabled: None,
+            callback: Box::new(handler),
+        });
+        self
+    }
+
+    /// Requests host frames while this node is visible and `enabled` is true.
+    /// Disabling the signal skips pending callbacks and retains the handler's state.
+    pub fn on_frame_when(
+        mut self,
+        enabled: Signal<bool>,
+        handler: impl FnMut(std::time::Duration, &mut Context<'_>) -> Result<()> + 'static,
+    ) -> Self {
+        self.on_frame = Some(FrameHandler {
+            enabled: Some(enabled),
+            callback: Box::new(handler),
+        });
         self
     }
 
