@@ -100,6 +100,15 @@ padding adds to the preferred outer size. Percentages use the parent's
 definite content dimension on the same axis. Text wraps within the allocated
 content width.
 
+Use `.aspect_ratio(width / height)` to derive an automatic dimension from
+a definite one, or `.aspect_square()` for a ratio of one. Ratios must be
+positive and finite. By default the ratio applies to the border box. With
+`BoxSizing::ContentBox` it applies inside the padding. A flex allocation
+can supply the definite dimension, so a growing preview can reserve its
+height at its final width. Explicit dimensions, size limits and stretch
+allocations take precedence. When both dimensions are intrinsic, the
+content supplies the preferred size.
+
 Use `.min_w(...)` and `.max_w(...)` to limit a child's preferred or stretched
 width. Both use the selected box model. The minimum takes precedence when the
 limits conflict and can make a flex item overflow the space between its

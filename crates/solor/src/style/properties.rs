@@ -70,7 +70,7 @@ properties! {
         max_width: Length,
         /// Maximum vertical size.
         max_height: Length,
-        /// Preferred width divided by height.
+        /// Preferred width divided by height. Must be finite and greater than zero.
         aspect_ratio: f32,
         /// Horizontal overflow policy.
         overflow_x: Overflow,

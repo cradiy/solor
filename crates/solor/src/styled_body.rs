@@ -14,6 +14,7 @@ pub(crate) struct StyledBody<E> {
     margins: Option<Box<Edges<Option<ComputedLength>>>>,
     inset: Size,
     box_sizing: BoxSizing,
+    aspect_ratio: Option<f32>,
     width: Option<ComputedLength>,
     height: Option<ComputedLength>,
 }
@@ -33,6 +34,10 @@ fn map_edges<T, U>(edges: Edges<T>, mut f: impl FnMut(T) -> Result<U>) -> Result
 
 impl<E> StyledBody<E> {
     pub fn new(content: E, style: &Style, units: UnitResolver) -> Result<Self> {
+        let aspect_ratio = style.layout.as_ref().and_then(|layout| layout.aspect_ratio);
+        if aspect_ratio.is_some_and(|ratio| !ratio.is_finite() || ratio <= 0.0) {
+            return Err(LayoutError::InvalidSize);
+        }
         let p = style.padding;
         if [p.top, p.right, p.bottom, p.left]
             .iter()
@@ -51,6 +56,7 @@ impl<E> StyledBody<E> {
         Ok(Self {
             margins,
             content,
+            aspect_ratio,
             padding: p,
             box_sizing: style
                 .layout
@@ -168,12 +174,12 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
     fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
         let inner = |w: Pixels| w.saturating_sub(self.inset.width);
         let basis = cx.containing_block();
-        let width = match cx.item_basis {
+        let mut width = match cx.item_basis {
             ItemBasis::Width(width) => width,
             _ => border_extent(self.width, basis.width, self.sizing_extra(self.inset.width))?,
         };
         let range = cx.height_range;
-        let height = match cx.item_basis {
+        let mut height = match cx.item_basis {
             ItemBasis::Height(height) => height,
             _ => border_extent(
                 self.height,
@@ -183,6 +189,24 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
         }
         .map(|h| range.clamp(h))
         .or_else(|| range.fixed());
+        if let Some(ratio) = self.aspect_ratio {
+            let used_width = match query {
+                Query::Exact(w) => Some(w),
+                _ => width.map(|w| query.resolve(w)),
+            };
+            let inset_x = self.sizing_extra(self.inset.width);
+            let inset_y = self.sizing_extra(self.inset.height);
+            match (used_width, height) {
+                (Some(w), None) => {
+                    let derived = add(w.saturating_sub(inset_x) / ratio, inset_y)?;
+                    height = Some(range.clamp(derived));
+                }
+                (None, Some(h)) => {
+                    width = Some(add(h.saturating_sub(inset_y) * ratio, inset_x)?);
+                }
+                _ => {}
+            }
+        }
         let content_query = match (query, width) {
             (_, Some(w)) => Query::Exact(inner(query.resolve(w))),
             (Query::Natural, None) => Query::Natural,

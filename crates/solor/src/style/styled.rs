@@ -218,6 +218,10 @@ pub trait Styled: Sized {
     fn h_full(self) -> Self {
         self.h(percent(100.0))
     }
+    /// Requests equal width and height when one dimension is automatic.
+    fn aspect_square(self) -> Self {
+        self.aspect_ratio(1.0)
+    }
     /// Declares a zero-percent basis and grow and shrink factors of one.
     fn flex_1(self) -> Self {
         self.flex_grow(1.0)
