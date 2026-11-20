@@ -6,6 +6,9 @@ meter's fill while its bounds and its siblings stay fixed. The contract for
 each property must identify who owns it, which descendants inherit it, which
 stage consumes it, and how a host learns about the resulting work.
 
+Run `cargo run -p solor-gallery --release` in a Linux Wayland session to compare
+letter spacing, OpenType ligatures, gradient geometry and flex distribution.
+
 ## Implemented boundaries
 
 | Interface | Current behavior |

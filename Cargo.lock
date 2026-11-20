@@ -426,6 +426,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "solor-gallery"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "solor",
+ "solor-linux",
+ "solor-render-cpu",
+]
+
+[[package]]
 name = "solor-linux"
 version = "0.1.0"
 dependencies = [

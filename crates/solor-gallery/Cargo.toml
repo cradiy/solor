@@ -1,0 +1,17 @@
+[package]
+name = "solor-gallery"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+description = "An interactive gallery of Solor interface primitives"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+solor.workspace = true
+solor-render-cpu = { path = "../solor-render-cpu" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+solor-linux = { path = "../solor-linux" }

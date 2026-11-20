@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/solor", "crates/solor-linux", "crates/solor-render-cpu"]
+members = ["crates/solor", "crates/solor-gallery", "crates/solor-linux", "crates/solor-render-cpu"]
 resolver = "3"
 
 [workspace.package]
