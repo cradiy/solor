@@ -117,7 +117,7 @@ impl MountedNode {
             &instance.scene,
             state,
             &instance.paint_reads,
-            Some(clips),
+            Some((clips, offset)),
             draws,
         )?;
         for draw in &mut draws[start..] {
@@ -127,14 +127,9 @@ impl MountedNode {
                 | Draw::Polyline { origin, .. }
                 | Draw::Text { origin, .. } => origin,
             };
-            origin.x = offset
-                .x
-                .checked_add(origin.x)
-                .context("paint x outside layout range")?;
-            origin.y = offset
-                .y
-                .checked_add(origin.y)
-                .context("paint y outside layout range")?;
+            *origin = offset
+                .checked_add(*origin)
+                .context("paint origin outside layout range")?;
         }
         if !self.fixed_label {
             instance.observe_paint(self.id, state)?;

@@ -391,6 +391,13 @@ fn progress_bar(progress: Signal<f32>) -> Div {
 }
 ```
 
+Use `cx.with_clip(offset, size, |cx| ...)` to crop part of a drawing, such as
+the price trace inside a plot. The rectangle uses the same content-local
+coordinates as `fill_rect`. Each nested rectangle intersects the active clip
+and any ancestor overflow clip. When the callback returns, subsequent commands
+use the enclosing clip. Children and pointer hit testing follow the container's
+layout and overflow styles.
+
 ## Framework boundary
 
 The progress bar is an application function built with the same container as the

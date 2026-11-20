@@ -180,6 +180,15 @@ pub struct Origin {
     pub y: Pixels,
 }
 
+impl Origin {
+    pub(crate) fn checked_add(self, offset: Self) -> Option<Self> {
+        Some(Self {
+            x: self.x.checked_add(offset.x)?,
+            y: self.y.checked_add(offset.y)?,
+        })
+    }
+}
+
 /// Measured or assigned size and its optional text baseline.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Metrics {

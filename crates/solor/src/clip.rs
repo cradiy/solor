@@ -19,6 +19,16 @@ pub struct ContentClip {
 }
 
 impl ContentClip {
+    pub(crate) fn intersect_rect(mut self, origin: Origin, size: Size) -> Result<Self> {
+        anyhow::ensure!(
+            size.width.is_extent() && size.height.is_extent(),
+            "invalid clip extent"
+        );
+        intersect_axis(&mut self.x, origin.x, size.width)?;
+        intersect_axis(&mut self.y, origin.y, size.height)?;
+        Ok(self)
+    }
+
     pub(crate) fn contains(&self, point: Origin) -> bool {
         self.x.as_ref().is_none_or(|x| x.contains(&point.x))
             && self.y.as_ref().is_none_or(|y| y.contains(&point.y))

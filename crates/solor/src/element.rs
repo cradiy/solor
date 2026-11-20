@@ -187,6 +187,8 @@ pub enum Draw {
 /// Local content bounds, inherited color and state access during recording.
 pub struct PaintContext<'a> {
     origin: Origin,
+    // Position of this node's border box in the clip coordinate system.
+    frame_offset: Origin,
     /// Assigned content area after removing padding.
     pub size: Size,
     text_color: Foreground,
@@ -231,6 +233,45 @@ impl<'paint> PaintContext<'paint> {
     /// Call on each paint while animation is active. Requests from siblings coalesce.
     pub fn request_animation_frame(&mut self) {
         self.next_frame = true;
+    }
+
+    /// Clips drawing inside the callback to a rectangle in content-local coordinates.
+    /// Nested clips intersect. The drawing origin and content size stay the same.
+    /// An error discards the callback's commands and frame request.
+    pub fn with_clip<R>(
+        &mut self,
+        offset: Origin,
+        size: Size,
+        draw: impl FnOnce(&mut PaintContext<'_>) -> Result<R>,
+    ) -> Result<R> {
+        let origin = self
+            .origin
+            .checked_add(offset)
+            .and_then(|local| self.frame_offset.checked_add(local))
+            .context("invalid clip origin")?;
+        let clip = self
+            .clip
+            .as_deref()
+            .cloned()
+            .unwrap_or_default()
+            .intersect_rect(origin, size)?;
+        let start = self.commands.len();
+        let mut scoped = PaintContext {
+            commands: self.commands,
+            clip: Some(Arc::new(clip)),
+            next_frame: false,
+            ..*self
+        };
+        match draw(&mut scoped) {
+            Ok(value) => {
+                self.next_frame |= scoped.next_frame;
+                Ok(value)
+            }
+            Err(error) => {
+                self.commands.truncate(start);
+                Err(error)
+            }
+        }
     }
 
     fn text_stroke(
@@ -337,18 +378,10 @@ impl<'paint> PaintContext<'paint> {
             size.width.is_extent() && size.height.is_extent(),
             "invalid fill extent"
         );
-        let origin = Origin {
-            x: self
-                .origin
-                .x
-                .checked_add(offset.x)
-                .context("invalid fill x")?,
-            y: self
-                .origin
-                .y
-                .checked_add(offset.y)
-                .context("invalid fill y")?,
-        };
+        let origin = self
+            .origin
+            .checked_add(offset)
+            .context("invalid fill origin")?;
         self.record_fill(origin, size, fill.into());
         Ok(())
     }
@@ -496,7 +529,7 @@ impl MountedNode {
         scene: &Scene,
         state: &Runtime<()>,
         reads: &RefCell<Vec<SignalId>>,
-        frame_clips: Option<&NodeClips>,
+        frame_clips: Option<(&NodeClips, Origin)>,
         commands: &mut Vec<Draw>,
     ) -> Result<bool> {
         if scene.is_pending() {
@@ -510,15 +543,16 @@ impl MountedNode {
         let start = commands.len();
         let size = geometry.metrics.size;
         let local_clips;
-        let clips = match frame_clips {
-            Some(clips) => clips,
+        let (clips, frame_offset) = match frame_clips {
+            Some(frame) => frame,
             None => {
                 local_clips = self.overflow_clip.resolve(None, Origin::default(), size)?;
-                &local_clips
+                (&local_clips, Origin::default())
             }
         };
         let mut cx = PaintContext {
             clip: clips.content.clone(),
+            frame_offset,
             origin: Origin::default(),
             size,
             text_color: self.text_color,
