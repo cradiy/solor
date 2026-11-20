@@ -660,3 +660,76 @@ fn tooltip_without_a_callback_waits_cancels_and_draws_above_the_owner() -> Resul
     assert!(ui.next_redraw(view).is_none());
     Ok(())
 }
+
+#[test]
+fn cursors_follow_the_accepted_branch_for_each_mouse_without_listeners() -> Result<()> {
+    use solor::style::{Cursor, PointerEvents};
+
+    let mut ui = Ui::new();
+    let show = ui.context().signal(true);
+    let view = ui.mount(component(|_| {
+        div().cursor_pointer().child(
+            div()
+                .size(px(30.0))
+                .cursor_text()
+                .visible_when(show)
+                .child(div().size(px(10.0)).cursor(Cursor::None))
+                .child(
+                    div()
+                        .size(px(10.0))
+                        .cursor(Cursor::Grab)
+                        .pointer_events(PointerEvents::None),
+                ),
+        )
+    }))?;
+    let a = sample(1, 4.0, 4.0);
+    let b = sample(2, 4.0, 15.0);
+    ui.dispatch_pointer(view, Move(a))?;
+    assert_eq!(ui.pointer_cursor(view, a.id), Cursor::Default);
+    accept(&mut ui, view, 80.0)?;
+    ui.dispatch_pointer(view, Move(b))?;
+    assert_eq!(ui.pointer_cursor(view, a.id), Cursor::None);
+    assert_eq!(ui.pointer_cursor(view, b.id), Cursor::Text);
+    assert!(ui.next_redraw(view).is_none());
+
+    ui.context().set(show, false)?;
+    ui.flush()?;
+    ui.layout(
+        view,
+        Size {
+            width: px(80.0),
+            height: px(40.0),
+        },
+    )?;
+    let frame = ui.prepare_pointer_frame(view)?;
+    assert_eq!(ui.pointer_cursor(view, b.id), Cursor::Text);
+    ui.accept_pointer_frame(frame)?;
+    assert_eq!(ui.pointer_cursor(view, b.id), Cursor::Pointer);
+    ui.dispatch_pointer(view, Leave(b.id))?;
+    assert_eq!(ui.pointer_cursor(view, b.id), Cursor::Default);
+    assert_eq!(ui.pointer_cursor(view, a.id), Cursor::Pointer);
+    Ok(())
+}
+
+#[test]
+fn resize_cursor_tracks_the_effective_control_and_respects_an_explicit_style() -> Result<()> {
+    use solor::{ResizeEdge, style::Cursor};
+    let mut ui = Ui::new();
+    let view = ui.mount(component(|_| {
+        div()
+            .window_resize_region(ResizeEdge::TopLeft)
+            .child(div().size(px(10.0)).on_click(|_| Ok(())))
+            .child(div().size(px(10.0)).cursor(Cursor::Crosshair))
+    }))?;
+    accept(&mut ui, view, 80.0)?;
+    for (x, y, cursor) in [
+        (50.0, 5.0, Cursor::Resize(ResizeEdge::TopLeft)),
+        (4.0, 5.0, Cursor::Default),
+        (4.0, 15.0, Cursor::Crosshair),
+    ] {
+        let mouse = sample(1, x, y);
+        ui.dispatch_pointer(view, Move(mouse))?;
+        assert_eq!(ui.pointer_cursor(view, mouse.id), cursor);
+    }
+    Ok(())
+}

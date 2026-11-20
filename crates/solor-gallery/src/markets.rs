@@ -188,6 +188,7 @@ fn watchlist(quotes: Quotes, feed: Feed) -> Div {
                                 .text_color(quotes.row_ink[i]),
                         ),
                 )
+                .cursor_pointer()
                 .on_click(move |cx| {
                     let previous = *cx.read(quotes.selected)?;
                     cx.set(quotes.highlight[previous], PANEL.into())?;
@@ -303,6 +304,7 @@ pub(super) fn market() -> impl IntoElement {
                             .items_center()
                             .justify_center()
                             .child(text(action).text_size(px(13.0)))
+                            .cursor_pointer()
                             .on_click(move |cx| {
                                 let run = !*cx.read(running)?;
                                 playback.select(usize::from(!run), cx)?;

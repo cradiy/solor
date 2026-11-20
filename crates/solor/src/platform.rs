@@ -134,6 +134,11 @@ pub trait WindowHandler<T: Presentation> {
     /// Handles an event and returns any requested redraw and native window operation.
     fn event(&mut self, event: WindowEvent) -> Result<EventResponse>;
 
+    /// Cursor requested for this mouse after input delivery or frame submission.
+    fn pointer_cursor(&self, _pointer: crate::pointer::PointerId) -> crate::style::Cursor {
+        crate::style::Cursor::Default
+    }
+
     /// Earliest monotonic deadline for an on-demand redraw. Recheck after input or submission.
     fn next_redraw(&self) -> Option<std::time::Instant> {
         None

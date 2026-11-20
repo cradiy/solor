@@ -345,6 +345,15 @@ impl Ui {
         })
     }
 
+    /// Returns the cursor for this mouse in the accepted view, or the default arrow outside it.
+    pub fn pointer_cursor(&self, view: ViewId, pointer: PointerId) -> crate::style::Cursor {
+        self.instances
+            .get(&view)
+            .map_or(crate::style::Cursor::Default, |instance| {
+                instance.pointer.hover.cursor(pointer)
+            })
+    }
+
     /// Earliest time an idle host should record this view for pointer feedback.
     /// A host rechecks this after input and after accepting a frame.
     pub fn next_redraw(&self, view: ViewId) -> Option<std::time::Instant> {

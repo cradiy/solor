@@ -12,6 +12,7 @@ use wayland_client::{
     protocol::{wl_buffer, wl_callback, wl_compositor, wl_seat, wl_shm, wl_shm_pool, wl_surface},
 };
 use wayland_protocols::wp::{
+    cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
     fractional_scale::v1::client::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1},
     presentation_time::client::wp_presentation,
     viewporter::client::{wp_viewport, wp_viewporter},
@@ -50,6 +51,7 @@ struct Window {
     next_slot: usize,
     view: Box<dyn WindowHandler<Rgba8>>,
     seats: Vec<pointer::Seat>,
+    cursor_shapes: Option<WpCursorShapeManagerV1>,
     full_damage: bool,
     failure: Option<anyhow::Error>,
     trace: bool,
@@ -195,6 +197,7 @@ impl Platform for Wayland {
             next_slot: 0,
             view,
             seats: Vec::new(),
+            cursor_shapes: globals.bind(&qh, 1..=1, ()).ok(),
             full_damage: true,
             failure: None,
             trace: self.trace_submissions,
@@ -367,6 +370,7 @@ impl Window {
             }
             self.dirty = false;
             self.view.frame_submitted()?;
+            self.sync_cursors();
             return Ok(());
         }
         for slot in self.slots.iter_mut().flatten().filter(|s| s.size == size) {
@@ -414,6 +418,7 @@ impl Window {
         self.dirty = false;
         self.full_damage = false;
         self.view.frame_submitted()?;
+        self.sync_cursors();
         self.commits += 1;
         if let Some(queued_ns) = queued_ns {
             eprintln!(

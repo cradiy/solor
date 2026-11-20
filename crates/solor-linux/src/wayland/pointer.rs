@@ -1,15 +1,22 @@
 use wayland_client::{
-    Connection, Dispatch, Proxy, QueueHandle, WEnum,
+    Connection, Dispatch, Proxy, QueueHandle, WEnum, delegate_noop,
     globals::GlobalListContents,
     protocol::{wl_pointer, wl_registry, wl_seat},
 };
 
+use wayland_protocols::wp::cursor_shape::v1::client::{
+    wp_cursor_shape_device_v1::{Shape, WpCursorShapeDeviceV1},
+    wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
+};
+
 use super::Window;
 use solor::{
+    ResizeEdge,
     layout::Origin,
     platform::WindowEvent,
     pointer::{PointerButton, PointerId, PointerInput, PointerKind, PointerSample, ScrollDelta},
     px,
+    style::Cursor,
 };
 fn sample(id: u32, x: f64, y: f64) -> PointerSample {
     PointerSample {
@@ -23,16 +30,55 @@ fn sample(id: u32, x: f64, y: f64) -> PointerSample {
     }
 }
 
+delegate_noop!(Window: ignore WpCursorShapeDeviceV1);
+delegate_noop!(Window: ignore WpCursorShapeManagerV1);
+
+fn native_shape(cursor: Cursor) -> Option<Shape> {
+    Some(match cursor {
+        Cursor::Auto | Cursor::Default => Shape::Default,
+        Cursor::Pointer => Shape::Pointer,
+        Cursor::Text => Shape::Text,
+        Cursor::Crosshair => Shape::Crosshair,
+        Cursor::Move => Shape::Move,
+        Cursor::Grab => Shape::Grab,
+        Cursor::Grabbing => Shape::Grabbing,
+        Cursor::NotAllowed => Shape::NotAllowed,
+        Cursor::Wait => Shape::Wait,
+        Cursor::Progress => Shape::Progress,
+        Cursor::ColResize => Shape::ColResize,
+        Cursor::RowResize => Shape::RowResize,
+        Cursor::Resize(edge) => match edge {
+            ResizeEdge::Top => Shape::NResize,
+            ResizeEdge::TopRight => Shape::NeResize,
+            ResizeEdge::Right => Shape::EResize,
+            ResizeEdge::BottomRight => Shape::SeResize,
+            ResizeEdge::Bottom => Shape::SResize,
+            ResizeEdge::BottomLeft => Shape::SwResize,
+            ResizeEdge::Left => Shape::WResize,
+            ResizeEdge::TopLeft => Shape::NwResize,
+        },
+        Cursor::None => return None,
+    })
+}
+
 pub(super) struct Seat {
     name: u32,
     seat: wl_seat::WlSeat,
     pointer: Option<wl_pointer::WlPointer>,
     position: Option<PointerSample>,
+    shape_device: Option<WpCursorShapeDeviceV1>,
+    enter_serial: Option<u32>,
+    applied_cursor: Option<Cursor>,
     scroll: Option<(PointerSample, ScrollDelta)>,
 }
 
 impl Seat {
     fn release_pointer(&mut self) {
+        if let Some(device) = self.shape_device.take() {
+            device.destroy();
+        }
+        self.enter_serial = None;
+        self.applied_cursor = None;
         self.position = None;
         self.scroll = None;
         if let Some(pointer) = self.pointer.take()
@@ -44,6 +90,25 @@ impl Seat {
 }
 
 impl Window {
+    pub(super) fn sync_cursors(&mut self) {
+        for seat in &mut self.seats {
+            let (Some(device), Some(pointer), Some(serial)) =
+                (&seat.shape_device, &seat.pointer, seat.enter_serial)
+            else {
+                continue;
+            };
+            let cursor = self.view.pointer_cursor(PointerId(seat.name.into()));
+            if seat.applied_cursor == Some(cursor) {
+                continue;
+            }
+            match native_shape(cursor) {
+                Some(shape) => device.set_shape(serial, shape),
+                None => pointer.set_cursor(serial, None, 0, 0),
+            }
+            seat.applied_cursor = Some(cursor);
+        }
+    }
+
     pub(super) fn add_seat(
         &mut self,
         registry: &wl_registry::WlRegistry,
@@ -57,6 +122,9 @@ impl Window {
                 seat: registry.bind(name, version.min(5), qh, name),
                 pointer: None,
                 position: None,
+                shape_device: None,
+                enter_serial: None,
+                applied_cursor: None,
                 scroll: None,
             });
         }
@@ -113,7 +181,12 @@ impl Dispatch<wl_seat::WlSeat, u32> for Window {
         {
             if caps.contains(wl_seat::Capability::Pointer) {
                 if input.pointer.is_none() {
-                    input.pointer = Some(seat.get_pointer(qh, *name));
+                    let pointer = seat.get_pointer(qh, *name);
+                    input.shape_device = state
+                        .cursor_shapes
+                        .as_ref()
+                        .map(|m| m.get_pointer(&pointer, qh, ()));
+                    input.pointer = Some(pointer);
                 }
             } else {
                 input.release_pointer();
@@ -144,16 +217,21 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
         let mut press = None;
         let event = match event {
             wl_pointer::Event::Enter {
+                serial,
                 surface,
                 surface_x,
                 surface_y,
                 ..
             } if surface == state.surface => {
                 let p = sample(*name, surface_x, surface_y);
+                seat.enter_serial = Some(serial);
+                seat.applied_cursor = None;
                 seat.position = Some(p);
                 PointerInput::Move(p)
             }
             wl_pointer::Event::Leave { .. } => {
+                seat.enter_serial = None;
+                seat.applied_cursor = None;
                 seat.position = None;
                 seat.scroll = None;
                 PointerInput::Cancel(PointerId((*name).into()))
@@ -225,5 +303,6 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
             _ => return,
         };
         state.dispatch(WindowEvent::Pointer(event), press);
+        state.sync_cursors();
     }
 }

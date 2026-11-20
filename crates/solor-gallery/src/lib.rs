@@ -63,6 +63,7 @@ impl<const N: usize> Selection<N> {
                             .bg(if selected { active } else { idle })
                             .text_color(if selected { active_ink } else { ink })
                             .child(label(name, 13.0, 18.0))
+                            .cursor_pointer()
                             .on_click(move |cx| self.select(i, cx))
                     }))
             });
@@ -104,6 +105,7 @@ fn header_button(title: &'static str, hint: &'static str, cx: &mut Context<'_>) 
                 Fill::from(if inside { rgb(0x687970) } else { MUTED }),
             )
         })
+        .cursor_pointer()
         .tooltip(hint)
         .text_color(PAPER)
         .child(label(title, 13.0, 18.0))

@@ -1,6 +1,6 @@
 //! Physical mouse presence on the frontmost branch of an accepted view.
 use super::{PointerButton, PointerFrame, PointerId, PointerInput, PointerKind};
-use crate::{NodeId, layout::Origin};
+use crate::{NodeId, WindowControl, layout::Origin, style::Cursor};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -10,6 +10,7 @@ type Owners = SmallVec<[NodeId; 4]>;
 struct Mouse {
     at: Origin,
     path: Owners,
+    cursor: Option<Cursor>,
     buttons: SmallVec<[PointerButton; 2]>,
 }
 
@@ -52,6 +53,13 @@ impl Hover {
     pub(super) fn position(&self, id: PointerId) -> Option<Origin> {
         Some(self.mice.get(&id)?.at)
     }
+    pub(super) fn cursor(&self, id: PointerId) -> Cursor {
+        self.mice
+            .get(&id)
+            .and_then(|m| m.cursor)
+            .unwrap_or(Cursor::Default)
+    }
+
     pub(super) fn path(&self, id: PointerId) -> &[NodeId] {
         self.mice.get(&id).map_or(&[], |m| &m.path)
     }
@@ -67,10 +75,17 @@ impl Hover {
         let mut next = Owners::new();
         for mouse in self.mice.values_mut() {
             mouse.path.clear();
+            mouse.cursor = None;
             if let Some(frame) = frame {
-                mouse
-                    .path
-                    .extend(frame.hover_path(mouse.at, |n| bodies.contains_key(&n)));
+                let target = frame.mouse_target(mouse.at, |n| bodies.contains_key(&n));
+                mouse.cursor = target.cursor.or_else(|| {
+                    let handlers = bodies.get(&target.pointer?)?.handlers.as_deref()?;
+                    match handlers.control {
+                        Some(WindowControl::Resize(edge)) => Some(Cursor::Resize(edge)),
+                        _ => None,
+                    }
+                });
+                mouse.path.extend(frame.hover_path(target.hover));
                 for &node in &mouse.path {
                     if !next.contains(&node)
                         && bodies

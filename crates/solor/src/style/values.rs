@@ -3,11 +3,11 @@ pub use crate::layout::FlexDirection;
 use crate::{AbsoluteLength, Length, Rgba, Signal};
 
 macro_rules! keywords {
-    ($(#[doc = $doc:literal] $name:ident { $($variant:ident: $meaning:literal),+ $(,)? })+) => {$(
+    ($(#[doc = $doc:literal] $name:ident { $($variant:ident $(($value:ty))?: $meaning:literal),+ $(,)? })+) => {$(
         #[doc = $doc]
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub enum $name {
-            $(#[doc = $meaning] $variant),+
+            $(#[doc = $meaning] $variant $(($value))?),+
         }
     )+};
 }
@@ -46,7 +46,7 @@ keywords! {
     /// Presentation of a line that does not fit.
     TextOverflow { Clip: "Clip the line.", Ellipsis: "Ellipsis at the end.", EllipsisStart: "Ellipsis at the start.", EllipsisMiddle: "Ellipsis in the middle." }
     /// Visual indication for pointer interaction.
-    Cursor { Auto: "Platform default.", Default: "Standard arrow.", Pointer: "Clickable target.", Text: "Text selection.", Crosshair: "Crosshair.", Move: "Move target.", Grab: "Grabbable.", Grabbing: "Dragging.", NotAllowed: "Unavailable action.", Wait: "Busy.", Progress: "Working in the background.", ColResize: "Resize columns.", RowResize: "Resize rows.", None: "Hide the cursor." }
+    Cursor { Auto: "Platform default.", Default: "Standard arrow.", Pointer: "Clickable target.", Text: "Text selection.", Crosshair: "Crosshair.", Move: "Move target.", Grab: "Grabbable.", Grabbing: "Dragging.", NotAllowed: "Unavailable action.", Wait: "Busy.", Progress: "Working in the background.", ColResize: "Resize columns.", RowResize: "Resize rows.", Resize(crate::ResizeEdge): "Resize a specific edge or corner.", None: "Hide the cursor." }
     /// Participation in pointer hit testing.
     PointerEvents { Auto: "Participate in hit testing.", None: "Ignore the box for pointer targeting." }
 }

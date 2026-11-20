@@ -107,14 +107,13 @@ impl Tooltips {
         else {
             return Ok(());
         };
-        let owner = frame
-            .hover_path(mouse, |n| instance.bodies.contains_key(&n))
-            .find(|n| {
-                instance.bodies[n]
-                    .handlers
-                    .as_deref()
-                    .is_some_and(|h| h.tooltip.is_some())
-            });
+        let target = frame.mouse_target(mouse, |n| instance.bodies.contains_key(&n));
+        let owner = frame.hover_path(target.hover).find(|n| {
+            instance.bodies[n]
+                .handlers
+                .as_deref()
+                .is_some_and(|h| h.tooltip.is_some())
+        });
         if owner != Some(tip.owner) {
             return Ok(());
         }

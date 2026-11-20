@@ -105,6 +105,21 @@ eligible. Captured motion looks up its owner directly.
 The host supplies `Leave` on surface exit, `Cancel` on loss of one pointer,
 and calls `cancel_pointers(view)` on deactivation.
 
+## System cursors
+
+Set `.cursor_pointer()` on a button, `.cursor_text()` on a text selection area,
+or `.cursor(Cursor::Crosshair)` on a plot. The nearest explicit cursor on the
+frontmost hit branch applies to each mouse independently. A resize region
+supplies the cursor for its edge when it receives pointer input and the branch
+has no explicit style. A child with its own click action gets its own cursor.
+Mouse capture redirects event delivery while the cursor follows the physical hit.
+
+`WindowHandler::pointer_cursor(id)` reads the resolved cursor after an input
+event or an accepted geometry change. A stationary mouse follows the newly
+accepted layout. Changing only the cursor requires no application redraw.
+On Wayland, compositors advertising `wp_cursor_shape_manager_v1` supply the
+system shapes. Without the extension the host leaves the cursor unchanged.
+
 ## Routing and lifetime
 
 | Event | Behavior |

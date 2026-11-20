@@ -60,6 +60,10 @@ impl WindowHandler<Rgba8> for CpuWindow {
         Ok(response)
     }
 
+    fn pointer_cursor(&self, pointer: solor::pointer::PointerId) -> solor::style::Cursor {
+        self.ui.pointer_cursor(self.view, pointer)
+    }
+
     fn next_redraw(&self) -> Option<std::time::Instant> {
         self.ui.next_redraw(self.view)
     }

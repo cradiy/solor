@@ -27,7 +27,8 @@ impl HitBox {
 pub(super) struct Recipients {
     pub pointer: Option<NodeId>,
     pub scroll: Option<NodeId>,
-    hover: Option<NodeId>,
+    pub(super) hover: Option<NodeId>,
+    pub(super) cursor: Option<crate::style::Cursor>,
 }
 
 struct Entry {
@@ -49,6 +50,7 @@ pub(super) struct HitGeometry {
     entries: Vec<Entry>,
     interactive: HashMap<NodeId, HitBox>,
     hover_parents: HashMap<NodeId, Option<NodeId>>,
+    has_cursor: bool,
 }
 
 impl PointerFrame {
@@ -87,16 +89,17 @@ impl PointerFrame {
         Arc::ptr_eq(&self.geometry, &other.geometry)
     }
 
-    pub(super) fn hover_path(
-        &self,
-        p: Origin,
-        live: impl Fn(NodeId) -> bool,
-    ) -> impl Iterator<Item = NodeId> + '_ {
-        let owner = (!self.geometry.hover_parents.is_empty())
-            .then(|| self.hit(p))
-            .flatten()
-            .filter(|(leaf, _)| live(*leaf))
-            .and_then(|(_, r)| r.hover);
+    pub(super) fn mouse_target(&self, at: Origin, live: impl Fn(NodeId) -> bool) -> Recipients {
+        if (self.geometry.has_cursor || !self.geometry.hover_parents.is_empty())
+            && let Some((leaf, target)) = self.hit(at)
+            && live(leaf)
+        {
+            return target;
+        }
+        Recipients::default()
+    }
+
+    pub(super) fn hover_path(&self, owner: Option<NodeId>) -> impl Iterator<Item = NodeId> + '_ {
         std::iter::successors(owner, |id| self.geometry.hover_parents[id])
     }
 
@@ -153,6 +156,7 @@ impl HitGeometry {
             entries: Vec::with_capacity(instance.visible_nodes),
             interactive: HashMap::new(),
             hover_parents: HashMap::new(),
+            has_cursor: false,
         };
         let root = &instance.bodies[&instance.scene.root()];
         if !root.visible {
@@ -183,6 +187,10 @@ impl HitGeometry {
                 size: geometry.metrics.size,
             };
             let mut recipients = inherited;
+            if body.hit_testable && body.cursor.is_some() {
+                recipients.cursor = body.cursor;
+                frame.has_cursor = true;
+            }
             if body.hit_testable
                 && let Some(handlers) = body.handlers.as_deref()
             {
@@ -193,6 +201,8 @@ impl HitGeometry {
                 }
                 if handlers.handles_pointer() {
                     recipients.pointer = Some(id);
+                    frame.has_cursor |=
+                        matches!(handlers.control, Some(crate::WindowControl::Resize(_)));
                 }
                 if handlers.scroll.is_some() {
                     recipients.scroll = Some(id);
