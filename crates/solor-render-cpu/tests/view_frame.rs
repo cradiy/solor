@@ -581,3 +581,99 @@ fn single_line_ellipsis_keeps_source_ranges_across_resize_and_edits() -> Result<
     }
     Ok(())
 }
+
+#[test]
+fn multiline_ellipsis_marks_only_the_last_visible_line() -> Result<()> {
+    use solor::{Draw, SharedString, percent};
+    use std::num::NonZeroUsize;
+
+    let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
+    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    let value = ui.context().signal(SharedString::default());
+    let view = ui.mount(component(|_| {
+        div()
+            .child(
+                text(value)
+                    .w(percent(100.0))
+                    .line_clamp(NonZeroUsize::new(2).unwrap())
+                    .text_ellipsis(),
+            )
+            .child(text(value).w(percent(100.0)))
+    }))?;
+    for (width, source, expected) in [
+        (62, "Output level Output level", true),
+        (240, "Output level Output level", false),
+        (48, "A\n中文世界中文世界", true),
+        (48, "A\n中文\nC", true),
+        (48, "A\n\nC", true),
+        (48, "A\n中文", false),
+        (48, "A\n", false),
+        (48, "A\nB\n", true),
+        (1, "word a abcdefghi\nmore", true),
+        (45, "\u{200f}1234567890中文世界", true),
+    ] {
+        ui.context().set(value, SharedString::from(source))?;
+        ui.flush()?;
+        let size = DeviceSize { width, height: 192 };
+        ui.layout(view, size.at_unit_scale())?;
+        let frame = ui.record_frame(view)?;
+        let [
+            Draw::Text {
+                paragraph: preview, ..
+            },
+            Draw::Text {
+                paragraph: full,
+                origin,
+                ..
+            },
+        ] = frame.draws()
+        else {
+            panic!("expected two labels")
+        };
+        let hidden = full.lines.len() > 2;
+        assert_eq!(expected, hidden);
+        assert_eq!(preview.text.as_str(), source);
+        assert_eq!(
+            preview.lines.len(),
+            full.lines.len().min(2),
+            "{width} {source:?}"
+        );
+        let last = preview.lines.len() - 1;
+        assert_eq!(
+            preview.lines[..last],
+            full.lines[..last],
+            "{width} {source}"
+        );
+        let line = &preview.lines[last];
+        assert_eq!(line.source_line, full.lines[last].source_line);
+        let source_line = source.split('\n').nth(line.source_line).unwrap();
+        assert!(
+            line.glyphs
+                .iter()
+                .all(|g| source_line.get(g.start..g.end).is_some())
+        );
+        assert_eq!(
+            line.glyphs.iter().any(|g| g.start == g.end),
+            hidden,
+            "{source:?}"
+        );
+        assert_eq!(origin.y, preview.content.height);
+        // A sub-glyph viewport can clip the entire marker.
+        if width == 1 {
+            continue;
+        }
+        let image = Surface::draw_view(&frame, size, RasterScale::ONE)?;
+        let row = width as usize * 4 * 24;
+        let reference = (last + 1) * row;
+        assert_eq!(
+            image.rgba[..last * row],
+            image.rgba[reference..reference + last * row]
+        );
+        assert_eq!(
+            image.rgba[last * row..reference] != image.rgba[reference + last * row..2 * reference],
+            hidden,
+            "{source:?}"
+        );
+    }
+    Ok(())
+}

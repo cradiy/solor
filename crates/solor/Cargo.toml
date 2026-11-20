@@ -10,6 +10,7 @@ layout-audit = []
 
 [dependencies]
 slotmap.workspace = true
+ttf-parser = { version = "0.25", default-features = false }
 anyhow.workspace = true
 color = "=0.3.3"
 smol_str = { version = "=0.3.7", default-features = false }

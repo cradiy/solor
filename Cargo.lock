@@ -422,6 +422,7 @@ dependencies = [
  "cosmic-text",
  "slotmap",
  "smol_str",
+ "ttf-parser",
 ]
 
 [[package]]

@@ -139,7 +139,13 @@ Labels preserve explicit line breaks and wrap by default. Both
 `.whitespace_nowrap()` and `.whitespace_normal()` fold runs of ASCII whitespace
 into a single space and trim the ends. The former keeps the result on one
 line, and the latter allows wrapping. `WhiteSpace::Pre` preserves whitespace
-and disables soft wrapping. Ellipsis placement applies to unwrapped lines.
+and disables soft wrapping.
+
+For a wrapped preview, combine `.line_clamp(n).text_ellipsis()`. When another
+visual line follows, the last visible line fits a trailing marker inside its
+content width. A hard break also counts, even if the last visible line is
+empty. The preceding lines keep their original wrapping. Start and middle
+ellipsis placement apply to unwrapped lines.
 
 Use `.z_index(i32)` to order overlapping siblings. Each parent paints its own
 content first, then its child subtrees in ascending layer order. The default

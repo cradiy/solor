@@ -7,8 +7,8 @@ use std::sync::Arc;
 use crate::style::{TextAlign, TextAttributes, TextOverflow, WhiteSpace};
 use crate::{Pixels, SharedString, px};
 use cosmic_text::{
-    Align, Attrs, Buffer, Ellipsize, EllipsizeHeightLimit, Family, FontSystem, Shaping, Wrap,
-    fontdb,
+    Align, Attrs, Buffer, BufferLine, Ellipsize, EllipsizeHeightLimit, Family, FontSystem,
+    LayoutGlyph, LayoutRun, LineEnding, Shaping, Wrap, fontdb,
 };
 
 use crate::layout::{
@@ -202,6 +202,7 @@ pub struct Engine {
     pub(crate) bytes: Arc<Vec<u8>>,
     fonts: FontSystem,
     face: fontdb::ID,
+    ellipsis: &'static str,
     /// Cumulative request, cache and shaping counts.
     pub counts: Counts,
 }
@@ -232,6 +233,10 @@ impl Engine {
             .ok_or(LayoutError::Node("font has no family"))?
             .0
             .clone();
+        let has_ellipsis = ttf_parser::Face::parse(bytes.as_slice(), face.index)
+            .map_err(|_| LayoutError::Node("invalid font face"))?
+            .glyph_index('…')
+            .is_some();
         let face = face.id;
         if faces.next().is_some() {
             return Err(LayoutError::Node("expected a single font face"));
@@ -242,8 +247,80 @@ impl Engine {
             bytes,
             fonts: FontSystem::new_with_locale_and_db(locale.into(), db),
             face,
+            ellipsis: if has_ellipsis { "…" } else { "..." },
             counts: Counts::default(),
         })))
+    }
+
+    fn glyphs<'a>(
+        &self,
+        glyphs: impl Iterator<Item = &'a LayoutGlyph>,
+        offset: impl Fn(usize) -> usize,
+    ) -> Result<Vec<Glyph>> {
+        let mut result = Vec::with_capacity(glyphs.size_hint().1.unwrap_or(0));
+        for glyph in glyphs {
+            if glyph.glyph_id == 0 || glyph.font_id != self.face {
+                return Err(LayoutError::Node("glyph unavailable"));
+            }
+            result.push(Glyph {
+                start: offset(glyph.start),
+                end: offset(glyph.end),
+                id: glyph.glyph_id,
+                x: glyph.x,
+                y: glyph.y,
+                width: glyph.w,
+                x_offset: glyph.x_offset,
+                y_offset: glyph.y_offset,
+            });
+        }
+        Ok(result)
+    }
+
+    fn marked_run(
+        &mut self,
+        buffer: &Buffer,
+        run: &LayoutRun<'_>,
+        source_offset: impl Fn(usize) -> usize,
+    ) -> Result<(Vec<Glyph>, f32)> {
+        // Glyphs may be in visual order. Shape the corresponding logical slice
+        // with the original paragraph direction and the marker in the same line.
+        let start = run.glyphs.iter().map(|g| g.start).min().unwrap_or(0);
+        let end = run.glyphs.iter().map(|g| g.end).max().unwrap_or(start);
+        let direction = if run.rtl { '\u{200f}' } else { '\u{200e}' };
+        let mut marked =
+            String::with_capacity(direction.len_utf8() + end - start + self.ellipsis.len());
+        marked.push(direction);
+        marked.push_str(&run.text[start..end]);
+        marked.push_str(self.ellipsis);
+        let original = &buffer.lines[run.line_i];
+        let mut line = BufferLine::new(
+            marked,
+            LineEnding::None,
+            original.attrs_list().clone(),
+            Shaping::Advanced,
+        );
+        line.set_align(original.align());
+        let [layout] = line.layout(
+            &mut self.fonts,
+            buffer.metrics().font_size,
+            buffer.size().0,
+            Wrap::None,
+            Ellipsize::End(EllipsizeHeightLimit::Lines(1)),
+            None,
+            buffer.tab_width(),
+            buffer.hinting(),
+        ) else {
+            return Err(LayoutError::Node("invalid ellipsis layout"));
+        };
+        let prefix = direction.len_utf8();
+        let visible = layout
+            .glyphs
+            .iter()
+            .filter(|g| g.start >= prefix || g.start == g.end);
+        let glyphs = self.glyphs(visible, |i| {
+            source_offset((start + i.saturating_sub(prefix)).min(end))
+        })?;
+        Ok((glyphs, layout.w))
     }
 
     fn shape(
@@ -280,7 +357,13 @@ impl Engine {
             });
         }
         let line_clamp = paragraph.line_clamp;
-        let height = line_clamp.map(|count| count.get() as f32 * style.line_height.get());
+        let mark_overflow =
+            !nowrap && paragraph.overflow == TextOverflow::Ellipsis && line_clamp.is_some();
+        // One line of lookahead distinguishes an exact fit from hidden content.
+        let height = line_clamp.map(|count| {
+            (count.get().saturating_add(usize::from(mark_overflow)) as f32)
+                * style.line_height.get()
+        });
         buffer.set_size(width.map(Pixels::get), height);
         buffer.set_text(
             display,
@@ -299,32 +382,18 @@ impl Engine {
         self.counts.shapes += 1;
         let mut lines = Vec::new();
         let mut content = Size::default();
-        for run in buffer
-            .layout_runs()
-            .take(line_clamp.map_or(usize::MAX, NonZeroUsize::get))
-        {
-            let mut glyphs = Vec::with_capacity(run.glyphs.len());
-            for glyph in run.glyphs {
-                // Missing glyphs are errors, never silent evidence of CJK support.
-                if glyph.glyph_id == 0 || glyph.font_id != self.face {
-                    return Err(LayoutError::Node("glyph unavailable"));
-                }
-                glyphs.push(Glyph {
-                    start: collapsed
-                        .as_ref()
-                        .map_or(glyph.start, |c| c.offsets[glyph.start]),
-                    end: collapsed
-                        .as_ref()
-                        .map_or(glyph.end, |c| c.offsets[glyph.end]),
-                    id: glyph.glyph_id,
-                    x: glyph.x,
-                    y: glyph.y,
-                    width: glyph.w,
-                    x_offset: glyph.x_offset,
-                    y_offset: glyph.y_offset,
-                });
-            }
-            content.width = content.width.max(extent(run.line_w)?);
+        let limit = line_clamp.map_or(usize::MAX, NonZeroUsize::get);
+        let mut runs = buffer.layout_runs().peekable();
+        while lines.len() < limit {
+            let Some(run) = runs.next() else { break };
+            let source_offset = |i: usize| collapsed.as_ref().map_or(i, |c| c.offsets[i]);
+            let (glyphs, line_width) =
+                if mark_overflow && lines.len() + 1 == limit && runs.peek().is_some() {
+                    self.marked_run(&buffer, &run, source_offset)?
+                } else {
+                    (self.glyphs(run.glyphs.iter(), source_offset)?, run.line_w)
+                };
+            content.width = content.width.max(extent(line_width)?);
             content.height = content
                 .height
                 .max(extent((run.line_top + run.line_height).max(run.line_y))?);
@@ -333,7 +402,7 @@ impl Engine {
                 top: run.line_top,
                 baseline: run.line_y,
                 height: run.line_height,
-                width: run.line_w,
+                width: line_width,
                 glyphs,
             });
         }
