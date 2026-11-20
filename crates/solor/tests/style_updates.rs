@@ -15,6 +15,108 @@ const INK: Rgba = Rgba::new(30, 40, 50, 255);
 const ACCENT: Rgba = Rgba::new(25, 100, 200, 255);
 
 #[test]
+fn signed_letter_spacing_uses_the_view_rem_and_changes_wrapping() -> Result<()> {
+    const LABEL: &str = "中fi AV";
+    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let view = ui.mount_with_rem_size(
+        component(|_| {
+            div()
+                .items_stretch()
+                .text_size(px(16.0))
+                .letter_spacing(solor::rem(0.125))
+                .child(text(LABEL))
+                .child(text(LABEL).letter_spacing(px(0.0)))
+                .child(text(LABEL).letter_spacing(px(-0.75)))
+        }),
+        px(20.0),
+    )?;
+    let size = Size {
+        width: px(200.0),
+        height: px(120.0),
+    };
+    ui.layout(view, size)?;
+    let paragraphs = |ui: &Ui| -> Result<Vec<_>> {
+        Ok(ui
+            .record_frame(view)?
+            .draws()
+            .iter()
+            .map(|draw| match draw {
+                Draw::Text { paragraph, .. } => paragraph.clone(),
+                _ => panic!("expected a text label"),
+            })
+            .collect())
+    };
+    let wide = paragraphs(&ui)?;
+    let normal = &wide[1].lines[0];
+    assert!(normal.glyphs.iter().any(|g| &LABEL[g.start..g.end] == "fi"));
+    for (index, spacing) in [(0, 2.5), (2, -0.75)] {
+        let line = &wide[index].lines[0];
+        assert_eq!(line.glyphs.len(), normal.glyphs.len());
+        for (i, (glyph, base)) in line.glyphs.iter().zip(&normal.glyphs).enumerate() {
+            assert_eq!(
+                (glyph.id, glyph.start, glyph.end),
+                (base.id, base.start, base.end)
+            );
+            assert!((glyph.x - base.x - i as f32 * spacing).abs() < 0.001);
+        }
+        assert!((line.width - normal.width - line.glyphs.len() as f32 * spacing).abs() < 0.001);
+    }
+    let width = px((wide[0].lines[0].width + normal.width) * 0.5);
+    ui.layout(view, Size { width, ..size })?;
+    let narrow = paragraphs(&ui)?;
+    assert_eq!(
+        narrow.iter().map(|p| p.lines.len()).collect::<Vec<_>>(),
+        [2, 1, 1]
+    );
+    let next = ui.children(view, ui.root(view)?)?.nth(1).unwrap();
+    assert_eq!(
+        ui.geometry(view, next).unwrap().origin.y,
+        narrow[0].content.height
+    );
+    Ok(())
+}
+
+#[test]
+fn tracked_clamped_line_starts_at_the_same_position_as_the_full_line() -> Result<()> {
+    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let view = ui.mount(component(|_| {
+        div()
+            .items_stretch()
+            .letter_spacing(px(2.25))
+            .child(
+                text("ABC\nD")
+                    .line_clamp(1.try_into().unwrap())
+                    .text_ellipsis(),
+            )
+            .child(text("ABC"))
+    }))?;
+    ui.layout(
+        view,
+        Size {
+            width: px(160.0),
+            height: px(72.0),
+        },
+    )?;
+    let frame = ui.record_frame(view)?;
+    let [
+        Draw::Text {
+            paragraph: preview, ..
+        },
+        Draw::Text {
+            paragraph: full, ..
+        },
+    ] = frame.draws()
+    else {
+        panic!("expected two labels");
+    };
+    let marked = &preview.lines[0].glyphs;
+    let unmarked = &full.lines[0].glyphs;
+    assert!(marked.len() > unmarked.len());
+    assert_eq!(&marked[..unmarked.len()], unmarked);
+    Ok(())
+}
+
+#[test]
 fn inherited_font_features_control_clusters_and_wrapping() -> Result<()> {
     use solor::style::FontFeature;
 

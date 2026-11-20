@@ -139,6 +139,7 @@ pub struct Counts {
 #[derive(PartialEq)]
 struct ParagraphStyle {
     features: Option<Rc<[FontFeature]>>,
+    letter_spacing: Pixels,
     alignment: TextAlign,
     line_clamp: Option<NonZeroUsize>,
     white_space: WhiteSpace,
@@ -146,9 +147,10 @@ struct ParagraphStyle {
 }
 
 impl ParagraphStyle {
-    fn from_attributes(attrs: Option<&TextAttributes>) -> Self {
+    fn from_attributes(attrs: Option<&TextAttributes>, letter_spacing: Pixels) -> Self {
         Self {
             features: attrs.and_then(|a| a.font_features.clone()),
+            letter_spacing,
             alignment: attrs.and_then(|a| a.text_align).unwrap_or(TextAlign::Start),
             line_clamp: attrs.and_then(|a| a.line_clamp.flatten()),
             white_space: attrs
@@ -264,6 +266,9 @@ impl Engine {
             if glyph.glyph_id == 0 || glyph.font_id != self.face {
                 return Err(LayoutError::Node("glyph unavailable"));
             }
+            if !glyph.x.is_finite() || !glyph.w.is_finite() {
+                return Err(LayoutError::InvalidSize);
+            }
             result.push(Glyph {
                 start: offset(glyph.start),
                 end: offset(glyph.end),
@@ -295,12 +300,14 @@ impl Engine {
         marked.push_str(&run.text[start..end]);
         marked.push_str(self.ellipsis);
         let original = &buffer.lines[run.line_i];
-        let mut line = BufferLine::new(
-            marked,
-            LineEnding::None,
-            original.attrs_list().clone(),
-            Shaping::Advanced,
-        );
+        let prefix = direction.len_utf8();
+        let mut attrs = original.attrs_list().clone();
+        let defaults = original.attrs_list().defaults();
+        if defaults.letter_spacing_opt.is_some() {
+            // The synthetic direction mark must occupy no horizontal space.
+            attrs.add_span(0..prefix, &defaults.letter_spacing(0.0));
+        }
+        let mut line = BufferLine::new(marked, LineEnding::None, attrs, Shaping::Advanced);
         line.set_align(original.align());
         let [layout] = line.layout(
             &mut self.fonts,
@@ -314,7 +321,6 @@ impl Engine {
         ) else {
             return Err(LayoutError::Node("invalid ellipsis layout"));
         };
-        let prefix = direction.len_utf8();
         let visible = layout
             .glyphs
             .iter()
@@ -368,6 +374,13 @@ impl Engine {
         });
         buffer.set_size(width.map(Pixels::get), height);
         let mut attrs = Attrs::new().family(Family::SansSerif);
+        if paragraph.letter_spacing != px(0.0) {
+            let spacing_em = paragraph.letter_spacing.get() / style.size.get();
+            if !spacing_em.is_finite() {
+                return Err(LayoutError::InvalidSize);
+            }
+            attrs = attrs.letter_spacing(spacing_em);
+        }
         if let Some(features) = &paragraph.features {
             for feature in features.iter() {
                 attrs
@@ -456,7 +469,7 @@ impl Text {
             engine,
             content: content.into(),
             style,
-            paragraph: ParagraphStyle::from_attributes(None),
+            paragraph: ParagraphStyle::from_attributes(None, px(0.0)),
             cache: RefCell::default(),
             cache_enabled,
         })
@@ -503,8 +516,12 @@ impl Text {
         self.style
     }
 
-    pub(crate) fn set_paragraph_style(&mut self, attributes: Option<&TextAttributes>) {
-        let paragraph = ParagraphStyle::from_attributes(attributes);
+    pub(crate) fn set_paragraph_style(
+        &mut self,
+        attributes: Option<&TextAttributes>,
+        letter_spacing: Pixels,
+    ) {
+        let paragraph = ParagraphStyle::from_attributes(attributes, letter_spacing);
         if self.paragraph != paragraph {
             self.paragraph = paragraph;
             self.release_cache();

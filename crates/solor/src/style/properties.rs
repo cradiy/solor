@@ -188,7 +188,7 @@ properties! {
         font_weight: u16,
         /// Font slant.
         font_style: FontStyle,
-        /// Additional spacing between characters.
+        /// Signed adjustment to each shaped glyph's horizontal advance.
         letter_spacing: AbsoluteLength,
         /// Alignment of text within a line.
         text_align: TextAlign,

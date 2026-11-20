@@ -218,6 +218,13 @@ Descendants inherit the ordered list. A local list replaces it, and
 `.font_features([])` uses the font's shaping defaults. Measurement, wrapping
 and painting use the same shaped glyphs.
 
+`.letter_spacing(px(0.75))` adds 0.75 logical pixels to each shaped
+glyph's advance, including the final advance in the line width. A ligature
+receives one adjustment. Negative values tighten the text. Values in rems
+use the mounted view's rem size. Descendant labels inherit the spacing and
+can reset it with `.letter_spacing(px(0.0))`. Wrapping and ellipsis placement
+use the adjusted advances.
+
 Paragraph alignment uses the label's content width after padding. Set
 `.text_center()` on a container to center each visual line in its labels.
 A label can override it with `.text_left()` or `.text_right()`. The default,

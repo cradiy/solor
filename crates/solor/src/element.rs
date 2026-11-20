@@ -93,7 +93,7 @@ impl Element for Text {
             size: style.text.size,
             line_height: style.text.line_height,
         })?;
-        self.set_paragraph_style(style.text.attributes.as_deref());
+        self.set_paragraph_style(style.text.attributes.as_deref(), style.text.letter_spacing);
         Ok(())
     }
     fn paint(&self, cx: &mut PaintContext) -> Result<()> {
@@ -423,18 +423,19 @@ impl AnyElement {
             };
             let mut style = node.body.base_style();
             let text = style.refine(&node.style, inherited, units);
-            if [
-                style.corner_radii.top_left,
-                style.corner_radii.top_right,
-                style.corner_radii.bottom_left,
-                style.corner_radii.bottom_right,
-                style.column_gap,
-                style.row_gap,
-                style.text.size,
-                style.text.line_height,
-            ]
-            .iter()
-            .any(|v| !v.is_extent())
+            if !style.text.letter_spacing.get().is_finite()
+                || [
+                    style.corner_radii.top_left,
+                    style.corner_radii.top_right,
+                    style.corner_radii.bottom_left,
+                    style.corner_radii.bottom_right,
+                    style.column_gap,
+                    style.row_gap,
+                    style.text.size,
+                    style.text.line_height,
+                ]
+                .iter()
+                .any(|v| !v.is_extent())
             {
                 return Err(crate::layout::LayoutError::InvalidSize.into());
             }

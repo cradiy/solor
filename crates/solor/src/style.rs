@@ -60,6 +60,8 @@ pub struct Typography {
     pub size: Pixels,
     /// Vertical distance between successive lines.
     pub line_height: Pixels,
+    /// Additional horizontal advance per shaped glyph, in logical pixels.
+    pub letter_spacing: Pixels,
     /// Foreground used to record glyphs.
     pub color: Foreground,
 }
@@ -69,6 +71,7 @@ impl Default for Typography {
             attributes: None,
             size: px(16.0),
             line_height: px(24.0),
+            letter_spacing: px(0.0),
             color: Foreground::Fixed(Rgba::new(0, 0, 0, 255)),
         }
     }
@@ -192,6 +195,14 @@ impl Style {
         later.text.apply_metrics(&mut self.text, units);
         let text = inherited.overlay(&later.text);
         overlay_group(&mut self.text.attributes, &text.attributes);
+        if let Some(spacing) = self
+            .text
+            .attributes
+            .as_deref()
+            .and_then(|a| a.letter_spacing)
+        {
+            self.text.letter_spacing = units.absolute(spacing);
+        }
         text
     }
 }
