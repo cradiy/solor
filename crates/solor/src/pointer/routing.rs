@@ -28,6 +28,11 @@ pub(crate) struct PointerRouter {
 }
 
 impl PointerRouter {
+    pub(crate) fn frame_listeners(&self) -> &[NodeId] {
+        self.frame
+            .as_ref()
+            .map_or(&[], PointerFrame::frame_listeners)
+    }
     pub(crate) fn invalidate_geometry(&mut self) {
         self.geometry.take();
     }

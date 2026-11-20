@@ -38,11 +38,16 @@ pub struct PointerFrame {
 }
 
 pub(super) struct HitGeometry {
+    frame_listeners: Vec<NodeId>,
     entries: Vec<Entry>,
     interactive: HashMap<NodeId, HitBox>,
 }
 
 impl PointerFrame {
+    pub(crate) fn frame_listeners(&self) -> &[NodeId] {
+        &self.geometry.frame_listeners
+    }
+
     pub(crate) fn paint_order(&self) -> impl Iterator<Item = (NodeId, Origin, &NodeClips)> + '_ {
         self.geometry
             .entries
@@ -112,6 +117,7 @@ impl Ui {
 impl HitGeometry {
     fn from_layout(instance: &Instance) -> Result<Self> {
         let mut frame = Self {
+            frame_listeners: Vec::new(),
             entries: Vec::with_capacity(instance.visible_nodes),
             interactive: HashMap::new(),
         };
@@ -122,6 +128,9 @@ impl HitGeometry {
         let mut pending = vec![(root, Origin::default(), None, None)];
         while let Some((body, offset, inherited, inherited_clip)) = pending.pop() {
             let id = body.id;
+            if instance.frame_handlers.contains_key(&id) {
+                frame.frame_listeners.push(id);
+            }
             let geometry = instance
                 .scene
                 .geometry(id)

@@ -9,6 +9,7 @@ use solor::{
     raster::RasterScale,
 };
 use solor_render_cpu::CpuWindow;
+use std::time::Duration;
 
 fn click(window: &mut CpuWindow, x: f32, y: f32) -> Result<()> {
     let point = PointerSample {
@@ -40,7 +41,11 @@ fn controls_change_the_specimen_and_choices_survive_navigation() -> Result<()> {
         let stride = frame.size.width as usize * 4;
         let pixels = frame.rgba[200 * stride..350 * stride].to_vec();
         window.frame_submitted()?;
-        assert!(!window.event(WindowEvent::FrameReady)?.redraw);
+        assert!(
+            !window
+                .event(WindowEvent::FrameReady(Duration::ZERO))?
+                .redraw
+        );
         Ok(pixels)
     };
     let (ui, gallery) = solor_gallery::gallery()?;
@@ -130,5 +135,175 @@ fn submitted_header_routes_drag_and_close_separately() -> Result<()> {
         window.event(WindowEvent::Pointer(up))?.window_control,
         Some(WindowControl::Close)
     );
+    Ok(())
+}
+
+fn market_window(scale: RasterScale) -> Result<(CpuWindow, Size)> {
+    let size = Size {
+        width: px(800.0),
+        height: px(560.0),
+    };
+    let (ui, root) = solor_gallery::gallery()?;
+    let mut window = CpuWindow::mount(ui, root)?;
+    window.frame(size, scale)?;
+    window.frame_submitted()?;
+    click(&mut window, 461.0, 29.0)?;
+    window.frame(size, scale)?;
+    window.frame_submitted()?;
+    Ok((window, size))
+}
+
+#[test]
+fn market_advances_freezes_and_retires_its_frame_listener() -> Result<()> {
+    let scale = RasterScale::ONE;
+    let (mut window, size) = market_window(scale)?;
+    let sample = |window: &mut CpuWindow| -> Result<Vec<u8>> {
+        let frame = window.frame(size, scale)?;
+        let stride = frame.size.width as usize * 4;
+        let pixels = frame.rgba[280 * stride..500 * stride].to_vec();
+        window.frame_submitted()?;
+        Ok(pixels)
+    };
+    assert!(
+        window
+            .event(WindowEvent::FrameReady(Duration::ZERO))?
+            .redraw
+    );
+    let previous = sample(&mut window)?;
+    assert!(
+        window
+            .event(WindowEvent::FrameReady(Duration::ZERO))?
+            .redraw
+    );
+    let latest = sample(&mut window)?;
+    assert!(previous != latest);
+    click(&mut window, 750.0, 85.0)?;
+    // The preceding submission may still have a callback in flight at pause.
+    window.event(WindowEvent::FrameReady(Duration::from_secs(2)))?;
+    let paused = sample(&mut window)?;
+    assert!(paused == latest);
+    assert!(
+        !window
+            .event(WindowEvent::FrameReady(Duration::ZERO))?
+            .redraw
+    );
+    assert!(paused == sample(&mut window)?);
+    click(&mut window, 92.0, 233.0)?;
+    assert!(paused != sample(&mut window)?);
+    assert!(
+        !window
+            .event(WindowEvent::FrameReady(Duration::ZERO))?
+            .redraw
+    );
+    click(&mut window, 750.0, 85.0)?;
+    sample(&mut window)?;
+    assert!(
+        window
+            .event(WindowEvent::FrameReady(Duration::ZERO))?
+            .redraw
+    );
+    click(&mut window, 550.0, 29.0)?;
+    sample(&mut window)?;
+    assert!(
+        !window
+            .event(WindowEvent::FrameReady(Duration::ZERO))?
+            .redraw
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "release throughput measurement"]
+fn market_frame_cost() -> Result<()> {
+    use std::time::Instant;
+    for scale in [RasterScale::ONE, RasterScale(1.5)] {
+        let (mut window, size) = market_window(scale)?;
+        let mut costs = Vec::with_capacity(360);
+        let clock = Instant::now();
+        for frame in 0..392 {
+            let start = Instant::now();
+            assert!(
+                window
+                    .event(WindowEvent::FrameReady(start.duration_since(clock)))?
+                    .redraw
+            );
+            assert!(window.frame(size, scale)?.damage.is_some());
+            window.frame_submitted()?;
+            if frame >= 32 {
+                costs.push(start.elapsed());
+            }
+        }
+        let frames_per_second = costs.len() as f64 / costs.iter().sum::<Duration>().as_secs_f64();
+        costs.sort_unstable();
+        let over = costs
+            .iter()
+            .filter(|&&d| d > Duration::from_secs_f64(1.0 / 120.0))
+            .count();
+        eprintln!(
+            "800x560 scale={} unpaced CPU throughput={frames_per_second:.0} frames/s, frame work p50={:?} p95={:?} p99={:?} over 120 Hz budget={over}/{}",
+            scale.0,
+            costs[179],
+            costs[341],
+            costs[356],
+            costs.len()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn fps_readout_uses_elapsed_callback_intervals() -> Result<()> {
+    use solor::{Draw, Ui};
+
+    let (mut ui, root) = solor_gallery::gallery()?;
+    let view = ui.mount(root)?;
+    let submit = |ui: &mut Ui| -> Result<Vec<solor::SharedString>> {
+        ui.flush()?;
+        ui.layout(
+            view,
+            Size {
+                width: px(800.0),
+                height: px(560.0),
+            },
+        )?;
+        let frame = ui.record_frame(view)?;
+        let labels = frame
+            .draws()
+            .iter()
+            .filter_map(|draw| match draw {
+                Draw::Text { paragraph, .. } => Some(paragraph.text.clone()),
+                _ => None,
+            })
+            .collect();
+        ui.accept_pointer_frame(frame.into_pointer_frame())?;
+        Ok(labels)
+    };
+    submit(&mut ui)?;
+    let point = PointerSample {
+        id: PointerId(1),
+        kind: PointerKind::Mouse,
+        position: Origin {
+            x: px(461.0),
+            y: px(29.0),
+        },
+        modifiers: Default::default(),
+    };
+    for input in [
+        PointerInput::Down(point, PointerButton::Primary),
+        PointerInput::Up(point, PointerButton::Primary),
+    ] {
+        ui.dispatch_pointer(view, input)?;
+    }
+    assert!(submit(&mut ui)?.iter().any(|label| label.as_str() == "--"));
+    for millis in [1000, 1050, 1600, 1900, 2250] {
+        ui.dispatch_frame(view, Duration::from_millis(millis))?;
+        let labels = submit(&mut ui)?;
+        let expected = if millis < 2250 { "--" } else { "3.2" };
+        assert!(
+            labels
+                .windows(2)
+                .any(|pair| pair[0] == "Callback FPS" && pair[1] == expected)
+        );
+    }
     Ok(())
 }

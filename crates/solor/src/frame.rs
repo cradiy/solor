@@ -153,13 +153,42 @@ impl MountedNode {
 }
 
 impl Ui {
+    /// Advances the live frame listeners from the last accepted view snapshot.
+    /// Pending input updates are flushed first so retired or hidden listeners do not run.
+    /// Hosts call this once per delivered frame opportunity, before recording its successor.
+    pub fn dispatch_frame(&mut self, view: ViewId, now: std::time::Duration) -> Result<()> {
+        if self.has_pending_bindings() {
+            self.flush()?;
+        }
+        let instance = self
+            .instances
+            .get_mut(&view)
+            .context("frame view is no longer mounted")?;
+        for id in instance.pointer.frame_listeners() {
+            if let Some(handler) = instance.frame_handlers.get_mut(id)
+                && let Some(node) = instance.bodies.get_mut(id)
+                && node.visible
+            {
+                handler(
+                    now,
+                    &mut crate::Context {
+                        state: self.state.get_mut(),
+                        engine: self.engine.as_ref(),
+                        owned: Some(&mut node.owned),
+                    },
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     /// Records the whole laid-out view. Repaint requests are acknowledged together
     /// after successful recording. Input continues to use the last accepted frame.
     pub fn record_frame(&self, view: ViewId) -> Result<ViewFrame> {
         let instance = self.instance(view)?;
         let pointer = self.prepare_pointer_frame(view)?;
         let cache = &instance.fixed_labels;
-        let mut next_frame = false;
+        let mut next_frame = !pointer.frame_listeners().is_empty();
         let mut state = self.state.try_borrow_mut()?;
         let mut draws = Vec::new();
         if let Some(labels) = cache.labels.get() {

@@ -164,6 +164,7 @@ type VisibilityUpdates = Rc<RefCell<HashMap<ViewId, VisibilityBatch>>>;
 type LabelUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), Signal<SharedString>>>>;
 
 struct Instance {
+    frame_handlers: HashMap<NodeId, element::FrameHandler>,
     scope: NodeId,
     paint_reads: RefCell<Vec<SignalId>>,
     observers: RefCell<HashMap<NodeId, Vec<(SignalId, BindingId)>>>,
@@ -379,6 +380,7 @@ impl Instance {
         };
         let Installation {
             mut node,
+            on_frame,
             children,
             watches,
         } = element.attach(
@@ -396,6 +398,9 @@ impl Instance {
         node.visible &= self.bodies[&parent].visible;
         self.visible_nodes += usize::from(node.visible);
         self.bodies.insert(id, node);
+        if let Some(handler) = on_frame {
+            self.frame_handlers.insert(id, handler);
+        }
         self.nodes.insert(path.to_vec(), id);
         self.invalidate_geometry();
         self.finish_attachment(id, path, watches, children, cx)?;
@@ -421,6 +426,7 @@ impl Instance {
             let node = self.bodies.remove(&node).expect("mounted body");
             self.visible_nodes -= usize::from(node.visible);
             self.pointer.retire(node.id);
+            self.frame_handlers.remove(&node.id);
             self.unobserve_paint(node.id, cx.state);
             self.repaints.borrow_mut().dirty.remove(&node.id);
             if let Some(target) = node.binding_target {
@@ -538,6 +544,7 @@ impl Ui {
             scene,
             Installation {
                 node: mut root_node,
+                on_frame,
                 children,
                 watches,
             },
@@ -547,6 +554,10 @@ impl Ui {
         drop(mount);
         let root = scene.root();
         let mut instance = Instance {
+            frame_handlers: on_frame
+                .into_iter()
+                .map(|handler| (root, handler))
+                .collect(),
             scope,
             paint_reads: Default::default(),
             observers: Default::default(),

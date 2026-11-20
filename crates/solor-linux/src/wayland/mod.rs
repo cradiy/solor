@@ -426,7 +426,7 @@ impl Dispatch<wl_callback::WlCallback, Option<usize>> for Window {
             }
         }
         state.waiting = false;
-        state.event(WindowEvent::FrameReady);
+        state.event(WindowEvent::FrameReady(state.start.elapsed()));
     }
 }
 

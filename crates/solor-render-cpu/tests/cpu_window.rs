@@ -1,4 +1,5 @@
 //! A mounted window routes against the last successfully submitted allocation.
+use std::time::Duration;
 use std::{cell::Cell, rc::Rc};
 
 use anyhow::Result;
@@ -61,7 +62,11 @@ fn rejected_resize_keeps_old_hit_geometry_until_retry_is_submitted() -> Result<(
     };
     window.frame(small, RasterScale::ONE)?;
     window.frame_submitted()?;
-    assert!(!window.event(WindowEvent::FrameReady)?.redraw);
+    assert!(
+        !window
+            .event(WindowEvent::FrameReady(Duration::ZERO))?
+            .redraw
+    );
 
     window.frame(large, RasterScale::ONE)?;
     // The platform rejects this buffer. A failed preparation supersedes it, too.
@@ -79,7 +84,11 @@ fn rejected_resize_keeps_old_hit_geometry_until_retry_is_submitted() -> Result<(
     let closed = window.frame(large, RasterScale::ONE)?;
     assert_eq!(&closed.rgba[sample..sample + 4], [255; 4]);
     window.frame_submitted()?;
-    assert!(!window.event(WindowEvent::FrameReady)?.redraw);
+    assert!(
+        !window
+            .event(WindowEvent::FrameReady(Duration::ZERO))?
+            .redraw
+    );
     Ok(())
 }
 

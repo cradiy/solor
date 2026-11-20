@@ -1,4 +1,5 @@
 //! Interactive specimens of Solor typography, fills and layout.
+mod markets;
 mod specimens;
 
 use anyhow::Result;
@@ -12,7 +13,7 @@ const INK: Rgba = rgb(0x252e29);
 const MUTED: Rgba = rgb(0x526058);
 const LINE: Rgba = rgb(0xd7dbd2);
 const CITRON: Rgba = rgb(0xe0efa3);
-const PAGES: [&str; 3] = ["Typography", "Paint", "Layout"];
+const PAGES: [&str; 4] = ["Markets", "Typography", "Paint", "Layout"];
 
 fn label(value: &'static str, size: f32, leading: f32) -> impl IntoElement + Styled {
     text(value)
@@ -111,7 +112,7 @@ pub fn gallery() -> Result<(Ui, impl Render)> {
     Ok((
         ui,
         component(move |cx| {
-            let pages = Selection::new(cx, 0);
+            let pages = Selection::new(cx, 1);
             let spacing = Selection::new(cx, 1);
             let geometry = Selection::new(cx, 0);
             let alignment = Selection::new(cx, 1);
@@ -144,9 +145,10 @@ pub fn gallery() -> Result<(Ui, impl Render)> {
                 .bg(PAPER)
                 .text_color(INK)
                 .child(header)
-                .child_when(pages.0[0], move || specimens::typography(spacing))
-                .child_when(pages.0[1], move || specimens::paint(geometry, &ramp))
-                .child_when(pages.0[2], move || specimens::layout(alignment))
+                .child_when(pages.0[0], markets::market)
+                .child_when(pages.0[1], move || specimens::typography(spacing))
+                .child_when(pages.0[2], move || specimens::paint(geometry, &ramp))
+                .child_when(pages.0[3], move || specimens::layout(alignment))
         }),
     ))
 }

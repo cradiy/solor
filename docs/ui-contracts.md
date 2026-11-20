@@ -8,6 +8,17 @@ stage consumes it, and how a host learns about the resulting work.
 
 Run `cargo run -p solor-gallery --release` in a Linux Wayland session to compare
 letter spacing, OpenType ligatures, gradient geometry and flex distribution.
+The Markets tab runs a deterministic feed of six instruments. Each host frame
+advances 32 ticks per instrument and rolls one candle into each 96-period
+history. Select an instrument to inspect its candles and volume. Pause freezes
+the feed and releases its frame request. Callback FPS counts intervals between
+host frame opportunities over at least one second of elapsed monotonic time.
+
+For unpaced CPU measurements, run
+`cargo test --release -p solor-gallery --test navigation market_frame_cost -- --ignored --nocapture`.
+The test drives the same mounted page and measures updates, layout, recording,
+CPU rasterization and submission acknowledgement at 1× and 1.5× scale.
+Window-system upload and display timing are outside this benchmark.
 
 ## Implemented boundaries
 

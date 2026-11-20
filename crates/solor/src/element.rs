@@ -233,13 +233,39 @@ impl PaintContext<'_> {
         }
     }
 
+    /// Fills a rectangle at an offset from the content origin in logical pixels.
+    pub fn fill_rect(&mut self, offset: Origin, size: Size, fill: impl Into<Fill>) -> Result<()> {
+        anyhow::ensure!(
+            size.width.is_extent() && size.height.is_extent(),
+            "invalid fill extent"
+        );
+        let origin = Origin {
+            x: self
+                .origin
+                .x
+                .checked_add(offset.x)
+                .context("invalid fill x")?,
+            y: self
+                .origin
+                .y
+                .checked_add(offset.y)
+                .context("invalid fill y")?,
+        };
+        self.record_fill(origin, size, fill.into());
+        Ok(())
+    }
+
     /// Records a rectangle at the content origin.
     pub fn fill(&mut self, size: Size, fill: impl Into<Fill>) {
+        self.record_fill(self.origin, size, fill.into());
+    }
+
+    fn record_fill(&mut self, origin: Origin, size: Size, fill: Fill) {
         self.commands.push(Draw::Fill {
             clip: self.clip.clone(),
-            origin: self.origin,
+            origin,
             size,
-            fill: fill.into(),
+            fill,
             corner_radii: Corners::default(),
         });
     }
@@ -416,7 +442,10 @@ impl MountedNode {
     }
 }
 
+pub(super) type FrameHandler = Box<dyn FnMut(std::time::Duration, &mut Context<'_>) -> Result<()>>;
+
 pub(super) struct Installation {
+    pub on_frame: Option<FrameHandler>,
     pub node: MountedNode,
     pub children: Vec<Child>,
     pub watches: Vec<Watch>,
@@ -561,6 +590,7 @@ impl AnyElement {
                 }
             };
             Ok(Installation {
+                on_frame: node.on_frame,
                 node: MountedNode::new::<E>(
                     id,
                     node.handlers,
@@ -626,6 +656,7 @@ pub(super) enum Child {
 
 /// A primitive and the children, handlers and styles to attach with it.
 pub struct Node<E> {
+    on_frame: Option<FrameHandler>,
     paint_mode: RefreshPolicy,
     style: StyleRefinement,
     watches: Vec<Watch>,
@@ -637,6 +668,7 @@ pub struct Node<E> {
 /// Wraps a custom layout body in the common element builder.
 pub fn element<E: Element>(body: E) -> Node<E> {
     Node {
+        on_frame: None,
         paint_mode: RefreshMode::OnDemand.into(),
         style: StyleRefinement::default(),
         watches: Vec::new(),
@@ -678,6 +710,16 @@ impl<E: Element> Node<E> {
     /// Registers the handler invoked on a direct click.
     pub fn on_click(mut self, click: impl Fn(&mut Context<'_>) -> Result<()> + 'static) -> Self {
         self.handlers.get_or_insert_with(Default::default).click = Some(Box::new(click));
+        self
+    }
+
+    /// Requests successive host frame opportunities while this node is visible.
+    /// The timestamp is the monotonic dispatch time. Signal writes apply before the next layout.
+    pub fn on_frame(
+        mut self,
+        handler: impl FnMut(std::time::Duration, &mut Context<'_>) -> Result<()> + 'static,
+    ) -> Self {
+        self.on_frame = Some(Box::new(handler));
         self
     }
 

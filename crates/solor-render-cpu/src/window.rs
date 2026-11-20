@@ -50,7 +50,10 @@ impl WindowHandler<Rgba8> for CpuWindow {
             WindowEvent::Pointer(input) => {
                 response.window_control = self.ui.dispatch_pointer(self.view, input)?
             }
-            WindowEvent::FrameReady => response.redraw = std::mem::take(&mut self.animate),
+            WindowEvent::FrameReady(time) if std::mem::take(&mut self.animate) => {
+                self.ui.dispatch_frame(self.view, time)?;
+                response.redraw = true;
+            }
             _ => {}
         }
         response.redraw |= self.ui.has_pending_bindings();

@@ -75,8 +75,9 @@ pub enum WindowEvent {
     Pointer(PointerInput),
     /// Vertical scroll distance in logical pixels.
     Scroll(Pixels),
-    /// The host is ready for a previously requested frame callback.
-    FrameReady,
+    /// A requested frame opportunity, timestamped at dispatch from a monotonic host clock.
+    /// Timestamps in one window share an origin and can be subtracted to measure cadence.
+    FrameReady(std::time::Duration),
 }
 
 /// The format a renderer submits to a compatible window.
