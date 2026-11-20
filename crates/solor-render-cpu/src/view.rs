@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::glyph_masks::GlyphMasks;
-use crate::pixels::{Clip, DeviceSize, RasterScale, Surface, TextRaster, blend};
+use crate::pixels::{Clip, DeviceSize, RasterScale, Surface, TextRaster, blend, blend_solid_span};
 use solor::{
     Draw, Fill, Pixels, ViewFrame,
     layout::{Origin, Size},
@@ -214,12 +214,7 @@ impl Surface {
             let (leading, rest) = pixels.split_at_mut((from - clip.left) as usize);
             let (middle, trailing) = rest.split_at_mut((to - from) as usize);
             match &mut brush {
-                Brush::Solid(c) if c.alpha == 255 => middle.fill([c.red, c.green, c.blue, 255]),
-                Brush::Solid(c) => {
-                    for pixel in middle {
-                        blend(pixel, *c, 255);
-                    }
-                }
+                Brush::Solid(c) => blend_solid_span(middle, *c, 255),
                 Brush::Gradient(_, Some(linear)) => linear
                     .write_span(from as u32, y as u32, middle)
                     .map_err(Error::other)?,

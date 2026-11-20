@@ -151,6 +151,27 @@ pub(super) fn blend(pixel: &mut [u8], color: solor::Rgba, coverage: u8) {
     }
 }
 
+// Solid spans share one effective alpha across all their destination pixels.
+pub(super) fn blend_solid_span(pixels: &mut [[u8; 4]], color: solor::Rgba, coverage: u8) {
+    let alpha = (u16::from(coverage) * u16::from(color.alpha) + 127) / 255;
+    if alpha == 0 {
+        return;
+    }
+    if alpha == 255 {
+        pixels.fill([color.red, color.green, color.blue, 255]);
+        return;
+    }
+
+    let inverse = 255 - alpha;
+    // The surface is opaque. Blending its fourth lane against 255 preserves that invariant.
+    let source = [color.red, color.green, color.blue, 255].map(|c| u16::from(c) * alpha + 127);
+    for pixel in pixels {
+        for (channel, source) in pixel.iter_mut().zip(source) {
+            *channel = ((source + u16::from(*channel) * inverse) / 255) as u8;
+        }
+    }
+}
+
 pub(super) struct TextRaster<'a> {
     font: FontRef<'a>,
     context: ScaleContext,
@@ -248,3 +269,7 @@ impl<'a> TextRaster<'a> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/blend.rs"]
+mod tests;

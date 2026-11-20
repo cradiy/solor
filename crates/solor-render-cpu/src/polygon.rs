@@ -1,7 +1,7 @@
 //! Even-odd polygon spans with four vertical samples and fractional horizontal coverage.
 use crate::{
     path::{PathBounds, device},
-    pixels::{Surface, blend},
+    pixels::{Surface, blend, blend_solid_span},
 };
 use solor::{
     Fill,
@@ -119,14 +119,7 @@ impl Surface {
         match fill {
             Fill::Solid(color) => {
                 for_each_span(points, origin, scale, clip, |row, from, to, coverage| {
-                    let pixels = self.span_pixels(row, from, to);
-                    if color.alpha == 255 && coverage == 255 {
-                        pixels.fill([color.red, color.green, color.blue, 255]);
-                    } else {
-                        for pixel in pixels {
-                            blend(pixel, *color, coverage);
-                        }
-                    }
+                    blend_solid_span(self.span_pixels(row, from, to), *color, coverage);
                     Ok(())
                 })
             }
