@@ -122,7 +122,7 @@ fn meter_damage_covers_old_and_new_ink_and_matches_full_replay() -> Result<()> {
         let full = Surface::draw_view(&reference, physical, SCALE)?;
         assert_eq!(frame.rgba, full.rgba);
         let new_width = (n * 37) % 237;
-        let area = frame.damage.unwrap();
+        let area = frame.damage.bounds().unwrap();
         if n != 0 {
             assert_eq!((area.left, area.top, area.bottom), (10, 10, 21));
             assert_eq!(
@@ -134,12 +134,12 @@ fn meter_damage_covers_old_and_new_ink_and_matches_full_replay() -> Result<()> {
         ui.accept_pointer_frame(reference.into_pointer_frame())?;
         window.frame_submitted()?;
     }
-    assert!(window.frame(SIZE, SCALE)?.damage.is_none());
+    assert!(window.frame(SIZE, SCALE)?.damage.is_empty());
     window.frame_submitted()?;
     let rescaled = RasterScale(1.2501);
     assert_eq!(rescaled.buffer_size(SIZE)?, physical);
     assert_eq!(
-        window.frame(SIZE, rescaled)?.damage,
+        window.frame(SIZE, rescaled)?.damage.bounds(),
         Some(solor::raster::Clip::canvas(physical))
     );
     Ok(())
@@ -169,7 +169,7 @@ fn time_window(extra: usize) -> Result<()> {
         window.event(WindowEvent::Pointer(movement(n)))?;
         let frame = window.frame(SIZE, SCALE)?;
         black_box(frame.rgba);
-        let area = frame.damage.unwrap();
+        let area = frame.damage.bounds().unwrap();
         window.frame_submitted()?;
         let elapsed = start.elapsed();
         if n > 20 {
@@ -207,7 +207,7 @@ fn offscreen_labels_preserve_meter_pixels_and_damage() -> Result<()> {
             }
             let frame = window.frame(SIZE, SCALE)?;
             assert!(frame.rgba == expected.rgba, "different pixels on frame {n}");
-            assert_eq!(frame.damage, expected.damage);
+            assert_eq!(frame.damage.bounds(), expected.damage.bounds());
             window.frame_submitted()?;
         }
         baseline.frame_submitted()?;
@@ -326,7 +326,7 @@ fn overlapping_text_matches_full_replay_across_repairs_retries_and_scale_changes
         let full = Surface::draw_view(&reference, physical, scale)?;
         assert_eq!(frame.rgba, full.rgba);
         assert_eq!(
-            frame.damage,
+            frame.damage.bounds(),
             Some(if full_damage {
                 Clip::canvas(physical)
             } else {
@@ -395,7 +395,7 @@ fn toggling_a_fill_repairs_only_its_clip_under_unchanged_labels() -> Result<()> 
         let full = Surface::draw_view(&reference, physical, SCALE)?;
         assert_eq!(frame.rgba, full.rgba);
         assert_eq!(
-            frame.damage,
+            frame.damage.bounds(),
             Some(step.map_or(Clip::canvas(physical), |_| meter))
         );
         ui.accept_pointer_frame(reference.into_pointer_frame())?;

@@ -22,7 +22,7 @@ use buffer::{Buffer, PixelOrder};
 use solor::{
     layout::Size,
     platform::{Platform, WindowControl, WindowEvent, WindowHandler, WindowOptions},
-    raster::{Clip, DeviceSize, RasterFrame, RasterScale, Rgba8},
+    raster::{Clip, Damage, DeviceSize, RasterFrame, RasterScale, Rgba8},
 };
 
 /// Wayland platform using XDG shell and shared-memory window buffers.
@@ -71,12 +71,12 @@ struct DamageAudit {
 
 impl DamageAudit {
     fn check(&mut self, current: &RasterFrame<'_>) -> io::Result<()> {
-        let damage = current.damage;
+        let damage = current.damage.rects();
         let canvas = Clip::canvas(current.size);
-        if damage.is_some_and(|area| area.empty() || area.intersect(canvas) != area) {
+        if damage.iter().any(|&area| area.intersect(canvas) != area) {
             return Err(io::Error::other("damage outside the submitted buffer"));
         }
-        if damage != Some(canvas) {
+        if !damage.contains(&canvas) {
             let previous = self
                 .previous
                 .as_ref()
@@ -89,15 +89,21 @@ impl DamageAudit {
                 .zip(current.rgba.chunks_exact(stride))
                 .enumerate()
             {
-                let matches = match damage {
-                    Some(area) if (area.top..area.bottom).contains(&(y as i64)) => {
-                        let left = area.left as usize * 4;
-                        let right = area.right as usize * 4;
-                        old[..left] == new[..left] && old[right..] == new[right..]
-                    }
-                    _ => old == new,
-                };
-                if !matches {
+                if old != new
+                    && old
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .zip(new.as_chunks::<4>().0)
+                        .enumerate()
+                        .any(|(x, (a, b))| {
+                            a != b
+                                && !damage.iter().any(|r| {
+                                    (r.left..r.right).contains(&(x as i64))
+                                        && (r.top..r.bottom).contains(&(y as i64))
+                                })
+                        })
+                {
                     return Err(io::Error::other(
                         "changed pixel outside reported buffer damage",
                     ));
@@ -285,13 +291,13 @@ impl Window {
         let mut frame = self.view.frame(self.size, scale)?;
         frame.validate(size)?;
         if self.full_damage {
-            frame.damage = Some(Clip::canvas(size));
+            frame.damage = Damage::from_rect(Clip::canvas(size));
         }
         if let Some(audit) = &mut self.audit {
             audit.check(&frame)?;
         }
         let callback = frame.request_callback;
-        let Some(area) = frame.damage else {
+        if frame.damage.is_empty() {
             if callback {
                 // A frame request takes effect at commit, even with no new buffer.
                 self.surface.frame(qh, None);
@@ -301,9 +307,11 @@ impl Window {
             self.dirty = false;
             self.view.frame_submitted()?;
             return Ok(());
-        };
+        }
         for slot in self.slots.iter_mut().flatten().filter(|s| s.size == size) {
-            slot.invalidate(area);
+            for &area in frame.damage.rects() {
+                slot.invalidate(area);
+            }
         }
         let reuse = self.slots[index]
             .as_ref()
@@ -323,12 +331,14 @@ impl Window {
         self.viewport
             .set_destination(self.size.width.get() as i32, self.size.height.get() as i32);
         self.surface.attach(Some(&slot.handle), 0, 0);
-        self.surface.damage_buffer(
-            area.left as i32,
-            area.top as i32,
-            (area.right - area.left) as i32,
-            (area.bottom - area.top) as i32,
-        );
+        for &area in frame.damage.rects() {
+            self.surface.damage_buffer(
+                area.left as i32,
+                area.top as i32,
+                (area.right - area.left) as i32,
+                (area.bottom - area.top) as i32,
+            );
+        }
         if callback {
             self.surface.frame(qh, Some(self.commits + 1));
             self.waiting = true;

@@ -54,23 +54,10 @@ impl Element for Chart {
                 color,
             )
         };
-        let lo = tape
-            .candles
-            .iter()
-            .map(|c| c.low)
-            .min()
-            .unwrap_or(tape.price)
-            - 4;
-        let hi = tape
-            .candles
-            .iter()
-            .map(|c| c.high)
-            .max()
-            .unwrap_or(tape.price)
-            + 4;
-        let y = |price| (hi - price) as f32 / (hi - lo) as f32 * h * 0.77;
+        let (lo, hi) = tape.range();
+        let y = |price| (hi - price) as f32 / (hi - lo).max(1) as f32 * h * 0.77;
         for line in 0..5 {
-            rect(0.0, line as f32 * h * 0.2, w, 1.0, rgb(0x303a40))?;
+            rect(0.0, line as f32 * h * 0.77 / 4.0, w, 1.0, rgb(0x2b333e))?;
         }
         let step = w / PERIODS as f32;
         let body = step * 0.70;

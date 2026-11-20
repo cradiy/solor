@@ -421,6 +421,7 @@ dependencies = [
  "color",
  "cosmic-text",
  "slotmap",
+ "smallvec",
  "smol_str",
  "ttf-parser",
 ]
@@ -441,6 +442,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "rustix",
+ "smallvec",
  "solor",
  "wayland-client",
  "wayland-protocols",

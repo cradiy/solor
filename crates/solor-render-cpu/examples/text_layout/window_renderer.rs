@@ -77,7 +77,9 @@ impl WindowHandler<Rgba8> for Renderer {
         Ok(RasterFrame {
             size,
             rgba: &pixels.rgba,
-            damage,
+            damage: damage
+                .map(solor::raster::Damage::from_rect)
+                .unwrap_or_default(),
             request_callback: self.view.wants_frame_callback(damage.is_some()),
         })
     }

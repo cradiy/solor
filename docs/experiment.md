@@ -76,13 +76,13 @@ The [Wayland text window](text-window.md) presents these pixels at the preferred
 surface scale. Acceptance covers a mapped two-row window, alternating row edits,
 released buffer reuse, compositor-driven resizing, agreement with uncached
 physical pixels, idle commits and normal close. Record client PSS and shared
-buffer sizes separately. The partial upload experiment tracks the bounding rectangle of missed changes
+buffer sizes separately. The partial upload experiment tracks the regions of missed changes
 per shared file. Compare bytes and conversion/write time for bounded row spans,
 full-width scanline bands and full uploads
 under identical content and compositor damage, and verify the complete file
 after edits and resizing. The window reports surface damage in physical buffer
 coordinates. Check that a new target reports full damage, local edits cover
-every changed pixel, and a slot can be repaired independently of that rectangle.
+every changed pixel, and a slot can be repaired independently of the damage reported for the current frame.
 For empty damage, verify zero shared-file writes, progress of scheduled frame
 callbacks, wakeup on input, and correct pixels on the next buffer submission.
 The [disclosure experiment](disclosure.md) connects primary pointer activation,

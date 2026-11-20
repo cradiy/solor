@@ -105,10 +105,10 @@ mounts the root once. The host passes this handler to the Wayland driver. It
 dispatches pointer events against the accepted layout and requests a frame
 when signal bindings have work to flush. Each frame records the view and
 compares the ordered commands with the previous submission. The window keeps
-one RGBA surface and repairs the bounding rectangle of changed commands,
+one RGBA surface and repairs a bounded set of rectangles covering changed commands,
 including the space vacated by shrinking or removed content. Inserting or removing
 a command leaves an unchanged suffix outside the damage calculation. Draws
-overlapping the damaged area are replayed in paint order. Identical commands
+overlapping each repair are replayed in paint order. Fully covering opaque base colors initialize the repaired pixels in a single pass. Identical commands
 produce empty damage. Changes to the allocation or scale and retries after a discarded
 prepared image require full damage. The platform acknowledges successful
 submission before the handler publishes its prepared hit geometry. On the next

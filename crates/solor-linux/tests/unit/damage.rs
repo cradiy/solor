@@ -20,11 +20,11 @@ fn audit_preserves_pixels_outside_the_surface_damage() {
         bottom: 2,
     };
     let mut audit = DamageAudit::default();
-    let mut check = |rgba: Vec<u8>, damage| {
+    let mut check = |rgba: Vec<u8>, damage: Option<Clip>| {
         audit.check(&RasterFrame {
             size,
             rgba: &rgba,
-            damage,
+            damage: damage.map(Damage::from_rect).unwrap_or_default(),
             request_callback: false,
         })
     };

@@ -22,27 +22,23 @@ Mask keys include the physical font size. A scale change invalidates retained
 pixels even if rounding leaves the physical buffer dimensions unchanged.
 
 The client keeps one retained RGBA image and up to two shared files. Each file
-tracks the bounding rectangle of all pixel changes since its last upload,
+tracks a bounded set of changed rectangles since its last upload,
 including changes while the compositor held it. New files start with the entire
 image pending. When the compositor advertises XBGR8888, the uploader writes the
 retained RGBA bytes directly. The format ignores the alpha byte. With XRGB8888
 the uploader swaps red and blue in a 16 KiB staging buffer. Each file keeps
 its format for its lifetime and clears pending damage after all writes succeed.
 
-For a gap of at least 2,048 bytes between the end of one affected row span and
-the start of the next, the uploader writes the spans separately. For smaller
-gaps it writes the contiguous range from the first affected pixel to the last.
-This also handles full-width updates. Both paths can include unmodified pixels
-within the combined bounds of distant edits.
+The uploader walks changed row spans in file-offset order and writes overlapping
+bytes once. Gaps shorter than 2,048 bytes can be included in the same write
+because the retained image contains the current values of the intervening pixels.
 
-The window sends the retained rasterizer's physical rectangle through
-`wl_surface.damage_buffer`. The rectangle uses the current buffer’s coordinates and
-bounds the pixel changes since the preceding surface commit. A slot can need
-more scanlines repaired than the rectangle reported to the compositor. A new
-logical size or scale damages the full target.
+The window sends the current frame's rectangles through `wl_surface.damage_buffer`
+in physical buffer coordinates. A reused slot can need more pixels repaired than
+the compositor needs for this frame. A new logical size or scale damages the full target.
 
 When the retained rasterizer returns an empty damage region, the window keeps
-the current buffer attached and preserves the pending rectangle in each slot. An
+the current buffer attached and preserves the pending damage in each slot. An
 event-driven disclosure then waits for input. If another application update
 needs a frame callback, the window requests it and commits the callback alone.
 The next visible change repairs the selected file before attaching it. The

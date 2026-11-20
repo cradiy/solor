@@ -159,7 +159,7 @@ fn changing_only_an_ancestor_clip_repairs_old_pixels_and_publishes_hits_on_submi
     click(&mut window, 4.0, 15.0)?;
     let narrow = window.frame(size, RasterScale::ONE)?;
     assert_eq!(
-        narrow.damage,
+        narrow.damage.bounds(),
         Some(Clip {
             left: 0,
             top: 0,
@@ -177,7 +177,7 @@ fn changing_only_an_ancestor_clip_repairs_old_pixels_and_publishes_hits_on_submi
     click(&mut window, 48.0, 5.0)?;
     click(&mut window, 16.0, 5.0)?;
     assert_eq!(clicks.get(), 2);
-    assert!(window.frame(size, RasterScale::ONE)?.damage.is_none());
+    assert!(window.frame(size, RasterScale::ONE)?.damage.is_empty());
     window.frame_submitted()?;
 
     let resized = window.frame(

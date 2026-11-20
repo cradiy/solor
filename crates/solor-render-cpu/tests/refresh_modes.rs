@@ -252,7 +252,7 @@ fn retained_sibling_repaints_only_on_change_while_meter_starts_and_stops() -> Re
             .event(WindowEvent::FrameReady(Duration::ZERO))?
             .redraw
     );
-    assert!(window.frame(SIZE, RasterScale::ONE)?.damage.is_none());
+    assert!(window.frame(SIZE, RasterScale::ONE)?.damage.is_empty());
     window.frame_submitted()?;
     assert_eq!(
         (samples.slow_paints.get(), samples.fast_paints.get()),

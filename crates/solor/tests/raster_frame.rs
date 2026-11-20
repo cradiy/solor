@@ -10,7 +10,7 @@ fn upload_checks_extent_storage_and_damage_before_accessing_rows() {
     let mut frame = RasterFrame {
         size,
         rgba: &[0; 24],
-        damage: None,
+        damage: Default::default(),
         request_callback: false,
     };
     frame.validate(size).unwrap();
@@ -25,12 +25,15 @@ fn upload_checks_extent_storage_and_damage_before_accessing_rows() {
     frame.rgba = &[0; 23];
     assert!(frame.validate(size).is_err());
     frame.rgba = &[0; 24];
-    frame.damage = Some(Clip {
+    frame.damage = solor::raster::Damage::from_rect(Clip {
         left: 1,
         ..Clip::canvas(size)
     });
     frame.validate(size).unwrap();
-    frame.damage.as_mut().unwrap().right = 3;
+    frame.damage.include(Clip {
+        right: 3,
+        ..Clip::canvas(size)
+    });
     assert!(frame.validate(size).is_err());
     frame.size = DeviceSize {
         width: u32::MAX,

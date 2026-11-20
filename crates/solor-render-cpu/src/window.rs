@@ -5,7 +5,7 @@ use solor::{
     layout::Size,
     platform::{EventResponse, WindowEvent, WindowHandler},
     pointer::PointerFrame,
-    raster::{Clip, RasterFrame, RasterScale, Rgba8},
+    raster::{Clip, Damage, RasterFrame, RasterScale, Rgba8},
 };
 
 use crate::{glyph_masks::GlyphMasks, pixels::Surface};
@@ -74,7 +74,7 @@ impl WindowHandler<Rgba8> for CpuWindow {
         let (surface, damage) = match self.retained.take() {
             Some(mut old) if old.logical == size && old.scale == scale => {
                 let damage = crate::view::damage(&old.draws, frame.draws(), scale, canvas)?;
-                if let Some(area) = damage {
+                for &area in damage.rects() {
                     old.surface
                         .repair(&frame, scale, area, &mut self.glyph_masks)?;
                 }
@@ -82,7 +82,7 @@ impl WindowHandler<Rgba8> for CpuWindow {
             }
             _ => (
                 Surface::raster_view(&frame, physical, scale, Some(&mut self.glyph_masks))?,
-                Some(canvas),
+                Damage::from_rect(canvas),
             ),
         };
         let animate = frame.requests_animation_frame();
@@ -97,8 +97,8 @@ impl WindowHandler<Rgba8> for CpuWindow {
         Ok(RasterFrame {
             size: physical,
             rgba: &retained.surface.rgba,
+            request_callback: animate || !damage.is_empty(),
             damage,
-            request_callback: animate || damage.is_some(),
         })
     }
 

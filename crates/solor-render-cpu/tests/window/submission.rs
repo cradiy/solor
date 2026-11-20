@@ -16,7 +16,7 @@ fn primary_release_updates_pixels_and_an_idle_frame_has_no_damage() -> anyhow::R
         height: px(100.0),
     };
     let initial = window.frame(size, RasterScale::ONE)?;
-    assert_eq!(initial.damage, Some(Clip::canvas(initial.size)));
+    assert_eq!(initial.damage.bounds(), Some(Clip::canvas(initial.size)));
     let closed = initial.rgba.to_vec();
     window.frame_submitted()?;
     let sample = PointerSample {
@@ -40,11 +40,11 @@ fn primary_release_updates_pixels_and_an_idle_frame_has_no_damage() -> anyhow::R
         assert_eq!(dirty, button == PointerButton::Primary);
     }
     let open = window.frame(size, RasterScale::ONE)?;
-    assert!(open.damage.is_some());
+    assert!(!open.damage.is_empty());
     assert_ne!(open.rgba, closed);
     window.frame_submitted()?;
     let idle = window.frame(size, RasterScale::ONE)?;
-    assert!(idle.damage.is_none());
+    assert!(idle.damage.is_empty());
     assert!(!idle.request_callback);
     Ok(())
 }

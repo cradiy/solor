@@ -8,7 +8,7 @@ use crate::pixels::{Clip, DeviceSize, RasterScale, Surface, TextRaster, blend};
 use solor::{
     Draw, Fill, Pixels, ViewFrame,
     layout::{Origin, Size},
-    raster::OpaqueLinearGradient,
+    raster::{Damage, OpaqueLinearGradient},
     style::Corners,
 };
 
@@ -30,7 +30,7 @@ impl Surface {
         masks: Option<&mut GlyphMasks>,
     ) -> Result<Self> {
         let mut surface = Self::white(size, scale)?;
-        surface.replay(frame, scale, Clip::canvas(size), masks)?;
+        surface.replay(frame, frame.draws(), scale, Clip::canvas(size), masks)?;
         Ok(surface)
     }
 
@@ -41,23 +41,61 @@ impl Surface {
         clip: Clip,
         masks: &mut GlyphMasks,
     ) -> Result<()> {
-        let stride = self.size.width as usize * 4;
-        for y in clip.top as usize..clip.bottom as usize {
-            self.rgba[y * stride + clip.left as usize * 4..y * stride + clip.right as usize * 4]
-                .fill(255);
+        let mut draws = frame.draws();
+        let mut background = [255; 4];
+        while let Some((draw, tail)) = draws.split_first() {
+            let bounds = device_bounds(draw, scale)?.intersect(clip);
+            if !bounds.empty() {
+                let Draw::Fill {
+                    fill: Fill::Solid(color),
+                    origin,
+                    size,
+                    corner_radii,
+                    ..
+                } = draw
+                else {
+                    break;
+                };
+                let left = f64::from(origin.x) * scale.0;
+                let top = f64::from(origin.y) * scale.0;
+                if bounds != clip
+                    || color.alpha != 255
+                    || *corner_radii != Corners::default()
+                    || left > clip.left as f64
+                    || top > clip.top as f64
+                    || left + f64::from(size.width) * scale.0 < clip.right as f64
+                    || top + f64::from(size.height) * scale.0 < clip.bottom as f64
+                {
+                    break;
+                }
+                background = [color.red, color.green, color.blue, 255];
+            }
+            draws = tail;
         }
-        self.replay(frame, scale, clip, Some(masks))
+        // Initialize the repaired pixels once, even with several opaque background layers.
+        let stride = self.size.width as usize * 4;
+        let start = clip.top as usize * stride + clip.left as usize * 4;
+        let row = start..start + (clip.right - clip.left) as usize * 4;
+        self.rgba[row.clone()]
+            .as_chunks_mut::<4>()
+            .0
+            .fill(background);
+        for y in 1..(clip.bottom - clip.top) as usize {
+            self.rgba.copy_within(row.clone(), start + y * stride);
+        }
+        self.replay(frame, draws, scale, clip, Some(masks))
     }
 
     fn replay(
         &mut self,
         frame: &ViewFrame,
+        draws: &[Draw],
         scale: RasterScale,
         clip: Clip,
         mut masks: Option<&mut GlyphMasks>,
     ) -> Result<()> {
         let mut text = None;
-        for draw in frame.draws() {
+        for draw in draws {
             let bounds = device_bounds(draw, scale)?.intersect(clip);
             if bounds.empty() {
                 continue;
@@ -293,7 +331,7 @@ pub(super) fn damage(
     new: &[Draw],
     scale: RasterScale,
     canvas: Clip,
-) -> Result<Option<Clip>> {
+) -> Result<Damage> {
     // An insertion or removal can shift identical trailing commands to new indices.
     // They still replay in paint order wherever the changed draws cause damage.
     let suffix = if old.len() != new.len() {
@@ -307,7 +345,7 @@ pub(super) fn damage(
     };
     let old = &old[..old.len() - suffix];
     let new = &new[..new.len() - suffix];
-    let mut area: Option<Clip> = None;
+    let mut area = Damage::default();
     for i in 0..old.len().max(new.len()) {
         let (before, after) = (old.get(i), new.get(i));
         if before.zip(after).is_some_and(|(a, b)| same_draw(a, b)) {
@@ -315,9 +353,7 @@ pub(super) fn damage(
         }
         for draw in before.into_iter().chain(after) {
             let bounds = device_bounds(draw, scale)?.intersect(canvas);
-            if !bounds.empty() {
-                area = Some(area.map_or(bounds, |r| r.union(bounds)));
-            }
+            area.include(bounds);
         }
     }
     Ok(area)

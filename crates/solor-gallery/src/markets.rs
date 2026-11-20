@@ -7,7 +7,7 @@ use std::{cell::RefCell, rc::Rc, time::Duration};
 use anyhow::Result;
 use solor::{
     Context, Div, Fill, IntoElement, RefreshMode, SharedString, Signal, Styled, component, div,
-    element, px, rgb, text,
+    element, percent, px, rgb, text,
 };
 
 use crate::{Selection, label};
@@ -22,13 +22,13 @@ const SYMBOLS: [(&str, &str, i32); 6] = [
 ];
 const PERIODS: usize = 96;
 const TICKS: usize = 32;
-const BASE: solor::Rgba = rgb(0x151b20);
-const PANEL: solor::Rgba = rgb(0x20282e);
-const ACTIVE: solor::Rgba = rgb(0x2b393b);
-const INK: solor::Rgba = rgb(0xe9efe9);
-const DIM: solor::Rgba = rgb(0xa4b2b6);
-const UP: solor::Rgba = rgb(0x57d4a6);
-const DOWN: solor::Rgba = rgb(0xec8590);
+const BASE: solor::Rgba = rgb(0x12161e);
+const PANEL: solor::Rgba = rgb(0x191f29);
+const ACTIVE: solor::Rgba = rgb(0x293a42);
+const INK: solor::Rgba = rgb(0xf1f4f6);
+const DIM: solor::Rgba = rgb(0xa1adb9);
+const UP: solor::Rgba = rgb(0x60ddba);
+const DOWN: solor::Rgba = rgb(0xff8492);
 
 #[derive(Clone, Copy, Default)]
 struct Candle {
@@ -60,6 +60,14 @@ impl Tape {
             tape.advance();
         }
         tape
+    }
+
+    fn range(&self) -> (i32, i32) {
+        self.candles
+            .iter()
+            .fold((self.price, self.price), |(lo, hi), bar| {
+                (lo.min(bar.low), hi.max(bar.high))
+            })
     }
 
     fn change(&self) -> SharedString {
@@ -106,6 +114,11 @@ struct Quotes {
     symbol: Signal<SharedString>,
     name: Signal<SharedString>,
     last: Signal<SharedString>,
+    reference: Signal<SharedString>,
+    high: Signal<SharedString>,
+    low: Signal<SharedString>,
+    row_change: [Signal<SharedString>; SYMBOLS.len()],
+    row_ink: [Signal<solor::Rgba>; SYMBOLS.len()],
     change: Signal<SharedString>,
     ink: Signal<solor::Rgba>,
 }
@@ -116,6 +129,9 @@ fn price(cents: i32) -> SharedString {
 
 impl Quotes {
     fn detail(&self, cx: &mut Context<'_>, tape: &Tape) -> Result<()> {
+        let (lo, hi) = tape.range();
+        cx.set(self.high, price(hi))?;
+        cx.set(self.low, price(lo))?;
         cx.set(self.last, price(tape.price))?;
         cx.set(self.change, tape.change())?;
         cx.set(self.ink, tape.ink())
@@ -123,12 +139,15 @@ impl Quotes {
 }
 
 fn watchlist(quotes: Quotes, feed: Feed) -> Div {
-    let mut list = div().w(px(196.0)).items_stretch().bg(PANEL).child(
+    let mut list = div().w(px(210.0)).items_stretch().bg(PANEL).child(
         div()
             .px(px(14.0))
             .h(px(42.0))
-            .justify_center()
-            .child(label("Watchlist", 15.0, 22.0)),
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .child(label("Watchlist", 15.0, 22.0))
+            .child(label("6 symbols", 11.0, 18.0).text_color(DIM)),
     );
     for (i, &(symbol, name, _)) in SYMBOLS.iter().enumerate() {
         let feed = feed.clone();
@@ -150,7 +169,18 @@ fn watchlist(quotes: Quotes, feed: Feed) -> Div {
                                 .line_height(px(20.0)),
                         ),
                 )
-                .child(label(name, 11.0, 17.0).text_color(DIM))
+                .child(
+                    div()
+                        .flex_row()
+                        .justify_between()
+                        .child(label(name, 11.0, 17.0).text_color(DIM))
+                        .child(
+                            text(quotes.row_change[i])
+                                .text_size(px(11.0))
+                                .line_height(px(17.0))
+                                .text_color(quotes.row_ink[i]),
+                        ),
+                )
                 .on_click(move |cx| {
                     let previous = *cx.read(quotes.selected)?;
                     cx.set(quotes.highlight[previous], PANEL.into())?;
@@ -158,6 +188,7 @@ fn watchlist(quotes: Quotes, feed: Feed) -> Div {
                     cx.set(quotes.selected, i)?;
                     cx.set(quotes.symbol, symbol.into())?;
                     cx.set(quotes.name, name.into())?;
+                    cx.set(quotes.reference, price(SYMBOLS[i].2))?;
                     quotes.detail(cx, &feed.borrow()[i])
                 }),
         );
@@ -177,6 +208,8 @@ fn live_updates(
         for (i, tape) in data.iter_mut().enumerate() {
             tape.advance();
             cx.set(quotes.rows[i], price(tape.price))?;
+            cx.set(quotes.row_change[i], tape.change())?;
+            cx.set(quotes.row_ink[i], tape.ink())?;
         }
         let i = *cx.read(quotes.selected)?;
         quotes.detail(cx, &data[i])?;
@@ -203,7 +236,13 @@ pub(super) fn market() -> impl IntoElement {
         let feed: Feed = Rc::new(RefCell::new(std::array::from_fn(|i| {
             Tape::new(SYMBOLS[i].2, 9127 + i as u32 * 31)
         })));
+        let (lo, hi) = feed.borrow()[0].range();
         let quotes = Quotes {
+            reference: cx.signal(price(SYMBOLS[0].2)),
+            low: cx.signal(price(lo)),
+            high: cx.signal(price(hi)),
+            row_change: std::array::from_fn(|i| cx.signal(feed.borrow()[i].change())),
+            row_ink: std::array::from_fn(|i| cx.signal(feed.borrow()[i].ink())),
             selected: cx.signal(0),
             rows: std::array::from_fn(|i| cx.signal(price(feed.borrow()[i].price))),
             highlight: std::array::from_fn(|i| {
@@ -232,7 +271,14 @@ pub(super) fn market() -> impl IntoElement {
                     .items_center()
                     .gap(px(12.0))
                     .child(label("Markets", 22.0, 32.0))
-                    .child(label("Simulated feed", 12.0, 20.0).text_color(DIM)),
+                    .child(
+                        div()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(div().size(px(6.0)).rounded(px(3.0)).bg(DIM))
+                            .child(label("Simulated feed", 12.0, 20.0).text_color(DIM)),
+                    ),
             )
             .child(
                 div()
@@ -258,62 +304,139 @@ pub(super) fn market() -> impl IntoElement {
                             }),
                     ),
             );
+        let legend = |color, name| {
+            div()
+                .flex_row()
+                .items_center()
+                .gap(px(5.0))
+                .child(div().size(px(6.0)).rounded(px(2.0)).bg(color))
+                .child(label(name, 11.0, 18.0).text_color(DIM))
+        };
         let detail = div()
             .flex_1()
             .items_stretch()
             .p(px(18.0))
-            .gap(px(7.0))
+            .gap(px(8.0))
             .overflow_hidden()
             .child(
                 div()
                     .flex_row()
                     .items_center()
-                    .gap(px(10.0))
+                    .justify_between()
                     .child(
-                        text(quotes.symbol)
-                            .text_size(px(22.0))
-                            .line_height(px(32.0)),
+                        div()
+                            .flex_row()
+                            .items_baseline()
+                            .gap(px(10.0))
+                            .child(
+                                text(quotes.symbol)
+                                    .text_size(px(23.0))
+                                    .line_height(px(32.0)),
+                            )
+                            .child(text(quotes.name).text_size(px(13.0)).text_color(DIM)),
                     )
-                    .child(text(quotes.name).text_color(DIM)),
+                    .child(label("USD", 11.0, 18.0).text_color(DIM)),
             )
             .child(
                 div()
                     .flex_row()
                     .items_center()
-                    .gap(px(16.0))
-                    .child(text(quotes.last).text_size(px(38.0)).line_height(px(52.0)))
-                    .child(text(quotes.change).text_color(quotes.ink)),
+                    .justify_between()
+                    .child(
+                        div()
+                            .flex_row()
+                            .items_baseline()
+                            .gap(px(10.0))
+                            .child(
+                                text(quotes.last)
+                                    .text_size(px(40.0))
+                                    .letter_spacing(px(-1.0))
+                                    .line_height(px(50.0)),
+                            )
+                            .child(text(quotes.change).text_color(quotes.ink)),
+                    )
+                    .child(
+                        div()
+                            .items_end()
+                            .child(label("Reference price", 11.0, 17.0).text_color(DIM))
+                            .child(text(quotes.reference).text_size(px(15.0))),
+                    ),
             )
-            .child(label("Price and volume", 12.0, 20.0).text_color(DIM))
-            .child_when(running, {
-                let feed = feed.clone();
-                move || {
-                    element(Chart {
-                        feed: feed.clone(),
-                        selected: quotes.selected,
-                    })
+            .child(div().h(px(1.0)).bg(rgb(0x303843)))
+            .child(
+                div()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .child(label("Price history", 14.0, 22.0))
+                    .child(
+                        div()
+                            .flex_row()
+                            .gap(px(10.0))
+                            .child(legend(UP, "Up"))
+                            .child(legend(DOWN, "Down")),
+                    ),
+            )
+            .child(
+                div()
                     .flex_1()
-                    .refresh_mode(RefreshMode::Continuous)
-                    .on_frame(live_updates(feed.clone(), quotes, fps))
-                }
-            })
-            .child_when(paused, {
-                let feed = feed.clone();
-                move || {
-                    element(Chart {
-                        feed: feed.clone(),
-                        selected: quotes.selected,
+                    .flex_row()
+                    .items_stretch()
+                    .gap(px(6.0))
+                    .child_when(running, {
+                        let feed = feed.clone();
+                        move || {
+                            element(Chart {
+                                feed: feed.clone(),
+                                selected: quotes.selected,
+                            })
+                            .flex_1()
+                            .refresh_mode(RefreshMode::Continuous)
+                            .on_frame(live_updates(
+                                feed.clone(),
+                                quotes,
+                                fps,
+                            ))
+                        }
                     })
-                    .flex_1()
-                }
-            })
+                    .child_when(paused, {
+                        let feed = feed.clone();
+                        move || {
+                            element(Chart {
+                                feed: feed.clone(),
+                                selected: quotes.selected,
+                            })
+                            .flex_1()
+                        }
+                    })
+                    .child(
+                        div()
+                            .w(px(43.0))
+                            .items_stretch()
+                            .child(
+                                div()
+                                    .h(percent(77.0))
+                                    .justify_between()
+                                    .items_end()
+                                    .child(text(quotes.high).text_size(px(10.0)).text_color(DIM))
+                                    .child(text(quotes.low).text_size(px(10.0)).text_color(DIM)),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .justify_end()
+                                    .items_end()
+                                    .child(label("Vol.", 10.0, 15.0).text_color(DIM)),
+                            ),
+                    ),
+            )
             .child(
                 div()
                     .flex_row()
                     .justify_between()
                     .text_color(DIM)
-                    .child(label("96 periods", 11.0, 18.0))
-                    .child(label("Latest", 11.0, 18.0)),
+                    .child(label("96 candles", 11.0, 18.0))
+                    .child(label("Latest candle", 11.0, 18.0)),
             );
         let rows = watchlist(quotes, feed.clone());
         div()

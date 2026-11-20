@@ -70,6 +70,74 @@ impl Clip {
     }
 }
 
+/// Changed device-pixel rectangles since a buffer was last brought up to date.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Damage {
+    rects: smallvec::SmallVec<[Clip; 16]>,
+}
+
+impl Damage {
+    /// Damage covering a single rectangle. Empty rectangles cover no pixels.
+    pub fn from_rect(rect: Clip) -> Self {
+        let mut damage = Self::default();
+        damage.include(rect);
+        damage
+    }
+
+    /// Returns the rectangles to repair, which may overlap.
+    pub fn rects(&self) -> &[Clip] {
+        &self.rects
+    }
+
+    /// Whether all previously submitted pixels remain current.
+    pub fn is_empty(&self) -> bool {
+        self.rects.is_empty()
+    }
+
+    /// Smallest rectangle containing every change.
+    pub fn bounds(&self) -> Option<Clip> {
+        self.rects.iter().copied().reduce(Clip::union)
+    }
+
+    /// Includes every pixel in a rectangle, with bounded storage for scattered changes.
+    pub fn include(&mut self, rect: Clip) {
+        if rect.empty() {
+            return;
+        }
+        let area =
+            |r: Clip| u128::from(r.right.abs_diff(r.left)) * u128::from(r.bottom.abs_diff(r.top));
+        let mut nearest = None;
+        for (index, &old) in self.rects.iter().enumerate() {
+            let merged = old.union(rect);
+            if merged == old {
+                return;
+            }
+            let extra = area(merged) - area(old);
+            if nearest.is_none_or(|(_, cost)| extra < cost) {
+                nearest = Some((index, extra));
+            }
+        }
+        // Combine nearby edits when their gap costs less than another small repair.
+        if let Some((index, cost)) = nearest
+            && (cost <= area(rect).saturating_add(128)
+                || self.rects.len() == self.rects.inline_size())
+        {
+            let merged = self.rects[index].union(rect);
+            self.rects[index] = merged;
+            // A growing chart span may absorb several earlier edits.
+            let mut i = self.rects.len();
+            while i > 0 {
+                i -= 1;
+                if i != index && self.rects[i].intersect(merged) == self.rects[i] {
+                    self.rects.remove(i);
+                }
+            }
+        } else {
+            self.rects.push(rect);
+        }
+    }
+}
+
 /// Device pixels per logical unit.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RasterScale(pub f64);
@@ -127,8 +195,8 @@ pub struct RasterFrame<'a> {
     pub size: DeviceSize,
     /// Four bytes per pixel in RGBA order. Opaque targets ignore alpha.
     pub rgba: &'a [u8],
-    /// Half-open physical area changed since the last submission.
-    pub damage: Option<Clip>,
+    /// Physical regions changed since the last submission.
+    pub damage: Damage,
     /// Request a frame callback even if the buffer contents are unchanged.
     pub request_callback: bool,
 }
@@ -147,7 +215,9 @@ impl RasterFrame<'_> {
         }
         if self
             .damage
-            .is_some_and(|a| a.empty() || a.intersect(canvas) != a)
+            .rects()
+            .iter()
+            .any(|&a| a.intersect(canvas) != a)
         {
             return Err(Error::other(
                 "invalid frame damage for the configured target",

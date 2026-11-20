@@ -227,7 +227,7 @@ fn market_frame_cost() -> Result<()> {
                     .event(WindowEvent::FrameReady(start.duration_since(clock)))?
                     .redraw
             );
-            assert!(window.frame(size, scale)?.damage.is_some());
+            assert!(!window.frame(size, scale)?.damage.is_empty());
             window.frame_submitted()?;
             if frame >= 32 {
                 costs.push(start.elapsed());
@@ -305,5 +305,31 @@ fn fps_readout_uses_elapsed_callback_intervals() -> Result<()> {
                 .any(|pair| pair[0] == "Callback FPS" && pair[1] == expected)
         );
     }
+    Ok(())
+}
+
+#[test]
+fn sparse_market_repairs_match_full_redraw_at_fractional_scale() -> Result<()> {
+    let scale = RasterScale(1.5);
+    let (mut cached, size) = market_window(scale)?;
+    let (mut full, _) = market_window(scale)?;
+    let mut saw_sparse_damage = false;
+    for tick in 1..=24 {
+        let time = Duration::from_millis(tick * 8);
+        cached.event(WindowEvent::FrameReady(time))?;
+        full.event(WindowEvent::FrameReady(time))?;
+        let repaired = cached.frame(size, scale)?;
+        saw_sparse_damage |= repaired.damage.rects().len() > 1;
+        // Discard the prepared reference frame to force a fresh surface at the same tick.
+        full.frame(size, scale)?;
+        let reference = full.frame(size, scale)?;
+        assert!(
+            repaired.rgba == reference.rgba,
+            "pixel mismatch at tick {tick}"
+        );
+        cached.frame_submitted()?;
+        full.frame_submitted()?;
+    }
+    assert!(saw_sparse_damage);
     Ok(())
 }

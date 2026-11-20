@@ -10,6 +10,7 @@ workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 solor.workspace = true
+smallvec.workspace = true
 anyhow.workspace = true
 rustix = { version = "1", features = ["fs", "time"] }
 wayland-client = "0.31"
