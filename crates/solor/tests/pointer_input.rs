@@ -534,6 +534,94 @@ fn scroll_uses_its_nearest_listener_and_preserves_press_and_capture() -> Result<
 }
 
 #[test]
+fn nested_scroll_handoff_uses_each_listeners_accepted_coordinates() -> Result<()> {
+    use solor::pointer::{PointerInput::Scroll, ScrollContext, ScrollDelta, ScrollEvent};
+    use std::cell::RefCell;
+
+    let mut ui = Ui::new();
+    let padding = ui.context().signal(px(2.0));
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let listen = |name| {
+        let log = log.clone();
+        move |event: &ScrollEvent, cx: &mut ScrollContext<'_>| {
+            log.borrow_mut()
+                .push((name, event.pointer.local_position().x, event.delta));
+            if event.delta.y > px(0.0) || (name == "inner" && event.delta.y == px(0.0)) {
+                cx.propagate();
+            }
+            anyhow::ensure!(
+                name != "middle" || event.delta.x != px(5.0),
+                "scroll failure"
+            );
+            Ok(())
+        }
+    };
+    let view = ui.mount(component(|_| {
+        div()
+            .p(padding)
+            .items_stretch()
+            .on_scroll(listen("outer"))
+            .child(
+                div()
+                    .p(px(3.0))
+                    .items_stretch()
+                    .on_scroll(listen("middle"))
+                    .child(div().h(px(12.0)).on_scroll(listen("inner"))),
+            )
+    }))?;
+    accept(&mut ui, view, 80.0)?;
+    let mouse = sample(1, 10.5, 10.5);
+    let both = ScrollDelta {
+        x: px(-1.25),
+        y: px(2.5),
+    };
+    let horizontal = ScrollDelta { y: px(0.0), ..both };
+    let up = ScrollDelta {
+        y: px(-1.0),
+        ..both
+    };
+
+    ui.context().set(padding, px(4.0))?;
+    ui.flush()?;
+    ui.layout(
+        view,
+        Size {
+            width: px(80.0),
+            height: px(40.0),
+        },
+    )?;
+    let pending = ui.prepare_pointer_frame(view)?;
+    ui.dispatch_pointer(view, Scroll(mouse, both))?;
+    assert_eq!(
+        log.take(),
+        [
+            ("inner", px(5.5), both),
+            ("middle", px(8.5), both),
+            ("outer", px(10.5), both)
+        ]
+    );
+
+    ui.accept_pointer_frame(pending)?;
+    ui.dispatch_pointer(view, Scroll(mouse, horizontal))?;
+    assert_eq!(
+        log.take(),
+        [
+            ("inner", px(3.5), horizontal),
+            ("middle", px(6.5), horizontal)
+        ]
+    );
+    ui.dispatch_pointer(view, Scroll(mouse, up))?;
+    assert_eq!(log.take(), [("inner", px(3.5), up)]);
+    let rejected = ScrollDelta { x: px(5.0), ..both };
+    assert!(ui.dispatch_pointer(view, Scroll(mouse, rejected)).is_err());
+    assert_eq!(
+        log.take(),
+        [("inner", px(3.5), rejected), ("middle", px(6.5), rejected)]
+    );
+    Ok(())
+}
+
+#[test]
 fn scroll_respects_clipping_and_keeps_a_retired_leaf_from_exposing_its_parent() -> Result<()> {
     use solor::pointer::{PointerInput::Scroll, ScrollDelta};
     let mut ui = Ui::new();

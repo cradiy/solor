@@ -55,6 +55,7 @@ pub(super) struct HitGeometry {
     entries: Vec<Entry>,
     interactive: HashMap<NodeId, InteractiveBox>,
     hover_parents: HashMap<NodeId, Option<NodeId>>,
+    scroll_parents: HashMap<NodeId, NodeId>,
     has_cursor: bool,
 }
 
@@ -106,6 +107,10 @@ impl PointerFrame {
 
     pub(super) fn hover_path(&self, owner: Option<NodeId>) -> impl Iterator<Item = NodeId> + '_ {
         std::iter::successors(owner, |id| self.geometry.hover_parents[id])
+    }
+
+    pub(super) fn scroll_parent(&self, owner: NodeId) -> Option<NodeId> {
+        self.geometry.scroll_parents.get(&owner).copied()
     }
 
     pub(super) fn bounds(&self, node: NodeId) -> Option<(Origin, Size)> {
@@ -163,6 +168,7 @@ impl HitGeometry {
             entries: Vec::with_capacity(instance.visible_nodes),
             interactive: HashMap::new(),
             hover_parents: HashMap::new(),
+            scroll_parents: HashMap::new(),
             has_cursor: false,
         };
         let root = &instance.bodies[&instance.scene.root()];
@@ -221,6 +227,9 @@ impl HitGeometry {
                         matches!(handlers.control, Some(crate::WindowControl::Resize(_)));
                 }
                 if handlers.scroll.is_some() {
+                    if let Some(parent) = inherited.scroll {
+                        frame.scroll_parents.insert(id, parent);
+                    }
                     recipients.scroll = Some(id);
                 }
             }

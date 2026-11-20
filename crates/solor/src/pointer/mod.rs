@@ -86,7 +86,7 @@ pub struct HoverPosition {
     pub size: Size,
 }
 
-/// Scroll delivered to the nearest listening element under the pointer.
+/// Scroll delivered to a listener on the hit branch of the accepted frame.
 #[derive(Clone, Copy, Debug)]
 pub struct ScrollEvent {
     /// Location and bounds in the listening element's accepted frame.
@@ -167,17 +167,39 @@ impl PointerDownContext<'_> {
         self.capture = true;
     }
 }
-impl<'a> Deref for PointerDownContext<'a> {
-    type Target = Context<'a>;
-    fn deref(&self) -> &Self::Target {
-        &self.context
+/// State access and event routing during a scroll callback.
+pub struct ScrollContext<'a> {
+    context: Context<'a>,
+    propagate: bool,
+}
+
+impl ScrollContext<'_> {
+    /// Forwards the full scroll delta to the next listening ancestor after this callback succeeds.
+    pub fn propagate(&mut self) {
+        self.propagate = true;
     }
 }
-impl DerefMut for PointerDownContext<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.context
-    }
+
+macro_rules! impl_event_context {
+    ($name:ident) => {
+        impl<'a> Deref for $name<'a> {
+            type Target = Context<'a>;
+
+            fn deref(&self) -> &Self::Target {
+                &self.context
+            }
+        }
+
+        impl DerefMut for $name<'_> {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.context
+            }
+        }
+    };
 }
+
+impl_event_context!(PointerDownContext);
+impl_event_context!(ScrollContext);
 
 type HoverHandler = Box<dyn Fn(bool, &mut Context<'_>) -> Result<()>>;
 
@@ -185,7 +207,7 @@ type HoverPositionHandler = Box<dyn Fn(Option<HoverPosition>, &mut Context<'_>) 
 
 type DownHandler = Box<dyn Fn(&PointerEvent, &mut PointerDownContext<'_>) -> Result<()>>;
 type PositionHandler = Box<dyn Fn(&PointerEvent, &mut Context<'_>) -> Result<()>>;
-type ScrollHandler = Box<dyn Fn(&ScrollEvent, &mut Context<'_>) -> Result<()>>;
+type ScrollHandler = Box<dyn Fn(&ScrollEvent, &mut ScrollContext<'_>) -> Result<()>>;
 type CancelHandler = Box<dyn Fn(PointerId, &mut Context<'_>) -> Result<()>>;
 
 #[derive(Default)]
@@ -273,8 +295,8 @@ impl<E: crate::Element> crate::Node<E> {
         /// Reports changes in content coordinates or dimensions after input or frame acceptance,
         /// and reports `None` when the last mouse leaves.
         on_hover_position => hover_position (Option<HoverPosition>, &mut Context<'_>);
-        /// Handles positioned scroll input over this element and its descendants without a closer scroll listener.
-        on_scroll => scroll (&ScrollEvent, &mut Context<'_>);
+        /// Handles scroll input at the nearest listener. Call `cx.propagate()` to pass it to an ancestor.
+        on_scroll => scroll (&ScrollEvent, &mut ScrollContext<'_>);
         /// Handles a button press on this element. The callback can capture the pointer.
         on_pointer_down => down (&PointerEvent, &mut PointerDownContext<'_>);
         /// Handles pointer motion over this element or during its capture.

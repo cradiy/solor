@@ -6,7 +6,7 @@ use anyhow::{Context as _, ensure};
 
 use super::{
     Handlers, PointerButton, PointerDownContext, PointerEvent, PointerFrame, PointerId,
-    PointerInput, PointerSample, ScrollDelta, ScrollEvent,
+    PointerInput, PointerSample, ScrollContext, ScrollDelta, ScrollEvent,
     frame::{HitGeometry, Recipients},
     hover::HoverChange,
 };
@@ -218,18 +218,36 @@ impl Delivery<'_> {
     }
 
     fn scroll(&mut self, sample: PointerSample, delta: ScrollDelta) -> Result<()> {
-        let Some(owner) = self.hit(sample, |r| r.scroll) else {
+        let Some(mut owner) = self.hit(sample, |r| r.scroll) else {
             return Ok(());
         };
-        let pointer = self.event(owner, sample, None)?;
-        let node = self
+        let frame = self
             .instance
-            .bodies
-            .get_mut(&owner)
-            .expect("live scroll recipient");
-        let (handlers, mut cx) = context_and_handlers(node, self.state, self.engine);
-        if let Some(scroll) = &handlers.scroll {
+            .pointer
+            .frame
+            .as_ref()
+            .expect("accepted scroll hit");
+        loop {
+            let pointer = self.event(owner, sample, None)?;
+            let node = self
+                .instance
+                .bodies
+                .get_mut(&owner)
+                .expect("live scroll ancestor");
+            let (handlers, context) = context_and_handlers(node, self.state, self.engine);
+            let scroll = handlers.scroll.as_ref().expect("accepted scroll listener");
+            let mut cx = ScrollContext {
+                context,
+                propagate: false,
+            };
             scroll(&ScrollEvent { pointer, delta }, &mut cx)?;
+            if !cx.propagate {
+                break;
+            }
+            let Some(parent) = frame.scroll_parent(owner) else {
+                break;
+            };
+            owner = parent;
         }
         Ok(())
     }

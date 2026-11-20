@@ -55,7 +55,10 @@ div()
 Use `.on_scroll(|event, cx| ...)` on any element to handle wheel or trackpad
 input. `event.delta.x` and `event.delta.y` are signed logical pixels, positive
 right and down. `event.pointer.local_position()` gives the position inside the
-listening element. On Wayland, axes reported in one pointer frame arrive together.
+listening element. A handler consumes the event by default. Call `cx.propagate()`
+when a control reaches its limit or ignores that axis. After the handler succeeds,
+the next listening ancestor receives the full delta with coordinates relative to
+its own accepted box. Each ancestor makes the same choice. On Wayland, axes reported in one pointer frame arrive together.
 
 Use `.on_hover(|inside, cx| ...)` on any element to react to mouse presence.
 Entering a child keeps its ancestors hovered. The first mouse to enter a
@@ -160,7 +163,7 @@ system shapes. Without the extension the host leaves the cursor unchanged.
 | Event | Behavior |
 | --- | --- |
 | Down | Hit-test the host's accepted frame. Resolve the frontmost hit to its nearest live interactive ancestor within the view, including the hit node itself. Keep one recipient for the primary press so a text label inside a button activates the button. A stale frontmost hit consumes the hit without targeting an element underneath. |
-| Scroll | Hit-test the accepted frame and deliver once to the nearest scroll listener on that branch. A child button can receive clicks while its parent receives scroll. Capture affects the press sequence independently. |
+| Scroll | Hit-test the accepted frame once. Start with the nearest scroll listener and continue up the same branch only while each listener requests propagation. A child button can receive clicks while its parent receives scroll. Capture affects the press sequence independently. |
 | Move | Route to the current hit unless this pointer is captured. Capture routes moves to its owner and suppresses click recognition for that press. For an uncaptured press, leaving its target cancels click eligibility through release. |
 | Up | Deliver the raw up first, to the capture owner or the current hit. After a successful callback, a matching primary release over the original, still-eligible target invokes its click handler once. The release of the initiating button ends capture even on callback failure. An unmatched up cannot activate a target. |
 | Cancel | Device loss, host cancellation or view deactivation clears the sequence. Notify its live owner once. A late up after cancel has no action. |

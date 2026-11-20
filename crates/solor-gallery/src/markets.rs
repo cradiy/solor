@@ -402,11 +402,16 @@ pub(super) fn market() -> impl IntoElement {
                     .on_scroll(move |event, cx| {
                         let next =
                             (zoom.get() + event.delta.y.get() * 0.5).clamp(12.0, PERIODS as f32);
+                        if next == zoom.get() {
+                            cx.propagate();
+                            return Ok(());
+                        }
                         zoom.set(next);
                         let count = next.round() as usize;
                         if count != *cx.read(visible)? {
                             cx.set(visible, count)?;
-                            inspection.locate(cx, count, feed[*cx.read(quotes.selected)?])?;
+                            let tape = feed[*cx.read(quotes.selected)?];
+                            inspection.locate(cx, count, tape)?;
                             cx.set(sample_count, format!("{count} samples").into())?;
                         }
                         Ok(())
