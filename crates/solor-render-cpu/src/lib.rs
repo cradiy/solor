@@ -7,6 +7,7 @@ pub mod frame;
 pub mod glyph_masks;
 /// CPU pixel surfaces.
 pub mod pixels;
+mod polyline;
 mod view;
 mod window;
 pub use window::CpuWindow;

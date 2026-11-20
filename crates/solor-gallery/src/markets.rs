@@ -11,7 +11,7 @@ use std::{
 use anyhow::Result;
 use solor::{
     Context, Div, Fill, IntoElement, RefreshMode, SharedString, Signal, Styled, component, div,
-    element, percent, px, rgb, text,
+    element, px, rgb, text,
 };
 
 use crate::{Selection, label};
@@ -26,6 +26,8 @@ const SYMBOLS: [(&str, &str, i32); 6] = [
 ];
 const PERIODS: usize = 96;
 const TICKS: usize = 32;
+const AVERAGE_PERIODS: usize = 16;
+const AVERAGE_INK: solor::Rgba = rgb(0xf7b64d);
 const BASE: solor::Rgba = rgb(0x12161e);
 const PANEL: solor::Rgba = rgb(0x191f29);
 const ACTIVE: solor::Rgba = rgb(0x293a42);
@@ -34,43 +36,49 @@ const DIM: solor::Rgba = rgb(0xa1adb9);
 const UP: solor::Rgba = rgb(0x60ddba);
 const DOWN: solor::Rgba = rgb(0xff8492);
 
-#[derive(Clone, Copy, Default)]
-struct Candle {
-    open: i32,
-    high: i32,
-    low: i32,
-    close: i32,
-    volume: u32,
+#[derive(Clone, Copy)]
+struct QuoteSample {
+    price: i32,
+    average: f32,
 }
 
 struct Tape {
-    candles: [Candle; PERIODS],
+    samples: [QuoteSample; PERIODS],
     next: usize,
     price: i32,
     anchor: i32,
     seed: u32,
+    rolling_sum: i32,
 }
 
 impl Tape {
     fn new(anchor: i32, seed: u32) -> Self {
         let mut tape = Self {
-            candles: [Candle::default(); PERIODS],
+            samples: [QuoteSample {
+                price: anchor,
+                average: anchor as f32,
+            }; PERIODS],
             next: 0,
             price: anchor,
             anchor,
             seed,
+            rolling_sum: anchor * AVERAGE_PERIODS as i32,
         };
-        for _ in 0..PERIODS {
+        // Warm the moving average before any of its samples become visible.
+        for _ in 0..(PERIODS + AVERAGE_PERIODS - 1) {
             tape.advance();
         }
         tape
     }
 
     fn range(&self) -> (i32, i32) {
-        self.candles
+        self.samples
             .iter()
-            .fold((self.price, self.price), |(lo, hi), bar| {
-                (lo.min(bar.low), hi.max(bar.high))
+            .fold((self.price, self.price), |(lo, hi), sample| {
+                (
+                    lo.min(sample.price).min(sample.average.floor() as i32),
+                    hi.max(sample.price).max(sample.average.ceil() as i32),
+                )
             })
     }
 
@@ -87,23 +95,18 @@ impl Tape {
     }
 
     fn advance(&mut self) {
-        let mut c = Candle {
-            open: self.price,
-            high: self.price,
-            low: self.price,
-            ..Default::default()
-        };
         for _ in 0..TICKS {
             self.seed ^= self.seed << 13;
             self.seed ^= self.seed >> 17;
             self.seed ^= self.seed << 5;
             self.price += (self.seed % 9) as i32 - 4 + (self.anchor - self.price) / 160;
-            c.high = c.high.max(self.price);
-            c.low = c.low.min(self.price);
-            c.volume += 1 + (self.seed >> 8) % 100;
         }
-        c.close = self.price;
-        self.candles[self.next] = c;
+        let leaving = (self.next + PERIODS - AVERAGE_PERIODS) % PERIODS;
+        self.rolling_sum += self.price - self.samples[leaving].price;
+        self.samples[self.next] = QuoteSample {
+            price: self.price,
+            average: self.rolling_sum as f32 / AVERAGE_PERIODS as f32,
+        };
         self.next = (self.next + 1) % PERIODS;
     }
 }
@@ -317,7 +320,7 @@ pub(super) fn market() -> impl IntoElement {
                 .child(label(name, 11.0, 18.0).text_color(DIM))
         };
         let visible = cx.signal(PERIODS);
-        let candle_count = cx.signal(SharedString::from(format!("{PERIODS} candles")));
+        let sample_count = cx.signal(SharedString::from(format!("{PERIODS} samples")));
         let zoom = Cell::new(PERIODS as f32);
         let detail = div()
             .flex_1()
@@ -380,8 +383,8 @@ pub(super) fn market() -> impl IntoElement {
                         div()
                             .flex_row()
                             .gap(px(10.0))
-                            .child(legend(UP, "Up"))
-                            .child(legend(DOWN, "Down")),
+                            .child(legend(UP, "Price"))
+                            .child(legend(AVERAGE_INK, "MA 16")),
                     ),
             )
             .child(
@@ -397,7 +400,7 @@ pub(super) fn market() -> impl IntoElement {
                         let count = next.round() as usize;
                         if count != *cx.read(visible)? {
                             cx.set(visible, count)?;
-                            cx.set(candle_count, format!("{count} candles").into())?;
+                            cx.set(sample_count, format!("{count} samples").into())?;
                         }
                         Ok(())
                     })
@@ -432,22 +435,10 @@ pub(super) fn market() -> impl IntoElement {
                     .child(
                         div()
                             .w(px(43.0))
-                            .items_stretch()
-                            .child(
-                                div()
-                                    .h(percent(77.0))
-                                    .justify_between()
-                                    .items_end()
-                                    .child(text(quotes.high).text_size(px(10.0)).text_color(DIM))
-                                    .child(text(quotes.low).text_size(px(10.0)).text_color(DIM)),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .justify_end()
-                                    .items_end()
-                                    .child(label("Vol.", 10.0, 15.0).text_color(DIM)),
-                            ),
+                            .justify_between()
+                            .items_end()
+                            .child(text(quotes.high).text_size(px(10.0)).text_color(DIM))
+                            .child(text(quotes.low).text_size(px(10.0)).text_color(DIM)),
                     ),
             )
             .child(
@@ -459,10 +450,10 @@ pub(super) fn market() -> impl IntoElement {
                         div()
                             .flex_row()
                             .gap(px(12.0))
-                            .child(text(candle_count).text_size(px(11.0)).line_height(px(18.0)))
+                            .child(text(sample_count).text_size(px(11.0)).line_height(px(18.0)))
                             .child(label("Scroll to zoom", 11.0, 18.0)),
                     )
-                    .child(label("Latest candle", 11.0, 18.0)),
+                    .child(label("Latest price", 11.0, 18.0)),
             );
         let rows = watchlist(quotes, feed.clone());
         div()

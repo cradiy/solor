@@ -9,8 +9,10 @@ stage consumes it, and how a host learns about the resulting work.
 Run `cargo run -p solor-gallery --release` in a Linux Wayland session to compare
 letter spacing, OpenType ligatures, gradient geometry and flex distribution.
 The Markets tab runs a deterministic feed of six instruments. Each host frame
-advances 32 ticks per instrument and rolls one candle into each 96-period
-history. Scroll vertically over the plot to zoom its latest 12 to 96 candles. The price axis retains the full history range. Select an instrument to inspect its candles and volume. Pause freezes
+advances 32 ticks per instrument and appends the latest price to a 96-sample
+history. The green price line and amber 16-sample moving average share the same
+axis. Scroll vertically over the plot to zoom its latest 12 to 96 samples.
+The price axis retains the full history range. Pause freezes
 the feed and releases its frame request. Callback FPS counts intervals between
 host frame opportunities over at least one second of elapsed monotonic time.
 
@@ -97,6 +99,11 @@ successful presentation, pass `frame.into_pointer_frame()` to
 `Ui::accept_pointer_frame`. Discarding the frame leaves the accepted input
 geometry in place. This path records the whole view and rasterizes a fresh
 image on each call.
+
+`PaintContext::stroke_polyline(points, width, color)` draws connected points
+relative to the element's content origin. Width is in logical pixels. The CPU
+backend antialiases round caps and joins, clips the stroke to inherited overflow
+bounds and composites a translucent stroke once at self-intersections.
 
 ## Presenting a mounted view
 

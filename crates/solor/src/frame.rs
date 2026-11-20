@@ -128,7 +128,9 @@ impl MountedNode {
         )?;
         for draw in &mut draws[start..] {
             let origin = match draw {
-                Draw::Fill { origin, .. } | Draw::Text { origin, .. } => origin,
+                Draw::Fill { origin, .. }
+                | Draw::Polyline { origin, .. }
+                | Draw::Text { origin, .. } => origin,
             };
             origin.x = offset
                 .x

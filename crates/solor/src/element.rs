@@ -138,6 +138,19 @@ pub enum Draw {
         /// Circular radii in logical pixels, fitted to the fill bounds.
         corner_radii: Corners<Pixels>,
     },
+    /// Strokes an open polyline with round caps and joins.
+    Polyline {
+        /// Effective clip in view coordinates.
+        clip: Option<Arc<ContentClip>>,
+        /// Content origin for the local points.
+        origin: Origin,
+        /// Ordered points in logical pixels relative to the origin.
+        points: Rc<[Origin]>,
+        /// Full stroke width in logical pixels.
+        width: Pixels,
+        /// Stroke color.
+        color: Rgba,
+    },
     /// Draws a shaped paragraph.
     Text {
         /// Effective clip in the same coordinates as the origin.
@@ -231,6 +244,34 @@ impl PaintContext<'_> {
                 });
             }
         }
+    }
+
+    /// Strokes consecutive local points with a solid color and round caps and joins.
+    /// Fewer than two points or a zero-width stroke produces no drawing.
+    pub fn stroke_polyline(
+        &mut self,
+        points: impl Into<Rc<[Origin]>>,
+        width: Pixels,
+        color: Rgba,
+    ) -> Result<()> {
+        let points = points.into();
+        anyhow::ensure!(width.is_extent(), "invalid stroke width");
+        anyhow::ensure!(
+            points
+                .iter()
+                .all(|p| p.x.get().is_finite() && p.y.get().is_finite()),
+            "invalid stroke point"
+        );
+        if points.len() >= 2 && width.get() > 0.0 && color.alpha != 0 {
+            self.commands.push(Draw::Polyline {
+                origin: self.origin,
+                clip: self.clip.clone(),
+                points,
+                width,
+                color,
+            });
+        }
+        Ok(())
     }
 
     /// Fills a rectangle at an offset from the content origin in logical pixels.

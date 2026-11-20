@@ -7,7 +7,7 @@ use solor::{
     px, rgb,
 };
 
-use super::{DOWN, Feed, PERIODS, TICKS, UP};
+use super::{AVERAGE_INK, Feed, PERIODS, UP};
 
 pub(super) struct Chart {
     pub(super) feed: Feed,
@@ -46,54 +46,48 @@ impl Element for Chart {
             return Ok(());
         }
         let count = *cx.read(self.visible)?;
-        let mut rect = |x, y, width, height, color| {
-            cx.fill_rect(
-                Origin { x: px(x), y: px(y) },
-                Size {
-                    width: px(width),
-                    height: px(height),
-                },
-                color,
-            )
-        };
         let (lo, hi) = tape.range();
-        let y = |price| (hi - price) as f32 / (hi - lo).max(1) as f32 * h * 0.77;
+        let inset = 1.0_f32.min(w * 0.5).min(h * 0.5);
+        let plot_height = h - 2.0 * inset;
         for line in 0..5 {
-            rect(0.0, line as f32 * h * 0.77 / 4.0, w, 1.0, rgb(0x2b333e))?;
+            cx.fill_rect(
+                Origin {
+                    x: px(0.0),
+                    y: px(inset + (plot_height - 1.0).max(0.0) * line as f32 / 4.0),
+                },
+                Size {
+                    width: px(w),
+                    height: px(1.0),
+                },
+                rgb(0x2b333e),
+            )?;
         }
-        let step = w / count as f32;
-        let body = step * 0.70;
-        for (i, c) in tape.candles[tape.next..]
+        let y = |value| {
+            if hi == lo {
+                px(h * 0.5)
+            } else {
+                px(inset + (hi as f32 - value) / (hi - lo) as f32 * plot_height)
+            }
+        };
+        let mut prices = Vec::with_capacity(count);
+        let mut averages = Vec::with_capacity(count);
+        for (i, sample) in tape.samples[tape.next..]
             .iter()
-            .chain(&tape.candles[..tape.next])
+            .chain(&tape.samples[..tape.next])
             .skip(PERIODS - count)
             .enumerate()
         {
-            let center = (i as f32 + 0.5) * step;
-            let color = if c.close >= c.open { UP } else { DOWN };
-            let wick = step.min(1.0);
-            rect(
-                center - wick * 0.5,
-                y(c.high),
-                wick,
-                (y(c.low) - y(c.high)).max(0.8),
-                color,
-            )?;
-            rect(
-                center - body * 0.5,
-                y(c.open.max(c.close)),
-                body,
-                (y(c.open) - y(c.close)).abs().max(1.0),
-                color,
-            )?;
-            let volume = h * 0.18 * c.volume as f32 / (TICKS * 100) as f32;
-            let volume_ink = if c.close >= c.open {
-                rgb(0x326353)
-            } else {
-                rgb(0x704954)
-            };
-            rect(center - body * 0.5, h - volume, body, volume, volume_ink)?;
+            let x = px(inset + i as f32 / (count - 1) as f32 * (w - 2.0 * inset));
+            prices.push(Origin {
+                x,
+                y: y(sample.price as f32),
+            });
+            averages.push(Origin {
+                x,
+                y: y(sample.average),
+            });
         }
-        Ok(())
+        cx.stroke_polyline(prices, px(2.0), UP)?;
+        cx.stroke_polyline(averages, px(1.5), AVERAGE_INK)
     }
 }
