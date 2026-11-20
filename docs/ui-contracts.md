@@ -211,6 +211,13 @@ ancestor. Descendants inherit the source until they supply their own color.
 Custom elements read it with `cx.text_color()?` during paint. A color change
 repaints the elements that read it and reuses their shaped paragraphs and layout.
 
+Set OpenType features on a label or container with
+`.font_features([FontFeature { tag: *b"liga", value: 0 }])` to disable
+standard ligatures. The active font determines which tags it supports.
+Descendants inherit the ordered list. A local list replaces it, and
+`.font_features([])` uses the font's shaping defaults. Measurement, wrapping
+and painting use the same shaped glyphs.
+
 Paragraph alignment uses the label's content width after padding. Set
 `.text_center()` on a container to center each visual line in its labels.
 A label can override it with `.text_left()` or `.text_right()`. The default,

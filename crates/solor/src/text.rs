@@ -4,7 +4,7 @@ use std::num::NonZeroUsize;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::style::{TextAlign, TextAttributes, TextOverflow, WhiteSpace};
+use crate::style::{FontFeature, TextAlign, TextAttributes, TextOverflow, WhiteSpace};
 use crate::{Pixels, SharedString, px};
 use cosmic_text::{
     Align, Attrs, Buffer, BufferLine, Ellipsize, EllipsizeHeightLimit, Family, FontSystem,
@@ -136,8 +136,9 @@ pub struct Counts {
     pub shapes: usize,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(PartialEq)]
 struct ParagraphStyle {
+    features: Option<Rc<[FontFeature]>>,
     alignment: TextAlign,
     line_clamp: Option<NonZeroUsize>,
     white_space: WhiteSpace,
@@ -147,6 +148,7 @@ struct ParagraphStyle {
 impl ParagraphStyle {
     fn from_attributes(attrs: Option<&TextAttributes>) -> Self {
         Self {
+            features: attrs.and_then(|a| a.font_features.clone()),
             alignment: attrs.and_then(|a| a.text_align).unwrap_or(TextAlign::Start),
             line_clamp: attrs.and_then(|a| a.line_clamp.flatten()),
             white_space: attrs
@@ -327,7 +329,7 @@ impl Engine {
         &mut self,
         text: &SharedString,
         style: TextStyle,
-        paragraph: ParagraphStyle,
+        paragraph: &ParagraphStyle,
         width: Option<Pixels>,
     ) -> Result<Paragraph> {
         let mut buffer = Buffer::new_empty(cosmic_text::Metrics::new(
@@ -365,9 +367,17 @@ impl Engine {
                 * style.line_height.get()
         });
         buffer.set_size(width.map(Pixels::get), height);
+        let mut attrs = Attrs::new().family(Family::SansSerif);
+        if let Some(features) = &paragraph.features {
+            for feature in features.iter() {
+                attrs
+                    .font_features
+                    .set(cosmic_text::FeatureTag::new(&feature.tag), feature.value);
+            }
+        }
         buffer.set_text(
             display,
-            &Attrs::new().family(Family::SansSerif),
+            &attrs,
             Shaping::Advanced,
             match paragraph.alignment {
                 TextAlign::Start => None,
@@ -535,7 +545,7 @@ impl Text {
             engine.counts.hits += 1;
             return Ok(Rc::clone(&cached.paragraph));
         }
-        let paragraph = Rc::new(engine.shape(&self.content, self.style, self.paragraph, width)?);
+        let paragraph = Rc::new(engine.shape(&self.content, self.style, &self.paragraph, width)?);
         if self.cache_enabled {
             if cache.len() == CACHE_SLOTS {
                 cache.pop_front();

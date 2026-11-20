@@ -15,6 +15,84 @@ const INK: Rgba = Rgba::new(30, 40, 50, 255);
 const ACCENT: Rgba = Rgba::new(25, 100, 200, 255);
 
 #[test]
+fn inherited_font_features_control_clusters_and_wrapping() -> Result<()> {
+    use solor::style::FontFeature;
+
+    const LABEL: &str = "中fi AVAVAVAVAVAV";
+    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let view = ui.mount(component(|_| {
+        div()
+            .items_stretch()
+            .font_features([
+                FontFeature {
+                    tag: *b"liga",
+                    value: 0,
+                },
+                FontFeature {
+                    tag: *b"kern",
+                    value: 0,
+                },
+            ])
+            .child(text(LABEL))
+            .child(text(LABEL).font_features([]))
+    }))?;
+    let size = Size {
+        width: px(400.0),
+        height: px(120.0),
+    };
+    ui.layout(view, size)?;
+    let paragraphs = |ui: &Ui| -> Result<_> {
+        let frame = ui.record_frame(view)?;
+        let [
+            Draw::Text {
+                paragraph: first, ..
+            },
+            Draw::Text {
+                paragraph: second, ..
+            },
+        ] = frame.draws()
+        else {
+            panic!("expected two labels");
+        };
+        Ok((first.clone(), second.clone()))
+    };
+    let (plain, defaults) = paragraphs(&ui)?;
+    let plain_line = &plain.lines[0];
+    let default_line = &defaults.lines[0];
+    assert_eq!(plain_line.glyphs.len(), default_line.glyphs.len() + 1);
+    assert!(
+        default_line
+            .glyphs
+            .iter()
+            .any(|g| &LABEL[g.start..g.end] == "fi")
+    );
+    assert!(
+        plain_line
+            .glyphs
+            .iter()
+            .any(|g| &LABEL[g.start..g.end] == "f")
+    );
+    assert!(plain_line.width > default_line.width);
+
+    let between = px((plain_line.width + default_line.width) * 0.5);
+    ui.layout(
+        view,
+        Size {
+            width: between,
+            ..size
+        },
+    )?;
+    let (wrapped, single) = paragraphs(&ui)?;
+    assert_eq!((wrapped.lines.len(), single.lines.len()), (2, 1));
+    let children: Vec<_> = ui.children(view, ui.root(view)?)?.collect();
+    assert_eq!(
+        ui.geometry(view, children[1]).unwrap().origin.y,
+        wrapped.content.height
+    );
+    Ok(())
+}
+
+#[test]
 fn conditional_label_inherits_style_and_keeps_identity_when_it_wraps() -> Result<()> {
     let mut ui = Ui::with_font(FONT.to_vec(), "zh-CN")?;
     let name = ui.context().signal(SharedString::from_static("A"));
