@@ -391,6 +391,10 @@ fn progress_bar(progress: Signal<f32>) -> Div {
 }
 ```
 
+Use `cx.fill_circle(center, radius, fill)` for round markers. The center and
+radius are logical pixels in the content box, and gradients span the circle's
+bounding square.
+
 Use `cx.with_clip(offset, size, |cx| ...)` to crop part of a drawing, such as
 the price trace inside a plot. The rectangle uses the same content-local
 coordinates as `fill_rect`. Each nested rectangle intersects the active clip

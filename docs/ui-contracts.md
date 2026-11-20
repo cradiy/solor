@@ -12,7 +12,10 @@ The Markets tab runs a deterministic feed of six instruments. Each host frame
 advances 32 ticks per instrument and appends the latest price to a 96-sample
 history. The green price line and amber 16-sample moving average share the same
 axis. A translucent polygon marks the area under the price line. Scroll vertically over the plot to zoom its latest 12 to 96 samples.
-The price axis retains the full history range. Each instrument owns a signal
+The price axis retains the full history range. Moving the mouse over the plot
+marks the nearest visible sample and shows its price and moving average.
+Zooming selects the nearest sample in the new range at the same horizontal
+fraction. Each instrument owns a signal
 with a fixed-size history updated in place. The chart reads the selected
 instrument during paint. Its `on_frame_when(running, handler)` callback advances
 the feed while playing. Pausing releases the frame request and keeps the same
@@ -22,7 +25,8 @@ host frame opportunities over at least one second of elapsed monotonic time.
 For unpaced CPU measurements, run
 `cargo test --release -p solor-gallery --test navigation market_frame_cost -- --ignored --nocapture`.
 The test drives the same mounted page and measures updates, layout, recording,
-CPU rasterization and submission acknowledgement at 1× and 1.5× scale.
+CPU rasterization and submission acknowledgement at 1× and 1.5× scale,
+with the pointer outside the plot and with a sample under inspection.
 Window-system upload and display timing are outside this benchmark.
 
 ## Implemented boundaries

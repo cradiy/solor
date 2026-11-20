@@ -346,6 +346,49 @@ fn overlapping_subtrees_share_paint_and_accepted_hit_order() -> Result<()> {
 }
 
 #[test]
+fn painted_circle_matches_a_round_box_at_fractional_scale() -> Result<()> {
+    let mut ui = Ui::new();
+    let radius = px(4.5);
+    let center = Origin {
+        x: radius,
+        y: radius,
+    };
+    let ring = gradient_left_to_right([
+        color_stop(rgb(0x124272), 0.0),
+        color_stop(rgb(0x67a234), 1.0),
+    ])?;
+    let circle = ui.mount(component(|_| {
+        let fill = ring.clone();
+        div().p(px(2.5)).paint(move |cx| {
+            assert!(cx.fill_circle(center, px(-1.0), rgb(0)).is_err());
+            assert!(cx.fill_circle(center, px(f32::MAX), rgb(0)).is_err());
+            cx.fill_circle(center, px(0.0), rgb(0))?;
+            cx.fill_circle(center, radius, fill.clone())
+        })
+    }))?;
+    let reference = ui.mount(component(|_| {
+        div()
+            .p(px(2.5))
+            .child(div().size(px(9.0)).rounded(radius).bg(ring))
+    }))?;
+    let viewport = DeviceSize {
+        width: 16,
+        height: 16,
+    }
+    .at_unit_scale();
+    let scale = RasterScale(1.5);
+    let physical = scale.buffer_size(viewport)?;
+    ui.layout(circle, viewport)?;
+    ui.layout(reference, viewport)?;
+    let frame = ui.record_frame(circle)?;
+    assert_eq!(frame.draws().len(), 1);
+    let painted = Surface::draw_view(&frame, physical, scale)?;
+    let rounded = Surface::draw_view(&ui.record_frame(reference)?, physical, scale)?;
+    assert!(painted.rgba == rounded.rgba);
+    Ok(())
+}
+
+#[test]
 fn fractional_rounded_edges_preserve_sample_coverage_at_each_corner() -> Result<()> {
     let mut ui = Ui::new();
     let view = ui.mount(component(|_| {

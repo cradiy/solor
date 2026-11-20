@@ -1,6 +1,6 @@
 //! A deterministic quote feed driven by the window's frame opportunities.
 mod chart;
-use chart::chart;
+use chart::{Inspection, chart};
 
 use std::{cell::Cell, time::Duration};
 
@@ -110,6 +110,7 @@ type Feed = [Signal<Tape>; SYMBOLS.len()];
 
 #[derive(Clone, Copy)]
 struct Quotes {
+    inspection: Inspection,
     rows: [Signal<SharedString>; SYMBOLS.len()],
     highlight: [Signal<Fill>; SYMBOLS.len()],
     selected: Signal<usize>,
@@ -136,7 +137,8 @@ impl Quotes {
         cx.set(self.low, price(lo))?;
         cx.set(self.last, cx.read(self.rows[i])?.clone())?;
         cx.set(self.change, cx.read(self.row_change[i])?.clone())?;
-        cx.set(self.ink, *cx.read(self.row_ink[i])?)
+        cx.set(self.ink, *cx.read(self.row_ink[i])?)?;
+        self.inspection.refresh(cx, tape)
     }
 }
 
@@ -243,7 +245,9 @@ pub(super) fn market() -> impl IntoElement {
         let tapes: [Tape; SYMBOLS.len()] =
             std::array::from_fn(|i| Tape::new(SYMBOLS[i].2, 9127 + i as u32 * 31));
         let (lo, hi) = tapes[0].range();
+        let inspection = Inspection::new(cx);
         let quotes = Quotes {
+            inspection,
             reference: cx.signal(price(SYMBOLS[0].2)),
             low: cx.signal(price(lo)),
             high: cx.signal(price(hi)),
@@ -322,7 +326,6 @@ pub(super) fn market() -> impl IntoElement {
                 .child(label(name, 11.0, 18.0).text_color(DIM))
         };
         let visible = cx.signal(PERIODS);
-        let show_latest = cx.signal(false);
         let sample_count = cx.signal(SharedString::from(format!("{PERIODS} samples")));
         let zoom = Cell::new(PERIODS as f32);
         let detail = div()
@@ -396,7 +399,6 @@ pub(super) fn market() -> impl IntoElement {
                     .flex_row()
                     .items_stretch()
                     .gap(px(6.0))
-                    .on_hover(move |inside, cx| cx.set(show_latest, inside))
                     .on_scroll(move |event, cx| {
                         let next =
                             (zoom.get() + event.delta.y.get() * 0.5).clamp(12.0, PERIODS as f32);
@@ -404,12 +406,13 @@ pub(super) fn market() -> impl IntoElement {
                         let count = next.round() as usize;
                         if count != *cx.read(visible)? {
                             cx.set(visible, count)?;
+                            inspection.locate(cx, count, feed[*cx.read(quotes.selected)?])?;
                             cx.set(sample_count, format!("{count} samples").into())?;
                         }
                         Ok(())
                     })
                     .child(
-                        chart(feed, quotes.selected, visible, show_latest)
+                        chart(feed, quotes.selected, visible, inspection)
                             .flex_1()
                             .on_frame_when(running, live_updates(feed, quotes, fps, timing)),
                     )
@@ -434,7 +437,11 @@ pub(super) fn market() -> impl IntoElement {
                             .child(text(sample_count).text_size(px(11.0)).line_height(px(18.0)))
                             .child(label("Scroll to zoom", 11.0, 18.0)),
                     )
-                    .child(label("Latest price", 11.0, 18.0)),
+                    .child(
+                        text(inspection.readout)
+                            .text_size(px(11.0))
+                            .line_height(px(18.0)),
+                    ),
             );
         let rows = watchlist(quotes, feed);
         div()

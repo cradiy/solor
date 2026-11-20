@@ -17,12 +17,7 @@ fn gallery() -> Result<(solor::Ui, impl solor::Render)> {
 }
 
 fn click(window: &mut CpuWindow, x: f32, y: f32) -> Result<()> {
-    let point = PointerSample {
-        id: PointerId(1),
-        kind: PointerKind::Mouse,
-        position: Origin { x: px(x), y: px(y) },
-        modifiers: Default::default(),
-    };
+    let point = mouse_at(x, y);
     for input in [
         PointerInput::Down(point, PointerButton::Primary),
         PointerInput::Up(point, PointerButton::Primary),
@@ -204,15 +199,7 @@ fn market_advances_freezes_and_retires_its_frame_listener() -> Result<()> {
     );
     assert!(paused == sample(&mut window)?);
     let scroll = |window: &mut CpuWindow, x, dy| -> Result<bool> {
-        let sample = PointerSample {
-            id: PointerId(1),
-            kind: PointerKind::Mouse,
-            position: Origin {
-                x: px(x),
-                y: px(330.0),
-            },
-            modifiers: Default::default(),
-        };
+        let sample = mouse_at(x, 330.0);
         let delta = solor::pointer::ScrollDelta {
             x: px(0.0),
             y: px(dy),
@@ -223,30 +210,28 @@ fn market_advances_freezes_and_retires_its_frame_listener() -> Result<()> {
     };
     assert!(!scroll(&mut window, 90.0, -12.0)?);
     let move_to = |window: &mut CpuWindow, x| -> Result<bool> {
-        let mouse = PointerSample {
-            id: PointerId(1),
-            kind: PointerKind::Mouse,
-            position: Origin {
-                x: px(x),
-                y: px(330.0),
-            },
-            modifiers: Default::default(),
-        };
+        let mouse = mouse_at(x, 330.0);
         Ok(window
             .event(WindowEvent::Pointer(PointerInput::Move(mouse)))?
             .redraw)
     };
     assert!(move_to(&mut window, 480.0)?);
     let guide = sample(&mut window)?;
-    // Only the horizontal latest-price guide changes on the paused plot.
-    let stride = 800 * 4;
-    let changed_rows = guide
-        .chunks_exact(stride)
-        .zip(paused.chunks_exact(stride))
-        .filter(|(new, old)| new != old)
-        .count();
-    assert!((1..=2).contains(&changed_rows));
-    assert!(!move_to(&mut window, 490.0)?);
+    let changed: Vec<_> = guide
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(paused.as_chunks::<4>().0)
+        .enumerate()
+        .filter_map(|(i, (a, b))| (a != b).then_some(i % 800))
+        .collect();
+    assert!(changed.len() >= 100);
+    assert!(changed.iter().all(|x| x.abs_diff(480) <= 8));
+    assert!(!move_to(&mut window, 480.01)?);
+    assert!(move_to(&mut window, 550.0)?);
+    assert!(guide != sample(&mut window)?);
+    assert!(move_to(&mut window, 480.0)?);
+    sample(&mut window)?;
     assert!(scroll(&mut window, 480.0, -200.0)?);
     assert!(guide != sample(&mut window)?);
     assert!(!scroll(&mut window, 480.0, -1.0)?);
@@ -288,87 +273,151 @@ fn market_advances_freezes_and_retires_its_frame_listener() -> Result<()> {
 fn market_frame_cost() -> Result<()> {
     use std::time::Instant;
     for scale in [RasterScale::ONE, RasterScale(1.5)] {
-        let (mut window, size) = market_window(scale)?;
-        let mut costs = Vec::with_capacity(360);
-        let clock = Instant::now();
-        for frame in 0..392 {
-            let start = Instant::now();
-            assert!(
-                window
-                    .event(WindowEvent::FrameReady(start.duration_since(clock)))?
-                    .redraw
-            );
-            assert!(!window.frame(size, scale)?.damage.is_empty());
-            window.frame_submitted()?;
-            if frame >= 32 {
-                costs.push(start.elapsed());
+        for inspecting in [false, true] {
+            let (mut window, size) = market_window(scale)?;
+            if inspecting {
+                window.event(WindowEvent::Pointer(PointerInput::Move(mouse_at(
+                    480.0, 330.0,
+                ))))?;
+                window.frame(size, scale)?;
+                window.frame_submitted()?;
             }
+            let mut costs = Vec::with_capacity(360);
+            let clock = Instant::now();
+            for frame in 0..392 {
+                let start = Instant::now();
+                assert!(
+                    window
+                        .event(WindowEvent::FrameReady(start.duration_since(clock)))?
+                        .redraw
+                );
+                assert!(!window.frame(size, scale)?.damage.is_empty());
+                window.frame_submitted()?;
+                if frame >= 32 {
+                    costs.push(start.elapsed());
+                }
+            }
+            let frames_per_second =
+                costs.len() as f64 / costs.iter().sum::<Duration>().as_secs_f64();
+            costs.sort_unstable();
+            let over = costs
+                .iter()
+                .filter(|&&d| d > Duration::from_secs_f64(1.0 / 120.0))
+                .count();
+            eprintln!(
+                "800x560 scale={} inspecting={inspecting} unpaced CPU throughput={frames_per_second:.0} frames/s, frame work p50={:?} p95={:?} p99={:?} over 120 Hz budget={over}/{}",
+                scale.0,
+                costs[179],
+                costs[341],
+                costs[356],
+                costs.len()
+            );
         }
-        let frames_per_second = costs.len() as f64 / costs.iter().sum::<Duration>().as_secs_f64();
-        costs.sort_unstable();
-        let over = costs
-            .iter()
-            .filter(|&&d| d > Duration::from_secs_f64(1.0 / 120.0))
-            .count();
-        eprintln!(
-            "800x560 scale={} unpaced CPU throughput={frames_per_second:.0} frames/s, frame work p50={:?} p95={:?} p99={:?} over 120 Hz budget={over}/{}",
-            scale.0,
-            costs[179],
-            costs[341],
-            costs[356],
-            costs.len()
-        );
     }
     Ok(())
 }
 
-#[test]
-fn fps_readout_uses_elapsed_callback_intervals() -> Result<()> {
-    use solor::{Draw, Ui};
+fn submit_labels(ui: &mut solor::Ui, view: solor::ViewId) -> Result<Vec<solor::SharedString>> {
+    ui.flush()?;
+    ui.layout(
+        view,
+        Size {
+            width: px(800.0),
+            height: px(560.0),
+        },
+    )?;
+    let frame = ui.record_frame(view)?;
+    let labels = frame
+        .draws()
+        .iter()
+        .filter_map(|draw| match draw {
+            solor::Draw::Text { paragraph, .. } => Some(paragraph.text.clone()),
+            _ => None,
+        })
+        .collect();
+    ui.accept_pointer_frame(frame.into_pointer_frame())?;
+    Ok(labels)
+}
 
-    let (mut ui, root) = gallery()?;
-    let view = ui.mount(root)?;
-    let submit = |ui: &mut Ui| -> Result<Vec<solor::SharedString>> {
-        ui.flush()?;
-        ui.layout(
-            view,
-            Size {
-                width: px(800.0),
-                height: px(560.0),
-            },
-        )?;
-        let frame = ui.record_frame(view)?;
-        let labels = frame
-            .draws()
-            .iter()
-            .filter_map(|draw| match draw {
-                Draw::Text { paragraph, .. } => Some(paragraph.text.clone()),
-                _ => None,
-            })
-            .collect();
-        ui.accept_pointer_frame(frame.into_pointer_frame())?;
-        Ok(labels)
-    };
-    submit(&mut ui)?;
-    let point = PointerSample {
+fn mouse_at(x: f32, y: f32) -> PointerSample {
+    PointerSample {
         id: PointerId(1),
         kind: PointerKind::Mouse,
-        position: Origin {
-            x: px(461.0),
-            y: px(29.0),
-        },
+        position: Origin { x: px(x), y: px(y) },
         modifiers: Default::default(),
-    };
+    }
+}
+
+fn market_view() -> Result<(solor::Ui, solor::ViewId)> {
+    let (mut ui, root) = gallery()?;
+    let view = ui.mount(root)?;
+    submit_labels(&mut ui, view)?;
+    let point = mouse_at(461.0, 29.0);
     for input in [
         PointerInput::Down(point, PointerButton::Primary),
         PointerInput::Up(point, PointerButton::Primary),
     ] {
         ui.dispatch_pointer(view, input)?;
     }
-    assert!(submit(&mut ui)?.iter().any(|label| label.as_str() == "--"));
+    Ok((ui, view))
+}
+
+#[test]
+fn inspected_price_and_average_follow_the_sample_as_it_moves_through_history() -> Result<()> {
+    let (mut ui, view) = market_view()?;
+    submit_labels(&mut ui, view)?;
+    let frame = ui.record_frame(view)?;
+    let (left, right) = frame
+        .draws()
+        .iter()
+        .find_map(|draw| {
+            let solor::Draw::Polyline { origin, points, .. } = draw else {
+                return None;
+            };
+            Some((origin.x + points.first()?.x, origin.x + points.last()?.x))
+        })
+        .expect("market price line");
+    let right = mouse_at(right.get(), 330.0);
+    let left = mouse_at(left.get(), 330.0);
+    let readout = |ui: &mut solor::Ui| -> Result<_> {
+        submit_labels(ui, view)?
+            .into_iter()
+            .find(|text| text.starts_with("Price ") && text.contains("MA "))
+            .ok_or_else(|| anyhow::anyhow!("missing inspected price and moving average"))
+    };
+    ui.dispatch_pointer(view, PointerInput::Move(right))?;
+    let initial = readout(&mut ui)?;
+    for tick in 1..=11 {
+        ui.dispatch_frame(view, Duration::from_millis(tick * 8))?;
+        submit_labels(&mut ui, view)?;
+    }
+    assert_ne!(initial, readout(&mut ui)?);
+    ui.dispatch_pointer(view, PointerInput::Move(left))?;
+    ui.dispatch_pointer(
+        view,
+        PointerInput::Scroll(
+            left,
+            solor::pointer::ScrollDelta {
+                x: px(0.0),
+                y: px(-200.0),
+            },
+        ),
+    )?;
+    assert_eq!(initial, readout(&mut ui)?);
+    Ok(())
+}
+
+#[test]
+fn fps_readout_uses_elapsed_callback_intervals() -> Result<()> {
+    let (mut ui, view) = market_view()?;
+    assert!(
+        submit_labels(&mut ui, view)?
+            .iter()
+            .any(|label| label.as_str() == "--")
+    );
     for millis in [1000, 1050, 1600, 1900, 2250] {
         ui.dispatch_frame(view, Duration::from_millis(millis))?;
-        let labels = submit(&mut ui)?;
+        let labels = submit_labels(&mut ui, view)?;
         let expected = if millis < 2250 { "--" } else { "3.2" };
         assert!(
             labels

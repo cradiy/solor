@@ -382,22 +382,62 @@ impl<'paint> PaintContext<'paint> {
             .origin
             .checked_add(offset)
             .context("invalid fill origin")?;
-        self.record_fill(origin, size, fill.into());
+        self.record_fill(origin, size, fill.into(), Corners::default());
+        Ok(())
+    }
+
+    /// Fills a circle in content-local logical pixels, mapping the fill to its diameter.
+    /// A zero radius records no drawing.
+    pub fn fill_circle(
+        &mut self,
+        center: Origin,
+        radius: Pixels,
+        fill: impl Into<Fill>,
+    ) -> Result<()> {
+        anyhow::ensure!(radius.is_extent(), "invalid circle radius");
+        let diameter = radius
+            .checked_add(radius)
+            .context("circle diameter outside layout range")?;
+        let offset = Origin {
+            x: center.x - radius,
+            y: center.y - radius,
+        };
+        let origin = self
+            .origin
+            .checked_add(offset)
+            .context("invalid circle origin")?;
+        if radius.get() > 0.0 {
+            self.record_fill(
+                origin,
+                Size {
+                    width: diameter,
+                    height: diameter,
+                },
+                fill.into(),
+                Corners::all(radius),
+            );
+        }
         Ok(())
     }
 
     /// Records a rectangle at the content origin.
     pub fn fill(&mut self, size: Size, fill: impl Into<Fill>) {
-        self.record_fill(self.origin, size, fill.into());
+        self.record_fill(self.origin, size, fill.into(), Corners::default());
     }
 
-    fn record_fill(&mut self, origin: Origin, size: Size, fill: Fill) {
+    fn record_fill(
+        &mut self,
+        origin: Origin,
+        size: Size,
+        fill: Fill,
+        corner_radii: Corners<Pixels>,
+    ) {
         self.commands.push(Draw::Fill {
             clip: self.clip.clone(),
             origin,
             size,
             fill,
-            corner_radii: Corners::default(),
+            corner_radii,
         });
     }
 }
