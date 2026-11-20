@@ -1,11 +1,12 @@
 //! Shared content-box adapter for every retained element.
 use crate::layout::{
-    ComputedLength, ContainingBlock, LayoutContext, LayoutError, LayoutNode, LayoutOutput, Margin,
-    Margins, MeasureContext, Metrics, Origin, Query, Result, Size, WidthLimits, border_extent,
+    AxisLimits, ComputedLength, ContainingBlock, LayoutContext, LayoutError, LayoutNode,
+    LayoutOutput, Margin, Margins, MeasureContext, Metrics, Origin, Query, Result, Size,
+    SizeLimits, WidthLimits, border_extent,
 };
 use crate::length::UnitResolver;
 use crate::style::BoxSizing;
-use crate::{Edges, Pixels, Style, px};
+use crate::{Edges, Length, Pixels, Style, px};
 
 pub(crate) struct StyledBody<E> {
     pub content: E,
@@ -87,22 +88,31 @@ impl<E> StyledBody<E> {
         }
     }
 
-    pub(crate) fn width_limits(
+    pub(crate) fn size_limits(
         &self,
         style: &Style,
         units: UnitResolver,
-    ) -> Result<Option<WidthLimits>> {
+    ) -> Result<Option<SizeLimits>> {
         let Some(layout) = &style.layout else {
             return Ok(None);
         };
-        let min = units.dimension(layout.min_width.unwrap_or_default())?;
-        let max = units.dimension(layout.max_width.unwrap_or_default())?;
-        Ok((min.is_some() || max.is_some()).then_some(WidthLimits {
-            preferred: self.width,
-            min,
-            max,
-            extra: self.sizing_extra(self.inset.width),
-        }))
+        let bounds = |min: Option<Length>, max: Option<Length>, inset| -> Result<_> {
+            let min = units.dimension(min.unwrap_or_default())?;
+            let max = units.dimension(max.unwrap_or_default())?;
+            Ok((min.is_some() || max.is_some()).then_some(AxisLimits {
+                min,
+                max,
+                extra: self.sizing_extra(inset),
+            }))
+        };
+        let width = bounds(layout.min_width, layout.max_width, self.inset.width)?.map(|bounds| {
+            WidthLimits {
+                preferred: self.width,
+                bounds,
+            }
+        });
+        let height = bounds(layout.min_height, layout.max_height, self.inset.height)?;
+        Ok((width.is_some() || height.is_some()).then_some(SizeLimits { width, height }))
     }
 }
 
@@ -127,35 +137,47 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
         let inner = |w: Pixels| w.saturating_sub(self.inset.width);
         let basis = cx.containing_block();
         let width = border_extent(self.width, basis.width, self.sizing_extra(self.inset.width))?;
+        let range = cx.height_range;
         let height = border_extent(
             self.height,
             basis.height,
             self.sizing_extra(self.inset.height),
-        )?;
+        )?
+        .map(|h| range.clamp(h))
+        .or_else(|| range.fixed());
         let content_query = match (query, width) {
             (_, Some(w)) => Query::Exact(inner(query.resolve(w))),
             (Query::Natural, None) => Query::Natural,
             (Query::AtMost(w), None) => Query::AtMost(inner(w)),
             (Query::Exact(w), None) => Query::Exact(inner(w)),
         };
-        cx.set_child_containing_block(ContainingBlock {
-            width: match content_query {
-                Query::Exact(w) => Some(w),
-                _ => None,
-            },
-            height: height.map(|h| h.saturating_sub(self.inset.height)),
-        });
-        let metrics = self
-            .content
-            .measure(cx, content_query)?
-            .validate_for(content_query)?;
+        let mut measure = |cx: &mut MeasureContext<'_, '_>, height: Option<Pixels>| {
+            cx.set_child_containing_block(ContainingBlock {
+                width: match content_query {
+                    Query::Exact(w) => Some(w),
+                    _ => None,
+                },
+                height: height.map(|h| h.saturating_sub(self.inset.height)),
+            });
+            self.content
+                .measure(cx, content_query)?
+                .validate_for(content_query)
+        };
+        let mut metrics = measure(cx, height)?;
+        let height = match height {
+            Some(h) => h,
+            None => {
+                let natural = add(metrics.size.height, self.inset.height)?;
+                let used = range.clamp(natural);
+                if range.reaches_limit(natural) && cx.child_count() > 0 {
+                    metrics = measure(cx, Some(used))?;
+                }
+                used
+            }
+        };
         let width = match width {
             Some(w) => w,
             None => add(metrics.size.width, self.inset.width)?,
-        };
-        let height = match height {
-            Some(h) => h,
-            None => add(metrics.size.height, self.inset.height)?,
         };
         Ok(Metrics {
             size: Size {
@@ -178,7 +200,9 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
                 width: add(out.content.width, self.inset.width)?,
                 height: add(out.content.height, self.inset.height)?,
             },
-            baseline: self.baseline(out.baseline)?,
+            baseline: self
+                .baseline(out.baseline)?
+                .filter(|&b| b <= assigned.height),
         })
     }
 }

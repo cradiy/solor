@@ -35,9 +35,7 @@ pub(crate) fn border_extent(
 
 pub(crate) struct WidthLimits {
     pub(crate) preferred: Option<ComputedLength>,
-    pub(crate) min: Option<ComputedLength>,
-    pub(crate) max: Option<ComputedLength>,
-    pub(crate) extra: Pixels,
+    pub(crate) bounds: AxisLimits,
 }
 
 impl WidthLimits {
@@ -50,8 +48,7 @@ impl WidthLimits {
         direct: bool,
     ) -> Result<Option<(Query, Pixels)>> {
         query.validate()?;
-        let min = border_extent(self.min, basis, self.extra)?;
-        let max = border_extent(self.max, basis, self.extra)?;
+        let SizeRange { min, max } = self.bounds.resolve(basis)?;
         if (min.is_none() && max.is_none()) || (direct && matches!(query, Query::Exact(_))) {
             return Ok(None);
         }
@@ -70,10 +67,54 @@ impl WidthLimits {
             None => Query::Natural,
         };
         if !matches!(query, Query::Exact(_))
-            && let Some(preferred) = border_extent(self.preferred, basis, self.extra)?
+            && let Some(preferred) = border_extent(self.preferred, basis, self.bounds.extra)?
         {
             query = Query::Exact(query.resolve(preferred).max(min));
         }
         Ok(Some((query, min)))
+    }
+}
+
+pub(crate) struct SizeLimits {
+    pub(crate) width: Option<WidthLimits>,
+    pub(crate) height: Option<AxisLimits>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct AxisLimits {
+    pub(crate) min: Option<ComputedLength>,
+    pub(crate) max: Option<ComputedLength>,
+    pub(crate) extra: Pixels,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct SizeRange {
+    min: Option<Pixels>,
+    max: Option<Pixels>,
+}
+
+impl AxisLimits {
+    pub(crate) fn resolve(self, basis: Option<Pixels>) -> Result<SizeRange> {
+        Ok(SizeRange {
+            min: border_extent(self.min, basis, self.extra)?,
+            max: border_extent(self.max, basis, self.extra)?,
+        })
+    }
+}
+
+impl SizeRange {
+    pub(crate) fn fixed(self) -> Option<Pixels> {
+        self.min
+            .filter(|&min| self.max.is_some_and(|max| max <= min))
+    }
+
+    pub(crate) fn clamp(self, value: Pixels) -> Pixels {
+        self.max
+            .map_or(value, |max| max.min(value))
+            .max(self.min.unwrap_or_default())
+    }
+
+    pub(crate) fn reaches_limit(self, value: Pixels) -> bool {
+        self.min.is_some_and(|min| value <= min) || self.max.is_some_and(|max| value >= max)
     }
 }

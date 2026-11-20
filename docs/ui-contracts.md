@@ -107,6 +107,15 @@ margins. A percentage limit applies once the parent content width is definite.
 Custom layouts that call `measure_child` directly retain control of the
 maximum or exact width they pass. The host assigns the root's viewport size.
 
+`.min_h(...)` and `.max_h(...)` bound preferred height and row stretch using
+the same box model. Percentage limits use the parent's definite content
+height. If the minimum exceeds the maximum, the minimum wins. When a limit
+determines a container's height, its children use the resulting content height
+for percentage sizing and alignment. Following siblings advance by the used
+box height. Content bounds can extend farther, and a label keeps the full
+paragraph when its box is capped. A baseline outside the assigned box is
+omitted.
+
 A `div()` uses vertical flow by default. Both `.flex_row()` and `.flex_col()`
 set its direction through the same style refinement, before or after adding
 children. Horizontal flow uses the column gap (`gap_x`), vertical flow uses
@@ -208,7 +217,7 @@ expresses placement but does not yet move a child or remove it from column flow.
 | Priority and capability | Required behavior and acceptance case |
 | --- | --- |
 | 1. Frame composition, clipping and hit testing | Compose parent-local coordinates, scale, clips and sibling order into one accepted frame. Move a rounded card over another target, fail one submission, then retry. Pixels and click targets must agree with the last accepted frame. Old bounds must be repaired when a wrapped label moves its siblings. |
-| 2. Sizing, placement and scrolling | Apply height limits, positioning and per-edge borders during measurement and placement. Resolve grow/shrink and overflow. Validate a long label between a fixed icon and an action at narrow and wide widths. Scrolling must share the visual clip and hit-test transform. |
+| 2. Sizing, placement and scrolling | Apply positioning and per-edge borders during measurement and placement. Resolve grow/shrink and overflow. Validate a long label between a fixed icon and an action at narrow and wide widths. Scrolling must share the visual clip and hit-test transform. |
 | 3. Input and state-dependent styles | Connect platform pointer adapters and define propagation, keyboard focus, tab order and actions. Define precedence for hover, press, focus and disabled states, including removing an override. Validate a pressed element that moves, loses capture or unmounts before release. |
 | 4. Text, editing and semantics | Apply font selection and fallback, weight, wrapping/truncation and decoration. Define editable ranges, composition, caret bounds and accessibility actions. A bilingual field must expose the same selection to keyboard, IME and assistive input. Preserve explicit units when converting platform text ranges. |
 | 5. Paint and animation | Define border and shadow paint order, opacity of overlapping descendants, transformed and rounded clipping, and animation timing. A frame-clock repaint must stop on unmount. CPU replay must draw every gradient stop, preserve hard edges and match the declared interpolation. A GPU representation needs equivalent output and a resource lifetime through submission. |

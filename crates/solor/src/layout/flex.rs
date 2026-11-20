@@ -60,7 +60,8 @@ impl FlexLayout {
         let mut ascent = None;
         let mut descent = None;
         for index in 0..cx.child_count() {
-            let (child, margins, item) = cx.measure_row_item(index, query)?;
+            let item = cx.measure_row_item(index, query)?;
+            let (child, margins) = (item.metrics, item.margins);
             let top = margins.top.fixed_or_zero();
             let bottom = margins.bottom.fixed_or_zero();
             if index == 0 {
@@ -69,7 +70,7 @@ impl FlexLayout {
                         b,
                         child.size.height,
                         margins,
-                        item.alignment(self.align_items),
+                        item.style.alignment(self.align_items),
                     )
                 });
             } else {
@@ -77,7 +78,7 @@ impl FlexLayout {
             }
             size.width = add(size.width, add(child.size.width, margins.horizontal()?)?)?;
             size.height = size.height.max(add(add(top, child.size.height)?, bottom)?);
-            if shares_row_baseline(item.alignment(self.align_items), margins) {
+            if shares_row_baseline(item.style.alignment(self.align_items), margins) {
                 let baseline = child.baseline.unwrap_or(child.size.height);
                 include_max(&mut ascent, add(top, baseline)?);
                 include_max(&mut descent, add(child.size.height - baseline, bottom)?);
@@ -150,7 +151,8 @@ impl FlexLayout {
     ) -> Result<LineSpacing> {
         let mut line = LineTotals::default();
         for i in 0..cx.child_count() {
-            let (child, margins, _) = cx.measure_flex_item(i, query, column_align)?;
+            let item = cx.measure_flex_item(i, query, column_align)?;
+            let (child, margins) = (item.metrics, item.margins);
             let (extent, before, after) = self.direction.main_axis(child.size, margins);
             line.push(extent, before, after, self.gap)?;
         }
@@ -179,14 +181,16 @@ impl FlexLayout {
         let mut shared_baseline = None;
         let mut baseline_items = Vec::new();
         for index in 0..cx.child_count() {
-            let (mut child, margins, item) = cx.measure_flex_item(index, query, column_align)?;
-            let align = item.alignment(self.align_items);
+            let item = cx.measure_flex_item(index, query, column_align)?;
+            let (mut child, margins) = (item.metrics, item.margins);
+            let align = item.style.alignment(self.align_items);
             if row
                 && align == Align::Stretch
-                && item.auto_height
+                && item.style.auto_height
                 && let (Margin::Fixed(top), Margin::Fixed(bottom)) = (margins.top, margins.bottom)
             {
-                child.size.height = assigned.height.saturating_sub(add(top, bottom)?);
+                let available = assigned.height.saturating_sub(add(top, bottom)?);
+                child.size.height = item.stretch_height(available, assigned.height)?;
             }
             let (extent, leading, trailing) = self.direction.main_axis(child.size, margins);
             // Start-aligned lines only need a totals pass when a main-axis margin is automatic.
