@@ -271,3 +271,63 @@ fn deactivation_cancels_all_contacts_even_on_error_and_is_scoped_to_one_view() -
     assert_eq!(*ui.context().read(releases)?, 1);
     Ok(())
 }
+
+#[test]
+fn relative_subtree_draws_and_clicks_follow_the_accepted_frame_across_resize() -> Result<()> {
+    use solor::{Draw, Rgba, percent};
+
+    let mut ui = Ui::new();
+    let clicks = ui.context().signal(0);
+    let view = ui.mount(component(|_| {
+        div().child(
+            div()
+                .relative()
+                .left(percent(25.0))
+                .size(px(20.0))
+                .p(px(2.0))
+                .child(div().size(px(6.0)).bg(Rgba::new(20, 90, 200, 255)))
+                .on_click(move |cx| cx.update(clicks, |count| *count += 1)),
+        )
+    }))?;
+    let record = |ui: &mut Ui, width, expected_x| -> Result<_> {
+        ui.layout(
+            view,
+            Size {
+                width: px(width),
+                height: px(40.0),
+            },
+        )?;
+        let frame = ui.record_frame(view)?;
+        let [Draw::Fill { origin, .. }] = frame.draws() else {
+            panic!("expected one fill")
+        };
+        assert_eq!(
+            *origin,
+            Origin {
+                x: px(expected_x),
+                y: px(2.0)
+            }
+        );
+        Ok(frame.into_pointer_frame())
+    };
+    let click = |ui: &mut Ui, x| -> Result<()> {
+        let p = sample(1, x, 3.0);
+        ui.dispatch_pointer(view, Down(p, Primary))?;
+        ui.dispatch_pointer(view, Up(p, Primary))?;
+        Ok(())
+    };
+    let first = record(&mut ui, 40.0, 12.0)?;
+    ui.accept_pointer_frame(first)?;
+    let next = record(&mut ui, 160.0, 42.0)?;
+    click(&mut ui, 3.0)?;
+    click(&mut ui, 43.0)?;
+    assert_eq!(*ui.context().read(clicks)?, 0);
+    click(&mut ui, 13.0)?;
+    assert_eq!(*ui.context().read(clicks)?, 1);
+    ui.accept_pointer_frame(next)?;
+    click(&mut ui, 13.0)?;
+    assert_eq!(*ui.context().read(clicks)?, 1);
+    click(&mut ui, 43.0)?;
+    assert_eq!(*ui.context().read(clicks)?, 2);
+    Ok(())
+}

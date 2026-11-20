@@ -223,6 +223,15 @@ content width. A hard break also counts, even if the last visible line is
 empty. The preceding lines keep their original wrapping. Start and middle
 ellipsis placement apply to unwrapped lines.
 
+Use `.relative()` on a child to shift its entire subtree from the position
+assigned by its parent. The child keeps its original space in the line.
+For example, `.relative().left(percent(25.0)).top(rem(0.5))` moves it right
+by a quarter of the parent's content width and down by half a rem. Vertical
+percentages use the parent's content height. Left and top take precedence
+over right and bottom when both opposing offsets are definite. An automatic
+edge defers to its opposite. The parent includes the shifted subtree's far
+edges in its content extent. The view root stays at the viewport origin.
+
 Use `.z_index(i32)` to order overlapping siblings. Each parent paints its own
 content first, then its child subtrees in ascending layer order. The default
 layer is zero. Equal layers keep declaration order. A child's layer applies

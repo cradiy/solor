@@ -9,7 +9,8 @@ const MEASUREMENT_CACHE_SLOTS: usize = 3;
 mod engine;
 pub(crate) use engine::FlexItemStyle;
 pub(crate) use engine::sizing::{
-    AxisLimits, ComputedLength, FlexBasis, ItemBasis, ItemSizing, WidthLimits, border_extent,
+    AxisLimits, ComputedLength, FlexBasis, ItemBasis, ItemSizing, RelativeOffset, WidthLimits,
+    border_extent,
 };
 mod flex;
 pub use flex::{FlexDirection, FlexLayout};

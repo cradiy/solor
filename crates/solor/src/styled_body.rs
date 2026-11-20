@@ -2,10 +2,10 @@
 use crate::layout::{
     AxisLimits, ComputedLength, ContainingBlock, FlexBasis, ItemBasis, ItemSizing, LayoutContext,
     LayoutError, LayoutNode, LayoutOutput, Margin, Margins, MeasureContext, Metrics, Origin, Query,
-    Result, Size, WidthLimits, border_extent,
+    RelativeOffset, Result, Size, WidthLimits, border_extent,
 };
 use crate::length::UnitResolver;
-use crate::style::BoxSizing;
+use crate::style::{BoxSizing, Position};
 use crate::{Edges, Length, Pixels, Style, px};
 
 pub(crate) struct StyledBody<E> {
@@ -126,11 +126,20 @@ impl<E> StyledBody<E> {
         } else {
             Size::default()
         };
-        Ok((width.is_some()
+        let relative_offset = if layout.position == Some(Position::Relative) {
+            RelativeOffset::from_edges(map_edges(layout.inset, |v| {
+                units.offset(v.unwrap_or_default())
+            })?)
+        } else {
+            None
+        };
+        Ok((relative_offset.is_some()
+            || width.is_some()
             || height.is_some()
             || basis.is_some()
             || shrink_inset != Size::default())
         .then_some(ItemSizing {
+            relative_offset,
             shrink_inset,
             width,
             height,

@@ -215,6 +215,36 @@ pub struct Geometry {
     pub content: Size,
 }
 
+impl Geometry {
+    // Shift the placed border box and extend its parent's positive overflow.
+    fn shift_relative(&mut self, offset: Origin, parent_content: &mut Size) -> Result<()> {
+        fn shift(
+            origin: &mut Pixels,
+            offset: Pixels,
+            extent: Pixels,
+            parent: &mut Pixels,
+        ) -> Result<()> {
+            *origin = origin.checked_add(offset).ok_or(LayoutError::InvalidSize)?;
+            let end = origin.checked_add(extent).ok_or(LayoutError::InvalidSize)?;
+            *parent = (*parent).max(end);
+            Ok(())
+        }
+
+        shift(
+            &mut self.origin.x,
+            offset.x,
+            self.metrics.size.width.max(self.content.width),
+            &mut parent_content.width,
+        )?;
+        shift(
+            &mut self.origin.y,
+            offset.y,
+            self.metrics.size.height.max(self.content.height),
+            &mut parent_content.height,
+        )
+    }
+}
+
 /// Content geometry returned after arranging children.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LayoutOutput {
@@ -784,6 +814,7 @@ struct Draft {
 
 #[derive(Clone, Copy, Default)]
 struct ChildState {
+    relative_offset: Origin,
     draft: Option<usize>,
     placed: bool,
 }
@@ -927,11 +958,22 @@ impl LayoutContext<'_, '_> {
             .access
             .child(index)
             .ok_or(LayoutError::MissingChild(index))?;
-        let (position, output) = self.access.execute_child(id, |entry, access| {
-            Ok(layout(entry, access, assigned, self.scratch, self.force))
-        })??;
+        let (result, relative_offset) = self.access.execute_child(id, |entry, access| {
+            let offset = entry
+                .item_sizing
+                .as_ref()
+                .and_then(|s| s.relative_offset.as_ref())
+                .map_or_else(Origin::default, |offset| offset.resolve(self.child_basis));
+            Ok((
+                layout(entry, access, assigned, self.scratch, self.force),
+                offset,
+            ))
+        })?;
+        let (position, output) = result?;
         // Recursive growth may relocate the vector; retain indexes, never references.
-        self.scratch.children[self.children_start + index].draft = Some(position);
+        let child = &mut self.scratch.children[self.children_start + index];
+        child.draft = Some(position);
+        child.relative_offset = relative_offset;
         #[cfg(feature = "layout-audit")]
         self.reads.push(Read::Layout {
             node: id,
@@ -1059,15 +1101,19 @@ fn layout(
         force,
         failed: false,
     };
-    let output = entry.body.layout(&mut cx, assigned)?.validate()?;
+    let mut output = entry.body.layout(&mut cx, assigned)?.validate()?;
     if cx.failed {
         return Err(LayoutError::FailedChildOperation);
     }
-    if cx.scratch.children[children_start..]
-        .iter()
-        .any(|child| !child.placed)
-    {
-        return Err(LayoutError::UnplacedChildren);
+    for child in &cx.scratch.children[children_start..] {
+        if !child.placed {
+            return Err(LayoutError::UnplacedChildren);
+        }
+        if child.relative_offset != Origin::default() {
+            let position = child.draft.ok_or(LayoutError::UnplacedChildren)?;
+            let geometry = &mut cx.scratch.draft[position].geometry;
+            geometry.shift_relative(child.relative_offset, &mut output.content)?;
+        }
     }
     let position = cx.scratch.draft.len();
     cx.scratch.draft.push(Draft {

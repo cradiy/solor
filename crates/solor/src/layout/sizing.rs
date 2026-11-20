@@ -1,5 +1,6 @@
 //! Conversion from declared box dimensions to child measurement constraints.
-use super::{ContainingBlock, ItemQuery, LayoutError, Pixels, Query, Result, Size};
+use super::super::column::Edges;
+use super::{ContainingBlock, ItemQuery, LayoutError, Origin, Pixels, Query, Result, Size};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ComputedLength {
@@ -109,7 +110,45 @@ impl FlexBasis {
     }
 }
 
+pub(crate) struct RelativeOffset {
+    x: Option<ComputedLength>,
+    y: Option<ComputedLength>,
+}
+
+impl RelativeOffset {
+    pub(crate) fn from_edges(edges: Edges<Option<ComputedLength>>) -> Option<Self> {
+        fn axis(
+            start: Option<ComputedLength>,
+            end: Option<ComputedLength>,
+        ) -> Option<ComputedLength> {
+            start.or_else(|| {
+                end.map(|value| match value {
+                    ComputedLength::Pixels(px) => ComputedLength::Pixels(px * -1.0),
+                    ComputedLength::Fraction(f) => ComputedLength::Fraction(-f),
+                })
+            })
+        }
+        let x = axis(edges.left, edges.right);
+        let y = axis(edges.top, edges.bottom);
+        (x.is_some() || y.is_some()).then_some(Self { x, y })
+    }
+
+    pub(super) fn resolve(&self, parent: ContainingBlock) -> Origin {
+        Origin {
+            x: self
+                .x
+                .and_then(|v| v.resolve(parent.width))
+                .unwrap_or_default(),
+            y: self
+                .y
+                .and_then(|v| v.resolve(parent.height))
+                .unwrap_or_default(),
+        }
+    }
+}
+
 pub(crate) struct ItemSizing {
+    pub(crate) relative_offset: Option<RelativeOffset>,
     pub(crate) shrink_inset: Size,
     pub(crate) basis: Option<FlexBasis>,
     pub(crate) width: Option<WidthLimits>,
