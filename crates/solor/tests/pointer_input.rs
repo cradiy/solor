@@ -40,7 +40,6 @@ fn accept(ui: &mut Ui, view: ViewId, width: f32) -> Result<()> {
 fn label_hits_button_up_precedes_click_and_bindings_wait_for_flush() -> Result<()> {
     let mut ui = Ui::with_font(
         include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf").to_vec(),
-        "en",
     )?;
     let visible = ui.context().signal(false);
     let released = ui.context().signal(false);
@@ -608,7 +607,6 @@ fn tooltip_without_a_callback_waits_cancels_and_draws_above_the_owner() -> Resul
     use solor::Draw;
     let mut ui = Ui::with_font(
         include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf").to_vec(),
-        "en",
     )?;
     let show = ui.context().signal(true);
     let view = ui.mount(component(|_| {
@@ -617,7 +615,11 @@ fn tooltip_without_a_callback_waits_cancels_and_draws_above_the_owner() -> Resul
             .items_end()
             .justify_end()
             .child_when(show, || {
-                div().size(px(10.0)).overflow_hidden().tooltip("Inner hint")
+                div().size(px(10.0)).overflow_hidden().tooltip(
+                    solor::Tooltip::new("Inner hint")
+                        .bg(solor::rgba(0x245569cc))
+                        .text_color(solor::rgb(0xffdf72)),
+                )
             })
     }))?;
     accept(&mut ui, view, 140.0)?;
@@ -635,13 +637,21 @@ fn tooltip_without_a_callback_waits_cancels_and_draws_above_the_owner() -> Resul
     let frame = ui.record_frame(view)?;
     let [
         Draw::Fill {
-            origin, size, clip, ..
+            origin,
+            size,
+            clip,
+            fill,
+            ..
         },
-        Draw::Text { paragraph, .. },
+        Draw::Text {
+            paragraph, color, ..
+        },
     ] = frame.draws()
     else {
         panic!("expected a tooltip overlay")
     };
+    assert_eq!(*fill, solor::Fill::from(solor::rgba(0x245569cc)));
+    assert_eq!(*color, solor::rgb(0xffdf72));
     assert_eq!(paragraph.text.as_str(), "Inner hint");
     assert!(clip.is_none() && origin.x >= px(0.0) && origin.x + size.width <= px(140.0));
     assert!(origin.y >= px(0.0) && origin.y + size.height <= px(30.0));
@@ -731,5 +741,131 @@ fn resize_cursor_tracks_the_effective_control_and_respects_an_explicit_style() -
         ui.dispatch_pointer(view, Move(mouse))?;
         assert_eq!(ui.pointer_cursor(view, mouse.id), cursor);
     }
+    Ok(())
+}
+
+#[test]
+fn tooltip_defaults_update_pending_and_visible_hints_and_preserve_local_overrides() -> Result<()> {
+    use solor::{
+        Draw, Edges, Fill, Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle, rgb,
+        style::Corners, text::TextStyle,
+    };
+    use std::time::Duration;
+
+    let mut ui = Ui::with_font(
+        include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf").to_vec(),
+    )?;
+    let view = ui.mount(component(|_| {
+        div().child(
+            div()
+                .size(px(12.0))
+                .tooltip(Tooltip::new("X").text_color(rgb(0xffdd00)).gap(px(3.5))),
+        )
+    }))?;
+    accept(&mut ui, view, 140.0)?;
+    ui.dispatch_pointer(view, Move(sample(1, 5.0, 5.0)))?;
+    assert!(ui.record_frame(view)?.draws().is_empty());
+
+    let theme = TooltipStyle {
+        delay: Duration::ZERO,
+        placement: TooltipPlacement::Right,
+        alignment: TooltipAlignment::End,
+        padding: Edges {
+            left: px(6.5),
+            top: px(2.5),
+            right: px(4.0),
+            bottom: px(2.0),
+        },
+        corner_radii: Corners::all(px(2.5)),
+        typography: TextStyle {
+            size: px(12.0),
+            line_height: px(16.0),
+        },
+        background: rgb(0xf0f0f0).into(),
+        text_color: rgb(0x202020),
+        ..TooltipStyle::default()
+    };
+    ui.set_tooltip_style(theme.clone())?;
+    let frame = ui.record_frame(view)?;
+    let [
+        Draw::Fill {
+            origin,
+            fill,
+            corner_radii,
+            ..
+        },
+        Draw::Text {
+            origin: label,
+            color,
+            paragraph,
+            ..
+        },
+    ] = frame.draws()
+    else {
+        panic!("expected visible tooltip");
+    };
+    assert_eq!(
+        *origin,
+        Origin {
+            x: px(15.5),
+            y: px(0.0)
+        }
+    );
+    assert_eq!(
+        *label,
+        Origin {
+            x: px(22.0),
+            y: px(2.5)
+        }
+    );
+    assert_eq!(corner_radii, &theme.corner_radii);
+    assert_eq!(fill, &theme.background);
+    assert_eq!(*color, rgb(0xffdd00));
+    assert_eq!(paragraph.style, theme.typography);
+    assert!(ui.next_redraw(view).is_none());
+
+    let typography = TextStyle {
+        size: px(18.0),
+        line_height: px(22.0),
+    };
+    ui.set_tooltip_style(TooltipStyle {
+        delay: Duration::from_secs(10),
+        typography,
+        max_width: px(22.0),
+        background: rgb(0x303030).into(),
+        ..theme.clone()
+    })?;
+    assert!(ui.next_redraw(view).is_some());
+    let frame = ui.record_frame(view)?;
+    let [
+        Draw::Fill { size, fill, .. },
+        Draw::Text {
+            paragraph, color, ..
+        },
+    ] = frame.draws()
+    else {
+        panic!("expected restyled tooltip");
+    };
+    assert!(size.width <= px(22.0));
+    assert_eq!(fill, &Fill::from(rgb(0x303030)));
+    assert_eq!(*color, rgb(0xffdd00));
+    assert_eq!(paragraph.style, typography);
+    assert!(ui.next_redraw(view).is_none());
+
+    let old = ui.tooltip_style().clone();
+    assert!(
+        ui.set_tooltip_style(TooltipStyle {
+            max_width: px(f32::NAN),
+            ..theme.clone()
+        })
+        .is_err()
+    );
+    assert_eq!(ui.tooltip_style(), &old);
+    ui.set_tooltip_style(TooltipStyle {
+        padding: Edges::all(px(100.0)),
+        ..theme
+    })?;
+    assert!(ui.record_frame(view)?.draws().is_empty());
+    assert!(ui.next_redraw(view).is_none());
     Ok(())
 }

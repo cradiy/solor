@@ -70,7 +70,6 @@ impl FixedLabel {
 /// Commands in view-local logical coordinates and the matching pointer geometry.
 pub struct ViewFrame {
     draws: Vec<Draw>,
-    font: Option<Arc<Vec<u8>>>,
     pointer: PointerFrame,
     next_frame: bool,
 }
@@ -84,11 +83,6 @@ impl ViewFrame {
     /// Whether a painted element requested a subsequent host-paced frame.
     pub fn requests_animation_frame(&self) -> bool {
         self.next_frame
-    }
-
-    /// Borrows the face used to shape the view's text.
-    pub fn font(&self) -> Option<&[u8]> {
-        self.font.as_ref().map(|font| font.as_slice())
     }
 
     /// Separates the recorded commands for retention from the hit geometry for submission.
@@ -176,7 +170,7 @@ impl Ui {
                     now,
                     &mut crate::Context {
                         state: self.state.get_mut(),
-                        engine: self.engine.as_ref(),
+                        engine: &self.engine,
                         owned: Some(&mut node.owned),
                     },
                 )?;
@@ -229,15 +223,10 @@ impl Ui {
         instance
             .pointer
             .tooltips
-            .paint(&pointer, instance, self.engine.as_ref(), &mut draws)?;
-        let font = self
-            .engine
-            .as_ref()
-            .map(|engine| engine.borrow().bytes.clone());
+            .paint(&pointer, instance, &self.engine, &mut draws)?;
         instance.repaints.borrow_mut().dirty.clear();
         Ok(ViewFrame {
             draws,
-            font,
             pointer,
             next_frame,
         })

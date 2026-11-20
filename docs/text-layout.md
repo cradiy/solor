@@ -5,7 +5,7 @@
 The private `text_layout` example integrates real font shaping and line layout
 with the core measurement and allocation contract. Its column and text nodes
 come from `solor`. That crate uses [cosmic-text 0.19.0](https://docs.rs/cosmic-text/0.19.0/cosmic_text/)
-with only its `std` feature enabled.
+for shaping and line layout.
 
 One bundled [Noto Sans CJK SC subset](../fixtures/fonts/README.md)
 provides deterministic Latin/CJK fixtures. The database starts empty, loads only

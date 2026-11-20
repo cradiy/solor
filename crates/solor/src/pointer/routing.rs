@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{
     Context, Instance, NodeId, Result, Ui, ViewId, WindowControl, element::MountedNode,
-    text::SharedEngine,
+    text::TextSystem,
 };
 
 struct Press {
@@ -70,15 +70,16 @@ impl PointerRouter {
 
 // The callback can change signals, but structural reconciliation occurs only at flush.
 struct Delivery<'a> {
+    tooltip_style: &'a crate::TooltipStyle,
     instance: &'a mut Instance,
     state: &'a mut Runtime<()>,
-    engine: Option<&'a SharedEngine>,
+    engine: &'a TextSystem,
 }
 
 fn context_and_handlers<'a>(
     node: &'a mut MountedNode,
     state: &'a mut Runtime<()>,
-    engine: Option<&'a SharedEngine>,
+    engine: &'a TextSystem,
 ) -> (&'a Handlers, Context<'a>) {
     (
         node.handlers.as_deref().expect("interactive recipient"),
@@ -98,7 +99,7 @@ impl Delivery<'_> {
             .reconcile(router.frame.as_ref(), &self.instance.bodies);
         router
             .tooltips
-            .reconcile(&router.hover, &self.instance.bodies);
+            .reconcile(&router.hover, self.tooltip_style, &self.instance.bodies);
         let mut result = Ok(());
         for (id, entered) in changes {
             let node = self
@@ -339,9 +340,10 @@ impl Ui {
             .get_mut(&view)
             .context("pointer view is no longer mounted")?;
         Ok(Delivery {
+            tooltip_style: &self.tooltip_style,
             instance,
             state: self.state.get_mut(),
-            engine: self.engine.as_ref(),
+            engine: &self.engine,
         })
     }
 

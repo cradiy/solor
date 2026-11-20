@@ -6,7 +6,7 @@ use solor::layout::Column;
 use solor::tree::NodeId;
 
 use crate::{
-    font_fixture::{FONT, fixture_engine},
+    font_fixture::fixture_engine,
     frame::{Frame, STYLE, TextDraw},
     layout::{
         Geometry, LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext, Metrics,
@@ -272,7 +272,6 @@ impl DisclosureLayout {
             scroll_y: top,
             draws,
             geometry,
-            font: FONT,
         })
     }
 }

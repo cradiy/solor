@@ -1,5 +1,5 @@
 use super::*;
-use crate::{SharedString, percent, rem};
+use crate::{FontFamily, percent, rem};
 use std::num::NonZeroUsize;
 
 // Macros expand inside Styled so all authoring primitives receive the same methods.
@@ -161,7 +161,7 @@ pub trait Styled: Sized {
         text_strikethrough => strikethrough: bool
     }
     converting_setters! { attributes_mut;
-        font_features => font_features: Rc<[FontFeature]>, font_family => font_family: SharedString, font_fallbacks => font_fallbacks: Rc<[SharedString]>,
+        font_features => font_features: Rc<[FontFeature]>, font_family => font_family: FontFamily, font_fallbacks => font_fallbacks: Rc<[FontFamily]>,
         letter_spacing => letter_spacing: AbsoluteLength, text_bg => text_background: Rgba,
         decoration_color => decoration_color: Rgba, decoration_thickness => decoration_thickness: AbsoluteLength
     }

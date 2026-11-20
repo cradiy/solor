@@ -665,8 +665,8 @@ impl AnyElement {
                 .as_deref()
                 .and_then(|handlers| handlers.tooltip.as_ref())
             {
-                anyhow::ensure!(cx.engine.is_some(), "text tooltip requires a font");
-                Text::validate_content(tip.as_str())?;
+                Text::validate_content(tip.text.as_str())?;
+                tip.resolve(&crate::TooltipStyle::default()).validate()?;
             }
             node.body.prepare_content(&style)?;
             let body = StyledBody::new(node.body, &style, units)?;
@@ -894,12 +894,9 @@ impl IntoElement for Label {
                 TextContent::Bound(signal) => (cx.read(signal)?.clone(), Some(signal)),
             };
             let mut node = element(Text::new(
-                Rc::clone(cx.engine.context("text requires a font")?),
+                Rc::clone(cx.engine.engine()),
                 initial,
-                TextStyle {
-                    size: px(16.0),
-                    line_height: px(24.0),
-                },
+                TextStyle::default(),
                 true,
             )?);
             node.style = self.style;

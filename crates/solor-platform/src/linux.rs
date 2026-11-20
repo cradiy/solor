@@ -18,9 +18,10 @@ impl Host {
     pub(super) fn run_window(
         &self,
         options: WindowOptions<'_>,
-        ui: Ui,
+        mut ui: Ui,
         root: impl Render,
     ) -> Result<()> {
+        ui.set_system_font_provider(solor_linux::system_ui_font);
         let window = CpuWindow::mount(ui, root)?;
         self.0.run_window(options, Box::new(window))
     }

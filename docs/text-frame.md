@@ -4,7 +4,7 @@
 
 The private `text_frame` example publishes an immutable drawing snapshot containing
 geometry, ordered text commands, absolute origins, allocated sizes, RGBA values,
-owned paragraph handles, and the embedded font bytes. It uses a fixed topology:
+and owned paragraphs that retain their resolved font faces. It uses a fixed topology:
 a column of shift groups, each containing one text leaf. A shift group reserves
 16 units for internal horizontal movement without changing its layout output.
 

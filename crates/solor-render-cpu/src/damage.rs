@@ -88,9 +88,7 @@ impl RetainedPixels {
         cache: &mut GlyphMasks,
     ) -> Result<Option<Clip>> {
         let canvas = Clip::canvas(size);
-        let full = self.surface.size != size
-            || self.clip != clip
-            || !std::ptr::eq(self.frame.font, frame.font);
+        let full = self.surface.size != size || self.clip != clip;
         let area = if full {
             Some(canvas)
         } else if Rc::ptr_eq(&self.frame, &frame) {

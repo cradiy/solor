@@ -13,6 +13,7 @@ pub(super) struct Chart {
     pub(super) feed: Feed,
     pub(super) selected: Signal<usize>,
     pub(super) visible: Signal<usize>,
+    pub(super) show_latest: Signal<bool>,
 }
 
 impl LayoutNode for Chart {
@@ -99,6 +100,20 @@ impl Element for Chart {
             y: baseline,
         });
         cx.fill_polygon(area, rgba(0x40ce9420))?;
+        if *cx.read(self.show_latest)? {
+            let guide_y = y(tape.price as f32);
+            cx.fill_rect(
+                Origin {
+                    x: px(0.0),
+                    y: guide_y.min(px(h - 1.0)),
+                },
+                Size {
+                    width: px(w),
+                    height: px(1.0),
+                },
+                rgba(0x60ddba70),
+            )?;
+        }
         cx.stroke_polyline(prices, px(2.0), UP)?;
         cx.stroke_polyline(averages, px(1.5), AVERAGE_INK)
     }

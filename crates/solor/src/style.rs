@@ -69,10 +69,11 @@ pub struct Typography {
 }
 impl Default for Typography {
     fn default() -> Self {
+        let metrics = crate::text::TextStyle::default();
         Self {
             attributes: None,
-            size: px(16.0),
-            line_height: px(24.0),
+            size: metrics.size,
+            line_height: metrics.line_height,
             letter_spacing: px(0.0),
             decoration_thickness: None,
             color: Foreground::Fixed(Rgba::new(0, 0, 0, 255)),

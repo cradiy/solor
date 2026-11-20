@@ -1,10 +1,11 @@
-//! A FIFO of grayscale outline masks for a single immutable face at a time.
+//! A FIFO of grayscale outline masks keyed by resolved face, device size and glyph.
 use std::collections::VecDeque;
 use std::io::Result;
 
 use swash::scale::image::Image;
 
 struct Entry {
+    face: u64,
     size_bits: u32,
     glyph: u16,
     mask: Image,
@@ -12,7 +13,6 @@ struct Entry {
 
 /// FIFO cache bounded by entry count and allocated mask bytes.
 pub struct GlyphMasks {
-    font: Option<&'static [u8]>,
     entries: VecDeque<Entry>,
     bytes: usize,
     max_entries: usize,
@@ -27,7 +27,6 @@ impl GlyphMasks {
     /// Creates an empty cache with the supplied budgets.
     pub fn new(max_entries: usize, max_bytes: usize) -> Self {
         Self {
-            font: None,
             entries: VecDeque::new(),
             bytes: 0,
             max_entries,
@@ -41,15 +40,6 @@ impl GlyphMasks {
     pub fn release(&mut self) {
         self.entries = VecDeque::new();
         self.bytes = 0;
-        self.font = None;
-    }
-
-    /// Binds a face, evicting masks belonging to the previous one.
-    pub(crate) fn bind(&mut self, font: &'static [u8]) {
-        if !self.font.is_some_and(|old| std::ptr::eq(old, font)) {
-            self.release();
-            self.font = Some(font);
-        }
     }
 
     /// Returns the number of resident masks and their allocated pixel bytes.
@@ -60,6 +50,7 @@ impl GlyphMasks {
     /// Borrows the resident mask or rasterizes it into the supplied scratch image.
     pub(crate) fn resolve<'a>(
         &'a mut self,
+        face: u64,
         size_bits: u32,
         glyph: u16,
         scratch: &'a mut Image,
@@ -68,7 +59,7 @@ impl GlyphMasks {
         if let Some(index) = self
             .entries
             .iter()
-            .position(|e| e.size_bits == size_bits && e.glyph == glyph)
+            .position(|e| e.face == face && e.size_bits == size_bits && e.glyph == glyph)
         {
             self.hits = self.hits.saturating_add(1);
             return Ok(&self.entries[index].mask);
@@ -96,6 +87,7 @@ impl GlyphMasks {
         }
         self.bytes += bytes;
         self.entries.push_back(Entry {
+            face,
             size_bits,
             glyph,
             mask: std::mem::take(scratch),

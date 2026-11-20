@@ -118,7 +118,7 @@ fn conditional_custom_element_receives_cascaded_text_and_local_box_declarations(
             .flex_col()
             .relative()
             .m(px(3.0))
-            .font_family("Example")
+            .font_family("monospace")
             .font_weight(400)
             .line_clamp(NonZeroUsize::new(3).unwrap())
             .child_when(show, move || {
@@ -143,7 +143,10 @@ fn conditional_custom_element_receives_cascaded_text_and_local_box_declarations(
     assert_eq!(layout.inset.top, Some(percent(10.0)));
     assert_eq!(layout.margin, Edges::default());
     let font = style.text.attributes.as_ref().unwrap();
-    assert_eq!(font.font_family.as_deref(), Some("Example"));
+    assert_eq!(
+        font.font_family,
+        Some(solor::FontFamily::Named("monospace".into()))
+    );
     assert_eq!(font.font_weight, Some(650));
     assert_eq!(font.line_clamp, Some(None));
     Ok(())

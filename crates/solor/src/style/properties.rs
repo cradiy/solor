@@ -1,6 +1,6 @@
 //! Independently composable groups of style declarations.
 use super::values::*;
-use crate::{AbsoluteLength, Edges, Fill, Length, Rgba, SharedString};
+use crate::{AbsoluteLength, Edges, Fill, FontFamily, Length, Rgba};
 use std::num::NonZeroUsize;
 use std::rc::Rc;
 
@@ -178,10 +178,10 @@ properties! {
 properties! {
     /// Inheritable font, paragraph and text decoration declarations.
     TextAttributes {
-        /// Preferred font family name.
-        font_family: SharedString,
-        /// Ordered fallback family names.
-        font_fallbacks: Rc<[SharedString]>,
+        /// Preferred named or generic font family.
+        font_family: FontFamily,
+        /// Ordered fallback families.
+        font_fallbacks: Rc<[FontFamily]>,
         /// Ordered OpenType shaping feature settings.
         font_features: Rc<[FontFeature]>,
         /// Numeric font weight on the OpenType scale from 1 to 1000.

@@ -1,18 +1,23 @@
 mod decoration;
+mod family;
+mod fonts;
+use decoration::Decorations;
 pub(crate) use decoration::Stroke;
-use decoration::{Decorations, FontStrokes};
+use family::FamilyPreferences;
+pub use family::{FontFamily, GenericFontFamily};
+use fonts::sans_query;
+pub use fonts::{FontFace, Fonts};
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use crate::style::{FontFeature, TextAlign, TextAttributes, TextOverflow, WhiteSpace};
 use crate::{Pixels, SharedString, px};
 use cosmic_text::{
-    Align, Attrs, Buffer, BufferLine, Ellipsize, EllipsizeHeightLimit, Family, FontSystem,
-    LayoutGlyph, LayoutRun, LineEnding, Shaping, Wrap, fontdb,
+    Align, Attrs, Buffer, BufferLine, Ellipsize, EllipsizeHeightLimit, FontSystem, LayoutGlyph,
+    LayoutRun, LineEnding, Shaping, Wrap, fontdb,
 };
 
 use crate::layout::{
@@ -35,8 +40,17 @@ pub struct TextStyle {
     pub line_height: Pixels,
 }
 
+impl Default for TextStyle {
+    fn default() -> Self {
+        Self {
+            size: px(16.0),
+            line_height: px(24.0),
+        }
+    }
+}
+
 impl TextStyle {
-    fn validate(self) -> Result<()> {
+    pub(crate) fn validate(self) -> Result<()> {
         if !self.size.is_extent() || !self.line_height.is_extent() {
             return Err(LayoutError::InvalidSize);
         }
@@ -58,6 +72,8 @@ pub struct Glyph {
     pub start: usize,
     /// Exclusive end byte in the source paragraph. An ellipsis has an empty range at the elision boundary.
     pub end: usize,
+    /// Index of the selected face in the paragraph's face table.
+    pub face: usize,
     /// Glyph index in the selected face.
     pub id: u16,
     /// Horizontal position within the line.
@@ -92,6 +108,8 @@ pub struct Line {
 /// Owned immutable layout data; no borrowed Buffer or FontSystem state.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Paragraph {
+    /// Faces referenced by the glyphs, retained even after the UI is dropped.
+    pub faces: Vec<FontFace>,
     /// Shared source text used for shaping.
     pub text: SharedString,
     /// Font metrics used to shape these lines.
@@ -120,6 +138,7 @@ impl Paragraph {
     /// Estimates storage retained by this paragraph and its line and glyph vectors.
     pub fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
+            + self.faces.capacity() * std::mem::size_of::<FontFace>()
             + self.lines.capacity() * std::mem::size_of::<Line>()
             + self
                 .lines
@@ -142,6 +161,10 @@ pub struct Counts {
 
 #[derive(PartialEq)]
 struct ParagraphStyle {
+    family: Option<FontFamily>,
+    fallbacks: Option<Rc<[FontFamily]>>,
+    weight: fontdb::Weight,
+    slant: fontdb::Style,
     features: Option<Rc<[FontFeature]>>,
     letter_spacing: Pixels,
     alignment: TextAlign,
@@ -153,6 +176,14 @@ struct ParagraphStyle {
 impl ParagraphStyle {
     fn from_attributes(attrs: Option<&TextAttributes>, letter_spacing: Pixels) -> Self {
         Self {
+            family: attrs.and_then(|a| a.font_family.clone()),
+            fallbacks: attrs.and_then(|a| a.font_fallbacks.clone()),
+            weight: fontdb::Weight(attrs.and_then(|a| a.font_weight).unwrap_or(400)),
+            slant: match attrs.and_then(|a| a.font_style) {
+                Some(crate::style::FontStyle::Italic) => fontdb::Style::Italic,
+                Some(crate::style::FontStyle::Oblique) => fontdb::Style::Oblique,
+                _ => fontdb::Style::Normal,
+            },
             features: attrs.and_then(|a| a.font_features.clone()),
             letter_spacing,
             alignment: attrs.and_then(|a| a.text_align).unwrap_or(TextAlign::Start),
@@ -205,19 +236,45 @@ impl CollapsedText {
     }
 }
 
-/// Single-face shaping engine shared between text nodes.
+/// Font matching and shaping shared between text nodes.
 pub struct Engine {
-    pub(crate) bytes: Arc<Vec<u8>>,
     fonts: FontSystem,
-    face: fontdb::ID,
+    preferences: FamilyPreferences,
+    faces: HashMap<(fontdb::ID, u16), FontFace>,
     ellipsis: &'static str,
-    strokes: FontStrokes,
     /// Cumulative request, cache and shaping counts.
     pub counts: Counts,
 }
 
 /// Shared ownership of a shaping engine on its UI thread.
 pub type SharedEngine = Rc<RefCell<Engine>>;
+
+#[derive(Default)]
+pub(crate) struct TextSystem {
+    engine: std::cell::OnceCell<SharedEngine>,
+    collection: std::cell::Cell<Option<Box<Fonts>>>,
+    pub(crate) platform_family: Option<fn() -> Option<String>>,
+}
+
+impl TextSystem {
+    pub(crate) fn with_fonts(collection: Fonts) -> Self {
+        Self {
+            collection: Some(Box::new(collection)).into(),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn engine(&self) -> &SharedEngine {
+        self.engine.get_or_init(|| {
+            let mut fonts = self
+                .collection
+                .take()
+                .map_or_else(Fonts::system, |fonts| *fonts);
+            fonts.apply_platform_family(self.platform_family);
+            Engine::with_fonts(fonts)
+        })
+    }
+}
 
 fn extent(value: f32) -> Result<Pixels> {
     if !value.is_finite() || !(0.0..=(1 << 24) as f32).contains(&value) {
@@ -227,55 +284,84 @@ fn extent(value: f32) -> Result<Pixels> {
 }
 
 impl Engine {
-    /// Loads one standalone font face. All text in this engine uses that face.
-    pub fn from_font(bytes: Vec<u8>, locale: &str) -> Result<SharedEngine> {
-        let mut db = fontdb::Database::new();
-        let bytes = Arc::new(bytes);
-        db.load_font_source(fontdb::Source::Binary(bytes.clone()));
-        let mut faces = db.faces();
-        let face = faces
-            .next()
-            .ok_or(LayoutError::Node("font contains no face"))?;
-        let family = face
-            .families
-            .first()
-            .ok_or(LayoutError::Node("font has no family"))?
-            .0
-            .clone();
-        let parsed = ttf_parser::Face::parse(bytes.as_slice(), face.index)
-            .map_err(|_| LayoutError::Node("invalid font face"))?;
-        let has_ellipsis = parsed.glyph_index('…').is_some();
-        let strokes = FontStrokes::new(&parsed);
-        let face = face.id;
-        if faces.next().is_some() {
-            return Err(LayoutError::Node("expected a single font face"));
-        }
-        drop(faces);
-        db.set_sans_serif_family(family);
-        Ok(Rc::new(RefCell::new(Self {
-            bytes,
-            strokes,
-            fonts: FontSystem::new_with_locale_and_db(locale.into(), db),
-            face,
-            ellipsis: if has_ellipsis { "…" } else { "..." },
+    /// Creates a shaping engine using the registered faces and locale preferences.
+    pub fn with_fonts(collection: Fonts) -> SharedEngine {
+        let (fonts, preferences) = collection.into_system();
+        let db = fonts.db();
+        let primary = db.query(&fontdb::Query {
+            families: &[preferences.resolve(None)],
+            ..Default::default()
+        });
+        let ellipsis = primary
+            .and_then(|id| {
+                db.with_face_data(id, |bytes, index| {
+                    ttf_parser::Face::parse(bytes, index)
+                        .ok()
+                        .and_then(|face| face.glyph_index('…'))
+                        .is_some()
+                })
+            })
+            .unwrap_or(false);
+        Rc::new(RefCell::new(Self {
+            fonts,
+            preferences,
+            faces: HashMap::new(),
+            ellipsis: if ellipsis { "…" } else { "..." },
             counts: Counts::default(),
-        })))
+        }))
+    }
+
+    /// Creates a shaping engine with the supplied font as its default family.
+    pub fn from_font(bytes: Vec<u8>) -> Result<SharedEngine> {
+        let mut fonts = Fonts::empty();
+        let family = fonts.add_font(bytes)?;
+        fonts.set_default_family(&family)?;
+        Ok(Self::with_fonts(fonts))
     }
 
     fn glyphs<'a>(
-        &self,
+        &mut self,
+        faces: &mut Vec<FontFace>,
         glyphs: impl Iterator<Item = &'a LayoutGlyph>,
         offset: impl Fn(usize) -> usize,
     ) -> Result<Vec<Glyph>> {
         let mut result = Vec::with_capacity(glyphs.size_hint().1.unwrap_or(0));
         for glyph in glyphs {
-            if glyph.glyph_id == 0 || glyph.font_id != self.face {
+            if glyph.glyph_id == 0 {
                 return Err(LayoutError::Node("glyph unavailable"));
             }
             if !glyph.x.is_finite() || !glyph.w.is_finite() {
                 return Err(LayoutError::InvalidSize);
             }
+            let weight = glyph.font_weight.0;
+            let face = if let Some(index) = faces
+                .iter()
+                .position(|f| f.font.id() == glyph.font_id && f.weight() == weight)
+            {
+                index
+            } else {
+                let entry = self.faces.entry((glyph.font_id, weight));
+                let resolved = match entry {
+                    std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        let font = self
+                            .fonts
+                            .get_font(glyph.font_id, glyph.font_weight)
+                            .ok_or(LayoutError::Node("font face unavailable"))?;
+                        let index = self
+                            .fonts
+                            .db()
+                            .face(glyph.font_id)
+                            .expect("shaped face")
+                            .index;
+                        entry.insert(FontFace::new(font, index, weight))
+                    }
+                };
+                faces.push(resolved.clone());
+                faces.len() - 1
+            };
             result.push(Glyph {
+                face,
                 start: offset(glyph.start),
                 end: offset(glyph.end),
                 id: glyph.glyph_id,
@@ -289,9 +375,61 @@ impl Engine {
         Ok(result)
     }
 
+    fn apply_fallbacks(
+        system: &mut FontSystem,
+        preferences: &FamilyPreferences,
+        buffer: &mut Buffer,
+        primary: &Attrs<'_>,
+        fallbacks: &[FontFamily],
+    ) {
+        use unicode_segmentation::UnicodeSegmentation;
+        if fallbacks.is_empty() {
+            return;
+        }
+        let fonts: Vec<_> = std::iter::once(primary.family)
+            .chain(fallbacks.iter().map(|f| preferences.resolve(Some(f))))
+            .filter_map(|family| {
+                let db = system.db();
+                let id = db.query(&fontdb::Query {
+                    families: &[family],
+                    weight: primary.weight,
+                    style: primary.style,
+                    stretch: primary.stretch,
+                })?;
+                let index = db.face(id)?.index;
+                Some((family, system.get_font(id, primary.weight)?, index))
+            })
+            .collect();
+        let coverage: Vec<_> = fonts
+            .iter()
+            .filter_map(|(family, font, index)| {
+                Some((*family, ttf_parser::Face::parse(font.data(), *index).ok()?))
+            })
+            .collect();
+        for line in &mut buffer.lines {
+            let mut spans = line.attrs_list().clone();
+            for (start, cluster) in line.text().grapheme_indices(true) {
+                if let Some((family, _)) = coverage.iter().find(|(_, face)| {
+                    cluster
+                        .chars()
+                        .filter(|c| !matches!(c, '\u{200d}' | '\u{fe0e}' | '\u{fe0f}'))
+                        .all(|c| face.glyph_index(c).is_some())
+                }) && *family != primary.family
+                {
+                    spans.add_span(
+                        start..start + cluster.len(),
+                        &primary.clone().family(*family),
+                    );
+                }
+            }
+            line.set_attrs_list(spans);
+        }
+    }
+
     fn marked_run(
         &mut self,
         buffer: &Buffer,
+        faces: &mut Vec<FontFace>,
         run: &LayoutRun<'_>,
         source_offset: impl Fn(usize) -> usize,
     ) -> Result<(Vec<Glyph>, f32)> {
@@ -307,8 +445,18 @@ impl Engine {
         marked.push_str(self.ellipsis);
         let original = &buffer.lines[run.line_i];
         let prefix = direction.len_utf8();
-        let mut attrs = original.attrs_list().clone();
         let defaults = original.attrs_list().defaults();
+        let mut attrs = cosmic_text::AttrsList::new(&defaults);
+        for (range, span) in original.attrs_list().spans_iter() {
+            let left = range.start.max(start);
+            let right = range.end.min(end);
+            if left < right {
+                attrs.add_span(
+                    prefix + left - start..prefix + right - start,
+                    &span.as_attrs(),
+                );
+            }
+        }
         if defaults.letter_spacing_opt.is_some() {
             // The synthetic direction mark must occupy no horizontal space.
             attrs.add_span(0..prefix, &defaults.letter_spacing(0.0));
@@ -331,7 +479,7 @@ impl Engine {
             .glyphs
             .iter()
             .filter(|g| g.start >= prefix || g.start == g.end);
-        let glyphs = self.glyphs(visible, |i| {
+        let glyphs = self.glyphs(faces, visible, |i| {
             source_offset((start + i.saturating_sub(prefix)).min(end))
         })?;
         Ok((glyphs, layout.w))
@@ -344,6 +492,9 @@ impl Engine {
         paragraph: &ParagraphStyle,
         width: Option<Pixels>,
     ) -> Result<Paragraph> {
+        if self.fonts.db().is_empty() {
+            return Err(LayoutError::Node("no fonts available"));
+        }
         let mut buffer = Buffer::new_empty(cosmic_text::Metrics::new(
             style.size.get(),
             style.line_height.get(),
@@ -379,7 +530,11 @@ impl Engine {
                 * style.line_height.get()
         });
         buffer.set_size(width.map(Pixels::get), height);
-        let mut attrs = Attrs::new().family(Family::SansSerif);
+        let family = self.preferences.resolve(paragraph.family.as_ref());
+        let mut attrs = Attrs::new()
+            .family(family)
+            .weight(paragraph.weight)
+            .style(paragraph.slant);
         if paragraph.letter_spacing != px(0.0) {
             let spacing_em = paragraph.letter_spacing.get() / style.size.get();
             if !spacing_em.is_finite() {
@@ -407,8 +562,19 @@ impl Engine {
                 TextAlign::Justify => Some(Align::Justified),
             },
         );
+        if let Some(fallbacks) = paragraph.fallbacks.as_deref() {
+            Self::apply_fallbacks(
+                &mut self.fonts,
+                &self.preferences,
+                &mut buffer,
+                &attrs,
+                fallbacks,
+            );
+        }
         buffer.shape_until_scroll(&mut self.fonts, false);
+
         self.counts.shapes += 1;
+        let mut faces = Vec::new();
         let mut lines = Vec::new();
         let mut content = Size::default();
         let limit = line_clamp.map_or(usize::MAX, NonZeroUsize::get);
@@ -418,9 +584,12 @@ impl Engine {
             let source_offset = |i: usize| collapsed.as_ref().map_or(i, |c| c.offsets[i]);
             let (glyphs, line_width) =
                 if mark_overflow && lines.len() + 1 == limit && runs.peek().is_some() {
-                    self.marked_run(&buffer, &run, source_offset)?
+                    self.marked_run(&buffer, &mut faces, &run, source_offset)?
                 } else {
-                    (self.glyphs(run.glyphs.iter(), source_offset)?, run.line_w)
+                    (
+                        self.glyphs(&mut faces, run.glyphs.iter(), source_offset)?,
+                        run.line_w,
+                    )
                 };
             content.width = content.width.max(extent(line_width)?);
             content.height = content
@@ -437,6 +606,7 @@ impl Engine {
         }
         let baseline = lines.first().map(|l| extent(l.baseline)).transpose()?;
         Ok(Paragraph {
+            faces,
             text: text.clone(),
             style,
             lines,

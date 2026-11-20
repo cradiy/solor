@@ -24,7 +24,7 @@ fn nested_paint_and_input_share_the_published_origin() -> Result<()> {
         height: 64,
     };
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    let mut ui = Ui::with_font(font.to_vec())?;
     let clicked = ui.context().signal(false);
     let view = ui.mount(component(|_| {
         div().bg(rgb(0)).p(px(4.5)).child(
@@ -207,7 +207,7 @@ fn fixed_label_recording_matches_live_text_across_edits_and_relayout() -> Result
     use solor::{SharedString, TextContent};
 
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    let mut ui = Ui::with_font(font.to_vec())?;
     let fixed = ui.context().signal(SharedString::from("Output level"));
     let value = ui.context().signal(SharedString::from("A"));
     let background = ui.context().signal(Fill::Solid(rgb(0xffffff)));
@@ -441,7 +441,7 @@ fn aligned_labels_use_each_visual_lines_allocated_width() -> Result<()> {
     use solor::{Draw, SharedString, percent};
 
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    let mut ui = Ui::with_font(font.to_vec())?;
     let value = ui.context().signal(SharedString::from("A"));
     let view = ui.mount(component(|_| {
         div()
@@ -494,7 +494,7 @@ fn logical_alignment_follows_paragraph_direction_and_justification_skips_last_li
     use solor::Draw;
 
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    let mut ui = Ui::with_font(font.to_vec())?;
     // The leading right-to-left mark selects the base direction for this paragraph.
     let rtl = "\u{200f}A";
     let view = ui.mount(component(|_| {
@@ -547,7 +547,7 @@ fn inherited_line_clamp_sizes_and_paints_only_visible_lines() -> Result<()> {
     use std::num::NonZeroUsize;
 
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    let mut ui = Ui::with_font(font.to_vec())?;
     let value = ui.context().signal(SharedString::from("A"));
     let view = ui.mount(component(|_| {
         div()
@@ -606,7 +606,7 @@ fn single_line_ellipsis_keeps_source_ranges_across_resize_and_edits() -> Result<
     use solor::{Draw, SharedString, percent};
 
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    let mut ui = Ui::with_font(font.to_vec())?;
     let source = ui.context().signal(SharedString::default());
     let view = ui.mount(component(|_| {
         div()
@@ -669,7 +669,7 @@ fn multiline_ellipsis_marks_only_the_last_visible_line() -> Result<()> {
     use std::num::NonZeroUsize;
 
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    let mut ui = Ui::with_font(font.to_vec())?;
     let value = ui.context().signal(SharedString::default());
     let view = ui.mount(component(|_| {
         div()
@@ -841,7 +841,7 @@ fn nested_axis_clips_crop_text_and_gradient_and_limit_hits_at_the_same_edges() -
         color_stop(rgb(0x2288ff), 1.0),
     ])?;
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let mut ui = Ui::with_font(font.to_vec(), "en")?;
+    let mut ui = Ui::with_font(font.to_vec())?;
     let clicked = ui.context().signal(0);
     let scene = |clipped| {
         let ramp = ramp.clone();

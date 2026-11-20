@@ -11,6 +11,11 @@ use solor::{
 use solor_render_cpu::CpuWindow;
 use std::time::Duration;
 
+fn gallery() -> Result<(solor::Ui, impl solor::Render)> {
+    let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
+    solor_gallery::gallery(solor::Ui::with_font(font.to_vec())?)
+}
+
 fn click(window: &mut CpuWindow, x: f32, y: f32) -> Result<()> {
     let point = PointerSample {
         id: PointerId(1),
@@ -48,7 +53,7 @@ fn controls_change_the_specimen_and_choices_survive_navigation() -> Result<()> {
         );
         Ok(pixels)
     };
-    let (ui, gallery) = solor_gallery::gallery()?;
+    let (ui, gallery) = gallery()?;
     let mut window = CpuWindow::mount(ui, gallery)?;
     let normal = specimen(&mut window)?;
     click(&mut window, 269.0, 154.0)?;
@@ -78,7 +83,7 @@ fn controls_change_the_specimen_and_choices_survive_navigation() -> Result<()> {
 
 #[test]
 fn submitted_header_routes_drag_and_close_separately() -> Result<()> {
-    let (ui, gallery) = solor_gallery::gallery()?;
+    let (ui, gallery) = gallery()?;
     let mut window = CpuWindow::mount(ui, gallery)?;
     let point = |x| PointerSample {
         id: PointerId(1),
@@ -153,7 +158,7 @@ fn market_window(scale: RasterScale) -> Result<(CpuWindow, Size)> {
         width: px(800.0),
         height: px(560.0),
     };
-    let (ui, root) = solor_gallery::gallery()?;
+    let (ui, root) = gallery()?;
     let mut window = CpuWindow::mount(ui, root)?;
     window.frame(size, scale)?;
     window.frame_submitted()?;
@@ -217,8 +222,33 @@ fn market_advances_freezes_and_retires_its_frame_listener() -> Result<()> {
             .redraw)
     };
     assert!(!scroll(&mut window, 90.0, -12.0)?);
+    let move_to = |window: &mut CpuWindow, x| -> Result<bool> {
+        let mouse = PointerSample {
+            id: PointerId(1),
+            kind: PointerKind::Mouse,
+            position: Origin {
+                x: px(x),
+                y: px(330.0),
+            },
+            modifiers: Default::default(),
+        };
+        Ok(window
+            .event(WindowEvent::Pointer(PointerInput::Move(mouse)))?
+            .redraw)
+    };
+    assert!(move_to(&mut window, 480.0)?);
+    let guide = sample(&mut window)?;
+    // Only the horizontal latest-price guide changes on the paused plot.
+    let stride = 800 * 4;
+    let changed_rows = guide
+        .chunks_exact(stride)
+        .zip(paused.chunks_exact(stride))
+        .filter(|(new, old)| new != old)
+        .count();
+    assert!((1..=2).contains(&changed_rows));
+    assert!(!move_to(&mut window, 490.0)?);
     assert!(scroll(&mut window, 480.0, -200.0)?);
-    assert!(paused != sample(&mut window)?);
+    assert!(guide != sample(&mut window)?);
     assert!(!scroll(&mut window, 480.0, -1.0)?);
     assert!(
         !window
@@ -226,6 +256,8 @@ fn market_advances_freezes_and_retires_its_frame_listener() -> Result<()> {
             .redraw
     );
     assert!(scroll(&mut window, 480.0, 200.0)?);
+    assert!(guide == sample(&mut window)?);
+    assert!(move_to(&mut window, 90.0)?);
     assert!(paused == sample(&mut window)?);
     click(&mut window, 92.0, 233.0)?;
     assert!(paused != sample(&mut window)?);
@@ -294,7 +326,7 @@ fn market_frame_cost() -> Result<()> {
 fn fps_readout_uses_elapsed_callback_intervals() -> Result<()> {
     use solor::{Draw, Ui};
 
-    let (mut ui, root) = solor_gallery::gallery()?;
+    let (mut ui, root) = gallery()?;
     let view = ui.mount(root)?;
     let submit = |ui: &mut Ui| -> Result<Vec<solor::SharedString>> {
         ui.flush()?;

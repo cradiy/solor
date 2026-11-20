@@ -8,8 +8,7 @@ fn main() -> anyhow::Result<()> {
         .app_id("solor.mounted-window")
         .size(px(260.0), px(110.0));
 
-    let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let ui = Ui::with_font(font.to_vec(), "en")?;
+    let ui = Ui::new();
     let settings = component(|cx| {
         let open = cx.signal(false);
         div()

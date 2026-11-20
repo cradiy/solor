@@ -8,11 +8,8 @@ use crate::text::Text;
 use std::{cell::Cell, rc::Rc};
 
 pub(super) fn test_ui() -> Ui {
-    Ui::with_font(
-        include_bytes!("../../../../fixtures/fonts/NotoSansCJKsc-fixture.otf").to_vec(),
-        "zh-CN",
-    )
-    .unwrap()
+    Ui::with_font(include_bytes!("../../../../fixtures/fonts/NotoSansCJKsc-fixture.otf").to_vec())
+        .unwrap()
 }
 
 impl Instance {

@@ -17,7 +17,7 @@ const ACCENT: Rgba = Rgba::new(25, 100, 200, 255);
 #[test]
 fn signed_letter_spacing_uses_the_view_rem_and_changes_wrapping() -> Result<()> {
     const LABEL: &str = "中fi AV";
-    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let view = ui.mount_with_rem_size(
         component(|_| {
             div()
@@ -78,7 +78,7 @@ fn signed_letter_spacing_uses_the_view_rem_and_changes_wrapping() -> Result<()> 
 
 #[test]
 fn tracked_clamped_line_starts_at_the_same_position_as_the_full_line() -> Result<()> {
-    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let view = ui.mount(component(|_| {
         div()
             .items_stretch()
@@ -121,7 +121,7 @@ fn inherited_font_features_control_clusters_and_wrapping() -> Result<()> {
     use solor::style::FontFeature;
 
     const LABEL: &str = "中fi AVAVAVAVAVAV";
-    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let view = ui.mount(component(|_| {
         div()
             .items_stretch()
@@ -196,7 +196,7 @@ fn inherited_font_features_control_clusters_and_wrapping() -> Result<()> {
 
 #[test]
 fn conditional_label_inherits_style_and_keeps_identity_when_it_wraps() -> Result<()> {
-    let mut ui = Ui::with_font(FONT.to_vec(), "zh-CN")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let name = ui.context().signal(SharedString::from_static("A"));
     let open = ui.context().signal(false);
     let card = StyleRefinement::default()
@@ -304,7 +304,7 @@ fn conditional_label_inherits_style_and_keeps_identity_when_it_wraps() -> Result
 
 #[test]
 fn inherited_color_only_repaints_consumers_and_reuses_shaped_text() -> Result<()> {
-    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let ink = ui.context().signal(INK);
     let attached = ui.context().signal(true);
     let view = ui.mount(component(|_| {
@@ -475,7 +475,7 @@ fn custom_content_gets_the_shared_box_and_gradient_without_style_hooks() -> Resu
         ColorStop::new(0.4, ACCENT),
         ColorStop::new(1.0, INK),
     ])?;
-    let mut ui = Ui::with_font(FONT.to_vec(), "zh-CN")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let tint = ui.context().signal(ACCENT);
     let base = StyleRefinement::default()
         .size(px(40.0))
@@ -546,7 +546,7 @@ fn fractional_style_lengths_survive_cascade_text_shaping_and_paint() -> Result<(
         .text_size(px(14.5))
         .line_height(px(20.25))
         .bg(INK);
-    let mut ui = Ui::with_font(FONT.to_vec(), "zh-CN")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let view = ui.mount(component(|_| {
         div().child(text("A").with_style(&declaration))
     }))?;
@@ -592,7 +592,7 @@ fn fractional_style_lengths_survive_cascade_text_shaping_and_paint() -> Result<(
 #[test]
 fn percent_sizes_follow_the_parent_content_box_and_rem_uses_the_view_basis() -> Result<()> {
     use solor::{percent, rem};
-    let mut ui = Ui::with_font(FONT.to_vec(), "zh-CN")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let open = ui.context().signal(false);
     let make = || {
         component(move |_| {
@@ -738,7 +738,7 @@ fn content_box_percentages_resolve_before_padding_and_child_percentages_use_the_
 fn content_box_label_wraps_and_paints_at_the_constrained_inner_width() -> Result<()> {
     use solor::{rem, style::BoxSizing};
 
-    let mut ui = Ui::with_font(FONT.to_vec(), "zh-CN")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let view = ui.mount(component(|_| {
         div()
             .child(
@@ -815,7 +815,7 @@ fn content_box_label_wraps_and_paints_at_the_constrained_inner_width() -> Result
 fn invisible_root_keeps_label_bindings_and_skips_local_paint_subscriptions() -> Result<()> {
     use solor::RefreshMode;
 
-    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let caption = ui.context().signal(SharedString::from_static("A"));
     let fill = ui.context().signal(Fill::from(ACCENT));
     let add_label = ui.context().signal(true);
@@ -866,7 +866,7 @@ fn invisible_root_keeps_label_bindings_and_skips_local_paint_subscriptions() -> 
 
 #[test]
 fn visibility_bindings_retire_with_branches_and_refresh_cached_text_order() -> Result<()> {
-    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let attached = ui.context().signal(true);
     let show = ui.context().signal(true);
     let view = ui.mount(component(|_| {

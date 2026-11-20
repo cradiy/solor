@@ -7,7 +7,7 @@ use solor::{
 #[test]
 fn stretched_content_box_respects_limits_and_reflows_its_percentage_label() -> Result<()> {
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let mut ui = Ui::with_font(font.to_vec(), "zh-CN")?;
+    let mut ui = Ui::with_font(font.to_vec())?;
     let view = ui.mount(component(|_| {
         div()
             .items_stretch()
@@ -98,7 +98,7 @@ fn row_uses_bounded_preferred_widths_even_when_the_minimum_overflows() -> Result
 #[test]
 fn intrinsic_container_measures_descendants_again_at_its_used_width() -> Result<()> {
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let mut ui = Ui::with_font(font.to_vec(), "zh-CN")?;
+    let mut ui = Ui::with_font(font.to_vec())?;
     let view = ui.mount(component(|_| {
         div()
             .child(

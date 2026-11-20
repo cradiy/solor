@@ -71,12 +71,9 @@ impl Surface {
         clip: Clip,
         origin: (i64, i64),
         scale: RasterScale,
-        mut cache: Option<&mut GlyphMasks>,
+        cache: Option<&mut GlyphMasks>,
     ) -> Result<Self> {
         let mut surface = Self::white(size, scale)?;
-        if let Some(cache) = cache.as_deref_mut() {
-            cache.bind(frame.font);
-        }
         // Sample a device-pixel crop of the document at the current scale.
         let origin = (
             origin.0,
@@ -85,7 +82,7 @@ impl Surface {
                 .saturating_add(scale.edge(f64::from(frame.scroll_y))),
         );
         let viewport = Clip::canvas(size).intersect(clip);
-        let mut text = TextRaster::new(frame.font, scale, origin, cache)?;
+        let mut text = TextRaster::new(scale, origin, cache);
         for draw in &frame.draws {
             text.draw(
                 &mut surface,
@@ -173,7 +170,6 @@ pub(super) fn blend_solid_span(pixels: &mut [[u8; 4]], color: solor::Rgba, cover
 }
 
 pub(super) struct TextRaster<'a> {
-    font: FontRef<'a>,
     context: ScaleContext,
     scratch: Image,
     scale: RasterScale,
@@ -183,21 +179,17 @@ pub(super) struct TextRaster<'a> {
 
 impl<'a> TextRaster<'a> {
     pub(super) fn new(
-        bytes: &'a [u8],
         scale: RasterScale,
         origin: (i64, i64),
         cache: Option<&'a mut GlyphMasks>,
-    ) -> Result<Self> {
-        let font =
-            FontRef::from_index(bytes, 0).ok_or_else(|| Error::other("invalid frame font"))?;
-        Ok(Self {
-            font,
+    ) -> Self {
+        Self {
             context: ScaleContext::new(),
             scratch: Image::new(),
             scale,
             origin,
             cache,
-        })
+        }
     }
 
     pub(super) fn draw(
@@ -225,45 +217,53 @@ impl<'a> TextRaster<'a> {
         let em = paragraph.style.size.get();
         let factor = scale.0 as f32;
         let device_em = em * factor;
-        let mut scaler = self
-            .context
-            .builder(self.font)
-            .size(device_em)
-            .hint(false)
-            .build();
         for line in &paragraph.lines {
-            for glyph in &line.glyphs {
-                let mut rasterize = |mask: &mut Image| {
-                    mask.clear();
-                    if renderer.render_into(&mut scaler, glyph.id, mask) {
-                        Ok(())
-                    } else {
-                        Err(Error::other("glyph outline unavailable"))
-                    }
-                };
-                let mask = match self.cache.as_deref_mut() {
-                    Some(cache) => cache.resolve(
-                        device_em.to_bits(),
-                        glyph.id,
-                        &mut self.scratch,
-                        rasterize,
-                    )?,
-                    None => {
-                        rasterize(&mut self.scratch)?;
-                        &self.scratch
-                    }
-                };
-                let x = scale
-                    .edge(f64::from(at.x) + f64::from(glyph.x + em * glyph.x_offset))
-                    .saturating_sub(origin.0)
-                    .saturating_add(i64::from(mask.placement.left));
-                let y = scale
-                    .edge(
-                        f64::from(at.y) + f64::from(line.baseline + glyph.y - em * glyph.y_offset),
-                    )
-                    .saturating_sub(origin.1)
-                    .saturating_sub(i64::from(mask.placement.top));
-                surface.composite(mask, x, y, bounds, color);
+            for run in line.glyphs.chunk_by(|a, b| a.face == b.face) {
+                let face = &paragraph.faces[run[0].face];
+                let font = FontRef::from_index(face.data(), face.index() as usize)
+                    .ok_or_else(|| Error::other("invalid paragraph font"))?;
+                let mut scaler = self
+                    .context
+                    .builder_with_id(font, [face.cache_key(), 0])
+                    .size(device_em)
+                    .variations([("wght", f32::from(face.weight()))])
+                    .hint(false)
+                    .build();
+                for glyph in run {
+                    let mut rasterize = |mask: &mut Image| {
+                        mask.clear();
+                        if renderer.render_into(&mut scaler, glyph.id, mask) {
+                            Ok(())
+                        } else {
+                            Err(Error::other("glyph outline unavailable"))
+                        }
+                    };
+                    let mask = match self.cache.as_deref_mut() {
+                        Some(cache) => cache.resolve(
+                            face.cache_key(),
+                            device_em.to_bits(),
+                            glyph.id,
+                            &mut self.scratch,
+                            rasterize,
+                        )?,
+                        None => {
+                            rasterize(&mut self.scratch)?;
+                            &self.scratch
+                        }
+                    };
+                    let x = scale
+                        .edge(f64::from(at.x) + f64::from(glyph.x + em * glyph.x_offset))
+                        .saturating_sub(origin.0)
+                        .saturating_add(i64::from(mask.placement.left));
+                    let y = scale
+                        .edge(
+                            f64::from(at.y)
+                                + f64::from(line.baseline + glyph.y - em * glyph.y_offset),
+                        )
+                        .saturating_sub(origin.1)
+                        .saturating_sub(i64::from(mask.placement.top));
+                    surface.composite(mask, x, y, bounds, color);
+                }
             }
         }
         Ok(())

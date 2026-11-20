@@ -104,8 +104,8 @@ fn movement(step: usize) -> PointerInput {
 
 #[test]
 fn meter_damage_covers_old_and_new_ink_and_matches_full_replay() -> Result<()> {
-    let mut window = CpuWindow::mount(Ui::with_font(FONT.to_vec(), "en")?, component(panel))?;
-    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let mut window = CpuWindow::mount(Ui::with_font(FONT.to_vec())?, component(panel))?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let view = ui.mount(component(panel))?;
     let physical = SCALE.buffer_size(SIZE)?;
     let mut old_width = 0;
@@ -153,7 +153,7 @@ fn time_mounted_meter_frames() -> Result<()> {
 
 fn scaled_window(extra: usize) -> Result<CpuWindow> {
     CpuWindow::mount(
-        Ui::with_font(FONT.to_vec(), "en")?,
+        Ui::with_font(FONT.to_vec())?,
         component(move |cx| panel_with_offscreen_labels(cx, extra)),
     )
 }
@@ -220,7 +220,7 @@ fn offscreen_labels_preserve_meter_pixels_and_damage() -> Result<()> {
 fn time_static_label_scaling() -> Result<()> {
     for extra in [0, 60, 252, 1020, 1020, 252, 60, 0] {
         time_window(extra)?;
-        let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+        let mut ui = Ui::with_font(FONT.to_vec())?;
         let view = ui.mount(component(move |cx| panel_with_offscreen_labels(cx, extra)))?;
         ui.layout(view, SIZE)?;
         let first = ui.record_frame(view)?;
@@ -302,8 +302,8 @@ fn overlapping_text_matches_full_replay_across_repairs_retries_and_scale_changes
                     .text_color(rgba(0x112233b0)),
             )
     }
-    let mut window = CpuWindow::mount(Ui::with_font(FONT.to_vec(), "en")?, component(overlay))?;
-    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let mut window = CpuWindow::mount(Ui::with_font(FONT.to_vec())?, component(overlay))?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let view = ui.mount(component(overlay))?;
     let scaled = RasterScale(1.5);
     for (step, scale, accept, full_damage) in [
@@ -372,8 +372,8 @@ fn toggling_a_fill_repairs_only_its_clip_under_unchanged_labels() -> Result<()> 
             .child(text("System device").mt(px(40.0)))
     }
 
-    let mut window = CpuWindow::mount(Ui::with_font(FONT.to_vec(), "en")?, component(panel))?;
-    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let mut window = CpuWindow::mount(Ui::with_font(FONT.to_vec())?, component(panel))?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let view = ui.mount(component(panel))?;
     let physical = SCALE.buffer_size(SIZE)?;
     let meter = Clip {
@@ -407,7 +407,7 @@ fn toggling_a_fill_repairs_only_its_clip_under_unchanged_labels() -> Result<()> 
 #[test]
 #[ignore = "release timing workload"]
 fn time_resizing_meter() -> Result<()> {
-    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let view = ui.mount(component(|cx| panel_with_offscreen_labels(cx, 1020)))?;
     let mut recordings = Vec::with_capacity(200);
     let mut updates = Vec::with_capacity(200);

@@ -8,6 +8,6 @@ fn main() -> anyhow::Result<()> {
         .without_decorations()
         .app_id("solor.gallery")
         .size(px(800.0), px(560.0));
-    let (ui, gallery) = solor_gallery::gallery()?;
+    let (ui, gallery) = solor_gallery::gallery(solor::Ui::new())?;
     platform.run_window(window, ui, gallery)
 }

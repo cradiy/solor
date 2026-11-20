@@ -44,12 +44,14 @@ use length::UnitResolver;
 pub use length::{AbsoluteLength, Length, percent, rem};
 pub use pixels::{Pixels, px};
 pub use platform::{ResizeEdge, WindowControl};
+pub use pointer::{Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle};
 pub use shared_string::SharedString;
 pub use style::{Style, StyleRefinement, Styled};
 
 use element::{Child, Factory, Installation, MountedNode, Watch};
 use styled_body::StyledBody;
-use text::{Engine, SharedEngine, Text};
+pub use text::{FontFamily, Fonts, GenericFontFamily};
+use text::{Text, TextSystem};
 
 #[cfg(test)]
 #[path = "../tests/unit/mod.rs"]
@@ -61,7 +63,7 @@ struct Mount<'a> {
 }
 
 impl Mount<'_> {
-    fn context<'a>(&'a mut self, engine: Option<&'a SharedEngine>) -> Context<'a> {
+    fn context<'a>(&'a mut self, engine: &'a TextSystem) -> Context<'a> {
         Context {
             state: self.state,
             engine,
@@ -82,7 +84,7 @@ impl Drop for Mount<'_> {
 
 /// State access during an application operation, component mount, or event.
 pub struct Context<'a> {
-    engine: Option<&'a SharedEngine>,
+    engine: &'a TextSystem,
     state: &'a mut Runtime<()>,
     // Application-owned signals live with the runtime. Component scopes retire theirs together.
     owned: Option<&'a mut Vec<SignalId>>,
@@ -185,7 +187,7 @@ struct Attachment<'a> {
     pending: &'a Pending,
     labels: &'a LabelUpdates,
     visibility: &'a VisibilityUpdates,
-    engine: Option<&'a SharedEngine>,
+    engine: &'a TextSystem,
 }
 
 impl Instance {
@@ -491,8 +493,9 @@ pub struct ViewId(NodeId);
 
 /// Owns the application signals and its mounted component trees.
 pub struct Ui {
+    tooltip_style: TooltipStyle,
     state: RefCell<Runtime<()>>,
-    engine: Option<SharedEngine>,
+    engine: TextSystem,
     instances: HashMap<ViewId, Instance>,
     pending: Pending,
     labels: LabelUpdates,
@@ -502,8 +505,9 @@ pub struct Ui {
 impl Default for Ui {
     fn default() -> Self {
         Self {
+            tooltip_style: TooltipStyle::default(),
             state: RefCell::new(Runtime::new(())),
-            engine: None,
+            engine: TextSystem::default(),
             instances: HashMap::new(),
             pending: Pending::default(),
             labels: LabelUpdates::default(),
@@ -513,17 +517,31 @@ impl Default for Ui {
 }
 
 impl Ui {
-    /// Creates a UI for custom primitives and containers.
+    /// Creates a UI that discovers system fonts on first use of text.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Enables text elements using a single caller-supplied font.
-    pub fn with_font(bytes: Vec<u8>, locale: &str) -> Result<Self> {
-        Ok(Self {
-            engine: Some(Engine::from_font(bytes, locale)?),
+    /// Creates a UI using an application's registered fonts and language preferences.
+    pub fn with_fonts(fonts: Fonts) -> Self {
+        Self {
+            engine: TextSystem::with_fonts(fonts),
             ..Self::default()
-        })
+        }
+    }
+
+    /// Creates a UI using this font as its primary family in an isolated font collection.
+    pub fn with_font(bytes: Vec<u8>) -> Result<Self> {
+        let mut fonts = Fonts::empty();
+        let name = fonts.add_font(bytes)?;
+        fonts.set_default_family(&name)?;
+        Ok(Self::with_fonts(fonts))
+    }
+
+    /// Supplies the native host's interface font for first use of system text.
+    /// Already shaped views retain their font settings.
+    pub fn set_system_font_provider(&mut self, provider: fn() -> Option<String>) {
+        self.engine.platform_family = Some(provider);
     }
 
     /// Renders once and attaches the declaration. Flush to initialize conditional children.
@@ -538,7 +556,7 @@ impl Ui {
             state: self.state.get_mut(),
             owned: Vec::new(),
         };
-        let mut cx = mount.context(self.engine.as_ref());
+        let mut cx = mount.context(&self.engine);
         let item = item.render(&mut cx).into_element();
         let (
             scene,
@@ -577,7 +595,7 @@ impl Ui {
             pending: &self.pending,
             labels: &self.labels,
             visibility: &self.visibility,
-            engine: self.engine.as_ref(),
+            engine: &self.engine,
         };
         if let Err(error) = instance.finish_attachment(root, &[], watches, children, &mut cx) {
             self.state.get_mut().remove_subtree(scope)?;
@@ -593,7 +611,7 @@ impl Ui {
     pub fn context(&mut self) -> Context<'_> {
         Context {
             state: self.state.get_mut(),
-            engine: self.engine.as_ref(),
+            engine: &self.engine,
             owned: None,
         }
     }
@@ -611,7 +629,7 @@ impl Ui {
         };
         click(&mut Context {
             state: self.state.get_mut(),
-            engine: self.engine.as_ref(),
+            engine: &self.engine,
             owned: Some(&mut node.owned),
         })?;
         Ok(true)
@@ -652,7 +670,7 @@ impl Ui {
                     pending: &self.pending,
                     labels: &self.labels,
                     visibility: &self.visibility,
-                    engine: self.engine.as_ref(),
+                    engine: &self.engine,
                 };
                 // Lexicographic paths apply parent removals before updates to their descendants.
                 for (path, open) in updates {

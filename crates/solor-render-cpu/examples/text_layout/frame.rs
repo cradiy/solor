@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use solor::tree::NodeId;
 
-use crate::font_fixture::{FONT, fixture_engine};
+use crate::font_fixture::fixture_engine;
 #[cfg(feature = "layout-audit")]
 use crate::layout::validation::{CheckTarget, SelectiveCheckpoint};
 use crate::layout::{
@@ -330,7 +330,6 @@ impl Presentation {
         let frame = Rc::new(Frame {
             revision,
             scroll_y: px(0.0),
-            font: FONT,
             geometry,
             draws,
         });

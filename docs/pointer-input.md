@@ -67,10 +67,30 @@ div().bg(fill).on_hover(move |inside, cx| {
 ### Text tooltips
 
 Attach `.tooltip("Show or hide the native window frame")` to a control in a
-text-enabled UI. The deepest hint on the hovered branch appears after 500 ms.
+text-enabled UI. The deepest hint on the hovered branch appears after its configured delay (500 ms by default).
 The text is shaped on demand and drawn in a passive overlay within the viewport.
 A press, scroll or exit dismisses the hint. Removing its owner cancels it.
 Hosts use `WindowHandler::next_redraw()` to wake once at the deadline.
+Ordinary string hints inherit `Ui::tooltip_style()`. The default uses a neutral
+charcoal background, white text at 14 logical pixels on a 20-pixel line,
+8 pixels of horizontal padding, 4 pixels of vertical padding, a 4-pixel corner
+radius, and a maximum box width of 280 pixels. It prefers the owner's lower
+left edge with a 4-pixel gap. Placement flips and clamps to the viewport.
+
+`Ui::set_tooltip_style` applies to pending, visible and future hints in that UI.
+A pending hint measures its delay from the original entry time. Updating a
+visible hint's style schedules a repaint. Each `Tooltip` can override individual
+fields and continue to inherit the rest.
+
+```rust
+ui.set_tooltip_style(TooltipStyle {
+    background: rgb(0x252e29).into(),
+    text_color: rgb(0xf8f7f2),
+    ..TooltipStyle::default()
+})?;
+
+div().tooltip(Tooltip::new("Close this window").placement(TooltipPlacement::Above))
+```
 
 The adapter supplies a view-scoped pointer ID, device kind, modifiers and
 view-local position in floating-point logical pixels. Down and up carry the

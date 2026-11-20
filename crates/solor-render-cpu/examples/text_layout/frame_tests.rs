@@ -170,7 +170,7 @@ fn resize_failure_keeps_old_allocation_and_owned_frames_outlive_caches_and_scene
     assert!(old_weak.upgrade().is_some());
     let weak = Rc::downgrade(&new.draws[0].paragraph);
     drop(view);
-    assert!(!new.font.is_empty());
+    assert!(!new.draws[0].paragraph.faces.is_empty());
     assert!(weak.upgrade().is_some());
     drop(old);
     assert!(old_weak.upgrade().is_none());

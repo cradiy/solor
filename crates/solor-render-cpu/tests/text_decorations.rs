@@ -11,7 +11,7 @@ const FONT: &[u8] = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixtur
 
 #[test]
 fn inherited_rules_follow_aligned_lines_and_foreground_repaints() -> Result<()> {
-    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let foreground = ui.context().signal(rgb(0x146480));
     let view = ui.mount(component(|_| {
         div()
@@ -88,7 +88,7 @@ fn inherited_rules_follow_aligned_lines_and_foreground_repaints() -> Result<()> 
 
 #[test]
 fn wrapped_ellipsized_strokes_clip_to_content_and_replay_at_fractional_scale() -> Result<()> {
-    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let ink = rgb(0x228850);
     let view = ui.mount(component(|_| {
         div().p(px(3.5)).child(
@@ -156,7 +156,7 @@ fn wrapped_ellipsized_strokes_clip_to_content_and_replay_at_fractional_scale() -
 
 #[test]
 fn inherited_highlight_follows_aligned_ink_and_clips_the_last_line() -> Result<()> {
-    let mut ui = Ui::with_font(FONT.to_vec(), "en")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let highlight = rgba(0xff000080);
     let view = ui.mount(component(|_| {
         div()

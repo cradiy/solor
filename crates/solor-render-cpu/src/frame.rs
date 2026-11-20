@@ -27,8 +27,6 @@ pub struct Frame {
     pub revision: u64,
     /// Logical distance from the document top to the viewport top.
     pub scroll_y: solor::Pixels,
-    /// Font face used for the glyph identifiers in this frame.
-    pub font: &'static [u8],
     /// Retained layout geometry in traversal order.
     pub geometry: Rc<[Geometry]>,
     /// Text commands in paint order.
@@ -44,7 +42,6 @@ impl Frame {
     /// Compares the visual inputs of both drawing sequences.
     pub fn same_drawing(&self, other: &Self) -> bool {
         self.scroll_y == other.scroll_y
-            && self.font == other.font
             && self.draws.len() == other.draws.len()
             && self.draws.iter().zip(&other.draws).all(|(a, b)| {
                 a.origin == b.origin

@@ -97,7 +97,7 @@ fn preferred_widths_larger_than_the_container_keep_their_relative_weights() -> R
 #[test]
 fn auto_basis_label_reflows_between_fixed_controls_after_resize() -> Result<()> {
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let mut ui = Ui::with_font(font.to_vec(), "zh-CN")?;
+    let mut ui = Ui::with_font(font.to_vec())?;
     let view = ui.mount(component(|_| {
         div()
             .child(

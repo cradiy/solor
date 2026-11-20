@@ -17,7 +17,7 @@ pub struct CpuWindow {
     prepared: Option<(PointerFrame, bool)>,
     animate: bool,
     retained: Option<RetainedView>,
-    // The mounted UI owns one immutable font face for the lifetime of this cache.
+    // Masks retain their face identity across submissions.
     glyph_masks: GlyphMasks,
 }
 

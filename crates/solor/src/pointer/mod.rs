@@ -3,6 +3,7 @@ mod frame;
 mod hover;
 mod routing;
 mod tooltip;
+pub use tooltip::{Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle};
 
 use std::ops::{Deref, DerefMut};
 
@@ -166,7 +167,7 @@ type CancelHandler = Box<dyn Fn(PointerId, &mut Context<'_>) -> Result<()>>;
 #[derive(Default)]
 pub(crate) struct Handlers {
     hover: Option<HoverHandler>,
-    pub(crate) tooltip: Option<crate::SharedString>,
+    pub(crate) tooltip: Option<Box<Tooltip>>,
     control: Option<crate::WindowControl>,
     down: Option<DownHandler>,
     moved: Option<PositionHandler>,
@@ -232,10 +233,10 @@ impl<E: crate::Element> crate::Node<E> {
 
     /// Shows a text hint after a mouse dwells on this element or its descendants.
     /// The hint is drawn above the view and leaves pointer targeting unchanged.
-    pub fn tooltip(mut self, text: impl Into<crate::SharedString>) -> Self {
-        let text = text.into();
+    pub fn tooltip(mut self, tooltip: impl Into<Tooltip>) -> Self {
+        let tooltip = tooltip.into();
         self.handlers.get_or_insert_with(Default::default).tooltip =
-            (!text.as_str().is_empty()).then_some(text);
+            (!tooltip.text.is_empty()).then(|| Box::new(tooltip));
         self
     }
 

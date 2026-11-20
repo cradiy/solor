@@ -18,6 +18,8 @@
 
 ## Architecture and dependencies
 
+- Make framework-provided visual styles configurable by applications. Use neutral,
+  conventional defaults and keep application branding in the application.
 - Keep crate boundaries aligned with concrete responsibilities.
 - Keep the framework independent of concrete platforms and rendering backends.
   Put each platform and rendering backend implementation in its own crate.

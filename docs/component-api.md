@@ -99,10 +99,43 @@ The `text` builder accepts a literal, an owned string, a `SharedString`, or a
 same bytes through layout. Short labels fit inline. The [source text
 experiment](text-layout.md#shared-source-text) measures both cases.
 
-`Ui::new()` supports custom elements and containers. To mount text, create
-the UI with `Ui::with_font(font_bytes, locale)?`. The current text leaf shapes
-one supplied face, defaults to size 16 and line height 24, and accepts up to 4096 UTF-8
-bytes. A missing glyph produces a layout error.
+`Ui::new()` discovers installed fonts when the first text element needs them.
+Native windows use the platform interface font by default. An application can register additional
+fonts before mounting its root and select them by family name:
+
+```rust
+let mut fonts = Fonts::system();
+let body = fonts.load_font("assets/Body.ttf")?;
+let ui = Ui::with_fonts(fonts);
+let content = div()
+    .font_family(body)
+    .child(text("Audio settings"))
+    .child(text("48 kHz").font_family(GenericFontFamily::Monospace));
+```
+
+Strings passed to `.font_family(...)` are literal names. Use
+`.font_family(GenericFontFamily::SystemUi)` on a label or container to select
+the native interface font even when its parent specifies another family. The
+Linux window host reads the desktop preference at first use of system text.
+Standalone text engines and isolated collections resolve the category from
+their available fonts.
+
+Use `Fonts::set_generic_font_family(category, Some(name))` before creating
+the UI to map a category to a registered family in both primary and fallback
+positions. Pass `None` to restore platform resolution. A fallback list can
+mix both kinds, e.g. `.font_fallbacks(["Body CJK".into(), GenericFontFamily::Serif.into()])`.
+
+Text inherits its parent's font family, weight, style and ordered
+`.font_fallbacks(...)`. An element can override any of these. If the selected
+families cannot supply a glyph, the shaper searches the other available faces.
+Applications can use `Fonts::add_font(bytes)` for in-memory data and
+`set_default_family` for the application-wide default. Registration uses the
+family names in the font file. The system locale guides script-specific fallback
+and can be overridden with `Fonts::set_locale`.
+
+Solor ships without a runtime font. Applications that need predictable coverage
+can supply their own fonts. Text defaults to 16 logical pixels with a line height
+of 24 and accepts up to 4096 UTF-8 bytes. A missing glyph produces a layout error.
 
 The inner container owns the padded hit area. Its child can be any element
 or composition. Moving the handler to another container changes which area

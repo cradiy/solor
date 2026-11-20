@@ -108,7 +108,7 @@ fn fractional_growth_leaves_space_for_auto_margins_before_justification() -> Res
 fn toolbar_measures_its_label_at_the_width_between_fixed_controls() -> Result<()> {
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
     for stretch in [true, false] {
-        let mut ui = Ui::with_font(font.to_vec(), "zh-CN")?;
+        let mut ui = Ui::with_font(font.to_vec())?;
         let view =
             ui.mount(component(|_| {
                 div().when(stretch, |d| d.items_stretch()).child(div().flex_row().gap(px(3.0))

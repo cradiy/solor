@@ -9,7 +9,7 @@ const FONT: &[u8] = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixtur
 
 #[test]
 fn capped_label_reserves_its_used_height_and_preserves_paragraph_overflow() -> Result<()> {
-    let mut ui = Ui::with_font(FONT.to_vec(), "zh-CN")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let caption = ui.context().signal(SharedString::from_static("A"));
     let view = ui.mount(component(|_| {
         div()
@@ -120,7 +120,7 @@ fn row_stretch_clamps_the_content_box_before_laying_out_percentage_children() ->
 
 #[test]
 fn minimum_column_height_updates_its_preferred_baseline_and_the_following_row() -> Result<()> {
-    let mut ui = Ui::with_font(FONT.to_vec(), "zh-CN")?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
     let view = ui.mount(component(|_| {
         div()
             .child(

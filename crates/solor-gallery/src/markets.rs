@@ -322,6 +322,7 @@ pub(super) fn market() -> impl IntoElement {
                 .child(label(name, 11.0, 18.0).text_color(DIM))
         };
         let visible = cx.signal(PERIODS);
+        let show_latest = cx.signal(false);
         let sample_count = cx.signal(SharedString::from(format!("{PERIODS} samples")));
         let zoom = Cell::new(PERIODS as f32);
         let detail = div()
@@ -395,6 +396,7 @@ pub(super) fn market() -> impl IntoElement {
                     .flex_row()
                     .items_stretch()
                     .gap(px(6.0))
+                    .on_hover(move |inside, cx| cx.set(show_latest, inside))
                     .on_scroll(move |event, cx| {
                         let next =
                             (zoom.get() + event.delta.y.get() * 0.5).clamp(12.0, PERIODS as f32);
@@ -413,6 +415,7 @@ pub(super) fn market() -> impl IntoElement {
                                 feed: feed.clone(),
                                 selected: quotes.selected,
                                 visible,
+                                show_latest,
                             })
                             .flex_1()
                             .refresh_mode(RefreshMode::Continuous)
@@ -430,6 +433,7 @@ pub(super) fn market() -> impl IntoElement {
                                 feed: feed.clone(),
                                 selected: quotes.selected,
                                 visible,
+                                show_latest,
                             })
                             .flex_1()
                         }

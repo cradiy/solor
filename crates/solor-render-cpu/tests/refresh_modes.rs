@@ -78,7 +78,7 @@ fn mixed_window(samples: &Rc<Samples>, active: bool, labels: usize) -> Result<Cp
     let slow = samples.clone();
     let fast = samples.clone();
     CpuWindow::mount(
-        Ui::with_font(FONT.to_vec(), "en")?,
+        Ui::with_font(FONT.to_vec())?,
         component(move |cx| {
             let level = cx.signal(10u16);
             let mode = cx.signal(refresh_mode(active));

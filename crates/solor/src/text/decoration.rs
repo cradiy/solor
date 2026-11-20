@@ -65,10 +65,31 @@ impl Text {
                 return None;
             }
             let engine = self.engine.borrow();
+            let db = engine.fonts.db();
+            let family = engine.preferences.resolve(self.paragraph.family.as_ref());
+            let query = cosmic_text::fontdb::Query {
+                families: &[family],
+                weight: self.paragraph.weight,
+                style: self.paragraph.slant,
+                ..Default::default()
+            };
+            let strokes = (underline || strike)
+                .then(|| {
+                    let id = db
+                        .query(&query)
+                        .or_else(|| db.query(&super::sans_query()))?;
+                    db.with_face_data(id, |bytes, index| {
+                        ttf_parser::Face::parse(bytes, index)
+                            .ok()
+                            .map(|face| FontStrokes::new(&face))
+                    })
+                    .flatten()
+                })
+                .flatten();
             Some(Box::new(Decorations {
                 background,
-                underline: underline.then_some(engine.strokes.underline),
-                strike: strike.then_some(engine.strokes.strike),
+                underline: strokes.as_ref().filter(|_| underline).map(|s| s.underline),
+                strike: strokes.as_ref().filter(|_| strike).map(|s| s.strike),
                 thickness: text.decoration_thickness,
                 color: attrs.decoration_color,
             }))

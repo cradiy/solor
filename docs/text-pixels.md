@@ -1,9 +1,8 @@
 # CPU text pixels
 
 The private `text_pixels` example consumes the published [text frame](text-frame.md)
-directly. Each call starts with opaque white RGBA8 pixels, loads face zero from
-the snapshot's fixed font bytes, and paints the supplied glyph IDs in command
-order. Swash supplies unhinted grayscale outline masks. PNG encoding is used for
+directly. Each call starts with opaque white RGBA8 pixels, paints the supplied glyph IDs in command
+order, and selects the face retained for each glyph by its paragraph. Swash supplies unhinted grayscale outline masks. PNG encoding is used for
 the sample output. Both dependencies are development-only.
 
 The offscreen benchmark uses device scale one. Glyph origins include the command origin, the line
@@ -51,9 +50,8 @@ comparisons on the same viewport and text.
 ## Reusing glyph masks
 
 The renderer can retain outline masks across frames. The fixture uses face zero,
-integer-pixel origins, unhinted outlines and scale one. Within an immutable font
-byte slice, glyph ID and pixel size identify the mask and its bearings. Binding
-a different font slice drops the entries. Position, clip, color and opacity
+integer-pixel origins, unhinted outlines and scale one. The resolved face and weight, glyph ID and device pixel size identify each
+cached mask and its bearings. Position, clip, color and opacity
 apply during compositing. Every update still paints a fresh white surface.
 
 The experimental FIFO uses at most 64 entries and 32 KiB of mask data capacity.

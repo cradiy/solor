@@ -30,7 +30,7 @@ impl Surface {
         masks: Option<&mut GlyphMasks>,
     ) -> Result<Self> {
         let mut surface = Self::white(size, scale)?;
-        surface.replay(frame, frame.draws(), scale, Clip::canvas(size), masks)?;
+        surface.replay(frame.draws(), scale, Clip::canvas(size), masks)?;
         Ok(surface)
     }
 
@@ -83,12 +83,11 @@ impl Surface {
         for y in 1..(clip.bottom - clip.top) as usize {
             self.rgba.copy_within(row.clone(), start + y * stride);
         }
-        self.replay(frame, draws, scale, clip, Some(masks))
+        self.replay(draws, scale, clip, Some(masks))
     }
 
     fn replay(
         &mut self,
-        frame: &ViewFrame,
         draws: &[Draw],
         scale: RasterScale,
         clip: Clip,
@@ -136,14 +135,7 @@ impl Surface {
                 } => {
                     let raster = match &mut text {
                         Some(raster) => raster,
-                        None => text.insert(TextRaster::new(
-                            frame
-                                .font()
-                                .ok_or_else(|| Error::other("text without a font face"))?,
-                            scale,
-                            (0, 0),
-                            masks.take(),
-                        )?),
+                        None => text.insert(TextRaster::new(scale, (0, 0), masks.take())),
                     };
                     raster.draw(self, *origin, *allocated, paragraph, *color, bounds)?;
                 }

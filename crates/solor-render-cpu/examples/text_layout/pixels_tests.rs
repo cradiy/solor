@@ -320,7 +320,6 @@ fn damage_replays_unchanged_overlapping_layers_in_order() {
         Rc::new(Frame {
             revision: frame.revision,
             scroll_y: frame.scroll_y,
-            font: frame.font,
             geometry: frame.geometry.clone(),
             draws,
         })

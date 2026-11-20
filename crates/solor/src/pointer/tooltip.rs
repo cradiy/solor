@@ -1,29 +1,66 @@
 //! A passive text overlay driven by the accepted hover path.
+mod style;
 use super::hover::Hover;
 use super::{PointerFrame, PointerId, PointerInput, PointerKind};
 use crate::{
-    Draw, Instance, NodeId, Result, SharedString,
+    Draw, Instance, NodeId, Pixels, Result, Ui,
     layout::{Origin, Query, Size},
-    px, rgb,
-    style::Corners,
-    text::{SharedEngine, Text, TextStyle},
+    px,
+    text::{SharedEngine, Text, TextSystem},
 };
 use std::{
     cell::{Cell, OnceCell},
     collections::HashMap,
-    time::{Duration, Instant},
+    time::Instant,
 };
+pub use style::{Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle};
+
+impl Ui {
+    /// Sets the default tooltip style for existing and future views.
+    /// Visible hints update on the next redraw. Local overrides take precedence.
+    pub fn set_tooltip_style(&mut self, style: TooltipStyle) -> Result<()> {
+        style.validate()?;
+        for instance in self.instances.values_mut() {
+            let tooltips = &mut instance.pointer.tooltips;
+            if let Some(tip) = tooltips.tip.as_mut() {
+                let declaration = instance.bodies[&tip.owner]
+                    .handlers
+                    .as_ref()
+                    .and_then(|h| h.tooltip.as_ref())
+                    .expect("live tooltip owner");
+                let resolved = declaration.resolve(&style);
+                if resolved != tip.style {
+                    if resolved.typography != tip.style.typography {
+                        tip.label.take();
+                    }
+                    tooltips
+                        .erase
+                        .set(tooltips.erase.get() || tip.painted.get());
+                    tip.style = resolved;
+                }
+            }
+        }
+        self.tooltip_style = style;
+        Ok(())
+    }
+
+    /// The UI's current defaults for text tooltips.
+    pub fn tooltip_style(&self) -> &TooltipStyle {
+        &self.tooltip_style
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Tooltips {
     mouse: Option<PointerId>,
-    tip: Option<Tooltip>,
+    tip: Option<Box<ActiveTooltip>>,
     erase: Cell<bool>,
 }
 
-struct Tooltip {
+struct ActiveTooltip {
     owner: NodeId,
-    deadline: Instant,
+    entered: Instant,
+    style: TooltipStyle,
     label: OnceCell<Text>,
     painted: Cell<bool>,
 }
@@ -45,6 +82,7 @@ impl Tooltips {
     pub(super) fn reconcile(
         &mut self,
         hover: &Hover,
+        defaults: &TooltipStyle,
         bodies: &HashMap<NodeId, crate::element::MountedNode>,
     ) {
         let owner = self.mouse.and_then(|id| {
@@ -55,28 +93,36 @@ impl Tooltips {
                     .is_some_and(|h| h.tooltip.is_some())
             })
         });
-        self.set_tip(owner);
+        if self.tip.as_ref().map(|tip| tip.owner) == owner {
+            return;
+        }
+        self.clear();
+        if let Some(owner) = owner {
+            let declaration = bodies[&owner]
+                .handlers
+                .as_ref()
+                .and_then(|h| h.tooltip.as_ref())
+                .expect("live tooltip owner");
+            self.tip = Some(Box::new(ActiveTooltip {
+                owner,
+                entered: Instant::now(),
+                style: declaration.resolve(defaults),
+                label: OnceCell::new(),
+                painted: Cell::new(false),
+            }));
+        }
     }
 
     pub(super) fn retire(&mut self, id: NodeId) {
         if self.tip.as_ref().is_some_and(|tip| tip.owner == id) {
-            self.set_tip(None);
+            self.clear();
         }
     }
 
-    fn set_tip(&mut self, owner: Option<NodeId>) {
-        if self.tip.as_ref().map(|t| t.owner) == owner {
-            return;
-        }
-        if self.tip.as_ref().is_some_and(|t| t.painted.get()) {
+    fn clear(&mut self) {
+        if self.tip.take().is_some_and(|tip| tip.painted.get()) {
             self.erase.set(true);
         }
-        self.tip = owner.map(|owner| Tooltip {
-            owner,
-            deadline: Instant::now() + Duration::from_millis(500),
-            label: OnceCell::new(),
-            painted: Cell::new(false),
-        });
     }
 
     pub(super) fn deadline(&self) -> Option<Instant> {
@@ -86,19 +132,19 @@ impl Tooltips {
         self.tip
             .as_ref()
             .filter(|t| !t.painted.get())
-            .map(|t| t.deadline)
+            .and_then(|t| t.entered.checked_add(t.style.delay))
     }
 
     pub(crate) fn paint(
         &self,
         frame: &PointerFrame,
         instance: &Instance,
-        engine: Option<&SharedEngine>,
+        engine: &TextSystem,
         draws: &mut Vec<Draw>,
     ) -> Result<()> {
         self.erase.set(false);
         let Some(tip) = &self.tip else { return Ok(()) };
-        if Instant::now() < tip.deadline {
+        if !tip.painted.get() && tip.entered.elapsed() < tip.style.delay {
             return Ok(());
         }
         let Some(mouse) = self
@@ -118,7 +164,7 @@ impl Tooltips {
             return Ok(());
         }
         let (at, size) = frame.bounds(tip.owner).expect("live tooltip hit box");
-        let text = instance.bodies[&tip.owner]
+        let tooltip = instance.bodies[&tip.owner]
             .handlers
             .as_ref()
             .and_then(|h| h.tooltip.as_ref())
@@ -129,87 +175,112 @@ impl Tooltips {
             .expect("laid out view")
             .metrics
             .size;
-        tip.draw(
-            text,
-            engine.expect("validated tooltip font"),
-            at,
-            size,
-            viewport,
-            draws,
-        )?;
+        tip.draw(tooltip, engine.engine(), at, size, viewport, draws)?;
         tip.painted.set(true);
         Ok(())
     }
 }
 
-impl Tooltip {
+impl ActiveTooltip {
     fn draw(
         &self,
-        text: &SharedString,
+        tooltip: &Tooltip,
         engine: &SharedEngine,
         at: Origin,
         owner: Size,
         viewport: Size,
         draws: &mut Vec<Draw>,
     ) -> Result<()> {
-        let available = viewport.width.saturating_sub(px(16.0)).min(px(280.0));
-        if available == px(0.0) || viewport.height <= px(10.0) {
+        let style = &self.style;
+        let padding = style.padding;
+        let horizontal = padding.left + padding.right;
+        let vertical = padding.top + padding.bottom;
+        let available = viewport
+            .width
+            .min(style.max_width)
+            .saturating_sub(horizontal);
+        if available == px(0.0) || viewport.height <= vertical {
             return Ok(());
         }
         let label = if let Some(label) = self.label.get() {
             label
         } else {
-            let label = Text::new(
-                engine.clone(),
-                text.clone(),
-                TextStyle {
-                    size: px(13.0),
-                    line_height: px(18.0),
-                },
-                true,
-            )?;
+            let label = Text::new(engine.clone(), tooltip.text.clone(), style.typography, true)?;
             self.label.get_or_init(|| label)
         };
         let paragraph = label.resolve(Query::AtMost(available))?;
         let content = Size {
             width: paragraph.content.width.min(available),
-            height: paragraph.content.height.min(viewport.height - px(10.0)),
+            height: paragraph.content.height.min(viewport.height - vertical),
         };
         let size = Size {
-            width: content.width + px(16.0),
-            height: content.height + px(10.0),
+            width: content.width + horizontal,
+            height: content.height + vertical,
         };
-        let below = at.y + owner.height + px(5.0);
-        let y = if below + size.height <= viewport.height {
-            below
-        } else {
-            at.y - px(5.0) - size.height
-        };
-        let origin = Origin {
-            x: at
-                .x
-                .max(px(0.0))
-                .min(viewport.width.saturating_sub(size.width)),
-            y: y.max(px(0.0))
-                .min(viewport.height.saturating_sub(size.height)),
-        };
+        let origin = style.origin(at, owner, size, viewport);
         draws.push(Draw::Fill {
             origin,
             size,
-            corner_radii: Corners::all(px(5.0)).fit_to(size),
+            corner_radii: style.corner_radii.fit_to(size),
             clip: None,
-            fill: rgb(0x303933).into(),
+            fill: style.background.clone(),
         });
         draws.push(Draw::Text {
             origin: Origin {
-                x: origin.x + px(8.0),
-                y: origin.y + px(5.0),
+                x: origin.x + padding.left,
+                y: origin.y + padding.top,
             },
             size: content,
             paragraph,
             clip: None,
-            color: rgb(0xf8f7f2),
+            color: style.text_color,
         });
         Ok(())
+    }
+}
+
+impl TooltipStyle {
+    fn origin(&self, at: Origin, owner: Size, tip: Size, viewport: Size) -> Origin {
+        let aligned = |start: Pixels, span: Pixels, extent: Pixels| match self.alignment {
+            TooltipAlignment::Start => start,
+            TooltipAlignment::Center => start + (span - extent) / 2.0,
+            TooltipAlignment::End => start + (span - extent),
+        };
+        let side = |start: Pixels, span: Pixels, extent: Pixels, limit: Pixels, after: bool| {
+            let before = start - self.gap - extent;
+            let beyond = start + span + self.gap;
+            if (after && beyond + extent <= limit) || (!after && before < px(0.0)) {
+                beyond
+            } else {
+                before
+            }
+        };
+        let (x, y) = match self.placement {
+            TooltipPlacement::Above | TooltipPlacement::Below => (
+                aligned(at.x, owner.width, tip.width),
+                side(
+                    at.y,
+                    owner.height,
+                    tip.height,
+                    viewport.height,
+                    self.placement == TooltipPlacement::Below,
+                ),
+            ),
+            TooltipPlacement::Left | TooltipPlacement::Right => (
+                side(
+                    at.x,
+                    owner.width,
+                    tip.width,
+                    viewport.width,
+                    self.placement == TooltipPlacement::Right,
+                ),
+                aligned(at.y, owner.height, tip.height),
+            ),
+        };
+        Origin {
+            x: x.max(px(0.0)).min(viewport.width.saturating_sub(tip.width)),
+            y: y.max(px(0.0))
+                .min(viewport.height.saturating_sub(tip.height)),
+        }
     }
 }

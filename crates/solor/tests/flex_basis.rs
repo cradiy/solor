@@ -12,7 +12,7 @@ use solor::{
 fn row_basis_controls_wrapping_and_reserved_line_height_after_resize() -> Result<()> {
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
     for direction in [Row, RowReverse] {
-        let mut ui = Ui::with_font(font.to_vec(), "zh-CN")?;
+        let mut ui = Ui::with_font(font.to_vec())?;
         let view = ui.mount(component(|_| {
             div()
                 .items_stretch()

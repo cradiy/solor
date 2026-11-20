@@ -345,7 +345,7 @@ fn stretched_column_remeasures_percentage_label_before_placing_siblings() -> Res
     use solor::text;
 
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let mut ui = Ui::with_font(font.to_vec(), "zh-CN")?;
+    let mut ui = Ui::with_font(font.to_vec())?;
     let view = ui.mount(component(|_| {
         div()
             .items_start()
@@ -399,7 +399,7 @@ fn baseline_group_sizes_a_nested_row_and_follows_conditional_membership() -> Res
 
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
     for direction in [Row, RowReverse] {
-        let mut ui = Ui::with_font(font.to_vec(), "zh-CN")?;
+        let mut ui = Ui::with_font(font.to_vec())?;
         let shown = ui.context().signal(false);
         let view = ui.mount(component(|_| {
             div()
@@ -473,7 +473,7 @@ fn alignment_uses_the_baseline_after_a_nested_column_justifies_its_content() -> 
     use solor::text;
 
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let mut ui = Ui::with_font(font.to_vec(), "zh-CN")?;
+    let mut ui = Ui::with_font(font.to_vec())?;
     let view = ui.mount(component(|_| {
         div()
             .child(

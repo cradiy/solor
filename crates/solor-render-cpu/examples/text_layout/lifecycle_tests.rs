@@ -17,7 +17,7 @@ use solor::{
 };
 
 use crate::{
-    font_fixture::{FONT, fixture_engine},
+    font_fixture::fixture_engine,
     frame::{Frame, STYLE, TextDraw},
     input::Point,
     pixels::{Clip, Surface},
@@ -234,7 +234,6 @@ impl Fixture {
             draws,
             revision: self.accepted.as_ref().map_or(1, |f| f.revision + 1),
             scroll_y: solor::px(0.0),
-            font: FONT,
         }))
     }
 

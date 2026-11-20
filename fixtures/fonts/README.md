@@ -25,6 +25,5 @@ hb-subset NotoSansCJK-Regular.ttc --face-index=2 \
   --output-file=NotoSansCJKsc-fixture.otf
 ```
 
-Runtime and tests load only this embedded face into an empty font database with a
-fixed locale. They do not discover installed fonts or silently accept missing
-glyphs. Expanding the corpus requires regenerating this asset and its checksum.
+Tests and fixed-font experiments load this subset explicitly. Expanding their
+corpus requires regenerating the asset and its checksum.

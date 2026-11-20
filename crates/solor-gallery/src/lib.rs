@@ -4,8 +4,8 @@ mod specimens;
 
 use anyhow::Result;
 use solor::{
-    Context, Div, Fill, IntoElement, Render, ResizeEdge, Rgba, Signal, Styled, Ui, color_stop,
-    component, div, linear_gradient, px, rgb, text,
+    Context, Div, Fill, IntoElement, Render, ResizeEdge, Rgba, Signal, Styled, TooltipStyle, Ui,
+    color_stop, component, div, linear_gradient, px, rgb, text,
 };
 
 const PAPER: Rgba = rgb(0xf8f7f2);
@@ -111,10 +111,13 @@ fn header_button(title: &'static str, hint: &'static str, cx: &mut Context<'_>) 
         .child(label(title, 13.0, 18.0))
 }
 
-/// Creates the gallery UI with its specimen font and its unmounted root component.
-pub fn gallery() -> Result<(Ui, impl Render)> {
-    let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
-    let ui = Ui::with_font(font.to_vec(), "en")?;
+/// Configures the supplied UI and creates the gallery's unmounted root component.
+pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
+    ui.set_tooltip_style(TooltipStyle {
+        background: INK.into(),
+        text_color: PAPER,
+        ..TooltipStyle::default()
+    })?;
     let ramp = linear_gradient(
         110.0,
         specimens::STOPS.map(|(at, color, _)| color_stop(color, at)),
