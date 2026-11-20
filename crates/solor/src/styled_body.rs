@@ -14,13 +14,28 @@ pub(crate) struct StyledBody<E> {
 }
 
 pub(crate) struct BoxModel {
-    padding: Edges,
-    margins: Option<Box<Edges<Option<ComputedLength>>>>,
+    origin: Origin,
     inset: Size,
+    margins: Option<Box<Edges<Option<ComputedLength>>>>,
     box_sizing: BoxSizing,
     aspect_ratio: Option<f32>,
     width: Option<ComputedLength>,
     height: Option<ComputedLength>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct ContentInsets {
+    pub(crate) origin: Origin,
+    total: Size,
+}
+
+impl ContentInsets {
+    pub(crate) fn content_size(self, border: Size) -> Size {
+        Size {
+            width: border.width.saturating_sub(self.total.width),
+            height: border.height.saturating_sub(self.total.height),
+        }
+    }
 }
 
 fn add(a: Pixels, b: Pixels) -> Result<Pixels> {
@@ -45,25 +60,24 @@ impl<E> StyledBody<E> {
     }
 
     pub fn origin(&self) -> Origin {
-        Origin {
-            x: self.bounds.padding.left,
-            y: self.bounds.padding.top,
-        }
+        self.bounds.origin
     }
     pub fn content_size(&self, size: Size) -> Size {
-        Size {
-            width: size.width.saturating_sub(self.bounds.inset.width),
-            height: size.height.saturating_sub(self.bounds.inset.height),
-        }
+        self.bounds.content_insets().content_size(size)
     }
     fn baseline(&self, baseline: Option<Pixels>) -> Result<Option<Pixels>> {
-        baseline
-            .map(|v| add(v, self.bounds.padding.top))
-            .transpose()
+        baseline.map(|v| add(v, self.bounds.origin.y)).transpose()
     }
 }
 
 impl BoxModel {
+    pub(crate) fn content_insets(&self) -> ContentInsets {
+        ContentInsets {
+            origin: self.origin,
+            total: self.inset,
+        }
+    }
+
     pub(crate) fn resolve(style: &Style, units: UnitResolver) -> Result<Self> {
         let aspect_ratio = style.layout.as_ref().and_then(|layout| layout.aspect_ratio);
         if aspect_ratio.is_some_and(|ratio| !ratio.is_finite() || ratio <= 0.0) {
@@ -87,7 +101,14 @@ impl BoxModel {
         Ok(Self {
             margins,
             aspect_ratio,
-            padding: p,
+            origin: Origin {
+                x: p.left,
+                y: p.top,
+            },
+            inset: Size {
+                width: add(p.left, p.right)?,
+                height: add(p.top, p.bottom)?,
+            },
             box_sizing: style
                 .layout
                 .as_ref()
@@ -95,10 +116,6 @@ impl BoxModel {
                 .unwrap_or(BoxSizing::BorderBox),
             width: units.dimension(style.width)?,
             height: units.dimension(style.height)?,
-            inset: Size {
-                width: add(p.left, p.right)?,
-                height: add(p.top, p.bottom)?,
-            },
         })
     }
 

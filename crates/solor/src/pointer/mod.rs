@@ -112,6 +112,7 @@ pub struct PointerEvent {
     pub button: Option<PointerButton>,
     position: Origin,
     size: Size,
+    padding: crate::styled_body::ContentInsets,
 }
 
 impl PointerEvent {
@@ -126,6 +127,18 @@ impl PointerEvent {
     /// Returns the recipient's accepted border-box dimensions.
     pub fn bounds(&self) -> Size {
         self.size
+    }
+    /// Position relative to the content origin used by the recipient's paint callback.
+    /// Points in the padding or outside the box during capture can lie outside the content.
+    pub fn content_position(&self) -> Origin {
+        Origin {
+            x: self.position.x - self.padding.origin.x,
+            y: self.position.y - self.padding.origin.y,
+        }
+    }
+    /// Content dimensions used for drawing in the accepted frame, excluding padding.
+    pub fn content_size(&self) -> Size {
+        self.padding.content_size(self.size)
     }
     /// Whether the changed button represents the primary action.
     pub fn is_primary_action(&self) -> bool {
@@ -166,6 +179,7 @@ type CancelHandler = Box<dyn Fn(PointerId, &mut Context<'_>) -> Result<()>>;
 
 #[derive(Default)]
 pub(crate) struct Handlers {
+    pub(crate) padding: crate::styled_body::ContentInsets,
     hover: Option<HoverHandler>,
     pub(crate) tooltip: Option<Box<Tooltip>>,
     control: Option<crate::WindowControl>,

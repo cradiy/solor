@@ -692,6 +692,9 @@ impl AnyElement {
             node.body.prepare_content(style)?;
             let body = StyledBody::new(node.body, style, units)?;
             let item_sizing = body.bounds.item_sizing(style, units)?;
+            if let Some(handlers) = node.handlers.as_mut() {
+                handlers.padding = body.bounds.content_insets();
+            }
             let id = match target {
                 Target::Root(slot) => slot.insert(Scene::new(body)).root(),
                 Target::Child {

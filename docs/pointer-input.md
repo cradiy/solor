@@ -14,6 +14,12 @@ on the common element builder. They accept `|event, cx| -> Result<()>`.
 as a click handler. During a down callback it can also capture the current
 pointer for the receiving element.
 
+For a control drawn with `div().paint(...)`, use `event.content_position()`
+and `event.content_size()` to map input to its drawing area. Both use the padding
+from the accepted frame. Positions are unclamped, so a drag can cross either
+end of a track. An axis has zero content size when padding consumes the full
+extent. `local_position()` and `bounds()` measure from the border box.
+
 ```rust
 let dragging = cx.signal(None);
 div()
@@ -25,9 +31,9 @@ div()
         Ok(())
     })
     .on_pointer_move(move |event, cx| {
-        let width = event.bounds().width.get();
+        let width = event.content_size().width.get();
         if *cx.read(dragging)? == Some(event.pointer_id()) && width > 0.0 {
-            let fraction = (event.local_position().x.get() / width).clamp(0.0, 1.0);
+            let fraction = (event.content_position().x.get() / width).clamp(0.0, 1.0);
             cx.set(progress, fraction)?;
         }
         Ok(())
@@ -96,8 +102,8 @@ The adapter supplies a view-scoped pointer ID, device kind, modifiers and
 view-local position in floating-point logical pixels. Down and up carry the
 changed button. The primary action is the primary mouse button, touch contact
 or pen tip. A cancel needs only the pointer ID. For positioned events the
-router derives border-box-local coordinates and bounds from the same accepted
-frame. Captured coordinates may fall outside the box and its ancestor clips.
+router derives both border-box and content-box coordinates from the same
+accepted frame. Captured coordinates may fall outside the box and its ancestor clips.
 
 ## Host boundary
 
@@ -109,7 +115,8 @@ If the newly accepted snapshot omits a live press owner, acceptance cancels
 that sequence. A cancel callback error leaves the new snapshot in effect.
 
 Recordings of the same mounted tree share its immutable hit geometry until a
-node is inserted or removed, or layout publishes changed geometry. The next
+node is inserted or removed, layout publishes changed geometry, or a
+listener's resolved padding changes. The next
 recording then builds a new snapshot. Accepting a submission selects its own
 snapshot for input, even if the view has already prepared a different layout.
 

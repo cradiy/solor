@@ -246,9 +246,11 @@ impl crate::Instance {
         // Custom content can use any declared property to determine its metrics.
         let builtin = std::any::TypeId::of::<E>() == std::any::TypeId::of::<FlexLayout>()
             || std::any::TypeId::of::<E>() == std::any::TypeId::of::<Text>();
+        let node = self.bodies.get_mut(&id).expect("mounted style target");
         if layout || !builtin {
             let bounds = crate::styled_body::BoxModel::resolve(&style, self.units)?;
             let sizing = bounds.item_sizing(&style, self.units)?;
+            let padding = bounds.content_insets();
             let mut prepared = Ok(());
             self.scene.edit_layout::<StyledBody<E>>(id, |body| {
                 prepared = body.content.prepare_content(&style);
@@ -258,13 +260,18 @@ impl crate::Instance {
             })?;
             prepared?;
             self.scene.set_item_style(id, item, sizing)?;
+            if let Some(handlers) = node.handlers.as_mut()
+                && handlers.padding != padding
+            {
+                handlers.padding = padding;
+                self.pointer.invalidate_geometry();
+            }
         } else {
             self.scene
                 .body_mut::<StyledBody<E>>(id)?
                 .content
                 .prepare_content(&style)?;
         }
-        let node = self.bodies.get_mut(&id).expect("mounted style target");
         let appearance = style.appearance.as_deref();
         let z_index = appearance.and_then(|a| a.z_index).unwrap_or_default();
         let clip = OverflowClip::from_layout(style.layout.as_deref());

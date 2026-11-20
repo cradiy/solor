@@ -80,6 +80,88 @@ fn label_hits_button_up_precedes_click_and_bindings_wait_for_flush() -> Result<(
 }
 
 #[test]
+fn captured_content_coordinates_follow_the_presented_paint_box() -> Result<()> {
+    let mut ui = Ui::new();
+    let left = ui.context().signal(px(2.5));
+    let last_move = Rc::new(Cell::new(None));
+    let view = ui.mount(component(|_| {
+        let last_move = last_move.clone();
+        div().p(px(3.0)).child(
+            div()
+                .w(px(20.0))
+                .h(px(12.0))
+                .pl(left)
+                .pr(px(3.0))
+                .pt(px(1.25))
+                .pb(px(2.75))
+                .paint(|cx| {
+                    cx.fill(cx.size, solor::rgb(0));
+                    Ok(())
+                })
+                .on_pointer_down(|_, cx| {
+                    cx.capture_pointer();
+                    Ok(())
+                })
+                .on_pointer_move(move |event, _| {
+                    last_move.set(Some(*event));
+                    Ok(())
+                }),
+        )
+    }))?;
+    let viewport = Size {
+        width: px(40.0),
+        height: px(40.0),
+    };
+    let record = |ui: &mut Ui| -> Result<_> {
+        ui.flush()?;
+        ui.layout(view, viewport)?;
+        let frame = ui.record_frame(view)?;
+        let [solor::Draw::Fill { origin, size, .. }] = frame.draws() else {
+            panic!("expected the painted content box");
+        };
+        let painted = (*origin, *size);
+        Ok((frame.into_pointer_frame(), painted))
+    };
+    let (first, mut presented) = record(&mut ui)?;
+    ui.accept_pointer_frame(first)?;
+    // Press inside the padding, then drag beyond the border box.
+    ui.dispatch_pointer(view, Down(sample(1, 3.5, 3.5), Primary))?;
+    let outside = sample(1, 30.0, 1.0);
+    let check = |ui: &mut Ui, (origin, size): (Origin, Size)| -> Result<()> {
+        ui.dispatch_pointer(view, Move(outside))?;
+        let event = last_move.take().expect("captured move");
+        assert_eq!(event.content_size(), size);
+        assert_eq!(
+            event.content_position(),
+            Origin {
+                x: outside.position.x - origin.x,
+                y: outside.position.y - origin.y,
+            }
+        );
+        assert_eq!(
+            event.local_position(),
+            Origin {
+                x: px(27.0),
+                y: px(-2.0)
+            }
+        );
+        assert_eq!(event.bounds().width, px(20.0));
+        Ok(())
+    };
+    assert_eq!(presented.1.width, px(14.5));
+    for (padding, expected_width) in [(7.5, 9.5), (18.0, 0.0)] {
+        ui.context().set(left, px(padding))?;
+        let (next, painted) = record(&mut ui)?;
+        assert_eq!(painted.1.width, px(expected_width));
+        check(&mut ui, presented)?;
+        ui.accept_pointer_frame(next)?;
+        check(&mut ui, painted)?;
+        presented = painted;
+    }
+    Ok(())
+}
+
+#[test]
 fn capture_uses_accepted_bounds_and_ends_on_release_error_or_cancel() -> Result<()> {
     let mut ui = Ui::new();
     let owner = ui.context().signal(None);

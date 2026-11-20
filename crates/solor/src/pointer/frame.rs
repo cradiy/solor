@@ -31,6 +31,11 @@ pub(super) struct Recipients {
     pub(super) cursor: Option<crate::style::Cursor>,
 }
 
+struct InteractiveBox {
+    border: HitBox,
+    padding: crate::styled_body::ContentInsets,
+}
+
 struct Entry {
     node: NodeId,
     area: HitBox,
@@ -48,7 +53,7 @@ pub struct PointerFrame {
 pub(super) struct HitGeometry {
     frame_listeners: Vec<NodeId>,
     entries: Vec<Entry>,
-    interactive: HashMap<NodeId, HitBox>,
+    interactive: HashMap<NodeId, InteractiveBox>,
     hover_parents: HashMap<NodeId, Option<NodeId>>,
     has_cursor: bool,
 }
@@ -107,7 +112,7 @@ impl PointerFrame {
         self.geometry
             .interactive
             .get(&node)
-            .map(|b| (b.origin, b.size))
+            .map(|b| (b.border.origin, b.border.size))
     }
 
     pub(super) fn event(
@@ -116,11 +121,13 @@ impl PointerFrame {
         sample: PointerSample,
         button: Option<PointerButton>,
     ) -> Option<PointerEvent> {
-        let area = self.geometry.interactive.get(&node)?;
+        let target = self.geometry.interactive.get(&node)?;
+        let area = target.border;
         Some(PointerEvent {
             sample,
             button,
             size: area.size,
+            padding: target.padding,
             position: Origin {
                 x: sample.position.x - area.origin.x,
                 y: sample.position.y - area.origin.y,
@@ -194,7 +201,13 @@ impl HitGeometry {
             if body.hit_testable
                 && let Some(handlers) = body.handlers.as_deref()
             {
-                frame.interactive.insert(id, area);
+                frame.interactive.insert(
+                    id,
+                    InteractiveBox {
+                        border: area,
+                        padding: handlers.padding,
+                    },
+                );
                 if handlers.hover.is_some() || handlers.tooltip.is_some() {
                     frame.hover_parents.insert(id, recipients.hover);
                     recipients.hover = Some(id);

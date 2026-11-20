@@ -140,8 +140,9 @@ impl Delivery<'_> {
             .as_ref()
             .and_then(|frame| frame.event(node, sample, button))
             .context("recipient missing from accepted pointer frame")?;
+        let content = event.content_position();
         ensure!(
-            event.position.x.get().is_finite() && event.position.y.get().is_finite(),
+            content.x.get().is_finite() && content.y.get().is_finite(),
             "invalid local pointer position"
         );
         Ok(event)
