@@ -10,10 +10,27 @@ use super::Window;
 use solor::raster::RasterFrame;
 use solor::raster::{Clip, DeviceSize};
 
+/// Byte order of the three visible channels in an opaque shared-memory pixel.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PixelOrder {
+    Rgb,
+    Bgr,
+}
+
+impl PixelOrder {
+    fn format(self) -> wl_shm::Format {
+        match self {
+            Self::Rgb => wl_shm::Format::Xbgr8888,
+            Self::Bgr => wl_shm::Format::Xrgb8888,
+        }
+    }
+}
+
 pub(super) struct Buffer {
     pub handle: wl_buffer::WlBuffer,
     pub size: DeviceSize,
     pub busy: bool,
+    order: PixelOrder,
     file: File,
     pending: PendingDamage,
 }
@@ -23,6 +40,7 @@ impl Buffer {
     pub fn new(
         size: DeviceSize,
         slot: usize,
+        order: PixelOrder,
         shm: &wl_shm::WlShm,
         qh: &QueueHandle<Window>,
     ) -> io::Result<Self> {
@@ -35,7 +53,7 @@ impl Buffer {
             size.width as i32,
             size.height as i32,
             (size.width * 4) as i32,
-            wl_shm::Format::Xrgb8888,
+            order.format(),
             qh,
             slot,
         );
@@ -44,6 +62,7 @@ impl Buffer {
             handle,
             size,
             busy: false,
+            order,
             file,
             pending: PendingDamage(Some(Clip::canvas(size))),
         })
@@ -54,7 +73,7 @@ impl Buffer {
     }
 
     pub fn upload(&mut self, pixels: &RasterFrame<'_>) -> io::Result<usize> {
-        self.pending.write(&self.file, pixels)
+        self.pending.write(&self.file, pixels, self.order)
     }
 
     pub fn verify(&self, oracle: &RasterFrame<'_>) -> io::Result<()> {
@@ -69,8 +88,12 @@ impl Buffer {
                 .iter()
                 .zip(expected.as_chunks::<4>().0)
             {
-                let [_, r, g, b] = u32::from_ne_bytes(*word).to_be_bytes();
-                if [r, g, b] != rgba[..3] {
+                let [first, green, third, _] = *word;
+                let rgb = match self.order {
+                    PixelOrder::Rgb => [first, green, third],
+                    PixelOrder::Bgr => [third, green, first],
+                };
+                if rgb != rgba[..3] {
                     return Err(io::Error::other("shm pixel differs from uncached frame"));
                 }
             }
@@ -94,7 +117,12 @@ impl PendingDamage {
         self.0 = Some(self.0.map_or(area, |old| old.union(area)));
     }
 
-    fn write(&mut self, file: &File, pixels: &RasterFrame<'_>) -> io::Result<usize> {
+    fn write(
+        &mut self,
+        file: &File,
+        pixels: &RasterFrame<'_>,
+        order: PixelOrder,
+    ) -> io::Result<usize> {
         let Some(area) = self.0 else { return Ok(0) };
         let stride = pixels.size.width as usize * 4;
         let rows = area.top as usize..area.bottom as usize;
@@ -102,6 +130,9 @@ impl PendingDamage {
         let right = area.right as usize * 4;
         let mut staging = [0u8; 16384];
         let mut write_span = |start: usize, end: usize| -> io::Result<()> {
+            if order == PixelOrder::Rgb {
+                return file.write_all_at(&pixels.rgba[start..end], start as u64);
+            }
             let mut offset = start as u64;
             for rgba in pixels.rgba[start..end].chunks(staging.len()) {
                 for (src, dst) in rgba
@@ -110,9 +141,7 @@ impl PendingDamage {
                     .iter()
                     .zip(staging.as_chunks_mut::<4>().0)
                 {
-                    dst.copy_from_slice(
-                        &u32::from_be_bytes([255, src[0], src[1], src[2]]).to_ne_bytes(),
-                    );
+                    *dst = [src[2], src[1], src[0], 255];
                 }
                 file.write_all_at(&staging[..rgba.len()], offset)?;
                 offset += rgba.len() as u64;

@@ -24,8 +24,10 @@ pixels even if rounding leaves the physical buffer dimensions unchanged.
 The client keeps one retained RGBA image and up to two shared files. Each file
 tracks the bounding rectangle of all pixel changes since its last upload,
 including changes while the compositor held it. New files start with the entire
-image pending. The uploader converts pixels to native-endian XRGB8888 using
-a 16 KiB staging buffer and clears the rectangle after every write succeeds.
+image pending. When the compositor advertises XBGR8888, the uploader writes the
+retained RGBA bytes directly. The format ignores the alpha byte. With XRGB8888
+the uploader swaps red and blue in a 16 KiB staging buffer. Each file keeps
+its format for its lifetime and clears pending damage after all writes succeed.
 
 For a gap of at least 2,048 bytes between the end of one affected row span and
 the start of the next, the uploader writes the spans separately. For smaller

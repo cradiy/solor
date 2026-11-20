@@ -18,7 +18,7 @@ use wayland_protocols::wp::{
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
-use buffer::Buffer;
+use buffer::{Buffer, PixelOrder};
 use solor::{
     layout::Size,
     platform::{Platform, WindowControl, WindowEvent, WindowHandler, WindowOptions},
@@ -44,6 +44,7 @@ struct Window {
     scale_120: u32,
     surface: wl_surface::WlSurface,
     shm: wl_shm::WlShm,
+    pixel_order: PixelOrder,
     slots: [Option<Buffer>; 2],
     next_slot: usize,
     view: Box<dyn WindowHandler<Rgba8>>,
@@ -182,6 +183,7 @@ impl Platform for Wayland {
             scale_120: 120,
             surface,
             shm,
+            pixel_order: PixelOrder::Bgr,
             slots: [None, None],
             next_slot: 0,
             view,
@@ -307,7 +309,7 @@ impl Window {
             .as_ref()
             .is_some_and(|slot| slot.size == size);
         if !reuse {
-            self.slots[index] = Some(Buffer::new(size, index, &self.shm, qh)?);
+            self.slots[index] = Some(Buffer::new(size, index, self.pixel_order, &self.shm, qh)?);
         }
         let slot = self.slots[index]
             .as_mut()
@@ -388,7 +390,23 @@ impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ()> for Window {
 
 delegate_noop!(Window: ignore wl_compositor::WlCompositor);
 delegate_noop!(Window: ignore wl_surface::WlSurface);
-delegate_noop!(Window: ignore wl_shm::WlShm);
+impl Dispatch<wl_shm::WlShm, ()> for Window {
+    fn event(
+        state: &mut Self,
+        _: &wl_shm::WlShm,
+        event: wl_shm::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_shm::Event::Format {
+            format: wayland_client::WEnum::Value(wl_shm::Format::Xbgr8888),
+        } = event
+        {
+            state.pixel_order = PixelOrder::Rgb;
+        }
+    }
+}
 delegate_noop!(Window: ignore wl_shm_pool::WlShmPool);
 
 impl Dispatch<wl_callback::WlCallback, Option<usize>> for Window {
