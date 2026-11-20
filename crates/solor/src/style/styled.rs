@@ -276,12 +276,12 @@ pub trait Styled: Sized {
         rounded { rounded_none: 0.0, rounded_sm: 0.125, rounded_md: 0.375, rounded_lg: 0.5 };
     }
 
-    /// Sets the preferred border-box width.
+    /// Sets the preferred width of the box selected by `box_sizing`.
     fn w(mut self, width: impl Into<Length>) -> Self {
         self.style().width = Some(width.into());
         self
     }
-    /// Sets the preferred border-box height.
+    /// Sets the preferred height of the box selected by `box_sizing`.
     fn h(mut self, height: impl Into<Length>) -> Self {
         self.style().height = Some(height.into());
         self

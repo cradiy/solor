@@ -1,9 +1,10 @@
 //! Shared content-box adapter for every retained element.
 use crate::layout::{
-    ContainingBlock, LayoutContext, LayoutError, LayoutNode, LayoutOutput, Margin, Margins,
-    MeasureContext, Metrics, Origin, Query, Result, Size,
+    ComputedLength, ContainingBlock, LayoutContext, LayoutError, LayoutNode, LayoutOutput, Margin,
+    Margins, MeasureContext, Metrics, Origin, Query, Result, Size, WidthLimits, border_extent,
 };
-use crate::length::{ComputedLength, UnitResolver};
+use crate::length::UnitResolver;
+use crate::style::BoxSizing;
 use crate::{Edges, Pixels, Style, px};
 
 pub(crate) struct StyledBody<E> {
@@ -11,6 +12,7 @@ pub(crate) struct StyledBody<E> {
     padding: Edges,
     margins: Option<Box<Edges<Option<ComputedLength>>>>,
     inset: Size,
+    box_sizing: BoxSizing,
     width: Option<ComputedLength>,
     height: Option<ComputedLength>,
 }
@@ -49,6 +51,11 @@ impl<E> StyledBody<E> {
             margins,
             content,
             padding: p,
+            box_sizing: style
+                .layout
+                .as_ref()
+                .and_then(|layout| layout.box_sizing)
+                .unwrap_or(BoxSizing::BorderBox),
             width: units.dimension(style.width)?,
             height: units.dimension(style.height)?,
             inset: Size {
@@ -72,6 +79,31 @@ impl<E> StyledBody<E> {
     fn baseline(&self, baseline: Option<Pixels>) -> Result<Option<Pixels>> {
         baseline.map(|v| add(v, self.padding.top)).transpose()
     }
+
+    fn sizing_extra(&self, inset: Pixels) -> Pixels {
+        match self.box_sizing {
+            BoxSizing::BorderBox => Pixels::default(),
+            BoxSizing::ContentBox => inset,
+        }
+    }
+
+    pub(crate) fn width_limits(
+        &self,
+        style: &Style,
+        units: UnitResolver,
+    ) -> Result<Option<WidthLimits>> {
+        let Some(layout) = &style.layout else {
+            return Ok(None);
+        };
+        let min = units.dimension(layout.min_width.unwrap_or_default())?;
+        let max = units.dimension(layout.max_width.unwrap_or_default())?;
+        Ok((min.is_some() || max.is_some()).then_some(WidthLimits {
+            preferred: self.width,
+            min,
+            max,
+            extra: self.sizing_extra(self.inset.width),
+        }))
+    }
 }
 
 impl<E: LayoutNode> LayoutNode for StyledBody<E> {
@@ -94,15 +126,12 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
     fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
         let inner = |w: Pixels| w.saturating_sub(self.inset.width);
         let basis = cx.containing_block();
-        let width = self.width.and_then(|v| v.resolve(basis.width));
-        let height = self.height.and_then(|v| v.resolve(basis.height));
-        if width
-            .into_iter()
-            .chain(height)
-            .any(|extent| !extent.is_extent())
-        {
-            return Err(LayoutError::InvalidSize);
-        }
+        let width = border_extent(self.width, basis.width, self.sizing_extra(self.inset.width))?;
+        let height = border_extent(
+            self.height,
+            basis.height,
+            self.sizing_extra(self.inset.height),
+        )?;
         let content_query = match (query, width) {
             (_, Some(w)) => Query::Exact(inner(query.resolve(w))),
             (Query::Natural, None) => Query::Natural,

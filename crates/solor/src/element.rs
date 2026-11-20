@@ -400,6 +400,7 @@ impl AnyElement {
             }
             node.body.prepare_content(&style)?;
             let body = StyledBody::new(node.body, &style, units)?;
+            let width_limits = body.width_limits(&style, units)?;
             let id = match target {
                 Target::Root(slot) => slot.insert(Scene::new(body)).root(),
                 Target::Child {
@@ -418,7 +419,7 @@ impl AnyElement {
                         auto_width: style.width == crate::Length::Auto,
                         auto_height: style.height == crate::Length::Auto,
                     };
-                    scene.mount_entry(parent, Some(index), body, item)?
+                    scene.mount_entry(parent, Some(index), body, item, width_limits)?
                 }
             };
             Ok(Installation {

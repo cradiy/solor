@@ -404,3 +404,159 @@ fn percent_sizes_follow_the_parent_content_box_and_rem_uses_the_view_basis() -> 
     }
     Ok(())
 }
+
+#[test]
+fn content_box_percentages_resolve_before_padding_and_child_percentages_use_the_inner_box()
+-> Result<()> {
+    use solor::{percent, style::BoxSizing};
+
+    let mut ui = Ui::new();
+    let card_style = StyleRefinement::default()
+        .box_sizing(BoxSizing::ContentBox)
+        .w(percent(50.0))
+        .h(percent(25.0))
+        .pl(px(2.25))
+        .pr(px(4.75))
+        .pt(px(1.5))
+        .pb(px(3.0));
+    let view = ui.mount(component(|_| {
+        div()
+            .p(px(1.0))
+            .child(
+                div()
+                    .with_style(&card_style)
+                    .child(div().w(percent(50.0)).h(percent(100.0))),
+            )
+            .child(
+                div()
+                    .with_style(&card_style)
+                    .box_sizing(BoxSizing::BorderBox),
+            )
+    }))?;
+    let root = ui.root(view)?;
+    for (width, height) in [(180.0, 100.0), (91.0, 75.0)] {
+        ui.layout(
+            view,
+            Size {
+                width: px(width),
+                height: px(height),
+            },
+        )?;
+        let mut children = ui.children(view, root)?;
+        let card = children.next().unwrap();
+        let next = ui.geometry(view, children.next().unwrap()).unwrap();
+        let inner = ui
+            .geometry(view, ui.children(view, card)?.next().unwrap())
+            .unwrap();
+        let card = ui.geometry(view, card).unwrap();
+        let w = px((width - 2.0) * 0.5);
+        let h = px((height - 2.0) * 0.25);
+        assert_eq!(
+            card.metrics.size,
+            Size {
+                width: w + px(7.0),
+                height: h + px(4.5)
+            }
+        );
+        assert_eq!(
+            inner.origin,
+            Origin {
+                x: px(2.25),
+                y: px(1.5)
+            }
+        );
+        assert_eq!(
+            inner.metrics.size,
+            Size {
+                width: w * 0.5,
+                height: h
+            }
+        );
+        assert_eq!(
+            next.metrics.size,
+            Size {
+                width: w,
+                height: h
+            }
+        );
+        assert_eq!(next.origin.y, card.origin.y + card.metrics.size.height);
+    }
+    Ok(())
+}
+
+#[test]
+fn content_box_label_wraps_and_paints_at_the_constrained_inner_width() -> Result<()> {
+    use solor::{rem, style::BoxSizing};
+
+    let mut ui = Ui::with_font(FONT.to_vec(), "zh-CN")?;
+    let view = ui.mount(component(|_| {
+        div()
+            .child(
+                text("Audio settings and output device")
+                    .box_sizing(BoxSizing::ContentBox)
+                    .w(rem(6.0))
+                    .p(px(4.5))
+                    .bg(ACCENT)
+                    .line_height(px(20.0)),
+            )
+            .child(div().size(px(4.0)))
+    }))?;
+    let root = ui.root(view)?;
+    let mut line_counts = Vec::new();
+    for (viewport_width, outer, inner) in [
+        (160.0, 105.0, 96.0),
+        (51.0, 51.0, 42.0),
+        (160.0, 105.0, 96.0),
+    ] {
+        ui.layout(
+            view,
+            Size {
+                width: px(viewport_width),
+                height: px(300.0),
+            },
+        )?;
+        let mut children = ui.children(view, root)?;
+        let label = children.next().unwrap();
+        let marker = ui.geometry(view, children.next().unwrap()).unwrap();
+        let geometry = ui.geometry(view, label).unwrap();
+        let mut commands = Vec::new();
+        ui.paint(view, label, &mut commands)?;
+        let [
+            Draw::Fill {
+                size: background, ..
+            },
+            Draw::Text {
+                origin,
+                size,
+                paragraph,
+                ..
+            },
+        ] = &commands[..]
+        else {
+            panic!("expected the label background and shaped paragraph");
+        };
+        let lines = paragraph.lines.len();
+        assert_eq!(size.width, px(inner));
+        assert_eq!(size.height, px(lines as f32 * 20.0));
+        assert_eq!(
+            *origin,
+            Origin {
+                x: px(4.5),
+                y: px(4.5)
+            }
+        );
+        assert_eq!(
+            *background,
+            Size {
+                width: px(outer),
+                height: size.height + px(9.0)
+            }
+        );
+        assert_eq!(geometry.metrics.size, *background);
+        assert_eq!(marker.origin.y, background.height);
+        line_counts.push(lines);
+    }
+    assert!(line_counts[1] > line_counts[0]);
+    assert_eq!(line_counts[0], line_counts[2]);
+    Ok(())
+}

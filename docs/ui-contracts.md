@@ -11,7 +11,7 @@ stage consumes it, and how a host learns about the resulting work.
 | Interface | Current behavior |
 | --- | --- |
 | Composition and ownership | A component renders once per attachment. A conditional owns its branch. Retiring a node releases its subscriptions and local signals. The host owns application signals. |
-| Box layout | Lengths in logical pixels, rems and percentage box sizes resolve to floating-point geometry. Every primitive receives the same border-box sizing and per-edge padding. Content layout, painting and child origins use the inner bounds. A container applies the gap on its main axis. |
+| Box layout | Lengths in logical pixels, rems and percentages resolve to floating-point geometry. Every primitive supports box sizing and per-edge padding. Content layout, painting and child origins use the inner bounds. A container applies the gap on its main axis. |
 | Style refinements | Later declarations override individual specified fields. Text size, line height, alignment and color propagate into fixed and conditional descendants. Each element resolves its own box and background at mount. |
 | Text | A fixed or signal-bound label owns a shared string and caches shaped paragraphs by width. Updating bound text keeps the element ID. A changed label schedules layout and local paint. |
 | Fill | A straight-alpha sRGB color has named channels. Every gradient shares an ordered, variable-length stop sequence. Four geometries sample it in sRGB or Oklab. Backgrounds and custom fills carry the same fill value. Equal offsets describe hard edges. Rounded fills use the assigned dimensions. |
@@ -93,6 +93,19 @@ At attachment, a custom element receives its local layout and appearance
 declarations in `Element::prepare_content`. Text attributes cascade from the
 parent, including when a conditional child is attached later. An explicit
 `clear_line_clamp()` removes an inherited line limit.
+
+Explicit width and height include padding by default. With
+`.box_sizing(BoxSizing::ContentBox)`, they describe the content area, and
+padding adds to the preferred outer size. Percentages use the parent's
+definite content dimension on the same axis. Text wraps within the allocated
+content width.
+
+Use `.min_w(...)` and `.max_w(...)` to limit a child's preferred or stretched
+width. Both use the selected box model. The minimum takes precedence when the
+limits conflict and can make a flex item overflow the space between its
+margins. A percentage limit applies once the parent content width is definite.
+Custom layouts that call `measure_child` directly retain control of the
+maximum or exact width they pass. The host assigns the root's viewport size.
 
 A `div()` uses vertical flow by default. Both `.flex_row()` and `.flex_col()`
 set its direction through the same style refinement, before or after adding
@@ -195,7 +208,7 @@ expresses placement but does not yet move a child or remove it from column flow.
 | Priority and capability | Required behavior and acceptance case |
 | --- | --- |
 | 1. Frame composition, clipping and hit testing | Compose parent-local coordinates, scale, clips and sibling order into one accepted frame. Move a rounded card over another target, fail one submission, then retry. Pixels and click targets must agree with the last accepted frame. Old bounds must be repaired when a wrapped label moves its siblings. |
-| 2. Sizing, placement and scrolling | Apply min/max sizing, positioning and per-edge borders during measurement and placement. Resolve grow/shrink and overflow. Validate a long label between a fixed icon and an action at narrow and wide widths. Scrolling must share the visual clip and hit-test transform. |
+| 2. Sizing, placement and scrolling | Apply height limits, positioning and per-edge borders during measurement and placement. Resolve grow/shrink and overflow. Validate a long label between a fixed icon and an action at narrow and wide widths. Scrolling must share the visual clip and hit-test transform. |
 | 3. Input and state-dependent styles | Connect platform pointer adapters and define propagation, keyboard focus, tab order and actions. Define precedence for hover, press, focus and disabled states, including removing an override. Validate a pressed element that moves, loses capture or unmounts before release. |
 | 4. Text, editing and semantics | Apply font selection and fallback, weight, wrapping/truncation and decoration. Define editable ranges, composition, caret bounds and accessibility actions. A bilingual field must expose the same selection to keyboard, IME and assistive input. Preserve explicit units when converting platform text ranges. |
 | 5. Paint and animation | Define border and shadow paint order, opacity of overlapping descendants, transformed and rounded clipping, and animation timing. A frame-clock repaint must stop on unmount. CPU replay must draw every gradient stop, preserve hard edges and match the declared interpolation. A GPU representation needs equivalent output and a resource lifetime through submission. |

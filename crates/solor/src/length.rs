@@ -1,5 +1,5 @@
 //! Dimensions in device-independent logical pixels.
-use crate::layout::{LayoutError, Result};
+use crate::layout::{ComputedLength, LayoutError, Result};
 use crate::{Pixels, px};
 
 /// A style length that can be resolved without knowing the parent box.
@@ -88,20 +88,5 @@ impl UnitResolver {
             return Err(LayoutError::InvalidSize);
         }
         Ok(offset)
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum ComputedLength {
-    Pixels(Pixels),
-    Fraction(f32),
-}
-
-impl ComputedLength {
-    pub fn resolve(self, basis: Option<Pixels>) -> Option<Pixels> {
-        match self {
-            Self::Pixels(value) => Some(value),
-            Self::Fraction(fraction) => basis.map(|value| px(value.get() * fraction)),
-        }
     }
 }

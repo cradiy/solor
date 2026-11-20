@@ -299,3 +299,27 @@ fn failed_paint_keeps_prior_commands_and_rejects_a_retired_signal() -> Result<()
     );
     Ok(())
 }
+
+#[test]
+fn custom_layout_can_offer_less_than_its_childs_minimum_width() -> Result<()> {
+    let mut ui = test_ui();
+    let view = ui.mount(component(|_| {
+        element(MeterTrack { percent: 50 })
+            .child(div().w(px(180.0)).min_w(px(80.0)).max_w(px(100.0)))
+    }))?;
+    let label = ui.children(view, ui.root(view)?)?.next().unwrap();
+    for (offer, used) in [(150.0, 100.0), (40.0, 40.0)] {
+        ui.layout(
+            view,
+            Size {
+                width: px(offer),
+                height: px(60.0),
+            },
+        )?;
+        assert_eq!(
+            ui.geometry(view, label).unwrap().metrics.size.width,
+            px(used)
+        );
+    }
+    Ok(())
+}

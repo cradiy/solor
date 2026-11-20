@@ -12,6 +12,10 @@ use std::rc::Rc;
 use super::node_store::{AccessError, Context, NodeStore};
 use super::tree::NodeId;
 
+#[path = "width.rs"]
+pub(super) mod width;
+use width::WidthLimits;
+
 use super::Align;
 use super::column::Margins;
 use super::{MEASUREMENT_CACHE_SLOTS, Pixels};
@@ -386,6 +390,7 @@ enum ItemQuery {
 struct Entry {
     // Immutable for the lifetime of this attachment.
     item_style: FlexItemStyle,
+    width_limits: Option<Box<WidthLimits>>,
     body: Box<dyn LayoutNode>,
     // Cache hits restore metrics, not the behavior's private measurement state.
     measure_cache: [Option<Measurement>; MEASUREMENT_CACHE_SLOTS],
@@ -401,9 +406,14 @@ struct Entry {
 }
 
 impl Entry {
-    fn new(body: impl LayoutNode, item_style: FlexItemStyle) -> Self {
+    fn new(
+        body: impl LayoutNode,
+        item_style: FlexItemStyle,
+        width_limits: Option<WidthLimits>,
+    ) -> Self {
         Self {
             item_style,
+            width_limits: width_limits.map(Box::new),
             body: Box::new(body),
             measure_cache: std::array::from_fn(|_| None),
             #[cfg(feature = "layout-audit")]
@@ -576,6 +586,20 @@ fn measure_item(
     } else {
         (query, Margins::default())
     };
+    if let Some(limits) = &entry.width_limits
+        && let Some((bounded, min)) =
+            limits.constrain(query, basis.width, matches!(mode, ItemQuery::Direct))?
+    {
+        let mut metrics = measure(entry, access, bounded, basis, force)?;
+        if !matches!(bounded, Query::Exact(_))
+            && (metrics.size.width < min || access.child_count() > 0)
+        {
+            // Descendant percentages and wrapping need a definite containing width.
+            let used = metrics.size.width.max(min);
+            metrics = measure(entry, access, Query::Exact(used), basis, force)?;
+        }
+        return Ok((metrics, margins));
+    }
     Ok((measure(entry, access, query, basis, force)?, margins))
 }
 
@@ -1069,7 +1093,7 @@ impl Scene {
     /// Create a scene with a three-query measurement cache and a maximum callback depth of 64.
     pub fn new(root: impl LayoutNode) -> Self {
         let store = NodeStore::new(
-            Box::new(Entry::new(root, FlexItemStyle::default())),
+            Box::new(Entry::new(root, FlexItemStyle::default(), None)),
             NonZeroUsize::new(64).unwrap(),
         );
         let nodes = vec![store.root()];
@@ -1109,7 +1133,11 @@ impl Scene {
         if self.request.is_some() {
             return Err(LayoutError::StructureLocked);
         }
-        self.insert_entry(parent, None, Entry::new(body, FlexItemStyle::default()))
+        self.insert_entry(
+            parent,
+            None,
+            Entry::new(body, FlexItemStyle::default(), None),
+        )
     }
 
     fn insert_entry(
@@ -1132,7 +1160,7 @@ impl Scene {
 
     /// Mount a child at the end of its parent's ordered children.
     pub fn mount(&mut self, parent: NodeId, body: impl LayoutNode) -> Result<NodeId> {
-        self.mount_entry(parent, None, body, FlexItemStyle::default())
+        self.mount_entry(parent, None, body, FlexItemStyle::default(), None)
     }
 
     /// Mount at a live child index or at the end. Existing siblings retain their handles.
@@ -1142,7 +1170,7 @@ impl Scene {
         index: usize,
         body: impl LayoutNode,
     ) -> Result<NodeId> {
-        self.mount_entry(parent, Some(index), body, FlexItemStyle::default())
+        self.mount_entry(parent, Some(index), body, FlexItemStyle::default(), None)
     }
 
     pub(crate) fn mount_entry(
@@ -1151,13 +1179,14 @@ impl Scene {
         index: Option<usize>,
         body: impl LayoutNode,
         item_style: FlexItemStyle,
+        width_limits: Option<WidthLimits>,
     ) -> Result<NodeId> {
         #[cfg(feature = "layout-audit")]
         let revision = self
             .topology_revision
             .checked_add(1)
             .ok_or(LayoutError::RevisionExhausted)?;
-        let node = self.insert_entry(parent, index, Entry::new(body, item_style))?;
+        let node = self.insert_entry(parent, index, Entry::new(body, item_style, width_limits))?;
         #[cfg(feature = "layout-audit")]
         {
             self.topology_revision = revision;
