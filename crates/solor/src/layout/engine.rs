@@ -12,6 +12,7 @@ use std::rc::Rc;
 use super::node_store::{AccessError, Context, NodeStore};
 use super::tree::NodeId;
 
+use super::Align;
 use super::column::Margins;
 use super::{MEASUREMENT_CACHE_SLOTS, Pixels};
 
@@ -274,6 +275,7 @@ pub enum Read {
         containing_block: ContainingBlock,
         metrics: Metrics,
         margins: Option<Margins>,
+        column_align: Option<Align>,
     },
     Layout {
         node: NodeId,
@@ -347,7 +349,43 @@ impl DependencyRecords {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct FlexItemStyle {
+    pub(crate) align_self: Align,
+    pub(crate) auto_width: bool,
+    pub(crate) auto_height: bool,
+}
+
+impl Default for FlexItemStyle {
+    fn default() -> Self {
+        Self {
+            align_self: Align::Auto,
+            auto_width: true,
+            auto_height: true,
+        }
+    }
+}
+
+impl FlexItemStyle {
+    pub(crate) fn alignment(self, parent: Align) -> Align {
+        if self.align_self == Align::Auto {
+            parent
+        } else {
+            self.align_self
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ItemQuery {
+    Direct,
+    Stack,
+    Column(Align),
+}
+
 struct Entry {
+    // Immutable for the lifetime of this attachment.
+    item_style: FlexItemStyle,
     body: Box<dyn LayoutNode>,
     // Cache hits restore metrics, not the behavior's private measurement state.
     measure_cache: [Option<Measurement>; MEASUREMENT_CACHE_SLOTS],
@@ -363,8 +401,9 @@ struct Entry {
 }
 
 impl Entry {
-    fn new(body: impl LayoutNode) -> Self {
+    fn new(body: impl LayoutNode, item_style: FlexItemStyle) -> Self {
         Self {
+            item_style,
             body: Box::new(body),
             measure_cache: std::array::from_fn(|_| None),
             #[cfg(feature = "layout-audit")]
@@ -425,6 +464,10 @@ impl MeasureContext<'_, '_> {
     pub fn containing_block(&self) -> ContainingBlock {
         self.containing_block
     }
+    pub(crate) fn definite_content_height(&self) -> Option<Pixels> {
+        self.child_basis.height
+    }
+
     /// Supplies this node's content dimensions for its children's preferred-size queries.
     pub fn set_child_containing_block(&mut self, basis: ContainingBlock) {
         self.child_basis = basis;
@@ -437,7 +480,7 @@ impl MeasureContext<'_, '_> {
 
     /// Queries one child's preferred metrics under the supplied constraint.
     pub fn measure_child(&mut self, index: usize, query: Query) -> Result<Metrics> {
-        Ok(self.measure_item(index, query, false)?.0)
+        Ok(self.measure_item(index, query, ItemQuery::Direct)?.0)
     }
 
     pub(crate) fn measure_stack_item(
@@ -445,15 +488,34 @@ impl MeasureContext<'_, '_> {
         index: usize,
         query: Query,
     ) -> Result<(Metrics, Margins)> {
-        self.measure_item(index, query, true)
+        let (metrics, margins, _) = self.measure_item(index, query, ItemQuery::Stack)?;
+        Ok((metrics, margins))
+    }
+
+    pub(crate) fn measure_row_item(
+        &mut self,
+        index: usize,
+        query: Query,
+    ) -> Result<(Metrics, Margins, FlexItemStyle)> {
+        self.measure_item(index, query, ItemQuery::Stack)
+    }
+
+    pub(crate) fn measure_column_item(
+        &mut self,
+        index: usize,
+        query: Query,
+        align: Align,
+    ) -> Result<(Metrics, Margins)> {
+        let (metrics, margins, _) = self.measure_item(index, query, ItemQuery::Column(align))?;
+        Ok((metrics, margins))
     }
 
     fn measure_item(
         &mut self,
         index: usize,
         query: Query,
-        with_margins: bool,
-    ) -> Result<(Metrics, Margins)> {
+        mode: ItemQuery,
+    ) -> Result<(Metrics, Margins, FlexItemStyle)> {
         if self.failed {
             return Err(LayoutError::FailedChildOperation);
         }
@@ -462,26 +524,27 @@ impl MeasureContext<'_, '_> {
             .access
             .child(index)
             .ok_or(LayoutError::MissingChild(index))?;
-        let (metrics, margins) = self.access.execute_child(id, |entry, access| {
-            Ok(measure_item(
-                entry,
-                access,
-                query,
-                self.child_basis,
-                self.force,
-                with_margins,
+        let (result, item_style) = self.access.execute_child(id, |entry, access| {
+            Ok((
+                measure_item(entry, access, query, self.child_basis, self.force, mode),
+                entry.item_style,
             ))
-        })??;
+        })?;
+        let (metrics, margins) = result?;
         #[cfg(feature = "layout-audit")]
         self.reads.push(Read::Measure {
             node: id,
             containing_block: self.child_basis,
             query,
             metrics,
-            margins: with_margins.then_some(margins),
+            margins: (!matches!(mode, ItemQuery::Direct)).then_some(margins),
+            column_align: match mode {
+                ItemQuery::Column(align) => Some(align),
+                _ => None,
+            },
         });
         self.failed = false;
-        Ok((metrics, margins))
+        Ok((metrics, margins, item_style))
     }
 }
 
@@ -491,14 +554,19 @@ fn measure_item(
     query: Query,
     basis: ContainingBlock,
     force: bool,
-    with_margins: bool,
+    mode: ItemQuery,
 ) -> Result<(Metrics, Margins)> {
-    let (query, margins) = if with_margins {
+    let (query, margins) = if !matches!(mode, ItemQuery::Direct) {
         let margins = entry.body.margins(match query {
             Query::Exact(width) => Some(width),
             _ => None,
         })?;
+        let stretch = matches!(mode, ItemQuery::Column(align)
+            if entry.item_style.auto_width && entry.item_style.alignment(align) == Align::Stretch);
         let query = match query {
+            Query::Exact(width) if stretch && !margins.has_auto_horizontal() => {
+                Query::Exact(margins.inner_width(width)?)
+            }
             Query::Exact(width) | Query::AtMost(width) => {
                 Query::AtMost(margins.inner_width(width)?)
             }
@@ -687,7 +755,7 @@ impl LayoutContext<'_, '_> {
 
     /// Queries a child's preferred metrics before assigning its box.
     pub fn measure_child(&mut self, index: usize, query: Query) -> Result<Metrics> {
-        Ok(self.measure_item(index, query, false)?.0)
+        Ok(self.measure_item(index, query, ItemQuery::Direct)?.0)
     }
 
     pub(crate) fn measure_stack_item(
@@ -695,15 +763,29 @@ impl LayoutContext<'_, '_> {
         index: usize,
         query: Query,
     ) -> Result<(Metrics, Margins)> {
-        self.measure_item(index, query, true)
+        let (metrics, margins, _) = self.measure_item(index, query, ItemQuery::Stack)?;
+        Ok((metrics, margins))
+    }
+
+    pub(crate) fn measure_flex_item(
+        &mut self,
+        index: usize,
+        query: Query,
+        column_align: Option<Align>,
+    ) -> Result<(Metrics, Margins, FlexItemStyle)> {
+        self.measure_item(
+            index,
+            query,
+            column_align.map_or(ItemQuery::Stack, ItemQuery::Column),
+        )
     }
 
     fn measure_item(
         &mut self,
         index: usize,
         query: Query,
-        with_margins: bool,
-    ) -> Result<(Metrics, Margins)> {
+        mode: ItemQuery,
+    ) -> Result<(Metrics, Margins, FlexItemStyle)> {
         if self.failed {
             return Err(LayoutError::FailedChildOperation);
         }
@@ -717,7 +799,7 @@ impl LayoutContext<'_, '_> {
             force: self.force,
             failed: false,
         }
-        .measure_item(index, query, with_margins)?;
+        .measure_item(index, query, mode)?;
         self.failed = false;
         Ok(metrics)
     }
@@ -986,7 +1068,10 @@ pub struct Scene {
 impl Scene {
     /// Create a scene with a three-query measurement cache and a maximum callback depth of 64.
     pub fn new(root: impl LayoutNode) -> Self {
-        let store = NodeStore::new(Box::new(Entry::new(root)), NonZeroUsize::new(64).unwrap());
+        let store = NodeStore::new(
+            Box::new(Entry::new(root, FlexItemStyle::default())),
+            NonZeroUsize::new(64).unwrap(),
+        );
         let nodes = vec![store.root()];
         Self {
             store,
@@ -1024,16 +1109,16 @@ impl Scene {
         if self.request.is_some() {
             return Err(LayoutError::StructureLocked);
         }
-        self.insert_entry(parent, None, body)
+        self.insert_entry(parent, None, Entry::new(body, FlexItemStyle::default()))
     }
 
     fn insert_entry(
         &mut self,
         parent: NodeId,
         index: Option<usize>,
-        body: impl LayoutNode,
+        entry: Entry,
     ) -> Result<NodeId> {
-        let entry = Box::new(Entry::new(body));
+        let entry = Box::new(entry);
         let node = match index {
             Some(index) => self.store.insert(parent, index, entry),
             None => self.store.append(parent, entry),
@@ -1047,7 +1132,7 @@ impl Scene {
 
     /// Mount a child at the end of its parent's ordered children.
     pub fn mount(&mut self, parent: NodeId, body: impl LayoutNode) -> Result<NodeId> {
-        self.mount_entry(parent, None, body)
+        self.mount_entry(parent, None, body, FlexItemStyle::default())
     }
 
     /// Mount at a live child index or at the end. Existing siblings retain their handles.
@@ -1057,21 +1142,22 @@ impl Scene {
         index: usize,
         body: impl LayoutNode,
     ) -> Result<NodeId> {
-        self.mount_entry(parent, Some(index), body)
+        self.mount_entry(parent, Some(index), body, FlexItemStyle::default())
     }
 
-    fn mount_entry(
+    pub(crate) fn mount_entry(
         &mut self,
         parent: NodeId,
         index: Option<usize>,
         body: impl LayoutNode,
+        item_style: FlexItemStyle,
     ) -> Result<NodeId> {
         #[cfg(feature = "layout-audit")]
         let revision = self
             .topology_revision
             .checked_add(1)
             .ok_or(LayoutError::RevisionExhausted)?;
-        let node = self.insert_entry(parent, index, body)?;
+        let node = self.insert_entry(parent, index, Entry::new(body, item_style))?;
         #[cfg(feature = "layout-audit")]
         {
             self.topology_revision = revision;

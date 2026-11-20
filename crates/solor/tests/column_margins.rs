@@ -94,7 +94,7 @@ fn automatic_margin_shares_only_positive_free_space() -> Result<()> {
         ui.geometry(view, rows[0]).unwrap().origin,
         Origin {
             x: px(1.75),
-            y: px(0.0)
+            y: px(23.0)
         }
     );
     let second = ui.geometry(view, rows[1]).unwrap();
@@ -102,7 +102,7 @@ fn automatic_margin_shares_only_positive_free_space() -> Result<()> {
         second.origin,
         Origin {
             x: px(-5.0),
-            y: px(2.0)
+            y: px(48.0)
         }
     );
     assert_eq!(second.metrics.size.width, px(0.0));

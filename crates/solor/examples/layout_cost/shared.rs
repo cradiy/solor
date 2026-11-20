@@ -3,7 +3,7 @@ use super::MEASUREMENT_CACHE_SLOTS;
 
 #[path = "../../src/column.rs"]
 mod column;
-use solor::{Pixels, node_store, tree};
+use solor::{Pixels, node_store, style::Align, tree};
 #[allow(dead_code)]
 #[path = "../layout_contract/fixtures.rs"]
 mod fixtures;

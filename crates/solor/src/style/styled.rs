@@ -172,7 +172,7 @@ pub trait Styled: Sized {
         flex_direction { flex_row: FlexDirection::Row, flex_col: FlexDirection::Column, flex_row_reverse: FlexDirection::RowReverse, flex_col_reverse: FlexDirection::ColumnReverse };
         flex_wrapping { flex_wrap: FlexWrap::Wrap, flex_nowrap: FlexWrap::NoWrap, flex_wrap_reverse: FlexWrap::WrapReverse };
         align_items { items_center: Align::Center, items_start: Align::Start, items_end: Align::End, items_stretch: Align::Stretch, items_baseline: Align::Baseline };
-        align_self { self_center: Align::Center, self_start: Align::Start, self_end: Align::End, self_stretch: Align::Stretch };
+        align_self { self_center: Align::Center, self_start: Align::Start, self_end: Align::End, self_stretch: Align::Stretch, self_baseline: Align::Baseline };
         justify_content { justify_center: Distribution::Center, justify_between: Distribution::SpaceBetween, justify_around: Distribution::SpaceAround, justify_evenly: Distribution::SpaceEvenly, justify_start: Distribution::Start, justify_end: Distribution::End };
         overflow { overflow_hidden: Overflow::Hidden, overflow_scroll: Overflow::Scroll, overflow_auto: Overflow::Auto, overflow_visible: Overflow::Visible };
         border_style { border_solid: BorderStyle::Solid, border_dashed: BorderStyle::Dashed, border_dotted: BorderStyle::Dotted };

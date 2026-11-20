@@ -537,6 +537,7 @@ fn check_reads<'a>(
                 metrics,
                 containing_block,
                 margins,
+                column_align,
             } => {
                 let current = access.execute_child(node, |entry, child| {
                     Ok(super::measure_item(
@@ -545,7 +546,11 @@ fn check_reads<'a>(
                         query,
                         containing_block,
                         false,
-                        margins.is_some(),
+                        match (column_align, margins) {
+                            (Some(align), _) => super::ItemQuery::Column(align),
+                            (_, Some(_)) => super::ItemQuery::Stack,
+                            _ => super::ItemQuery::Direct,
+                        },
                     ))
                 })??;
                 current.0 == metrics && margins.is_none_or(|edges| edges == current.1)

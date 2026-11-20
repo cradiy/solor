@@ -11,7 +11,7 @@ use crate::layout::{FlexDirection, FlexLayout};
 use crate::length::UnitResolver;
 use crate::pointer::Handlers;
 use crate::style::PointerEvents;
-use crate::style::{Background, Corners, TextStyleRefinement};
+use crate::style::{Align, Background, Corners, TextStyleRefinement};
 use crate::text::{Paragraph, Text, TextStyle};
 use crate::{Fill, Pixels, Rgba, Style, StyleRefinement, Styled, StyledBody, px};
 
@@ -64,12 +64,10 @@ impl Element for FlexLayout {
     }
 
     fn prepare_content(&mut self, style: &Style) -> Result<()> {
-        if let Some(direction) = style
-            .layout
-            .as_ref()
-            .and_then(|layout| layout.flex_direction)
-        {
-            self.direction = direction;
+        if let Some(layout) = &style.layout {
+            self.direction = layout.flex_direction.unwrap_or(self.direction);
+            self.justify_content = layout.justify_content.unwrap_or(self.justify_content);
+            self.align_items = layout.align_items.unwrap_or(self.align_items);
         }
         self.gap = match self.direction {
             FlexDirection::Row | FlexDirection::RowReverse => style.column_gap,
@@ -409,7 +407,19 @@ impl AnyElement {
                     parent,
                     index,
                     ..
-                } => scene.mount_at(parent, index, body)?,
+                } => {
+                    let align_self = style
+                        .layout
+                        .as_ref()
+                        .and_then(|layout| layout.align_self)
+                        .unwrap_or(Align::Auto);
+                    let item = crate::layout::FlexItemStyle {
+                        align_self,
+                        auto_width: style.width == crate::Length::Auto,
+                        auto_height: style.height == crate::Length::Auto,
+                    };
+                    scene.mount_entry(parent, Some(index), body, item)?
+                }
             };
             Ok(Installation {
                 node: MountedNode::new::<E>(
@@ -629,6 +639,8 @@ pub type Div = Node<FlexLayout>;
 pub fn div() -> Div {
     element(FlexLayout {
         direction: FlexDirection::Column,
+        justify_content: crate::style::Distribution::Start,
+        align_items: Align::Start,
         gap: px(0.0),
     })
 }

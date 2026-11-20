@@ -37,6 +37,10 @@ impl<T: Copy> Edges<T> {
 pub type Margins = Edges<Margin>;
 
 impl Margins {
+    pub(crate) fn has_auto_horizontal(self) -> bool {
+        self.left == Margin::Auto || self.right == Margin::Auto
+    }
+
     pub(crate) fn horizontal(self) -> Result<Pixels> {
         add(self.left.fixed_or_zero(), self.right.fixed_or_zero())
     }
@@ -99,24 +103,10 @@ impl Column {
         assigned: Size,
         stretch: Option<usize>,
     ) -> Result<LayoutOutput> {
-        self.arrange(cx, assigned, stretch, false)
-    }
-
-    pub(crate) fn arrange(
-        &self,
-        cx: &mut LayoutContext<'_, '_>,
-        assigned: Size,
-        stretch: Option<usize>,
-        reverse: bool,
-    ) -> Result<LayoutOutput> {
         let inset = add(self.padding.left, self.padding.right)?;
         let inner_width = assigned.width.saturating_sub(inset);
         let query = Query::Exact(inner_width);
-        let mut cursor = if reverse {
-            self.padding.bottom
-        } else {
-            self.padding.top
-        };
+        let mut cursor = self.padding.top;
         let mut content = Size {
             width: inset,
             height: self.padding.top,
@@ -127,18 +117,8 @@ impl Column {
                 cursor = add(cursor, self.gap)?;
             }
             let (child, margin) = cx.measure_stack_item(index, query)?;
-            let (leading, trailing) = if reverse {
-                (margin.bottom, margin.top)
-            } else {
-                (margin.top, margin.bottom)
-            };
-            cursor = add(cursor, leading.fixed_or_zero())?;
-            let end = add(cursor, child.size.height)?;
-            let y = if reverse {
-                assigned.height - end
-            } else {
-                cursor
-            };
+            let y = add(cursor, margin.top.fixed_or_zero())?;
+            let end = add(y, child.size.height)?;
             let available = margin.inner_width(inner_width)?;
             let mut size = child.size;
             if stretch == Some(index) {
@@ -157,10 +137,8 @@ impl Column {
             content.height = content
                 .height
                 .max(add(y, child.size.height.max(output.content.height))?);
-            cursor = add(end, trailing.fixed_or_zero())?;
-            if !reverse {
-                content.height = content.height.max(cursor);
-            }
+            cursor = add(end, margin.bottom.fixed_or_zero())?;
+            content.height = content.height.max(cursor);
         }
         content.height = add(content.height, self.padding.bottom)?;
         Ok(LayoutOutput {
@@ -168,13 +146,10 @@ impl Column {
             content,
         })
     }
+}
 
-    pub(crate) fn measure_stack(
-        &self,
-        cx: &mut MeasureContext<'_, '_>,
-        query: Query,
-        reverse: bool,
-    ) -> Result<Metrics> {
+impl LayoutNode for Column {
+    fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
         let child_query = self.child_query(query)?;
         let mut height = self.padding.top;
         let mut width = Pixels::default();
@@ -186,20 +161,7 @@ impl Column {
             let (child, margin) = cx.measure_stack_item(index, child_query)?;
             height = add(height, margin.top.fixed_or_zero())?;
             if index == 0 {
-                baseline = if reverse {
-                    // Distance from the bottom edge to the first child's baseline.
-                    child
-                        .baseline
-                        .map(|value| {
-                            add(
-                                add(self.padding.bottom, margin.bottom.fixed_or_zero())?,
-                                child.size.height - value,
-                            )
-                        })
-                        .transpose()?
-                } else {
-                    child.baseline.map(|value| add(value, height)).transpose()?
-                };
+                baseline = child.baseline.map(|value| add(value, height)).transpose()?;
             }
             height = add(
                 add(height, child.size.height)?,
@@ -208,9 +170,6 @@ impl Column {
             width = width.max(add(child.size.width, margin.horizontal()?)?);
         }
         let height = add(height, self.padding.bottom)?.max(Pixels::default());
-        if reverse {
-            baseline = baseline.map(|distance| height - distance);
-        }
         Ok(Metrics {
             size: Size {
                 width: query.resolve(add(width, add(self.padding.left, self.padding.right)?)?),
@@ -218,12 +177,6 @@ impl Column {
             },
             baseline: baseline.filter(|b| b.is_extent() && *b <= height),
         })
-    }
-}
-
-impl LayoutNode for Column {
-    fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
-        self.measure_stack(cx, query, false)
     }
 
     fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {

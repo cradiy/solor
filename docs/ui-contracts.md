@@ -100,6 +100,35 @@ children. Horizontal flow uses the column gap (`gap_x`), vertical flow uses
 the row gap (`gap_y`), and `gap` sets both. Reverse directions start placement
 at the far edge while keeping child identity and declaration order.
 
+Use `.justify_center()` or `.justify_end()` to place the whole line, and
+`.justify_between()`, `.justify_around()` or `.justify_evenly()` to distribute
+surplus space in addition to the declared gap. Main-axis auto margins share
+positive free space before alignment. When the line overflows, distributed
+spacing falls back to the start edge. Center and end keep their alignment
+even when this places some content before the start edge.
+
+Use `.items_start()`, `.items_center()` or `.items_end()` to position children
+on the cross axis. A child can override its container using `.self_start()`,
+`.self_center()` or `.self_end()`. The default is start. Alignment uses the
+child's margin box within the container's padded content area. Auto margins
+on that axis take precedence. Reversing the main axis preserves the cross-axis
+direction.
+
+Use `.items_stretch()` for a line or `.self_stretch()` for one child. A child
+with an automatic cross size fills the content area between its fixed margins.
+An explicit cross size or an automatic cross-axis margin keeps the child's
+measured size. A column with a definite width measures stretched children at
+their allocated width, so wrapped text contributes its resulting height to
+the line.
+
+In a row, `.items_baseline()` aligns the first baselines of its children.
+Use `.self_baseline()` to join that group from an individual child. A child
+without a baseline participates at its bottom border edge. A vertical auto
+margin takes precedence. The preferred row height accommodates the largest
+measured extent above the baseline and the largest below it, including fixed
+margins. A nested row exposes its shared baseline to its parent. In a column,
+baseline alignment uses the start edge of the horizontal axis.
+
 Horizontal flow measures each child against the container's content width
 less its fixed margins. The line can overflow when the combined preferred
 widths and gaps exceed its allocation. Automatic horizontal margins share
@@ -110,7 +139,7 @@ Vertical flow measures and places child border boxes with their margins.
 Adjacent vertical margins add to the row gap. Signed margins can overlap
 siblings. Fixed horizontal margins reduce the width available to the child.
 One automatic horizontal margin takes the remaining positive space, and two
-share it equally. Automatic vertical margins contribute zero. Percentages on
+share it equally. Automatic vertical margins share surplus height during placement. Percentages on
 all four edges use the column's content width. Their intrinsic contribution
 is zero while that width is indefinite, and placement resolves them against
 the assigned width. Root margins do not change the host's viewport allocation.
@@ -166,7 +195,7 @@ expresses placement but does not yet move a child or remove it from column flow.
 | Priority and capability | Required behavior and acceptance case |
 | --- | --- |
 | 1. Frame composition, clipping and hit testing | Compose parent-local coordinates, scale, clips and sibling order into one accepted frame. Move a rounded card over another target, fail one submission, then retry. Pixels and click targets must agree with the last accepted frame. Old bounds must be repaired when a wrapped label moves its siblings. |
-| 2. Sizing, placement and scrolling | Apply min/max sizing, positioning and per-edge borders during measurement and placement. Resolve row and column alignment, stretch, grow/shrink and overflow. Validate a long label between a fixed icon and an action at narrow and wide widths. Scrolling must share the visual clip and hit-test transform. |
+| 2. Sizing, placement and scrolling | Apply min/max sizing, positioning and per-edge borders during measurement and placement. Resolve grow/shrink and overflow. Validate a long label between a fixed icon and an action at narrow and wide widths. Scrolling must share the visual clip and hit-test transform. |
 | 3. Input and state-dependent styles | Connect platform pointer adapters and define propagation, keyboard focus, tab order and actions. Define precedence for hover, press, focus and disabled states, including removing an override. Validate a pressed element that moves, loses capture or unmounts before release. |
 | 4. Text, editing and semantics | Apply font selection and fallback, weight, wrapping/truncation and decoration. Define editable ranges, composition, caret bounds and accessibility actions. A bilingual field must expose the same selection to keyboard, IME and assistive input. Preserve explicit units when converting platform text ranges. |
 | 5. Paint and animation | Define border and shadow paint order, opacity of overlapping descendants, transformed and rounded clipping, and animation timing. A frame-clock repaint must stop on unmount. CPU replay must draw every gradient stop, preserve hard edges and match the declared interpolation. A GPU representation needs equivalent output and a resource lifetime through submission. |

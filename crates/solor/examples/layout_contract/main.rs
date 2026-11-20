@@ -5,7 +5,7 @@ const MEASUREMENT_CACHE_SLOTS: usize = 3;
 
 #[path = "../../src/column.rs"]
 mod column;
-use solor::{Pixels, node_store, tree};
+use solor::{Pixels, node_store, style::Align, tree};
 mod fixtures;
 #[allow(dead_code, reason = "the fixture exercises a subset of the layout API")]
 mod layout;
