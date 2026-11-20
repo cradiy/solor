@@ -685,6 +685,61 @@ fn hover_without_a_tooltip_tracks_mouse_presence_across_accepted_frames() -> Res
 }
 
 #[test]
+fn hover_position_follows_accepted_padding_and_the_remaining_mouse() -> Result<()> {
+    use std::cell::RefCell;
+
+    let mut ui = Ui::new();
+    let padding = ui.context().signal(px(2.0));
+    let positions = Rc::new(RefCell::new(Vec::new()));
+    let moves = Rc::new(Cell::new(0));
+    let view = ui.mount(component(|_| {
+        let positions = positions.clone();
+        let moves = moves.clone();
+        div()
+            .p(padding)
+            .on_hover_position(move |hover, _| {
+                positions
+                    .borrow_mut()
+                    .push(hover.map(|h| (h.position.x, h.size.width)));
+                Ok(())
+            })
+            .child(div().size(px(30.0)).on_pointer_move(move |_, _| {
+                moves.set(moves.get() + 1);
+                Ok(())
+            }))
+    }))?;
+    let first = sample(7, 12.0, 12.0);
+    let second = sample(3, 22.0, 12.0);
+    ui.dispatch_pointer(view, Move(first))?;
+    accept(&mut ui, view, 80.0)?;
+    assert_eq!(positions.take(), [Some((px(10.0), px(76.0)))]);
+    ui.dispatch_pointer(view, Move(second))?;
+    assert_eq!(positions.take(), [Some((px(20.0), px(76.0)))]);
+    ui.context().set(padding, px(5.0))?;
+    ui.flush()?;
+    ui.layout(
+        view,
+        Size {
+            width: px(80.0),
+            height: px(40.0),
+        },
+    )?;
+    let changed = ui.prepare_pointer_frame(view)?;
+    assert!(positions.borrow().is_empty());
+    ui.accept_pointer_frame(changed)?;
+    assert_eq!(positions.take(), [Some((px(17.0), px(70.0)))]);
+    accept(&mut ui, view, 80.0)?;
+    ui.dispatch_pointer(view, Move(second))?;
+    assert!(positions.borrow().is_empty());
+    assert_eq!(moves.get(), 2);
+    ui.dispatch_pointer(view, Leave(second.id))?;
+    assert_eq!(positions.take(), [Some((px(7.0), px(70.0)))]);
+    ui.cancel_pointers(view)?;
+    assert_eq!(positions.take(), [None]);
+    Ok(())
+}
+
+#[test]
 fn tooltip_without_a_callback_waits_cancels_and_draws_above_the_owner() -> Result<()> {
     use solor::Draw;
     let mut ui = Ui::with_font(

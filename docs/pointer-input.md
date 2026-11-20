@@ -70,6 +70,14 @@ div().bg(fill).on_hover(move |inside, cx| {
 })
 ```
 
+For a crosshair or sample readout, use `.on_hover_position(|hover, cx| ...)`.
+While a mouse is over the subtree, `hover` contains its position relative to
+the content origin and the content size in logical pixels. The callback runs
+on entry and when either value changes, including after a resize with the
+mouse at rest. With several mice over the same subtree, the most recently
+sampled one supplies the position. Leaving reveals the remaining mouse or
+delivers `None` when the subtree is empty.
+
 ### Text tooltips
 
 Attach `.tooltip("Show or hide the native window frame")` to a control in a

@@ -208,7 +208,10 @@ impl HitGeometry {
                         padding: handlers.padding,
                     },
                 );
-                if handlers.hover.is_some() || handlers.tooltip.is_some() {
+                if handlers.hover.is_some()
+                    || handlers.hover_position.is_some()
+                    || handlers.tooltip.is_some()
+                {
                     frame.hover_parents.insert(id, recipients.hover);
                     recipients.hover = Some(id);
                 }

@@ -14,6 +14,7 @@ history. The green price line and amber 16-sample moving average share the same
 axis. A translucent polygon marks the area under the price line. Scroll vertically over the plot to zoom its latest 12 to 96 samples.
 The price axis retains the full history range. Moving the mouse over the plot
 marks the nearest visible sample and shows its price and moving average.
+Resizing the plot updates the selection under a stationary mouse.
 Zooming selects the nearest sample in the new range at the same horizontal
 fraction. Each instrument owns a signal
 with a fixed-size history updated in place. The chart reads the selected

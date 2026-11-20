@@ -1,7 +1,6 @@
 use solor::{
     Context, Div, SharedString, Signal, div,
     layout::{Origin, Size},
-    pointer::PointerKind,
     px, rgb, rgba,
 };
 
@@ -155,23 +154,13 @@ pub(super) fn chart(
         }
         Ok(())
     });
-    plot.on_pointer_move(move |event, cx| {
-        if event.sample.kind == PointerKind::Mouse {
-            let size = event.content_size();
-            let inset = plot_inset(size);
-            let span = size.width.get() - 2.0 * inset;
-            let fraction = (span > 0.0)
-                .then(|| ((event.content_position().x.get() - inset) / span).clamp(0.0, 1.0));
-            cx.set(inspection.fraction, fraction)?;
-            inspection.locate(cx, *cx.read(visible)?, feed[*cx.read(selected)?])?;
-        }
-        Ok(())
-    })
-    .on_hover(move |inside, cx| {
-        if !inside {
-            cx.set(inspection.fraction, None)?;
-            inspection.locate(cx, *cx.read(visible)?, feed[*cx.read(selected)?])?;
-        }
-        Ok(())
+    plot.on_hover_position(move |hover, cx| {
+        let fraction = hover.and_then(|hover| {
+            let inset = plot_inset(hover.size);
+            let span = hover.size.width.get() - 2.0 * inset;
+            (span > 0.0).then(|| ((hover.position.x.get() - inset) / span).clamp(0.0, 1.0))
+        });
+        cx.set(inspection.fraction, fraction)?;
+        inspection.locate(cx, *cx.read(visible)?, feed[*cx.read(selected)?])
     })
 }

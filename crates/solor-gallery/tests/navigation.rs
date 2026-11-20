@@ -363,6 +363,59 @@ fn market_view() -> Result<(solor::Ui, solor::ViewId)> {
 }
 
 #[test]
+fn resized_market_keeps_the_inspection_marker_under_a_stationary_mouse() -> Result<()> {
+    use solor::Draw;
+
+    let (mut ui, view) = market_view()?;
+    submit_labels(&mut ui, view)?;
+    let pause = mouse_at(750.0, 85.0);
+    ui.dispatch_pointer(view, PointerInput::Down(pause, PointerButton::Primary))?;
+    ui.dispatch_pointer(view, PointerInput::Up(pause, PointerButton::Primary))?;
+    let mouse = mouse_at(550.0, 330.0);
+    ui.dispatch_pointer(view, PointerInput::Move(mouse))?;
+    submit_labels(&mut ui, view)?;
+
+    let resized = Size {
+        width: px(1000.0),
+        height: px(560.0),
+    };
+    ui.layout(view, resized)?;
+    let frame = ui.record_frame(view)?;
+    ui.accept_pointer_frame(frame.into_pointer_frame())?;
+    ui.flush()?;
+    ui.layout(view, resized)?;
+    let frame = ui.record_frame(view)?;
+    let expected = frame
+        .draws()
+        .iter()
+        .find_map(|draw| {
+            let Draw::Polyline { origin, points, .. } = draw else {
+                return None;
+            };
+            points.iter().map(|p| origin.x + p.x).min_by(|a, b| {
+                (a.get() - mouse.position.x.get())
+                    .abs()
+                    .total_cmp(&(b.get() - mouse.position.x.get()).abs())
+            })
+        })
+        .expect("nearest market sample");
+    let marker = frame
+        .draws()
+        .iter()
+        .find_map(|draw| match draw {
+            Draw::Fill { origin, size, .. } if size.width == px(5.0) && size.height == px(5.0) => {
+                Some(origin.x + px(2.5))
+            }
+            _ => None,
+        })
+        .expect("inspection marker");
+    assert_eq!(marker, expected);
+    ui.accept_pointer_frame(frame.into_pointer_frame())?;
+    assert!(ui.next_redraw(view).is_none());
+    Ok(())
+}
+
+#[test]
 fn inspected_price_and_average_follow_the_sample_as_it_moves_through_history() -> Result<()> {
     let (mut ui, view) = market_view()?;
     submit_labels(&mut ui, view)?;

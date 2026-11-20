@@ -77,6 +77,15 @@ pub struct ScrollDelta {
     pub y: crate::Pixels,
 }
 
+/// Physical mouse location in an element's accepted content box.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HoverPosition {
+    /// Logical coordinates relative to the content origin. Padding lies outside the content.
+    pub position: Origin,
+    /// Logical dimensions of the content box used by the paint callback.
+    pub size: Size,
+}
+
 /// Scroll delivered to the nearest listening element under the pointer.
 #[derive(Clone, Copy, Debug)]
 pub struct ScrollEvent {
@@ -172,6 +181,8 @@ impl DerefMut for PointerDownContext<'_> {
 
 type HoverHandler = Box<dyn Fn(bool, &mut Context<'_>) -> Result<()>>;
 
+type HoverPositionHandler = Box<dyn Fn(Option<HoverPosition>, &mut Context<'_>) -> Result<()>>;
+
 type DownHandler = Box<dyn Fn(&PointerEvent, &mut PointerDownContext<'_>) -> Result<()>>;
 type PositionHandler = Box<dyn Fn(&PointerEvent, &mut Context<'_>) -> Result<()>>;
 type ScrollHandler = Box<dyn Fn(&ScrollEvent, &mut Context<'_>) -> Result<()>>;
@@ -181,6 +192,7 @@ type CancelHandler = Box<dyn Fn(PointerId, &mut Context<'_>) -> Result<()>>;
 pub(crate) struct Handlers {
     pub(crate) padding: crate::styled_body::ContentInsets,
     hover: Option<HoverHandler>,
+    hover_position: Option<HoverPositionHandler>,
     pub(crate) tooltip: Option<Box<Tooltip>>,
     control: Option<crate::WindowControl>,
     down: Option<DownHandler>,
@@ -257,6 +269,10 @@ impl<E: crate::Element> crate::Node<E> {
     pointer_handlers! {
         /// Notifies when the first mouse enters this subtree or the last mouse leaves it.
         on_hover => hover (bool, &mut Context<'_>);
+        /// Observes the most recently sampled mouse over this subtree, independently of capture.
+        /// Reports changes in content coordinates or dimensions after input or frame acceptance,
+        /// and reports `None` when the last mouse leaves.
+        on_hover_position => hover_position (Option<HoverPosition>, &mut Context<'_>);
         /// Handles positioned scroll input over this element and its descendants without a closer scroll listener.
         on_scroll => scroll (&ScrollEvent, &mut Context<'_>);
         /// Handles a button press on this element. The callback can capture the pointer.

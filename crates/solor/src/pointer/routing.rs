@@ -8,6 +8,7 @@ use super::{
     Handlers, PointerButton, PointerDownContext, PointerEvent, PointerFrame, PointerId,
     PointerInput, PointerSample, ScrollDelta, ScrollEvent,
     frame::{HitGeometry, Recipients},
+    hover::HoverChange,
 };
 use crate::{
     Context, Instance, NodeId, Result, Ui, ViewId, WindowControl, element::MountedNode,
@@ -101,15 +102,24 @@ impl Delivery<'_> {
             .tooltips
             .reconcile(&router.hover, self.tooltip_style, &self.instance.bodies);
         let mut result = Ok(());
-        for (id, entered) in changes {
+        for (id, change) in changes {
             let node = self
                 .instance
                 .bodies
                 .get_mut(&id)
                 .expect("live hover listener");
             let (handlers, mut cx) = context_and_handlers(node, self.state, self.engine);
-            if let Some(handler) = &handlers.hover {
-                result = result.and(handler(entered, &mut cx));
+            match change {
+                HoverChange::Presence(entered) => {
+                    if let Some(handler) = &handlers.hover {
+                        result = result.and(handler(entered, &mut cx));
+                    }
+                }
+                HoverChange::Position(position) => {
+                    if let Some(handler) = &handlers.hover_position {
+                        result = result.and(handler(position, &mut cx));
+                    }
+                }
             }
         }
         result
