@@ -372,6 +372,7 @@ impl DependencyRecords {
 #[derive(Clone, Copy)]
 pub(crate) struct FlexItemStyle {
     pub(crate) grow: f32,
+    pub(crate) shrink: f32,
     pub(crate) align_self: Align,
     pub(crate) auto_width: bool,
     pub(crate) auto_height: bool,
@@ -381,6 +382,7 @@ impl Default for FlexItemStyle {
     fn default() -> Self {
         Self {
             grow: 0.0,
+            shrink: 0.0,
             align_self: Align::Auto,
             auto_width: true,
             auto_height: true,
@@ -389,6 +391,10 @@ impl Default for FlexItemStyle {
 }
 
 impl FlexItemStyle {
+    pub(super) fn is_flexible(self) -> bool {
+        self.grow > 0.0 || self.shrink > 0.0
+    }
+
     pub(crate) fn alignment(self, parent: Align) -> Align {
         if self.align_self == Align::Auto {
             parent
@@ -402,7 +408,8 @@ pub(crate) struct MeasuredItem {
     pub(crate) metrics: Metrics,
     pub(crate) margins: Margins,
     pub(crate) style: FlexItemStyle,
-    pub(crate) growth_limit: Option<Pixels>,
+    pub(super) main_limits: SizeRange,
+    pub(super) shrink_inset: Pixels,
     height_limits: Option<AxisLimits>,
 }
 
@@ -557,28 +564,32 @@ impl MeasureContext<'_, '_> {
             .access
             .child(index)
             .ok_or(LayoutError::MissingChild(index))?;
-        let (result, style, height_limits, main_limits) =
+        let (result, style, height_limits, main_limits, shrink_inset) =
             self.access.execute_child(id, |entry, access| {
-                let main_limits = match (entry.item_style.grow > 0.0, mode, &entry.item_sizing) {
-                    (true, ItemQuery::Row(_), Some(s)) => {
-                        s.width.as_ref().map(|w| (w.bounds, self.child_basis.width))
-                    }
-                    (true, ItemQuery::Column(_, _), Some(s)) => {
-                        s.height.map(|h| (h, self.child_basis.height))
-                    }
-                    _ => None,
-                };
+                let (main_limits, shrink_inset) =
+                    match (entry.item_style.is_flexible(), mode, &entry.item_sizing) {
+                        (true, ItemQuery::Row(_), Some(s)) => (
+                            s.width.as_ref().map(|w| (w.bounds, self.child_basis.width)),
+                            s.shrink_inset.width,
+                        ),
+                        (true, ItemQuery::Column(_, _), Some(s)) => (
+                            s.height.map(|h| (h, self.child_basis.height)),
+                            s.shrink_inset.height,
+                        ),
+                        _ => (None, Pixels::default()),
+                    };
                 Ok((
                     measure_item(entry, access, query, self.child_basis, self.force, mode),
                     entry.item_style,
                     entry.item_sizing.as_ref().and_then(|limits| limits.height),
                     main_limits,
+                    shrink_inset,
                 ))
             })?;
         let (metrics, margins) = result?;
-        let growth_limit = match main_limits {
-            Some((limits, basis)) => limits.resolve(basis)?.upper(),
-            None => None,
+        let main_limits = match main_limits {
+            Some((limits, basis)) => limits.resolve(basis)?,
+            None => SizeRange::default(),
         };
         #[cfg(feature = "layout-audit")]
         self.reads.push(Read::Measure {
@@ -595,7 +606,8 @@ impl MeasureContext<'_, '_> {
             margins,
             style,
             height_limits,
-            growth_limit,
+            main_limits,
+            shrink_inset,
         })
     }
 }
@@ -642,6 +654,7 @@ fn measure_item(
     };
     let query = match item_basis {
         ItemBasis::Width(Some(width)) => Query::Exact(width),
+        _ if mode == ItemQuery::Row(None) && entry.item_style.shrink > 0.0 => Query::Natural,
         _ => query,
     };
     let input = MeasureInput {

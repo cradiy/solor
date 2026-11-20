@@ -121,13 +121,21 @@ impl<E> StyledBody<E> {
                     height: self.sizing_extra(self.inset.height),
                 },
             });
-        Ok(
-            (width.is_some() || height.is_some() || basis.is_some()).then_some(ItemSizing {
-                width,
-                height,
-                basis,
-            }),
-        )
+        let shrink_inset = if layout.flex_shrink.unwrap_or_default() > 0.0 {
+            self.inset
+        } else {
+            Size::default()
+        };
+        Ok((width.is_some()
+            || height.is_some()
+            || basis.is_some()
+            || shrink_inset != Size::default())
+        .then_some(ItemSizing {
+            shrink_inset,
+            width,
+            height,
+            basis,
+        }))
     }
 }
 

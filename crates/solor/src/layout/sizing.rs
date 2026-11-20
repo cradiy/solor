@@ -110,6 +110,7 @@ impl FlexBasis {
 }
 
 pub(crate) struct ItemSizing {
+    pub(crate) shrink_inset: Size,
     pub(crate) basis: Option<FlexBasis>,
     pub(crate) width: Option<WidthLimits>,
     pub(crate) height: Option<AxisLimits>,
@@ -138,7 +139,11 @@ impl AxisLimits {
 }
 
 impl SizeRange {
-    pub(super) fn upper(self) -> Option<Pixels> {
+    pub(crate) fn lower(self) -> Pixels {
+        self.min.unwrap_or_default()
+    }
+
+    pub(crate) fn upper(self) -> Option<Pixels> {
         self.max.map(|max| max.max(self.min.unwrap_or_default()))
     }
 

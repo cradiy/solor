@@ -6,7 +6,9 @@ use super::{
 };
 use crate::style::{Align, Distribution};
 mod grow;
+mod shrink;
 use grow::Growth;
+use shrink::{Shrink, ShrinkPlan};
 
 /// Main axis and placement order for a container's children.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,7 +66,7 @@ impl FlexLayout {
     fn measure_row(&self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
         let mut size = Size::default();
         let mut first = None;
-        let mut has_growth = false;
+        let mut has_flexible_items = false;
         let mut ascent = None;
         let mut descent = None;
         let available = match query {
@@ -74,7 +76,7 @@ impl FlexLayout {
         let mut items = LineItems::new(self, cx.child_count(), available, false);
         for index in 0..cx.child_count() {
             let item = items.item(index, |i, mode| cx.measure_item(i, query, mode))?;
-            has_growth |= item.style.grow > 0.0;
+            has_flexible_items |= item.style.is_flexible();
             let (child, margins) = (item.metrics, item.margins);
             let top = margins.top.fixed_or_zero();
             let bottom = margins.bottom.fixed_or_zero();
@@ -99,9 +101,9 @@ impl FlexLayout {
             }
         }
         size.width = query.resolve(size.width.max(px(0.0)));
-        if has_growth && available.is_none() {
+        if has_flexible_items && available.is_none() {
             // A shrink-wrapped row now has a used width. Measure its line height
-            // with percentage bases and growth resolved at that width.
+            // with percentage bases and flexible sizes resolved at that width.
             cx.set_child_containing_block(ContainingBlock {
                 width: Some(size.width),
                 height: cx.definite_content_height(),
@@ -132,11 +134,11 @@ impl FlexLayout {
         let mut line = LineTotals::default();
         let mut width = px(0.0);
         let mut first = None;
-        let mut has_growth = false;
+        let mut has_flexible_items = false;
         let mut items = LineItems::new(self, cx.child_count(), cx.definite_content_height(), false);
         for index in 0..cx.child_count() {
             let item = items.item(index, |i, mode| cx.measure_item(i, query, mode))?;
-            has_growth |= item.style.grow > 0.0;
+            has_flexible_items |= item.style.is_flexible();
             let (child, margins) = (item.metrics, item.margins);
             let (extent, before, after) = self.direction.main_axis(child.size, margins);
             line.push(extent, before, after, self.gap)?;
@@ -148,7 +150,7 @@ impl FlexLayout {
         let height = cx
             .definite_content_height()
             .unwrap_or(line.occupied.max(px(0.0)));
-        if has_growth && cx.definite_content_height().is_none() {
+        if has_flexible_items && cx.definite_content_height().is_none() {
             cx.set_child_containing_block(ContainingBlock {
                 width: match query {
                     Query::Exact(width) => Some(width),
@@ -206,7 +208,10 @@ impl FlexLayout {
                 child.size.height = item.stretch_height(available, assigned.height)?;
             }
             let (extent, leading, trailing) = self.direction.main_axis(child.size, margins);
-            let spacing = items.plan.unwrap_or_default().spacing;
+            let spacing = items
+                .plan
+                .as_ref()
+                .map_or_else(LineSpacing::default, |p| p.spacing);
             if index == 0 {
                 cursor = spacing.start;
             } else {
@@ -288,9 +293,14 @@ impl FlexLayout {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
+enum Allocation {
+    Grow(f64),
+    Shrink(ShrinkPlan),
+}
+
 struct LinePlan {
-    unit: f64,
+    allocation: Allocation,
     spacing: LineSpacing,
 }
 
@@ -346,9 +356,10 @@ impl<'a> LineItems<'a> {
                 Distribution::Start | Distribution::Stretch
             ) || before == Margin::Auto
                 || after == Margin::Auto);
-        if self.plan.is_none() && (item.style.grow > 0.0 || needs_spacing) {
+        if self.plan.is_none() && (item.style.is_flexible() || needs_spacing) {
             let mut line = LineTotals::default();
             let mut growth = Growth::default();
+            let mut shrink = Shrink::default();
             for i in 0..self.count {
                 let measured;
                 let child = if i == index {
@@ -362,27 +373,39 @@ impl<'a> LineItems<'a> {
                     .direction
                     .main_axis(child.metrics.size, child.margins);
                 line.push(extent, before, after, self.flex.gap)?;
-                growth.push(child.style.grow, extent, child.growth_limit);
+                growth.push(child.style.grow, extent, child.main_limits.upper());
+                shrink.push(extent, child);
             }
             let free = add(available, line.occupied * -1.0)?;
-            let (unit, remaining) = growth.resolve(free);
+            let (allocation, remaining) = if free < px(0.0) {
+                let (plan, remaining) = shrink.resolve(free * -1.0);
+                (Allocation::Shrink(plan), remaining)
+            } else {
+                let (unit, remaining) = growth.resolve(free);
+                (Allocation::Grow(unit), remaining)
+            };
             self.plan = Some(LinePlan {
-                unit,
+                allocation,
                 spacing: line.spacing(remaining, self.flex.justify_content),
             });
         }
-        if let Some(plan) = self.plan
-            && plan.unit > 0.0
-            && item.style.grow > 0.0
-        {
-            let width_or_height = f64::from(base) + plan.unit * f64::from(item.style.grow);
-            let used = px(item.growth_limit.map_or(width_or_height, |limit| {
-                width_or_height.min(f64::from(limit))
-            }) as f32);
+        if let Some(plan) = &self.plan {
+            let used = match plan.allocation {
+                Allocation::Shrink(shrink) => shrink.extent(base, &item),
+                Allocation::Grow(unit) if unit > 0.0 && item.style.grow > 0.0 => {
+                    let grown = f64::from(base) + unit * f64::from(item.style.grow);
+                    px(item
+                        .main_limits
+                        .upper()
+                        .map_or(grown, |max| grown.min(f64::from(max)))
+                        as f32)
+                }
+                Allocation::Grow(_) => base,
+            };
             if !used.is_extent() {
                 return Err(LayoutError::InvalidSize);
             }
-            if used > base {
+            if used != base {
                 return measure(index, self.mode(Some(used)));
             }
         }

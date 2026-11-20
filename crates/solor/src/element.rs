@@ -403,7 +403,12 @@ impl AnyElement {
                 .as_ref()
                 .and_then(|layout| layout.flex_grow)
                 .unwrap_or_default();
-            if !grow.is_finite() || grow < 0.0 {
+            let shrink = style
+                .layout
+                .as_ref()
+                .and_then(|layout| layout.flex_shrink)
+                .unwrap_or_default();
+            if [grow, shrink].iter().any(|f| !f.is_finite() || *f < 0.0) {
                 return Err(crate::layout::LayoutError::InvalidSize.into());
             }
             node.body.prepare_content(&style)?;
@@ -424,6 +429,7 @@ impl AnyElement {
                         .unwrap_or(Align::Auto);
                     let item = crate::layout::FlexItemStyle {
                         grow,
+                        shrink,
                         align_self,
                         auto_width: style.width == crate::Length::Auto,
                         auto_height: style.height == crate::Length::Auto,
