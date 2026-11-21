@@ -6,7 +6,8 @@ use std::{cell::Cell, time::Duration};
 
 use anyhow::Result;
 use solor::{
-    Context, Div, Fill, IntoElement, SharedString, Signal, Styled, component, div, px, rgb, text,
+    Context, Div, Fill, IntoElement, SharedString, Signal, Styled, component, div,
+    pointer::ScrollDelta, px, rgb, text,
 };
 
 use crate::label;
@@ -400,12 +401,17 @@ pub(super) fn market() -> impl IntoElement {
                     .items_stretch()
                     .gap(px(6.0))
                     .on_scroll(move |event, cx| {
-                        let next =
-                            (zoom.get() + event.delta.y.get() * 0.5).clamp(12.0, PERIODS as f32);
-                        if next == zoom.get() {
-                            cx.propagate();
-                            return Ok(());
-                        }
+                        let current = zoom.get();
+                        let pixels_per_sample = 2.0;
+                        let used_y = event.delta.y.get().clamp(
+                            (12.0 - current) * pixels_per_sample,
+                            (PERIODS as f32 - current) * pixels_per_sample,
+                        );
+                        cx.propagate_remaining(ScrollDelta {
+                            x: event.delta.x,
+                            y: event.delta.y - px(used_y),
+                        })?;
+                        let next = current + used_y / pixels_per_sample;
                         zoom.set(next);
                         let count = next.round() as usize;
                         if count != *cx.read(visible)? {

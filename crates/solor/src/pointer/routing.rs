@@ -217,7 +217,7 @@ impl Delivery<'_> {
         Ok(None)
     }
 
-    fn scroll(&mut self, sample: PointerSample, delta: ScrollDelta) -> Result<()> {
+    fn scroll(&mut self, sample: PointerSample, mut delta: ScrollDelta) -> Result<()> {
         let Some(mut owner) = self.hit(sample, |r| r.scroll) else {
             return Ok(());
         };
@@ -238,10 +238,12 @@ impl Delivery<'_> {
             let scroll = handlers.scroll.as_ref().expect("accepted scroll listener");
             let mut cx = ScrollContext {
                 context,
-                propagate: false,
+                received: delta,
+                remaining: ScrollDelta::default(),
             };
             scroll(&ScrollEvent { pointer, delta }, &mut cx)?;
-            if !cx.propagate {
+            delta = cx.remaining;
+            if delta == ScrollDelta::default() {
                 break;
             }
             let Some(parent) = frame.scroll_parent(owner) else {

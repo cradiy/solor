@@ -622,6 +622,60 @@ fn nested_scroll_handoff_uses_each_listeners_accepted_coordinates() -> Result<()
 }
 
 #[test]
+fn each_scroll_listener_can_forward_only_its_available_distance() -> Result<()> {
+    use solor::pointer::{PointerInput::Scroll, ScrollDelta};
+
+    let mut ui = Ui::new();
+    let request = ui.context().signal(None::<ScrollDelta>);
+    let delivered = ui.context().signal(Vec::new());
+    let view = ui.mount(component(|_| {
+        div()
+            .items_stretch()
+            .on_scroll(move |event, cx| cx.update(delivered, |log| log.push(event.delta)))
+            .child(
+                div()
+                    .items_stretch()
+                    .on_scroll(move |_, cx| {
+                        if let Some(part) = *cx.read(request)? {
+                            cx.propagate_remaining(part)?;
+                        } else {
+                            cx.propagate();
+                        }
+                        Ok(())
+                    })
+                    .child(div().h(px(16.0)).on_scroll(|event, cx| {
+                        cx.propagate_remaining(ScrollDelta {
+                            x: px(0.0),
+                            y: event.delta.y / 2.0,
+                        })
+                    })),
+            )
+    }))?;
+    accept(&mut ui, view, 80.0)?;
+    let delta = |x, y| ScrollDelta { x: px(x), y: px(y) };
+    let input = Scroll(sample(1, 4.0, 4.0), delta(1.5, -8.5));
+    for invalid in [
+        delta(0.0, -8.5),
+        delta(0.0, 1.0),
+        delta(0.5, 0.0),
+        delta(0.0, f32::NAN),
+        delta(0.0, f32::NEG_INFINITY),
+    ] {
+        ui.context().set(request, Some(invalid))?;
+        assert!(ui.dispatch_pointer(view, input).is_err());
+    }
+    for part in [Some(ScrollDelta::default()), None, Some(delta(0.0, -1.25))] {
+        ui.context().set(request, part)?;
+        ui.dispatch_pointer(view, input)?;
+    }
+    assert_eq!(
+        ui.context().read(delivered)?.as_slice(),
+        &[delta(0.0, -4.25), delta(0.0, -1.25)]
+    );
+    Ok(())
+}
+
+#[test]
 fn scroll_respects_clipping_and_keeps_a_retired_leaf_from_exposing_its_parent() -> Result<()> {
     use solor::pointer::{PointerInput::Scroll, ScrollDelta};
     let mut ui = Ui::new();

@@ -56,9 +56,14 @@ Use `.on_scroll(|event, cx| ...)` on any element to handle wheel or trackpad
 input. `event.delta.x` and `event.delta.y` are signed logical pixels, positive
 right and down. `event.pointer.local_position()` gives the position inside the
 listening element. A handler consumes the event by default. Call `cx.propagate()`
-when a control reaches its limit or ignores that axis. After the handler succeeds,
-the next listening ancestor receives the full delta with coordinates relative to
-its own accepted box. Each ancestor makes the same choice. On Wayland, axes reported in one pointer frame arrive together.
+to forward the entire delta. Use `cx.propagate_remaining(remainder)?` when a
+control handles one axis of a diagonal gesture or reaches a limit partway
+through a scroll. Each component of the remainder must lie between zero and the
+received value on that axis. A zero remainder ends delivery.
+
+After the handler succeeds, the next listening ancestor receives the forwarded
+distance in `event.delta`, with coordinates relative to its own accepted box.
+On Wayland, axes reported in one pointer frame arrive together.
 
 Use `.on_hover(|inside, cx| ...)` on any element to react to mouse presence.
 Entering a child keeps its ancestors hovered. The first mouse to enter a

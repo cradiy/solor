@@ -351,7 +351,12 @@ fn mouse_at(x: f32, y: f32) -> PointerSample {
 fn market_view() -> Result<(solor::Ui, solor::ViewId)> {
     let (mut ui, root) = gallery()?;
     let view = ui.mount(root)?;
-    submit_labels(&mut ui, view)?;
+    open_market(&mut ui, view)?;
+    Ok((ui, view))
+}
+
+fn open_market(ui: &mut solor::Ui, view: solor::ViewId) -> Result<()> {
+    submit_labels(ui, view)?;
     let point = mouse_at(461.0, 29.0);
     for input in [
         PointerInput::Down(point, PointerButton::Primary),
@@ -359,7 +364,58 @@ fn market_view() -> Result<(solor::Ui, solor::ViewId)> {
     ] {
         ui.dispatch_pointer(view, input)?;
     }
-    Ok((ui, view))
+    Ok(())
+}
+
+#[test]
+fn market_zoom_passes_unused_scroll_to_its_container() -> Result<()> {
+    use solor::{Styled, component, div, pointer::ScrollDelta};
+    use std::{cell::RefCell, rc::Rc};
+
+    let (mut ui, root) = gallery()?;
+    let passed = Rc::new(RefCell::new(Vec::new()));
+    let view = ui.mount(component(|_| {
+        let passed = passed.clone();
+        div()
+            .items_stretch()
+            .on_scroll(move |event, _| {
+                passed.borrow_mut().push(event.delta);
+                Ok(())
+            })
+            .child(root)
+    }))?;
+    open_market(&mut ui, view)?;
+    submit_labels(&mut ui, view)?;
+    let frame = ui.record_frame(view)?;
+    let point = frame
+        .draws()
+        .iter()
+        .find_map(|draw| match draw {
+            solor::Draw::Polyline { origin, points, .. } => {
+                let p = points[points.len() / 2];
+                Some(mouse_at((origin.x + p.x).get(), (origin.y + p.y).get()))
+            }
+            _ => None,
+        })
+        .expect("market price line");
+    let delta = |x, y| ScrollDelta { x: px(x), y: px(y) };
+    // The first half pixel adjusts continuous zoom without changing the rounded label.
+    for (input, labels, remainder) in [
+        (delta(1.25, -0.5), "96 samples", Some(delta(1.25, 0.0))),
+        (delta(0.0, -0.75), "95 samples", None),
+        (delta(-3.5, 4.0), "96 samples", Some(delta(-3.5, 2.75))),
+        (delta(0.0, -170.25), "12 samples", Some(delta(0.0, -2.25))),
+        (delta(-0.5, -0.75), "12 samples", Some(delta(-0.5, -0.75))),
+    ] {
+        ui.dispatch_pointer(view, PointerInput::Scroll(point, input))?;
+        assert_eq!(passed.take().as_slice(), remainder.as_slice());
+        assert!(
+            submit_labels(&mut ui, view)?
+                .iter()
+                .any(|s| s.as_str() == labels)
+        );
+    }
+    Ok(())
 }
 
 #[test]

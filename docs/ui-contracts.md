@@ -12,7 +12,8 @@ The Markets tab runs a deterministic feed of six instruments. Each host frame
 advances 32 ticks per instrument and appends the latest price to a 96-sample
 history. The green price line and amber 16-sample moving average share the same
 axis. A translucent polygon marks the area under the price line. Scroll vertically over the plot to zoom its latest 12 to 96 samples.
-The price axis retains the full history range. Moving the mouse over the plot
+The plot passes horizontal motion and vertical distance beyond either zoom limit
+to its enclosing scroll listener. The price axis retains the full history range. Moving the mouse over the plot
 marks the nearest visible sample and shows its price and moving average.
 Resizing the plot updates the selection under a stationary mouse.
 Zooming selects the nearest sample in the new range at the same horizontal

@@ -91,7 +91,7 @@ pub struct HoverPosition {
 pub struct ScrollEvent {
     /// Location and bounds in the listening element's accepted frame.
     pub pointer: PointerEvent,
-    /// Logical distance requested by the input device.
+    /// Logical distance available to this listener after descendants have handled their share.
     pub delta: ScrollDelta,
 }
 
@@ -170,13 +170,29 @@ impl PointerDownContext<'_> {
 /// State access and event routing during a scroll callback.
 pub struct ScrollContext<'a> {
     context: Context<'a>,
-    propagate: bool,
+    received: ScrollDelta,
+    remaining: ScrollDelta,
 }
 
 impl ScrollContext<'_> {
-    /// Forwards the full scroll delta to the next listening ancestor after this callback succeeds.
+    /// Forwards all the distance received by this listener to the next listening ancestor.
     pub fn propagate(&mut self) {
-        self.propagate = true;
+        self.remaining = self.received;
+    }
+
+    /// Forwards the unconsumed distance after this callback succeeds. Each signed component
+    /// must be between zero and the corresponding received delta. A zero remainder ends delivery.
+    /// The last successful propagation request in a callback determines what is forwarded.
+    pub fn propagate_remaining(&mut self, remaining: ScrollDelta) -> Result<()> {
+        let within = |received: crate::Pixels, part: crate::Pixels| {
+            (received.get().min(0.0)..=received.get().max(0.0)).contains(&part.get())
+        };
+        anyhow::ensure!(
+            within(self.received.x, remaining.x) && within(self.received.y, remaining.y),
+            "scroll remainder outside the received delta"
+        );
+        self.remaining = remaining;
+        Ok(())
     }
 }
 
