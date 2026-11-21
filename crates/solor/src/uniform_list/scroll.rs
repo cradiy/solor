@@ -26,6 +26,8 @@ pub struct ListScrollPosition {
     pub offset_px: f64,
     /// Maximum scroll distance in logical pixels, excluding the viewport height.
     pub max_offset_px: f64,
+    /// Height of the visible content area in logical pixels.
+    pub viewport_height: crate::Pixels,
     /// Whether the document extent includes any unmeasured row heights.
     pub is_estimated: bool,
 }
@@ -104,12 +106,16 @@ impl Request {
     }
 }
 
+type PositionSignal = Signal<Option<ListScrollPosition>>;
+
 #[derive(Default)]
 struct State {
     pending: Cell<Option<Request>>,
     staged: Cell<Option<ListScrollPosition>>,
     published: Cell<Option<ListScrollPosition>>,
     position_signal: Option<Signal<Option<ListScrollPosition>>>,
+    observers: RefCell<Vec<Weak<PositionSignal>>>,
+    offset: Cell<Option<Signal<f64>>>,
     viewport: RefCell<Weak<Cell<bool>>>,
 }
 
@@ -179,6 +185,21 @@ impl ListScrollHandle {
         self.0.published.get()
     }
 
+    pub(crate) fn observe(&self, cx: &mut Context<'_>) -> Rc<PositionSignal> {
+        let signal = Rc::new(cx.signal(self.position()));
+        let mut observers = self.0.observers.borrow_mut();
+        observers.retain(|observer| observer.strong_count() > 0);
+        observers.push(Rc::downgrade(&signal));
+        signal
+    }
+
+    pub(crate) fn scroll_by(&self, delta: f64, cx: &mut Context<'_>) -> Result<f64> {
+        let (Some(position), Some(offset)) = (self.position(), self.0.offset.get()) else {
+            return Ok(0.0);
+        };
+        apply_delta(cx, offset, position.max_offset_px, delta, Some(self))
+    }
+
     fn enqueue(&self, request: Request) {
         self.0.pending.set(Some(request));
         if let Some(dirty) = self.0.viewport.borrow().upgrade() {
@@ -186,7 +207,12 @@ impl ListScrollHandle {
         }
     }
 
-    pub(super) fn attach(&self, dirty: &Rc<Cell<bool>>, state: &Runtime<()>) -> Result<()> {
+    pub(super) fn attach(
+        &self,
+        dirty: &Rc<Cell<bool>>,
+        offset: Signal<f64>,
+        state: &Runtime<()>,
+    ) -> Result<()> {
         let mut viewport = self.0.viewport.borrow_mut();
         ensure!(
             viewport.upgrade().is_none(),
@@ -207,6 +233,7 @@ impl ListScrollHandle {
             self.0.pending.set(Some(request));
         }
         *viewport = Rc::downgrade(dirty);
+        self.0.offset.set(Some(offset));
         self.0.staged.set(None);
         self.0.published.set(None);
         Ok(())
@@ -250,16 +277,23 @@ impl ListScrollHandle {
     }
 
     pub(crate) fn detach(&self, state: &mut Runtime<()>) {
+        self.0.offset.set(None);
         self.publish_position(None, state);
     }
 
     fn publish_position(&self, position: Option<ListScrollPosition>, state: &mut Runtime<()>) {
-        if self.0.published.replace(position) != position
-            && let Some(signal) = self.0.position_signal
-        {
+        if self.0.published.replace(position) == position {
+            return;
+        }
+        if let Some(signal) = self.0.position_signal {
             // The scope owning the signal may have unmounted while the list was still live.
             let _ = state.set(signal, position);
         }
+        self.0.observers.borrow_mut().retain(|observer| {
+            observer
+                .upgrade()
+                .is_some_and(|signal| state.set(*signal, position).is_ok())
+        });
     }
 
     pub(super) fn pending(&self) -> Option<Request> {
@@ -269,4 +303,22 @@ impl ListScrollHandle {
     pub(super) fn clear(&self) {
         self.0.pending.set(None);
     }
+}
+
+pub(super) fn apply_delta(
+    cx: &mut Context<'_>,
+    offset: Signal<f64>,
+    limit: f64,
+    delta: f64,
+    handle: Option<&ListScrollHandle>,
+) -> Result<f64> {
+    let previous = cx.read(offset)?.min(limit);
+    let used = delta.clamp(-previous, limit - previous);
+    cx.set(offset, previous + used)?;
+    if used != 0.0
+        && let Some(handle) = handle
+    {
+        handle.clear();
+    }
+    Ok(used)
 }

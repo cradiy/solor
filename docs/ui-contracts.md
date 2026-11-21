@@ -10,7 +10,7 @@ Run `cargo run -p solor-gallery --release` in a Linux Wayland session to compare
 letter spacing, OpenType ligatures, gradient geometry and flex distribution.
 The Lists tab shows the 24-bit RGB color space in a virtual list. Scroll to
 browse swatches, or click and drag the position indicator to seek across all
-16,777,216 colors.
+16,777,216 colors. A slim thumb sits over the list’s right edge and widens on hover.
 
 The Markets tab runs a deterministic feed of six instruments. In a short window,
 the watchlist rows scroll beneath their fixed header. Each host frame
@@ -568,3 +568,61 @@ information to locate the destination. When measuring those rows changes the
 extent, the viewport preserves the destination row and within-row distance.
 The reported offset and percentage can consequently change. Zero and 100
 percent seek to the document edges.
+
+### List scrollbars
+
+Place a scrollbar beside a uniform or variable list and bind both to the same
+handle. A stretched flex row gives the track the height of the list.
+
+```rust
+let list = ListScrollHandle::new();
+div().flex_row().items_stretch().h(px(320.0))
+    .child(uniform_list(items, px(32.0), build_row).scroll_handle(&list).flex_1())
+    .child(scrollbar(&list))
+```
+
+The thumb represents the visible fraction of the content. Dragging preserves the
+grab point, including outside the track. Pressing the track above or below the
+thumb scrolls one viewport. Wheel input over the track scrolls the same list
+and passes unused distance to its parent. When the content fits, the track keeps
+its width and the thumb disappears.
+
+By default only a narrow thumb is visible at rest. Hovering the track or
+dragging the thumb reveals the rail and widens the thumb inside the same hit
+area. Use `scrollbar(&list).auto_hide(true)` to hide the resting thumb as well.
+
+Style the track with the shared element builders. Its padding sets the inset
+around the thumb. Thumb fills accept solid colors and gradients.
+
+```rust
+scrollbar(&list)
+    .w(px(14.0)).p(px(3.0)).hover_track_fill(rgb(0xe8e8e8))
+    .thumb_style(ScrollbarThumbStyle {
+        fill: rgb(0x60756a).into(),
+        hover_fill: rgb(0x485c51).into(),
+        drag_fill: rgb(0x34473d).into(),
+        radius: px(4.0),
+        min_length: px(28.0),
+        idle_width: px(3.0),
+    })
+```
+
+For application-specific rendering, `paint_with` receives the track's paint
+context, scroll position, hover and drag state, and the thumb interval used for
+input. For example, an application can reveal a thin indicator while the list is
+active and widen it during a drag. Paint-time signal reads subscribe automatically.
+
+```rust
+scrollbar(&list).paint_with(move |cx, bar| {
+    if !bar.hovered && !bar.dragging && !*cx.read(list_active)? {
+        return Ok(());
+    }
+    let width = cx.size.width.min(px(if bar.dragging { 6.0 } else { 2.0 }));
+    cx.fill_rounded_rect(
+        Origin { x: cx.size.width - width, y: bar.thumb_top },
+        Size { width, height: bar.thumb_length },
+        px(3.0),
+        *cx.read(accent_color)?,
+    )
+})
+```

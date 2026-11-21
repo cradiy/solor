@@ -21,6 +21,8 @@ mod pixels;
 pub mod platform;
 pub mod pointer;
 pub mod raster;
+mod scrollbar;
+pub use scrollbar::{Scrollbar, ScrollbarPaintState, ScrollbarThumbStyle, scrollbar};
 mod shared_string;
 pub mod state;
 pub mod style;

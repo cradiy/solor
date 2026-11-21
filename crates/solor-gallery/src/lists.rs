@@ -4,7 +4,7 @@ use solor::{
     div,
     layout::{Origin, Size},
     pointer::PointerEvent,
-    px, rgb, text, uniform_list,
+    px, rgb, scrollbar, text, uniform_list,
 };
 
 const COLORS: usize = 1 << 24;
@@ -27,9 +27,16 @@ pub(super) fn palette() -> impl IntoElement {
             )
             .child(seek_bar(cx, list.clone(), position))
             .child(
-                uniform_list(COLORS, px(40.0), color_row)
-                    .scroll_handle(&list)
-                    .flex_1(),
+                div()
+                    .flex_row()
+                    .items_stretch()
+                    .flex_1()
+                    .child(
+                        uniform_list(COLORS, px(40.0), color_row)
+                            .scroll_handle(&list)
+                            .flex_1(),
+                    )
+                    .child(scrollbar(&list).ml(px(-12.0))),
             )
     })
 }
@@ -47,6 +54,7 @@ fn color_row(index: usize) -> Div {
         .flex_row()
         .items_center()
         .gap(px(12.0))
+        .pr(px(16.0))
         .child(
             div()
                 .w(px(56.0))

@@ -284,15 +284,8 @@ where
                     |index| index.borrow().top(count, f64::from(height)),
                 );
                 let limit = (extent - f64::from(event.pointer.content_size().height)).max(0.0);
-                let previous = cx.read(offset)?.min(limit);
                 let delta = f64::from(event.delta.y);
-                let used = delta.clamp(-previous, limit - previous);
-                cx.set(offset, previous + used)?;
-                if used != 0.0
-                    && let Some(handle) = &wheel_handle
-                {
-                    handle.clear();
-                }
+                let used = scroll::apply_delta(cx, offset, limit, delta, wheel_handle.as_ref())?;
                 cx.propagate_remaining(ScrollDelta {
                     x: event.delta.x,
                     y: px((delta - used) as f32),
@@ -307,7 +300,7 @@ where
             let handle = self.scroll.clone();
             node.watches.push(Box::new(move |cx, target, _, _, _| {
                 if let Some(handle) = handle {
-                    handle.attach(&viewport_dirty, cx.state)?;
+                    handle.attach(&viewport_dirty, offset, cx.state)?;
                 }
                 let scrolled = viewport_dirty.clone();
                 cx.state
@@ -376,6 +369,7 @@ impl Window {
                 handle.stage(active.then_some(ListScrollPosition {
                     offset_px: offset,
                     max_offset_px: limit,
+                    viewport_height: size.height,
                     is_estimated,
                 }));
             }
@@ -405,6 +399,7 @@ impl Window {
             handle.stage(Some(ListScrollPosition {
                 offset_px: offset,
                 max_offset_px: limit,
+                viewport_height: size.height,
                 is_estimated,
             }));
             if measured.is_some() && range != (0..count) && offset > 0.0 && offset < limit {

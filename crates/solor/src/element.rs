@@ -374,6 +374,18 @@ impl<'paint> PaintContext<'paint> {
 
     /// Fills a rectangle at an offset from the content origin in logical pixels.
     pub fn fill_rect(&mut self, offset: Origin, size: Size, fill: impl Into<Fill>) -> Result<()> {
+        self.fill_rounded_rect(offset, size, px(0.0), fill)
+    }
+
+    /// Fills a content-local rectangle with a uniform corner radius in logical pixels.
+    pub fn fill_rounded_rect(
+        &mut self,
+        offset: Origin,
+        size: Size,
+        radius: Pixels,
+        fill: impl Into<Fill>,
+    ) -> Result<()> {
+        anyhow::ensure!(radius.is_extent(), "invalid corner radius");
         anyhow::ensure!(
             size.width.is_extent() && size.height.is_extent(),
             "invalid fill extent"
@@ -382,7 +394,12 @@ impl<'paint> PaintContext<'paint> {
             .origin
             .checked_add(offset)
             .context("invalid fill origin")?;
-        self.record_fill(origin, size, fill.into(), Corners::default());
+        self.record_fill(
+            origin,
+            size,
+            fill.into(),
+            Corners::all(radius.min(size.width / 2.0).min(size.height / 2.0)),
+        );
         Ok(())
     }
 
