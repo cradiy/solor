@@ -822,3 +822,55 @@ fn horizontal_painter_follows_its_axis_through_resize() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn revealing_a_content_rectangle_moves_each_axis_only_as_far_as_needed() -> Result<()> {
+    use solor::ScrollHandle;
+
+    let origin = |x, y| Origin { x: px(x), y: px(y) };
+    let size = |w, h| Size {
+        width: px(w),
+        height: px(h),
+    };
+    let scroll = ScrollHandle::new();
+    let target = origin(211.5, 170.25);
+    scroll.scroll_to_reveal(target, size(20.0, 10.0))?;
+    assert!(scroll.scroll_to_reveal(target, size(-1.0, 10.0)).is_err());
+
+    let mut ui = Ui::new();
+    let tracked = scroll.clone();
+    let view = ui.mount(component(move |_| {
+        div()
+            .overflow_auto()
+            .track_scroll(&tracked)
+            .child(div().min_w(px(400.0)).min_h(px(300.0)))
+    }))?;
+    submit(&mut ui, view, 80.0)?;
+    let offset = || scroll.metrics().unwrap().offset;
+    assert_eq!(offset(), origin(111.5, 100.25));
+
+    // An oversized rectangle already covers the horizontal viewport; the short
+    // vertical interval is fully visible. Neither axis needs to move.
+    scroll.scroll_to_reveal(origin(80.0, 130.0), size(200.0, 20.0))?;
+    submit(&mut ui, view, 80.0)?;
+    assert_eq!(offset(), origin(111.5, 100.25));
+
+    scroll.scroll_to_reveal(origin(30.0, 190.0), size(20.0, 100.0))?;
+    ui.dispatch_pointer(
+        view,
+        PointerInput::Scroll(
+            point(20.0, 20.0),
+            ScrollDelta {
+                x: px(2.25),
+                y: px(3.5),
+            },
+        ),
+    )?;
+    submit(&mut ui, view, 80.0)?;
+    assert_eq!(offset(), origin(32.25, 193.5));
+
+    scroll.scroll_to_reveal(origin(-50.0, 500.0), size(10.0, 20.0))?;
+    submit(&mut ui, view, 80.0)?;
+    assert_eq!(offset(), origin(0.0, 220.0));
+    Ok(())
+}

@@ -41,16 +41,26 @@ enum AxisTarget {
     Current,
     Pixels(Pixels),
     Percent(f64),
+    Reveal {
+        start: Pixels,
+        extent: Pixels,
+    },
 }
 
 impl AxisTarget {
-    fn resolve(self, current: Pixels, limit: Pixels) -> Pixels {
+    fn resolve(self, current: Pixels, limit: Pixels, viewport: Pixels) -> Pixels {
         let target = match self {
-            Self::Current => current,
-            Self::Pixels(value) => value,
-            Self::Percent(percent) => px((f64::from(limit) * (percent / 100.0)) as f32),
+            Self::Current => f64::from(current),
+            Self::Pixels(value) => f64::from(value),
+            Self::Percent(percent) => f64::from(limit) * (percent / 100.0),
+            Self::Reveal { start, extent } => {
+                // Align either edge, keeping the current offset whenever it lies between them.
+                let leading = f64::from(start);
+                let trailing = leading + f64::from(extent) - f64::from(viewport);
+                f64::from(current).clamp(leading.min(trailing), leading.max(trailing))
+            }
         };
-        target.max(Pixels::default()).min(limit)
+        px(target.clamp(0.0, f64::from(limit)) as f32)
     }
 }
 
@@ -72,10 +82,18 @@ impl ScrollRequest {
         })
     }
 
-    fn resolve(self, current: Origin, limit: Size) -> Origin {
+    fn resolve(self, metrics: ScrollMetrics) -> Origin {
         Origin {
-            x: self.x.resolve(current.x, limit.width),
-            y: self.y.resolve(current.y, limit.height),
+            x: self.x.resolve(
+                metrics.offset.x,
+                metrics.max_offset.width,
+                metrics.viewport.width,
+            ),
+            y: self.y.resolve(
+                metrics.offset.y,
+                metrics.max_offset.height,
+                metrics.viewport.height,
+            ),
         }
     }
 }
@@ -127,6 +145,32 @@ impl ScrollHandle {
         Ok(())
     }
 
+    /// Scrolls each axis just far enough to reveal a rectangle in unscrolled content coordinates.
+    /// An oversized target moves only far enough to cover the viewport on that axis.
+    /// The next scrollable layout resolves the request and clamps it to the available travel.
+    /// Origins must be finite and extents must be finite and nonnegative.
+    pub fn scroll_to_reveal(&self, origin: Origin, size: Size) -> Result<()> {
+        ensure!(
+            origin.x.get().is_finite() && origin.y.get().is_finite(),
+            "reveal origin must be finite"
+        );
+        ensure!(
+            size.width.is_extent() && size.height.is_extent(),
+            "invalid reveal extent"
+        );
+        self.0.pending.set(Some(ScrollRequest {
+            x: AxisTarget::Reveal {
+                start: origin.x,
+                extent: size.width,
+            },
+            y: AxisTarget::Reveal {
+                start: origin.y,
+                extent: size.height,
+            },
+        }));
+        Ok(())
+    }
+
     /// Requests a vertical percentage of scrollable travel, preserving the horizontal destination.
     /// Layout resolves the percentage against its content and viewport. Intervening wheel
     /// input continues from the requested percentage of the current range.
@@ -174,9 +218,11 @@ impl ScrollHandle {
             return 0.0;
         };
         let limit = f64::from(axis.extent(metrics.max_offset));
-        let start = self.0.pending.get().map_or(metrics.offset, |request| {
-            request.resolve(metrics.offset, metrics.max_offset)
-        });
+        let start = self
+            .0
+            .pending
+            .get()
+            .map_or(metrics.offset, |request| request.resolve(metrics));
         let current = f64::from(axis.coordinate(start));
         let used = delta.clamp(-current, limit - current);
         if used != 0.0 {
@@ -252,7 +298,7 @@ impl Ui {
         let metrics = instance
             .scroll_metrics(node)
             .context("expected a visible, laid-out scroll container")?;
-        let next = request.resolve(metrics.offset, metrics.max_offset);
+        let next = request.resolve(metrics);
         let moved = instance.apply_scroll_offset(node, metrics.offset, next)?;
         if let Some(tracked) = instance.tracked_scroll.get(&node) {
             tracked.handle.0.pending.set(None);
@@ -355,7 +401,7 @@ impl Instance {
                 if let Some(m) = &mut metrics
                     && let Some(request) = tracked.handle.0.pending.take()
                 {
-                    let next = request.resolve(m.offset, m.max_offset);
+                    let next = request.resolve(*m);
                     self.apply_scroll_offset(node, m.offset, next)?;
                     m.offset = next;
                 }
@@ -392,7 +438,13 @@ impl Instance {
             .tracked_scroll
             .get(&owner)
             .and_then(|tracked| tracked.handle.0.pending.take())
-            .map_or(previous, |request| request.resolve(previous, limit));
+            .map_or(previous, |request| {
+                request.resolve(ScrollMetrics {
+                    offset: previous,
+                    max_offset: limit,
+                    viewport: geometry.metrics.size,
+                })
+            });
         let (next, remaining) = advance(start, limit, delta);
         self.apply_scroll_offset(owner, previous, next)?;
         if let Some(tracked) = self.tracked_scroll.get(&owner) {

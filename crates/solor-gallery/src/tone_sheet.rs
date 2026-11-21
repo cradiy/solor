@@ -1,8 +1,16 @@
 use crate::{INK, PAPER, label};
 use solor::{
-    Div, Fill, IntoElement, Rgba, ScrollHandle, SharedString, Signal, Styled, component, div,
-    horizontal_scrollbar, px, rgb, scrollbar, text,
+    Div, Fill, IntoElement, Pixels, Rgba, ScrollHandle, SharedString, Signal, Styled, component,
+    div, horizontal_scrollbar,
+    layout::{Origin, Size},
+    px, rgb, scrollbar, text,
 };
+
+const TILE_SIZE: Size = Size {
+    width: px(124.0),
+    height: px(64.0),
+};
+const TILE_GAP: Pixels = px(4.0);
 
 const FAMILIES: [(&str, Rgba); 9] = [
     ("Clay", rgb(0xb86145)),
@@ -34,18 +42,19 @@ fn hex(color: Rgba) -> String {
 }
 
 fn tile(
-    family: &str,
-    base: Rgba,
+    row: usize,
     step: u8,
     chip: Signal<Fill>,
     readout: Signal<SharedString>,
+    selected: Signal<Origin>,
 ) -> Div {
+    let (family, base) = FAMILIES[row];
     let color = swatch(base, step);
     let name = format!("{family} {step}00");
     let caption = SharedString::from(format!("{name}  /  {}", hex(color)));
     div()
-        .w(px(124.0))
-        .h(px(64.0))
+        .w(TILE_SIZE.width)
+        .h(TILE_SIZE.height)
         .flex_shrink(0.0)
         .items_stretch()
         .child(div().flex_1().rounded(px(6.0)).bg(color))
@@ -56,6 +65,13 @@ fn tile(
         )
         .cursor_pointer()
         .on_click(move |cx| {
+            cx.set(
+                selected,
+                Origin {
+                    x: (TILE_SIZE.width + TILE_GAP) * f32::from(step - 1),
+                    y: (TILE_SIZE.height + TILE_GAP) * row as f32,
+                },
+            )?;
             cx.set(chip, color.into())?;
             cx.set(readout, caption.clone())
         })
@@ -71,12 +87,14 @@ pub(super) fn sheet() -> impl IntoElement {
             "{family} 100  /  {}",
             hex(first)
         )));
-        let rows = FAMILIES.into_iter().map(|(family, base)| {
+        let selected = cx.signal(Origin::default());
+        let reveal = scroll.clone();
+        let rows = (0..FAMILIES.len()).map(|row| {
             div()
                 .flex_row()
-                .gap(px(4.0))
+                .gap(TILE_GAP)
                 .flex_shrink(0.0)
-                .children((1..=9).map(|step| tile(family, base, step, chip, readout)))
+                .children((1..=9).map(|step| tile(row, step, chip, readout, selected)))
         });
         div()
             .flex_1()
@@ -91,8 +109,19 @@ pub(super) fn sheet() -> impl IntoElement {
                     .child(div().size(px(20.0)).rounded(px(5.0)).bg(chip))
                     .child(text(readout).text_size(px(14.0)).whitespace_nowrap())
                     .child(div().flex_1())
+                    .child(label("9 families  /  81 swatches", 12.0, 18.0).text_color(crate::MUTED))
                     .child(
-                        label("9 families  /  81 swatches", 12.0, 18.0).text_color(crate::MUTED),
+                        div()
+                            .px(px(10.0))
+                            .h(px(28.0))
+                            .justify_center()
+                            .rounded(px(6.0))
+                            .bg(crate::LINE)
+                            .cursor_pointer()
+                            .child(label("Show selection", 12.0, 18.0))
+                            .on_click(move |cx| {
+                                reveal.scroll_to_reveal(*cx.read(selected)?, TILE_SIZE)
+                            }),
                     ),
             )
             .child(
@@ -103,7 +132,7 @@ pub(super) fn sheet() -> impl IntoElement {
                     .child(
                         div()
                             .flex_1()
-                            .gap(px(4.0))
+                            .gap(TILE_GAP)
                             .overflow_auto()
                             .track_scroll(&scroll)
                             .children(rows),

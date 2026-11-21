@@ -14,6 +14,7 @@ browse swatches, or click and drag the position indicator to seek across all
 Choose **Tone sheet** to browse nine color families down the rows and nine tones
 across the columns. Both scrollbars control the same viewport. Selecting a swatch
 shows its name and hex value above the sheet, where they stay visible while scrolling.
+Choose **Show selection** to bring that swatch back into view.
 
 Run `cargo test --release -p solor-gallery --test navigation tone_sheet_recording_cost -- --ignored --nocapture`
 to measure frame recording during two-axis scrolling and repeated stationary
@@ -677,6 +678,12 @@ For example, appending a row and requesting 100 percent in the same handler
 reveals the new bottom row. If wheel input arrives before layout, it continues
 from the requested position within the current range. Unmounting clears
 outstanding requests.
+
+Use `scroll.scroll_to_reveal(origin, size)?` to show a rectangle identified in
+the container's unscrolled logical coordinates. Each axis moves the smallest
+distance that fits the target inside the viewport. An oversized target covers
+the viewport on that axis and keeps the current offset if it already covers it.
+The scroll range limits travel for targets outside the content.
 
 Uniform and variable lists use their own `ListScrollHandle` with the same scrollbar.
 

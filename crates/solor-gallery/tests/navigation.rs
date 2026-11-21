@@ -784,6 +784,10 @@ fn tone_sheet_selects_the_last_swatch_after_scrolling_both_axes() -> Result<()> 
     let labels = submit_labels(&mut ui, view)?;
     assert!(labels.iter().any(|s| s.as_str() == "Clay 100"));
     assert!(label_target(&ui.record_frame(view)?, "Rose 900").is_none());
+    click_label(&mut ui, view, "Show selection")?;
+    assert!(ui.next_redraw(view).is_some());
+    submit_labels(&mut ui, view)?;
+    assert!(label_target(&ui.record_frame(view)?, "Rose 900").is_some());
     assert_eq!(chip(&ui)?, fixed);
     let surface = Surface::draw_view(
         &ui.record_frame(view)?,
