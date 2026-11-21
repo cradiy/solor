@@ -43,9 +43,15 @@ pub(crate) struct OverflowClip {
 
 impl OverflowClip {
     pub(crate) fn from_layout(layout: Option<&LayoutProperties>) -> Self {
+        let clips = |policy| {
+            matches!(
+                policy,
+                Some(Overflow::Hidden | Overflow::Scroll | Overflow::Auto)
+            )
+        };
         Self {
-            x: layout.and_then(|v| v.overflow_x) == Some(Overflow::Hidden),
-            y: layout.and_then(|v| v.overflow_y) == Some(Overflow::Hidden),
+            x: clips(layout.and_then(|v| v.overflow_x)),
+            y: clips(layout.and_then(|v| v.overflow_y)),
         }
     }
 

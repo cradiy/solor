@@ -139,7 +139,7 @@ snapshot for input, even if the view has already prepared a different layout.
 Hit testing visits axis-aligned border boxes in reverse paint order within the
 view rectangle. Higher sibling `z_index` values are in front. For ties the
 later sibling is in front. Children stay within their parent's layer.
-An ancestor with hidden overflow limits descendant hits on the specified axes,
+An ancestor with `Hidden`, `Scroll` or `Auto` overflow limits descendant hits on the specified axes,
 including the leading edge and excluding the trailing edge. A newly sized clip
 takes effect for input when the host accepts that frame.
 An invisible subtree leaves the visible boxes behind it eligible for hits.

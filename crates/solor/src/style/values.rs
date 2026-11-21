@@ -22,7 +22,12 @@ keywords! {
         Sticky: "Constrain the normal flow position against a scrollport."
     }
     /// Behavior of content extending beyond one box axis.
-    Overflow { Visible: "Allow overflow.", Hidden: "Clip overflow.", Scroll: "Provide a scrollable axis.", Auto: "Scroll when content overflows." }
+    Overflow {
+        Visible: "Allow content beyond the box on this axis.",
+        Hidden: "Clip content and descendant hits to the box on this axis.",
+        Scroll: "Declare a scroll axis and clip its contents. The application controls the offset.",
+        Auto: "Clip overflow on this axis. The application controls the offset when content overflows."
+    }
     /// Reference box used by width and height constraints.
     BoxSizing { BorderBox: "Include border and padding.", ContentBox: "Size the content area." }
     /// How replaced content such as an image fits its content box.

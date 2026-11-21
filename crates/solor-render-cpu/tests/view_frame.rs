@@ -957,3 +957,81 @@ fn nested_axis_clips_crop_text_and_gradient_and_limit_hits_at_the_same_edges() -
     }
     Ok(())
 }
+
+#[test]
+fn scrollport_pixels_and_clicks_follow_each_accepted_overflow_axis() -> Result<()> {
+    use solor::style::Overflow::{Auto, Scroll, Visible};
+    let mut ui = Ui::new();
+    let x_policy = ui.context().signal(Visible);
+    let y_policy = ui.context().signal(Visible);
+    let clicks = ui.context().signal(0);
+    let view = ui.mount(component(|_| {
+        div().bg(rgb(0xffffff)).p(px(4.0)).child(
+            div()
+                .size(px(10.0))
+                .overflow_x(x_policy)
+                .overflow_y(y_policy)
+                .child(
+                    div()
+                        .min_w(px(24.0))
+                        .min_h(px(24.0))
+                        .bg(rgb(0))
+                        .on_click(move |cx| cx.update(clicks, |count| *count += 1)),
+                ),
+        )
+    }))?;
+    let size = DeviceSize {
+        width: 32,
+        height: 32,
+    };
+    let probes = [(9, 9), (14, 9), (9, 14), (14, 14)];
+    let check_hits = |ui: &mut Ui, expected: [bool; 4]| -> Result<()> {
+        for ((x, y), enabled) in probes.into_iter().zip(expected) {
+            let sample = PointerSample {
+                id: PointerId(1),
+                kind: PointerKind::Mouse,
+                position: Origin {
+                    x: px(x as f32),
+                    y: px(y as f32),
+                },
+                modifiers: Default::default(),
+            };
+            let before = *ui.context().read(clicks)?;
+            ui.dispatch_pointer(view, PointerInput::Down(sample, PointerButton::Primary))?;
+            ui.dispatch_pointer(view, PointerInput::Up(sample, PointerButton::Primary))?;
+            assert_eq!(
+                *ui.context().read(clicks)? != before,
+                enabled,
+                "hit ({x}, {y})"
+            );
+        }
+        Ok(())
+    };
+    let mut accepted = [false; 4];
+    for (x_policy_value, y_policy_value, expected) in [
+        (Visible, Visible, [true, true, true, true]),
+        (Scroll, Visible, [true, false, true, false]),
+        (Visible, Auto, [true, true, false, false]),
+        (Auto, Scroll, [true, false, false, false]),
+        (Visible, Visible, [true, true, true, true]),
+    ] {
+        ui.context().set(x_policy, x_policy_value)?;
+        ui.context().set(y_policy, y_policy_value)?;
+        ui.flush()?;
+        ui.layout(view, size.at_unit_scale())?;
+        let frame = ui.record_frame(view)?;
+        let image = Surface::draw_view(&frame, size, RasterScale::ONE)?;
+        for ((x, y), painted) in probes.into_iter().zip(expected) {
+            assert_eq!(
+                pixel(&image, x, y) == [0, 0, 0, 255],
+                painted,
+                "pixel ({x}, {y})"
+            );
+        }
+        check_hits(&mut ui, accepted)?;
+        ui.accept_pointer_frame(frame.into_pointer_frame())?;
+        check_hits(&mut ui, expected)?;
+        accepted = expected;
+    }
+    Ok(())
+}
