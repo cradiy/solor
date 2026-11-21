@@ -4,6 +4,7 @@ mod hover;
 mod routing;
 mod scroll;
 pub(crate) use scroll::ScrollAxes;
+pub use scroll::ScrollMetrics;
 mod tooltip;
 pub use tooltip::{Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle};
 

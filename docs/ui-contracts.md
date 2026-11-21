@@ -393,6 +393,14 @@ independently on each axis. The element's own background inherits its ancestor c
 recordings from `Ui::paint` use the element's own coordinate system and apply
 its own overflow setting. The CPU backend rounds clip edges to device pixels.
 
+A host can read a laid-out overflow container with `ui.scroll_metrics(view, node)`.
+The snapshot contains its current two-axis offset, maximum scroll distance and
+viewport size in logical pixels. To restore a saved position, call
+`ui.set_scroll_offset(view, node, saved_offset)?` after layout. The setter clamps
+each axis to the current bounds and requests a redraw when the offset changes.
+Readback reflects the new offset immediately. Pointer hits switch to the new
+geometry when the host accepts the frame.
+
 Each background corner has an independent circular radius. If two adjacent
 radii exceed their shared edge, the frame scales all four by the same factor
 until they fit. The CPU renderer applies this shape to solid and gradient

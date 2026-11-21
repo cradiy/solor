@@ -1148,3 +1148,95 @@ fn tooltip_defaults_update_pending_and_visible_hints_and_preserve_local_override
     assert!(ui.next_redraw(view).is_none());
     Ok(())
 }
+
+#[test]
+fn container_seek_shares_wheel_offsets_and_switches_hits_on_submission() -> Result<()> {
+    use solor::{
+        Draw, ScrollMetrics,
+        pointer::{PointerInput, ScrollDelta},
+        rgb,
+        style::Overflow,
+    };
+
+    let mut ui = Ui::new();
+    let selected = ui.context().signal(None);
+    let horizontal = ui.context().signal(Overflow::Scroll);
+    let view = ui.mount(component(move |_| {
+        div()
+            .overflow_x(horizontal)
+            .overflow_y_scroll()
+            .children((0..3u32).map(|index| {
+                div()
+                    .min_w(px(100.0))
+                    .min_h(px(30.0))
+                    .bg(rgb(index + 1))
+                    .on_click(move |cx| cx.set(selected, Some(index)))
+            }))
+    }))?;
+    let root = ui.root(view)?;
+    let origin = |x, y| Origin { x: px(x), y: px(y) };
+    assert!(ui.scroll_metrics(view, root).is_none());
+    assert!(ui.set_scroll_offset(view, root, origin(2.0, 1.0)).is_err());
+    accept(&mut ui, view, 60.0)?;
+    assert_eq!(
+        ui.scroll_metrics(view, root),
+        Some(ScrollMetrics {
+            offset: Origin::default(),
+            viewport: Size {
+                width: px(60.0),
+                height: px(40.0)
+            },
+            max_offset: Size {
+                width: px(40.0),
+                height: px(50.0)
+            },
+        })
+    );
+    let p = sample(1, 3.0, 2.0);
+    ui.dispatch_pointer(
+        view,
+        PointerInput::Scroll(
+            p,
+            ScrollDelta {
+                x: px(0.5),
+                y: px(1.25),
+            },
+        ),
+    )?;
+    assert_eq!(
+        ui.scroll_metrics(view, root).unwrap().offset,
+        origin(0.5, 1.25)
+    );
+    assert!(ui.set_scroll_offset(view, root, origin(7.75, 31.25))?);
+    let frame = ui.record_frame(view)?;
+    assert!(frame.draws().iter().any(|d|matches!(d, Draw::Fill {origin: at,fill,..} if *fill == rgb(2).into() && *at == origin(-7.75,-1.25))));
+    let click = |ui: &mut Ui| -> Result<()> {
+        ui.dispatch_pointer(view, Down(p, Primary))?;
+        ui.dispatch_pointer(view, Up(p, Primary))?;
+        Ok(())
+    };
+    click(&mut ui)?;
+    assert_eq!(*ui.context().read(selected)?, Some(0));
+    ui.accept_pointer_frame(frame.into_pointer_frame())?;
+    click(&mut ui)?;
+    assert_eq!(*ui.context().read(selected)?, Some(1));
+    assert!(!ui.set_scroll_offset(view, root, origin(7.75, 31.25))?);
+    assert!(ui.next_redraw(view).is_none());
+    assert!(ui.set_scroll_offset(view, root, origin(-100.0, 500.0))?);
+    assert!(
+        ui.set_scroll_offset(view, root, origin(0.0, f32::NAN))
+            .is_err()
+    );
+    assert_eq!(
+        ui.scroll_metrics(view, root).unwrap().offset,
+        origin(0.0, 50.0)
+    );
+    ui.context().set(horizontal, Overflow::Hidden)?;
+    accept(&mut ui, view, 60.0)?;
+    assert!(!ui.set_scroll_offset(view, root, origin(12.0, 50.0))?);
+    let child = ui.children(view, root)?.next().unwrap();
+    assert!(ui.scroll_metrics(view, child).is_none());
+    ui.unmount(view)?;
+    assert!(ui.scroll_metrics(view, root).is_none());
+    Ok(())
+}

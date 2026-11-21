@@ -51,7 +51,7 @@ use length::UnitResolver;
 pub use length::{AbsoluteLength, Length, percent, rem};
 pub use pixels::{Pixels, px};
 pub use platform::{ResizeEdge, WindowControl};
-pub use pointer::{Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle};
+pub use pointer::{ScrollMetrics, Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle};
 pub use shared_string::SharedString;
 pub use style::{Style, StyleRefinement, Styled};
 
