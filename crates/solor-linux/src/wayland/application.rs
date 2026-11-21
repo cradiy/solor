@@ -8,6 +8,7 @@ use super::{
     role::{Request, Role},
 };
 use crate::{layer_shell::LayerShellOptions, popup::PopupHandle, surface_control::Binding};
+use rustix::event::PollFlags;
 use solor::{
     platform::{PlatformWindow, WindowBackground, WindowHandle, WindowHandler, WindowOptions},
     raster::Rgba8,
@@ -16,13 +17,12 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     io,
-    os::fd::{AsFd, BorrowedFd},
     rc::{Rc, Weak},
     time::Instant,
 };
 use wayland_client::{
     Connection, EventQueue, Proxy, QueueHandle,
-    backend::ObjectId,
+    backend::{ObjectId, WaylandError},
     globals::{GlobalList, registry_queue_init},
     protocol::{wl_compositor, wl_shm, wl_surface},
 };
@@ -545,27 +545,14 @@ impl EventLoop {
             if self.windows.revisit.get() || !self.windows.pending.borrow().is_empty() {
                 continue;
             }
+            let write_interest = flush_interest(&self.queue)?;
             if self.desktop.windows.is_empty() {
-                self.connection.flush()?;
                 return Ok(());
-            }
-            if self.desktop.popup_only {
-                use rustix::event::PollFlags;
-                use wayland_client::backend::WaylandError;
-                let interest = match self.connection.flush() {
-                    Ok(()) => PollFlags::empty(),
-                    Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
-                        PollFlags::OUT
-                    }
-                    Err(error) => return Err(error.into()),
-                };
-                let wait = control.as_ref().map(|(_, h)| h);
-                wait_for_events(self.connection.as_fd(), interest, deadline, &wake, wait)?;
-                continue;
             }
             dispatch_until(
                 &mut self.queue,
                 &mut self.desktop,
+                write_interest,
                 deadline,
                 &wake,
                 control.as_ref().map(|(_, h)| h),
@@ -632,25 +619,36 @@ impl Window {
         }
     }
 }
+
+fn flush_interest(queue: &EventQueue<Desktop>) -> Result<PollFlags, WaylandError> {
+    match queue.flush() {
+        Ok(()) => Ok(PollFlags::empty()),
+        Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => Ok(PollFlags::OUT),
+        Err(error) => Err(error),
+    }
+}
+
 // A pending hint can wake an otherwise idle window. Input queued before the
 // deadline gets the opportunity to cancel or replace it before presentation.
 fn dispatch_until(
     queue: &mut EventQueue<Desktop>,
     desktop: &mut Desktop,
+    write_interest: PollFlags,
     deadline: Option<Instant>,
     wake: &super::wake::EventWake,
     control: Option<&Binding<'_>>,
 ) -> anyhow::Result<()> {
-    use wayland_client::backend::WaylandError;
-
+    if desktop.popup_only {
+        wait_for_events(queue, write_interest, deadline, wake, control)?;
+        return Ok(());
+    }
     if queue.dispatch_pending(desktop)? != 0 {
         return Ok(());
     }
-    queue.flush()?;
     if let Some(guard) = queue.prepare_read()
         && wait_for_events(
-            guard.connection_fd(),
-            rustix::event::PollFlags::IN,
+            queue,
+            PollFlags::IN | write_interest,
             deadline,
             wake,
             control,
@@ -667,15 +665,15 @@ fn dispatch_until(
 }
 
 fn wait_for_events(
-    fd: BorrowedFd<'_>,
-    interest: rustix::event::PollFlags,
+    queue: &EventQueue<Desktop>,
+    interest: PollFlags,
     deadline: Option<Instant>,
     wake: &super::wake::EventWake,
     control: Option<&Binding<'_>>,
 ) -> anyhow::Result<bool> {
-    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    use rustix::event::{PollFd, Timespec, poll};
     let mut fds: smallvec::SmallVec<[_; 3]> = smallvec::smallvec![
-        PollFd::new(&fd, interest),
+        PollFd::new(queue, interest),
         PollFd::new(&wake.0, PollFlags::IN)
     ];
     if let Some(control) = control {
@@ -698,15 +696,21 @@ fn wait_for_events(
         control.drain()?;
     }
 
+    let ready = fds[0].revents();
     anyhow::ensure!(
-        !fds[0]
-            .revents()
-            .intersects(PollFlags::HUP | PollFlags::ERR | PollFlags::NVAL),
+        !ready.intersects(PollFlags::HUP | PollFlags::ERR | PollFlags::NVAL),
         "Wayland connection closed"
     );
-    Ok(fds[0].revents().contains(PollFlags::IN))
+    if ready.contains(PollFlags::OUT) {
+        flush_interest(queue)?;
+    }
+    Ok(ready.contains(PollFlags::IN))
 }
 
 #[cfg(test)]
 #[path = "../../tests/unit/window_handle.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/dispatch.rs"]
+mod dispatch_tests;
