@@ -379,8 +379,11 @@ The `Hidden`, `Scroll` and `Auto` overflow policies clip content and descendant
 hits to the element's border box, including its padding. Use `.overflow_hidden()`
 to clip both axes, or set an axis independently with a value or signal such as
 `.overflow_y(Overflow::Scroll)`. The application handles scrolling and owns
-the offset. Nested clips intersect independently on each axis. The element's own background inherits its ancestor
-clip. View recordings attach the effective clip to each draw command. Local
+the offset. Each viewport keeps its full local content extent in `Ui::geometry`.
+On a clipped axis, the child's border edge bounds its contribution to the parent's
+content extent, including when the child is relatively positioned. On a visible
+axis, descendant overflow can extend the parent's content. Nested clips intersect
+independently on each axis. The element's own background inherits its ancestor clip. View recordings attach the effective clip to each draw command. Local
 recordings from `Ui::paint` use the element's own coordinate system and apply
 its own overflow setting. The CPU backend rounds clip edges to device pixels.
 

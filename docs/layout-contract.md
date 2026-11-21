@@ -45,8 +45,9 @@ about virtualized, hidden, portal, or out-of-flow children.
 
 A container measures its children, computes a proposed size, and then negotiates
 child assignments using its actual allocation during layout. Child layout returns
-the final baseline and content extent; the parent uses them to decide relative
-origins. The framework retains the assigned size rather than copying a previous
+the final baseline and the content extent exposed to its parent. Each clipped
+axis limits that extent to the child's assigned box. The child's published
+geometry retains its full local content size. The framework retains the assigned size rather than copying a previous
 measurement's size or baseline into published geometry.
 
 ## Invalidation and reuse

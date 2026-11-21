@@ -1,6 +1,7 @@
 //! Logical clip bounds shared by frame recording and pointer routing.
 use std::{ops::Range, sync::Arc};
 
+pub(crate) use crate::layout::OverflowClip;
 use crate::{
     Pixels, Result,
     layout::{Origin, Size},
@@ -33,12 +34,6 @@ impl ContentClip {
         self.x.as_ref().is_none_or(|x| x.contains(&point.x))
             && self.y.as_ref().is_none_or(|y| y.contains(&point.y))
     }
-}
-
-#[derive(PartialEq, Eq)]
-pub(crate) struct OverflowClip {
-    x: bool,
-    y: bool,
 }
 
 impl OverflowClip {

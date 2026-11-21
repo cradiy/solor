@@ -96,3 +96,48 @@ fn a_shifted_child_keeps_its_flow_slot_and_reports_descendant_overflow() -> Resu
     assert_eq!(ui.geometry(view, root).unwrap().content.height, px(35.25));
     Ok(())
 }
+
+#[test]
+fn nested_viewport_contributes_only_exposed_overflow_to_its_ancestors() -> Result<()> {
+    use solor::style::Overflow::{Auto, Hidden, Scroll, Visible};
+    let mut ui = Ui::new();
+    let horizontal = ui.context().signal(Visible);
+    let vertical = ui.context().signal(Visible);
+    let view = ui.mount(component(|_| {
+        div().child(
+            div()
+                .size(px(20.0))
+                .relative()
+                .left(px(3.5))
+                .top(px(4.25))
+                .overflow_x(horizontal)
+                .overflow_y(vertical)
+                .child(div().min_w(px(50.0)).min_h(px(60.0))),
+        )
+    }))?;
+    let root = ui.root(view)?;
+    let inner = ui.children(view, root)?.next().unwrap();
+    for (x, y, width, height) in [
+        (Visible, Visible, 53.5, 64.25),
+        (Scroll, Visible, 23.5, 64.25),
+        (Visible, Auto, 53.5, 24.25),
+        (Hidden, Scroll, 23.5, 24.25),
+        (Visible, Visible, 53.5, 64.25),
+    ] {
+        ui.context().set(horizontal, x)?;
+        ui.context().set(vertical, y)?;
+        ui.flush()?;
+        // Resizing only the parent also exercises reuse of the inner geometry.
+        for outer_width in [20.0, 22.0] {
+            ui.layout(view, size(outer_width, 20.0))?;
+            let geometry = ui.geometry(view, inner).unwrap();
+            assert_eq!(geometry.metrics.size, size(20.0, 20.0));
+            assert_eq!(geometry.content, size(50.0, 60.0));
+            assert_eq!(
+                ui.geometry(view, root).unwrap().content,
+                size(width, height)
+            );
+        }
+    }
+    Ok(())
+}

@@ -220,13 +220,39 @@ pub struct Geometry {
     pub metrics: Metrics,
     /// Offset from the parent box.
     pub origin: Origin,
-    /// Reported content extent, including overflow.
+    /// Full local content extent, including overflow clipped by this node.
     pub content: Size,
 }
 
+/// Axes on which the element clips overflow at the border box.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct OverflowClip {
+    pub(crate) x: bool,
+    pub(crate) y: bool,
+}
+
 impl Geometry {
+    fn parent_output(self, clip: OverflowClip) -> LayoutOutput {
+        let mut content = self.content;
+        if clip.x {
+            content.width = content.width.min(self.metrics.size.width);
+        }
+        if clip.y {
+            content.height = content.height.min(self.metrics.size.height);
+        }
+        LayoutOutput {
+            baseline: self.metrics.baseline,
+            content,
+        }
+    }
+
     // Shift the placed border box and extend its parent's positive overflow.
-    fn shift_relative(&mut self, offset: Origin, parent_content: &mut Size) -> Result<()> {
+    fn shift_relative(
+        &mut self,
+        offset: Origin,
+        clip: OverflowClip,
+        parent_content: &mut Size,
+    ) -> Result<()> {
         fn shift(
             origin: &mut Pixels,
             offset: Pixels,
@@ -239,16 +265,17 @@ impl Geometry {
             Ok(())
         }
 
+        let content = self.parent_output(clip).content;
         shift(
             &mut self.origin.x,
             offset.x,
-            self.metrics.size.width.max(self.content.width),
+            self.metrics.size.width.max(content.width),
             &mut parent_content.width,
         )?;
         shift(
             &mut self.origin.y,
             offset.y,
-            self.metrics.size.height.max(self.content.height),
+            self.metrics.size.height.max(content.height),
             &mut parent_content.height,
         )
     }
@@ -410,6 +437,7 @@ impl DependencyRecords {
 
 #[derive(Clone, Copy)]
 pub(crate) struct FlexItemStyle {
+    pub(crate) overflow_clip: OverflowClip,
     pub(crate) grow: f32,
     pub(crate) shrink: f32,
     pub(crate) align_self: Align,
@@ -420,6 +448,7 @@ pub(crate) struct FlexItemStyle {
 impl Default for FlexItemStyle {
     fn default() -> Self {
         Self {
+            overflow_clip: OverflowClip::default(),
             grow: 0.0,
             shrink: 0.0,
             align_self: Align::Auto,
@@ -823,6 +852,7 @@ struct Draft {
 
 #[derive(Clone, Copy, Default)]
 struct ChildState {
+    overflow_clip: OverflowClip,
     relative_offset: Origin,
     draft: Option<usize>,
     placed: bool,
@@ -951,7 +981,7 @@ impl LayoutContext<'_, '_> {
         Ok(metrics)
     }
 
-    /// Arranges a child at the assigned size and returns its content extent.
+    /// Arranges a child and returns the content extent exposed to its parent on each axis.
     pub fn layout_child(&mut self, index: usize, assigned: Size) -> Result<LayoutOutput> {
         if self.failed {
             return Err(LayoutError::FailedChildOperation);
@@ -967,7 +997,7 @@ impl LayoutContext<'_, '_> {
             .access
             .child(index)
             .ok_or(LayoutError::MissingChild(index))?;
-        let (result, relative_offset) = self.access.execute_child(id, |entry, access| {
+        let (result, relative_offset, clip) = self.access.execute_child(id, |entry, access| {
             let offset = entry
                 .item_sizing
                 .as_ref()
@@ -976,6 +1006,7 @@ impl LayoutContext<'_, '_> {
             Ok((
                 layout(entry, access, assigned, self.scratch, self.force),
                 offset,
+                entry.item_style.overflow_clip,
             ))
         })?;
         let (position, output) = result?;
@@ -983,6 +1014,7 @@ impl LayoutContext<'_, '_> {
         let child = &mut self.scratch.children[self.children_start + index];
         child.draft = Some(position);
         child.relative_offset = relative_offset;
+        child.overflow_clip = clip;
         #[cfg(feature = "layout-audit")]
         self.reads.push(Read::Layout {
             node: id,
@@ -1060,10 +1092,7 @@ fn layout(
         let geometry = scratch.draft[position].geometry;
         return Ok((
             position,
-            LayoutOutput {
-                baseline: geometry.metrics.baseline,
-                content: geometry.content,
-            },
+            geometry.parent_output(entry.item_style.overflow_clip),
         ));
     }
     if !force
@@ -1086,10 +1115,7 @@ fn layout(
         scratch.record_draft(position, None);
         return Ok((
             position,
-            LayoutOutput {
-                baseline: geometry.metrics.baseline,
-                content: geometry.content,
-            },
+            geometry.parent_output(entry.item_style.overflow_clip),
         ));
     }
     #[cfg(feature = "layout-audit")]
@@ -1121,26 +1147,34 @@ fn layout(
         if child.relative_offset != Origin::default() {
             let position = child.draft.ok_or(LayoutError::UnplacedChildren)?;
             let geometry = &mut cx.scratch.draft[position].geometry;
-            geometry.shift_relative(child.relative_offset, &mut output.content)?;
+            geometry.shift_relative(
+                child.relative_offset,
+                child.overflow_clip,
+                &mut output.content,
+            )?;
         }
     }
     let position = cx.scratch.draft.len();
+    let geometry = Geometry {
+        metrics: Metrics {
+            size: assigned,
+            baseline: output.baseline,
+        },
+        origin: Origin::default(),
+        content: output.content,
+    };
     cx.scratch.draft.push(Draft {
         node: cx.access.current(),
         #[cfg(feature = "layout-audit")]
         reads: Some(std::mem::take(&mut cx.reads)),
-        geometry: Geometry {
-            metrics: Metrics {
-                size: assigned,
-                baseline: output.baseline,
-            },
-            origin: Origin::default(),
-            content: output.content,
-        },
+        geometry,
     });
     #[cfg(feature = "layout-audit")]
     cx.scratch.record_draft(position, Some(subtree_start));
-    Ok((position, output))
+    Ok((
+        position,
+        geometry.parent_output(entry.item_style.overflow_clip),
+    ))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

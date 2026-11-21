@@ -232,6 +232,7 @@ pub(super) fn item_style(style: &Style) -> Result<crate::layout::FlexItemStyle> 
         .and_then(|layout| layout.align_self)
         .unwrap_or(Align::Auto);
     Ok(crate::layout::FlexItemStyle {
+        overflow_clip: OverflowClip::from_layout(style.layout.as_deref()),
         grow,
         shrink,
         align_self,
@@ -247,7 +248,8 @@ impl crate::Instance {
         let builtin = std::any::TypeId::of::<E>() == std::any::TypeId::of::<FlexLayout>()
             || std::any::TypeId::of::<E>() == std::any::TypeId::of::<Text>();
         let node = self.bodies.get_mut(&id).expect("mounted style target");
-        if layout || !builtin {
+        let clip = item.overflow_clip;
+        if layout || !builtin || clip != node.overflow_clip {
             let bounds = crate::styled_body::BoxModel::resolve(&style, self.units)?;
             let sizing = bounds.item_sizing(&style, self.units)?;
             let padding = bounds.content_insets();
@@ -274,7 +276,6 @@ impl crate::Instance {
         }
         let appearance = style.appearance.as_deref();
         let z_index = appearance.and_then(|a| a.z_index).unwrap_or_default();
-        let clip = OverflowClip::from_layout(style.layout.as_deref());
         let cursor = appearance.and_then(|a| a.cursor);
         let hit_testable = appearance.and_then(|a| a.pointer_events) != Some(PointerEvents::None);
         let routing_changed = (z_index, &clip, cursor, hit_testable)

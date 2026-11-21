@@ -7,11 +7,11 @@ use crate::{node_store, tree};
 const MEASUREMENT_CACHE_SLOTS: usize = 3;
 
 mod engine;
-pub(crate) use engine::FlexItemStyle;
 pub(crate) use engine::sizing::{
     AxisLimits, ComputedLength, FlexBasis, ItemBasis, ItemSizing, RelativeOffset, WidthLimits,
     border_extent,
 };
+pub(crate) use engine::{FlexItemStyle, OverflowClip};
 mod flex;
 pub use flex::{FlexDirection, FlexLayout};
 mod margin;
