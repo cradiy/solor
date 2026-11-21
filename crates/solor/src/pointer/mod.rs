@@ -44,7 +44,7 @@ pub enum PointerButton {
 }
 
 /// Keyboard modifiers held when the sample was produced.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Modifiers {
     /// Shift is held.
     pub shift: bool,
@@ -222,6 +222,7 @@ pub(crate) struct Handlers {
     scroll: Option<ScrollHandler>,
     up: Option<PositionHandler>,
     cancel: Option<CancelHandler>,
+    pub(crate) actions: Vec<crate::keyboard::ActionHandler>,
     pub(crate) key_down: Option<crate::keyboard::KeyDownHandler>,
     pub(crate) key_up: Option<crate::keyboard::KeyHandler>,
     pub(crate) click: Option<crate::element::Click>,

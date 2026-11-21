@@ -2,7 +2,7 @@
 use anyhow::Result;
 use solor::{
     WindowControl,
-    keyboard::{KeyEvent, KeyState, NamedKey},
+    keyboard::{Key, KeyEvent, KeyState, NamedKey},
     layout::{Origin, Size},
     platform::{WindowEvent, WindowHandler},
     pointer::{PointerButton, PointerId, PointerInput, PointerKind, PointerSample},
@@ -91,10 +91,10 @@ fn startup_keyboard_navigation_keeps_focus_on_the_activated_tab() -> Result<()> 
         w.frame_submitted()?;
         Ok(pixels)
     };
-    let key = |w: &mut CpuWindow, key: NamedKey| -> Result<()> {
+    let key = |w: &mut CpuWindow, key: Key| -> Result<()> {
         for state in [KeyState::Down, KeyState::Up] {
             w.event(WindowEvent::Key(KeyEvent {
-                key: key.into(),
+                key: key.clone(),
                 state,
                 modifiers: Default::default(),
             }))?;
@@ -102,16 +102,16 @@ fn startup_keyboard_navigation_keeps_focus_on_the_activated_tab() -> Result<()> 
         Ok(())
     };
     let original = submit(&mut window)?;
-    key(&mut window, NamedKey::Tab)?;
+    key(&mut window, Key::Tab)?;
     let focused = submit(&mut window)?;
     let header_end = 800 * 58 * 4;
     assert!(focused[..header_end] != original[..header_end]);
     assert!(focused[header_end..] == original[header_end..]);
-    key(&mut window, NamedKey::Enter)?;
+    key(&mut window, Key::Enter)?;
     let lists = submit(&mut window)?;
     assert!(lists[header_end..] != original[header_end..]);
-    key(&mut window, NamedKey::Tab)?;
-    key(&mut window, NamedKey::Enter)?;
+    key(&mut window, Key::Tab)?;
+    key(&mut window, Key::Space)?;
     let markets = window.frame(size, RasterScale::ONE)?;
     assert!(
         markets.request_callback,

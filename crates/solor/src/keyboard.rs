@@ -4,7 +4,12 @@ use crate::{Context, Instance, NodeId, Ui, ViewId, tree::TreeError};
 use anyhow::Result;
 
 pub use crate::pointer::Modifiers;
-pub use keyboard_types::{Key, KeyState, NamedKey};
+mod binding;
+mod shortcut;
+pub(crate) use binding::ActionHandler;
+pub use binding::KeyBinding;
+pub use keyboard_types::{KeyState, NamedKey};
+pub use shortcut::{Key, Modifier, Shortcut};
 
 /// A logical key transition as interpreted by the active keyboard layout.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,7 +33,7 @@ pub struct KeyDownContext<'a> {
 }
 
 impl KeyDownContext<'_> {
-    /// Skips the framework's default action for this press, including Tab navigation.
+    /// Consumes this press before shortcut lookup and Tab navigation.
     pub fn prevent_default(&mut self) {
         self.prevented = true;
     }
@@ -126,7 +131,8 @@ impl Ui {
         self.instance_mut(view)?.advance_focus(true)
     }
 
-    /// Delivers the transition to the focused element, then runs its default action.
+    /// Delivers the transition to the focused element, then resolves bound actions on
+    /// its focus path. An unconsumed Tab or Shift+Tab press moves focus through the view.
     /// Returns true when a callback ran or Tab navigation found a focus target.
     pub fn dispatch_key(&mut self, view: ViewId, event: &KeyEvent) -> Result<bool> {
         let instance = self
@@ -164,9 +170,35 @@ impl Ui {
                 }
             }
         }
+        if event.state == KeyState::Down
+            && !self.keymap.is_empty()
+            && let Some(actions) = self.keymap.get(&Shortcut::from_event(event))
+        {
+            let mut target = instance.focused;
+            while let Some(id) = target {
+                let node = instance
+                    .bodies
+                    .get_mut(&id)
+                    .ok_or(TreeError::InvalidNode(id))?;
+                if let Some(handlers) = node.handlers.as_deref()
+                    && let Some((handler, action)) = ActionHandler::find(&handlers.actions, actions)
+                {
+                    handler(
+                        action,
+                        &mut Context {
+                            state: self.state.get_mut(),
+                            engine: &self.engine,
+                            owned: Some(&mut node.owned),
+                        },
+                    )?;
+                    return Ok(true);
+                }
+                target = instance.scene.parent(id)?;
+            }
+        }
         let mods = event.modifiers;
         if event.state == KeyState::Down
-            && event.key == Key::Named(NamedKey::Tab)
+            && event.key == Key::Tab
             && !mods.alt
             && !mods.meta
             && !mods.control

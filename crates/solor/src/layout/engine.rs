@@ -1289,6 +1289,10 @@ impl Scene {
         self.scratch = Scratch::default();
     }
 
+    pub(crate) fn parent(&self, node: NodeId) -> Result<Option<NodeId>> {
+        Ok(self.store.parent(node).map_err(AccessError::from)?)
+    }
+
     /// Returns the live children in layout order.
     pub fn children(
         &self,

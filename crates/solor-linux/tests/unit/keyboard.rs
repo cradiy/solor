@@ -22,12 +22,12 @@ fn shared_keymap_resolves_the_declared_symbol_and_shift_level() {
     let size = map.len() as u32 + 1;
     assert!(read_layout(file.try_clone().unwrap().into(), size + 1).is_none());
     let plain = read_layout(file.try_clone().unwrap().into(), size - 1).unwrap();
-    assert_eq!(key_for_code(&plain, 30), Some(Key::Character("α".into())));
+    assert_eq!(key_for_code(&plain, 30), Some(Key::Character('α')));
     let mut layout = read_layout(file.into(), size).unwrap();
-    assert_eq!(key_for_code(&layout, 30), Some(Key::Character("α".into())));
+    assert_eq!(key_for_code(&layout, 30), Some(Key::Character('α')));
     let shift = layout.get_keymap().mod_get_index(xkb::MOD_NAME_SHIFT);
     layout.update_mask(1 << shift, 0, 0, 0, 0, 0);
-    assert_eq!(key_for_code(&layout, 30), Some(Key::Character("Α".into())));
+    assert_eq!(key_for_code(&layout, 30), Some(Key::Character('Α')));
     for (sym, expected) in [
         (Keysym::ISO_Left_Tab, NamedKey::Tab),
         (Keysym::KP_Left, NamedKey::ArrowLeft),

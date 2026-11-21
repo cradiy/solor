@@ -8,7 +8,7 @@ use anyhow::Result;
 use solor::{
     Context, Div, Fill, IntoElement, Render, ResizeEdge, Rgba, Signal, Styled, TooltipStyle, Ui,
     color_stop, component, div,
-    keyboard::{Modifiers, NamedKey},
+    keyboard::{Key, KeyBinding},
     layout::{Origin, Size},
     linear_gradient, px, rgb, text,
 };
@@ -99,6 +99,8 @@ impl<const N: usize> Selection<N> {
     }
 }
 
+struct ActivateChoice;
+
 fn activation_button(
     button: Div,
     accent: Option<Rgba>,
@@ -125,12 +127,7 @@ fn activation_button(
             )
         })
         .on_click(activate)
-        .on_key_down(move |event, cx| {
-            if event.key == NamedKey::Enter.into() && event.modifiers == Modifiers::default() {
-                activate(cx)?;
-            }
-            Ok(())
-        })
+        .on_action(move |_: &ActivateChoice, cx| activate(cx))
 }
 
 fn brand() -> Div {
@@ -174,6 +171,10 @@ fn header_button(title: &'static str, hint: &'static str, cx: &mut Context<'_>) 
 
 /// Configures the supplied UI and creates the gallery's unmounted root component.
 pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
+    ui.bind_keys([
+        KeyBinding::new(Key::Enter, ActivateChoice),
+        KeyBinding::new(Key::Space, ActivateChoice),
+    ]);
     ui.set_tooltip_style(TooltipStyle {
         background: INK.into(),
         text_color: PAPER,

@@ -39,23 +39,28 @@ div().focus_indicator(|paint| {
 })
 ```
 
-Use `.focusable().on_key_down(...).on_key_up(...)` to handle key transitions.
-Each transition goes directly to the element focused at delivery time. Callbacks
-can read and update signals through their context. Wayland resolves character
-keys through the active layout and reports named keys such as Enter and Tab.
-On key-down the focused control receives the event first. A control that uses
-Tab itself can call `cx.prevent_default()` during that press. Tab with Control,
-Alt or Meta follows normal key delivery. Releasing Tab goes to the element
-focused at release time. The adapter delivers individual presses and releases.
+Bind application commands once on the UI and handle them on the element that
+owns the operation. For example, an editor can bind Ctrl+S to its save action.
 
 ```rust
-div().focusable().on_key_down(move |event, cx| {
-    if event.key == NamedKey::Enter.into() {
-        cx.update(open, |value| *value = !*value)?;
-    }
-    Ok(())
-})
+use solor::keyboard::{Key, KeyBinding, Modifier};
+
+struct Save;
+ui.bind_keys([KeyBinding::new(Key::S.with(Modifier::Ctrl), Save)]);
+
+div().focusable().on_action(move |_: &Save, cx| save_document(cx))
 ```
+
+A shortcut matches the logical key and exact modifier set on key-down. ASCII
+letters match either case. Shift must be bound explicitly when held. Actions
+can carry data. Dispatch starts at the focused element and walks towards the
+view root until a handler accepts the action type. At the same element, the
+most recently bound matching action wins.
+
+Use `.on_key_down(...)` and `.on_key_up(...)` on the focused element to handle
+individual transitions. The key-down handler runs first and can call
+`cx.prevent_default()` to consume the press. Tab and Shift+Tab move focus when
+the press remains unconsumed. Wayland resolves keys through the active layout.
 
 Custom window hosts forward `WindowEvent::Key(event)` through
 `ui.dispatch_key(view, &event)`. The CPU window does this automatically.

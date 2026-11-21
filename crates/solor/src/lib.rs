@@ -600,6 +600,7 @@ pub struct ViewId(NodeId);
 
 /// Owns the application signals and its mounted component trees.
 pub struct Ui {
+    keymap: HashMap<keyboard::Shortcut, Vec<Box<dyn std::any::Any>>>,
     tooltip_style: TooltipStyle,
     state: RefCell<Runtime<()>>,
     engine: TextSystem,
@@ -613,6 +614,7 @@ pub struct Ui {
 impl Default for Ui {
     fn default() -> Self {
         Self {
+            keymap: HashMap::new(),
             tooltip_style: TooltipStyle::default(),
             state: RefCell::new(Runtime::new(())),
             engine: TextSystem::default(),

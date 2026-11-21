@@ -66,7 +66,7 @@ fn key_for_code(layout: &xkb::State, evdev_code: u32) -> Option<Key> {
 
 fn logical_key(sym: Keysym) -> Key {
     if let Some(ch) = char::from_u32(xkb::keysym_to_utf32(sym)).filter(|ch| !ch.is_control()) {
-        return Key::Character(ch.to_string());
+        return Key::from(ch);
     }
     let named = match sym {
         Keysym::Return | Keysym::KP_Enter | Keysym::ISO_Enter => NamedKey::Enter,
