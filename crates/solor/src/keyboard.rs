@@ -79,12 +79,38 @@ impl TabOrder {
 }
 
 impl Instance {
+    pub(super) fn set_focus(&mut self, next: Option<NodeId>, show_indicator: bool) {
+        if self.focused != next
+            && let Some(previous) = self.focused
+        {
+            self.set_focus_indicator(previous, false);
+        }
+        self.focused = next;
+        if let Some(id) = next {
+            self.set_focus_indicator(id, show_indicator);
+        }
+    }
+
+    fn set_focus_indicator(&mut self, id: NodeId, visible: bool) {
+        if let Some(indicator) = self
+            .bodies
+            .get_mut(&id)
+            .and_then(|body| body.handlers.as_deref_mut())
+            .and_then(|handlers| handlers.focus_indicator.as_mut())
+            && indicator.visible != visible
+        {
+            indicator.visible = visible;
+            self.repaints.borrow_mut().invalidate(id);
+        }
+    }
+
     fn advance_focus(&mut self, backwards: bool) -> Result<Option<NodeId>> {
         if self.tab_order.is_none() {
             self.tab_order = Some(TabOrder::collect(self)?);
         }
         let order = self.tab_order.as_mut().expect("collected tab order");
-        self.focused = order.step(self.focused, backwards);
+        let next = order.step(self.focused, backwards);
+        self.set_focus(next, true);
         Ok(self.focused)
     }
 }

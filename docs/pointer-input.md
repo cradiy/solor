@@ -25,6 +25,20 @@ focus, Tab starts at the first stop and Shift+Tab at the last. Virtual lists
 participate through their currently mounted rows, including overscan.
 Hosts can use `ui.focus_next(view)` and `ui.focus_previous(view)` directly.
 
+Use `.focus_indicator(|paint| ...)` to make an element focusable and draw its
+focus cue. Tab traversal and explicit `Ui::focus` show the cue. A primary
+press that assigns focus hides it, including a press on the same control.
+Hover and pointer motion preserve the cue. The painter runs above the current
+background and below the element's content and children, with its origin at
+the border box. Its signal reads subscribe the element to repaint while the
+indicator is visible.
+
+```rust
+div().focus_indicator(|paint| {
+    paint.fill_rounded_rect(Origin::default(), paint.size, px(6.0), rgb(0x31558a))
+})
+```
+
 Use `.focusable().on_key_down(...).on_key_up(...)` to handle key transitions.
 Each transition goes directly to the element focused at delivery time. Callbacks
 can read and update signals through their context. Wayland resolves character

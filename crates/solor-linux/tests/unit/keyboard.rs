@@ -20,7 +20,9 @@ fn shared_keymap_resolves_the_declared_symbol_and_shift_level() {
     file.write_all(map).unwrap();
     file.write_all(&[0]).unwrap();
     let size = map.len() as u32 + 1;
-    assert!(read_layout(file.try_clone().unwrap().into(), size - 1).is_none());
+    assert!(read_layout(file.try_clone().unwrap().into(), size + 1).is_none());
+    let plain = read_layout(file.try_clone().unwrap().into(), size - 1).unwrap();
+    assert_eq!(key_for_code(&plain, 30), Some(Key::Character("α".into())));
     let mut layout = read_layout(file.into(), size).unwrap();
     assert_eq!(key_for_code(&layout, 30), Some(Key::Character("α".into())));
     let shift = layout.get_keymap().mod_get_index(xkb::MOD_NAME_SHIFT);

@@ -7,7 +7,10 @@ mod tone_sheet;
 use anyhow::Result;
 use solor::{
     Context, Div, Fill, IntoElement, Render, ResizeEdge, Rgba, Signal, Styled, TooltipStyle, Ui,
-    color_stop, component, div, linear_gradient, px, rgb, text,
+    color_stop, component, div,
+    keyboard::{Modifiers, NamedKey},
+    layout::{Origin, Size},
+    linear_gradient, px, rgb, text,
 };
 
 const PAPER: Rgba = rgb(0xf8f7f2);
@@ -29,49 +32,105 @@ fn rule() -> Div {
 }
 
 #[derive(Clone, Copy)]
-struct Selection<const N: usize>([Signal<bool>; N]);
+struct Choice {
+    selected: Signal<bool>,
+    background: Signal<Rgba>,
+    ink: Signal<Rgba>,
+}
+
+#[derive(Clone, Copy)]
+struct Selection<const N: usize> {
+    choices: [Choice; N],
+    colors: [(Rgba, Rgba); 2],
+}
 
 impl<const N: usize> Selection<N> {
-    fn new(cx: &mut Context<'_>, initial: usize) -> Self {
-        Self(std::array::from_fn(|i| cx.signal(i == initial)))
+    fn new(cx: &mut Context<'_>, initial: usize, dark: bool) -> Self {
+        let colors = if dark {
+            [(INK, PAPER), (CITRON, INK)]
+        } else {
+            [(rgb(0xedeee7), INK), (INK, PAPER)]
+        };
+        let choices = std::array::from_fn(|i| {
+            let selected = i == initial;
+            let (background, ink) = colors[usize::from(selected)];
+            Choice {
+                selected: cx.signal(selected),
+                background: cx.signal(background),
+                ink: cx.signal(ink),
+            }
+        });
+        Self { choices, colors }
+    }
+
+    fn flags(self) -> [Signal<bool>; N] {
+        self.choices.map(|choice| choice.selected)
     }
 
     fn select(self, index: usize, cx: &mut Context<'_>) -> Result<()> {
-        for (i, flag) in self.0.into_iter().enumerate() {
-            cx.set(flag, i == index)?;
+        for (i, choice) in self.choices.into_iter().enumerate() {
+            let selected = i == index;
+            if *cx.read(choice.selected)? != selected {
+                let (bg, ink) = self.colors[usize::from(selected)];
+                cx.set(choice.selected, selected)?;
+                cx.set(choice.background, bg)?;
+                cx.set(choice.ink, ink)?;
+            }
         }
         Ok(())
     }
 
-    fn buttons(self, names: [&'static str; N], dark: bool) -> Div {
-        let (active, active_ink, idle, ink) = if dark {
-            (CITRON, INK, INK, PAPER)
-        } else {
-            (INK, PAPER, rgb(0xedeee7), INK)
-        };
-        let mut bar = div();
-        for (current, flag) in self.0.into_iter().enumerate() {
-            bar = bar.child_when(flag, move || {
-                div()
-                    .flex_row()
-                    .gap(px(3.0))
-                    .children(names.into_iter().enumerate().map(|(i, name)| {
-                        let selected = i == current;
-                        div()
-                            .px(px(10.0))
-                            .h(px(30.0))
-                            .justify_center()
-                            .rounded(px(8.0))
-                            .bg(if selected { active } else { idle })
-                            .text_color(if selected { active_ink } else { ink })
-                            .child(label(name, 13.0, 18.0))
-                            .cursor_pointer()
-                            .on_click(move |cx| self.select(i, cx))
-                    }))
-            });
-        }
-        bar
+    fn buttons(self, names: [&'static str; N]) -> Div {
+        div()
+            .flex_row()
+            .gap(px(3.0))
+            .children(names.into_iter().enumerate().map(|(i, name)| {
+                let choice = self.choices[i];
+                let button = div()
+                    .px(px(10.0))
+                    .h(px(30.0))
+                    .justify_center()
+                    .rounded(px(8.0))
+                    .bg(choice.background)
+                    .text_color(choice.ink)
+                    .child(label(name, 13.0, 18.0));
+                activation_button(button, None, move |cx| self.select(i, cx))
+            }))
     }
+}
+
+fn activation_button(
+    button: Div,
+    accent: Option<Rgba>,
+    activate: impl Fn(&mut Context<'_>) -> Result<()> + Copy + 'static,
+) -> Div {
+    button
+        .cursor_pointer()
+        .focus_indicator(move |paint| {
+            let inset = px(10.).min(paint.size.width / 2.);
+            paint.fill_rounded_rect(
+                Origin {
+                    x: inset,
+                    y: (paint.size.height - px(4.)).max(px(0.)),
+                },
+                Size {
+                    width: paint.size.width - inset * 2.,
+                    height: paint.size.height.min(px(2.)),
+                },
+                px(1.),
+                match accent {
+                    Some(color) => color,
+                    None => paint.text_color()?,
+                },
+            )
+        })
+        .on_click(activate)
+        .on_key_down(move |event, cx| {
+            if event.key == NamedKey::Enter.into() && event.modifiers == Modifiers::default() {
+                activate(cx)?;
+            }
+            Ok(())
+        })
 }
 
 fn brand() -> Div {
@@ -127,10 +186,10 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
     Ok((
         ui,
         component(move |cx| {
-            let pages = Selection::new(cx, 2);
-            let spacing = Selection::new(cx, 1);
-            let geometry = Selection::new(cx, 0);
-            let alignment = Selection::new(cx, 1);
+            let pages = Selection::new(cx, 2, true);
+            let spacing = Selection::new(cx, 1, false);
+            let geometry = Selection::new(cx, 0, false);
+            let alignment = Selection::new(cx, 1, false);
             let header = div()
                 .window_drag_region()
                 .flex_row()
@@ -159,7 +218,7 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
                         .flex_row()
                         .items_center()
                         .gap(px(14.0))
-                        .child(pages.buttons(PAGES, true))
+                        .child(pages.buttons(PAGES))
                         .child(
                             header_button("Close", "Close this window", cx).window_close_button(),
                         ),
@@ -179,11 +238,17 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
                         .child(div().w(px(14.0)).window_resize_region(ResizeEdge::TopRight)),
                 )
                 .child(header)
-                .child_when(pages.0[0], lists::palette)
-                .child_when(pages.0[1], markets::market)
-                .child_when(pages.0[2], move || specimens::typography(spacing))
-                .child_when(pages.0[3], move || specimens::paint(geometry, &ramp))
-                .child_when(pages.0[4], move || specimens::layout(alignment))
+                .child_when(pages.choices[0].selected, lists::palette)
+                .child_when(pages.choices[1].selected, markets::market)
+                .child_when(pages.choices[2].selected, move || {
+                    specimens::typography(spacing)
+                })
+                .child_when(pages.choices[3].selected, move || {
+                    specimens::paint(geometry, &ramp)
+                })
+                .child_when(pages.choices[4].selected, move || {
+                    specimens::layout(alignment)
+                })
         }),
     ))
 }

@@ -138,3 +138,57 @@ fn reordered_list_rows_keep_focus_and_change_the_next_tab_stop() -> Result<()> {
     assert_eq!(ui.focus_next(view)?, Some(rows[1]));
     Ok(())
 }
+
+#[test]
+fn focus_indicator_releases_paint_dependencies_on_blur_and_hide() -> Result<()> {
+    use solor::rgb;
+
+    let mut ui = Ui::new();
+    let shown = ui.context().signal(true);
+    let accent = ui.context().signal(rgb(0x264ddd));
+    let view = ui.mount(component(|_| {
+        div()
+            .visible_when(shown)
+            .child(div().focus_indicator(move |cx| {
+                cx.fill(cx.size, *cx.read(accent)?);
+                Ok(())
+            }))
+            .child(div().focusable())
+    }))?;
+    let target = ui.children(view, ui.root(view)?)?.next().unwrap();
+    let frame = |ui: &mut Ui| -> Result<()> {
+        ui.flush()?;
+        ui.layout(
+            view,
+            Size {
+                width: px(40.),
+                height: px(20.),
+            },
+        )?;
+        ui.record_frame(view)?;
+        Ok(())
+    };
+    frame(&mut ui)?;
+    ui.focus(view, target)?;
+    frame(&mut ui)?;
+    ui.focus(view, target)?;
+    assert!(ui.next_redraw(view).is_none());
+    ui.context().set(accent, rgb(0x823011))?;
+    ui.flush()?;
+    let mut dirty = Vec::new();
+    ui.collect_repaints(view, &mut dirty)?;
+    assert_eq!(dirty, [target]);
+    ui.blur(view)?;
+    frame(&mut ui)?;
+    ui.context().set(accent, rgb(0xffdd12))?;
+    ui.flush()?;
+    assert!(ui.next_redraw(view).is_none());
+    ui.focus(view, target)?;
+    ui.context().set(shown, false)?;
+    frame(&mut ui)?;
+    ui.context().set(shown, true)?;
+    frame(&mut ui)?;
+    assert_eq!(ui.focused(view)?, None);
+    assert!(ui.record_frame(view)?.draws().is_empty());
+    Ok(())
+}

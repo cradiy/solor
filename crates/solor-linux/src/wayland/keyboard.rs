@@ -39,15 +39,15 @@ impl Drop for Keyboard {
 }
 
 fn read_layout(fd: OwnedFd, size: u32) -> Option<xkb::State> {
-    // The compositor shares a NUL-terminated keymap starting at file offset zero.
+    // The advertised range starts at offset zero and may include a trailing NUL.
     // Bound the allocation even for a malformed size.
     if !(1..=16 * 1024 * 1024).contains(&size) {
         return None;
     }
     let mut bytes = vec![0; size as usize];
     File::from(fd).read_exact_at(&mut bytes, 0).ok()?;
-    if bytes.pop() != Some(0) {
-        return None;
+    if bytes.last() == Some(&0) {
+        bytes.pop();
     }
     let keymap = xkb::Keymap::new_from_string(
         &xkb::Context::new(xkb::CONTEXT_NO_FLAGS),

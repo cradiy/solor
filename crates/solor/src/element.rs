@@ -504,6 +504,13 @@ pub(super) struct InheritedText {
 
 type Record = Box<dyn Fn(&Scene, NodeId, &mut PaintContext) -> Result<()>>;
 
+type IndicatorPaint = Box<dyn Fn(&mut PaintContext<'_>) -> Result<()>>;
+
+pub(crate) struct FocusIndicator {
+    paint: IndicatorPaint,
+    pub(crate) visible: bool,
+}
+
 fn record_content<E: Element>(scene: &Scene, id: NodeId, cx: &mut PaintContext) -> Result<()> {
     let body = scene.body::<StyledBody<E>>(id)?;
     cx.size = body.content_size(cx.size);
@@ -558,7 +565,10 @@ impl MountedNode {
         record: Option<Record>,
     ) -> Self {
         let style = mounted.style;
-        let frame_paint = if !mounted.fixed
+        let frame_paint = if handlers
+            .as_deref()
+            .is_some_and(|h| h.focus_indicator.is_some())
+            || !mounted.fixed
             || !matches!(paint_mode, RefreshPolicy::Fixed(RefreshMode::OnDemand))
         {
             FramePaint::Recorded
@@ -669,6 +679,19 @@ impl MountedNode {
                 fill,
                 corner_radii: paint.corner_radii.fit_to(size),
             });
+        }
+        if let Some(indicator) = self
+            .handlers
+            .as_deref()
+            .and_then(|h| h.focus_indicator.as_ref())
+            && indicator.visible
+        {
+            if let Err(error) = (indicator.paint)(&mut cx) {
+                commands.truncate(start);
+                return Err(error);
+            }
+            // A painter can customize its own bounds without changing the content pass.
+            cx.size = size;
         }
         if let Some(record) = &self.record
             && let Err(error) = record(scene, self.id, &mut cx)
@@ -915,6 +938,20 @@ impl<E: Element> Node<E> {
     pub fn focusable(mut self) -> Self {
         self.focusable = true;
         self
+    }
+
+    /// Makes this element focusable and paints its keyboard focus indicator over the
+    /// background, before its content. The painter receives border-box coordinates.
+    pub fn focus_indicator(
+        mut self,
+        paint: impl Fn(&mut PaintContext) -> Result<()> + 'static,
+    ) -> Self {
+        let handlers = self.handlers.get_or_insert_with(Default::default);
+        handlers.focus_indicator = Some(FocusIndicator {
+            paint: Box::new(paint),
+            visible: false,
+        });
+        self.focusable()
     }
 
     /// Appends a child in declaration order.

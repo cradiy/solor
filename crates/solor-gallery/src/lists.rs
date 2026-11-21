@@ -11,7 +11,7 @@ const COLORS: usize = 1 << 24;
 
 pub(super) fn palette() -> impl IntoElement {
     component(|cx| {
-        let modes = Selection::new(cx, 0);
+        let modes = Selection::new(cx, 0, false);
         div()
             .flex_1()
             .items_stretch()
@@ -23,10 +23,10 @@ pub(super) fn palette() -> impl IntoElement {
                     .items_center()
                     .justify_between()
                     .child(label("Color atlas", 33.0, 44.0).letter_spacing(px(-1.3)))
-                    .child(modes.buttons(["RGB list", "Tone sheet"], false)),
+                    .child(modes.buttons(["RGB list", "Tone sheet"])),
             )
-            .child_when(modes.0[0], rgb_list)
-            .child_when(modes.0[1], tone_sheet::sheet)
+            .child_when(modes.choices[0].selected, rgb_list)
+            .child_when(modes.choices[1].selected, tone_sheet::sheet)
     })
 }
 

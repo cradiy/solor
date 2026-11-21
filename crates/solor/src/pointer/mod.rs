@@ -211,6 +211,7 @@ type CancelHandler = Box<dyn Fn(PointerId, &mut Context<'_>) -> Result<()>>;
 
 #[derive(Default)]
 pub(crate) struct Handlers {
+    pub(crate) focus_indicator: Option<crate::element::FocusIndicator>,
     pub(crate) padding: crate::styled_body::ContentInsets,
     hover: Option<HoverHandler>,
     hover_position: Option<HoverPositionHandler>,

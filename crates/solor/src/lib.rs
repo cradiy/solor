@@ -344,7 +344,7 @@ impl Instance {
                 } else {
                     self.visible_nodes -= 1;
                     if self.focused == Some(id) {
-                        self.focused = None;
+                        self.set_focus(None, false);
                     }
                     self.unobserve_paint(id, state);
                 }
@@ -878,13 +878,13 @@ impl Ui {
             body.visible && body.focusable,
             "focus requires a visible, focusable element"
         );
-        instance.focused = Some(target);
+        instance.set_focus(Some(target), true);
         Ok(())
     }
 
     /// Clears logical focus in this view.
     pub fn blur(&mut self, view: ViewId) -> Result<()> {
-        self.instance_mut(view)?.focused = None;
+        self.instance_mut(view)?.set_focus(None, false);
         Ok(())
     }
 

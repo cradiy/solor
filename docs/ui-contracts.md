@@ -8,6 +8,8 @@ stage consumes it, and how a host learns about the resulting work.
 
 Run `cargo run -p solor-gallery --release` in a Linux Wayland session to compare
 letter spacing, OpenType ligatures, gradient geometry and flex distribution.
+From the initial Typography page, Tab or Shift+Tab moves between page and specimen
+choices. Enter selects the focused choice and leaves focus on its button.
 The Lists tab shows the 24-bit RGB color space in a virtual list. Scroll to
 browse swatches, or click and drag the position indicator to seek across all
 16,777,216 colors. A slim thumb sits over the list’s right edge and widens on hover.
@@ -49,7 +51,7 @@ Zooming selects the nearest sample in the new range at the same horizontal
 fraction. Each instrument owns a signal
 with a fixed-size history updated in place. The chart reads the selected
 instrument during paint. Its `on_frame_when(running, handler)` callback advances
-the feed while playing. Pausing releases the frame request and keeps the same
+the feed while playing. When the feed toggle has focus, Enter pauses or resumes it. Pausing releases the frame request and keeps the same
 chart mounted for selection, hover and zoom. Callback FPS counts intervals between
 host frame opportunities over at least one second of elapsed monotonic time.
 

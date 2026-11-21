@@ -2,6 +2,7 @@
 use anyhow::Result;
 use solor::{
     WindowControl,
+    keyboard::{KeyEvent, KeyState, NamedKey},
     layout::{Origin, Size},
     platform::{WindowEvent, WindowHandler},
     pointer::{PointerButton, PointerId, PointerInput, PointerKind, PointerSample},
@@ -72,6 +73,49 @@ fn controls_change_the_specimen_and_choices_survive_navigation() -> Result<()> {
     assert!(
         wide == specimen(&mut window)?,
         "returning should preserve the selected tracking"
+    );
+    Ok(())
+}
+
+#[test]
+fn startup_keyboard_navigation_keeps_focus_on_the_activated_tab() -> Result<()> {
+    let (ui, root) = gallery()?;
+    let mut window = CpuWindow::mount(ui, root)?;
+    let size = Size {
+        width: px(800.),
+        height: px(560.),
+    };
+    let submit = |w: &mut CpuWindow| -> Result<_> {
+        let frame = w.frame(size, RasterScale::ONE)?;
+        let pixels = frame.rgba.to_vec();
+        w.frame_submitted()?;
+        Ok(pixels)
+    };
+    let key = |w: &mut CpuWindow, key: NamedKey| -> Result<()> {
+        for state in [KeyState::Down, KeyState::Up] {
+            w.event(WindowEvent::Key(KeyEvent {
+                key: key.into(),
+                state,
+                modifiers: Default::default(),
+            }))?;
+        }
+        Ok(())
+    };
+    let original = submit(&mut window)?;
+    key(&mut window, NamedKey::Tab)?;
+    let focused = submit(&mut window)?;
+    let header_end = 800 * 58 * 4;
+    assert!(focused[..header_end] != original[..header_end]);
+    assert!(focused[header_end..] == original[header_end..]);
+    key(&mut window, NamedKey::Enter)?;
+    let lists = submit(&mut window)?;
+    assert!(lists[header_end..] != original[header_end..]);
+    key(&mut window, NamedKey::Tab)?;
+    key(&mut window, NamedKey::Enter)?;
+    let markets = window.frame(size, RasterScale::ONE)?;
+    assert!(
+        markets.request_callback,
+        "Markets should start its live feed"
     );
     Ok(())
 }
@@ -251,8 +295,21 @@ fn market_advances_freezes_and_retires_its_frame_listener() -> Result<()> {
             .event(WindowEvent::FrameReady(Duration::ZERO))?
             .redraw
     );
-    click(&mut window, 750.0, 85.0)?;
-    sample(&mut window)?;
+    for key in [NamedKey::Tab, NamedKey::Enter] {
+        assert!(
+            window
+                .event(WindowEvent::Key(KeyEvent {
+                    key: key.into(),
+                    state: KeyState::Down,
+                    modifiers: solor::keyboard::Modifiers {
+                        shift: key == NamedKey::Tab,
+                        ..Default::default()
+                    },
+                }))?
+                .redraw
+        );
+        sample(&mut window)?;
+    }
     assert!(
         window
             .event(WindowEvent::FrameReady(Duration::ZERO))?

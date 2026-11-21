@@ -6,7 +6,7 @@ use solor::{
 
 pub(super) fn typography(spacing: Selection<3>) -> Div {
     let mut specimen = div().items_stretch();
-    for (flag, tracking) in spacing.0.into_iter().zip([-1.5, 0.0, 3.0]) {
+    for (flag, tracking) in spacing.flags().into_iter().zip([-1.5, 0.0, 3.0]) {
         specimen = specimen.child_when(flag, move || {
             let latin = div()
                 .flex_grow(2.0)
@@ -79,7 +79,7 @@ pub(super) fn typography(spacing: Selection<3>) -> Div {
         "Typography",
         control(
             "Letter spacing",
-            spacing.buttons(["Tight", "Natural", "Wide"], false),
+            spacing.buttons(["Tight", "Natural", "Wide"]),
         ),
         specimen,
         details("Text features", comparison.child(revision)),
@@ -95,7 +95,7 @@ pub(super) const STOPS: [(f32, Rgba, &str); 4] = [
 
 pub(super) fn paint(geometry: Selection<3>, ramp: &Gradient) -> Div {
     let mut specimen = div().items_stretch();
-    for (active, kind) in geometry.0.into_iter().zip([
+    for (active, kind) in geometry.flags().into_iter().zip([
         GradientKind::Linear,
         GradientKind::Radial,
         GradientKind::Diamond,
@@ -118,7 +118,7 @@ pub(super) fn paint(geometry: Selection<3>, ramp: &Gradient) -> Div {
         "Paint",
         control(
             "Gradient",
-            geometry.buttons(["Linear", "Radial", "Diamond"], false),
+            geometry.buttons(["Linear", "Radial", "Diamond"]),
         ),
         specimen,
         details("Color stops", stops),
@@ -127,7 +127,7 @@ pub(super) fn paint(geometry: Selection<3>, ramp: &Gradient) -> Div {
 
 pub(super) fn layout(alignment: Selection<3>) -> Div {
     let mut specimen = stage(rgb(0xe3e2f1)).px(px(18.0));
-    for (active, distribution) in alignment.0.into_iter().zip([
+    for (active, distribution) in alignment.flags().into_iter().zip([
         Distribution::Start,
         Distribution::Center,
         Distribution::SpaceBetween,
@@ -178,10 +178,7 @@ pub(super) fn layout(alignment: Selection<3>) -> Div {
     );
     page(
         "Flex layout",
-        control(
-            "Justify",
-            alignment.buttons(["Start", "Center", "Between"], false),
-        ),
+        control("Justify", alignment.buttons(["Start", "Center", "Between"])),
         specimen,
         details("Flex grow", weights),
     )

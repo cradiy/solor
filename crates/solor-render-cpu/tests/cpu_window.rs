@@ -292,3 +292,90 @@ fn window_keys_follow_focus_and_retire_with_their_controls() -> Result<()> {
     assert!(!key(&mut window, KeyState::Down)?);
     Ok(())
 }
+
+#[test]
+fn focus_indicator_moves_over_hover_backgrounds_and_under_content() -> Result<()> {
+    use solor::keyboard::{KeyEvent, KeyState, NamedKey};
+    use solor::{PaintContext, Rgba};
+
+    let idle = rgb(0x282929);
+    let hover = rgb(0x5d6666);
+    let focus = rgb(0x31558a);
+    let ink = rgb(0xffffdd);
+    let indicator = move |cx: &mut PaintContext<'_>| {
+        cx.fill(cx.size, focus);
+        Ok(())
+    };
+    let mut window = CpuWindow::mount(
+        Ui::new(),
+        component(move |cx| {
+            let bg = cx.signal(idle);
+            div()
+                .flex_row()
+                .child(
+                    div()
+                        .size(px(20.))
+                        .bg(bg)
+                        .p(px(4.))
+                        .focus_indicator(indicator)
+                        .on_hover(move |inside, cx| cx.set(bg, if inside { hover } else { idle }))
+                        .child(div().size(px(4.)).bg(ink)),
+                )
+                .child(div().size(px(20.)).bg(idle).focus_indicator(indicator))
+        }),
+    )?;
+    let render = |window: &mut CpuWindow, expected: [Rgba; 3]| -> Result<()> {
+        let frame = window.frame(
+            Size {
+                width: px(40.),
+                height: px(20.),
+            },
+            RasterScale::ONE,
+        )?;
+        for ((x, y), color) in [(1, 1), (5, 5), (21, 1)].into_iter().zip(expected) {
+            let i = (y * 40 + x) * 4;
+            assert_eq!(
+                frame.rgba[i..i + 4],
+                [color.red, color.green, color.blue, color.alpha]
+            );
+        }
+        window.frame_submitted()
+    };
+    let sample = |x| PointerSample {
+        id: PointerId(1),
+        kind: PointerKind::Mouse,
+        position: Origin {
+            x: px(x),
+            y: px(1.),
+        },
+        modifiers: Default::default(),
+    };
+    let tab = || {
+        WindowEvent::Key(KeyEvent {
+            key: NamedKey::Tab.into(),
+            state: KeyState::Down,
+            modifiers: Default::default(),
+        })
+    };
+    render(&mut window, [idle, ink, idle])?;
+    assert!(
+        window
+            .event(WindowEvent::Pointer(PointerInput::Move(sample(1.))))?
+            .redraw
+    );
+    render(&mut window, [hover, ink, idle])?;
+    assert!(window.event(tab())?.redraw);
+    render(&mut window, [focus, ink, idle])?;
+    assert!(window.event(tab())?.redraw);
+    render(&mut window, [hover, ink, focus])?;
+    assert!(
+        window
+            .event(WindowEvent::Pointer(PointerInput::Down(
+                sample(21.),
+                PointerButton::Primary
+            )))?
+            .redraw
+    );
+    render(&mut window, [idle, ink, idle])?;
+    Ok(())
+}

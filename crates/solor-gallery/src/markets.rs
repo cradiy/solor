@@ -10,7 +10,7 @@ use solor::{
     pointer::ScrollDelta, px, rgb, text, uniform_list,
 };
 
-use crate::label;
+use crate::{activation_button, label};
 
 const SYMBOLS: [(&str, &str, i32); 6] = [
     ("ORBX", "Orbex Freight", 4895),
@@ -268,6 +268,13 @@ pub(super) fn market() -> impl IntoElement {
         let timing = cx.signal(None);
         let fps = cx.signal(SharedString::from("--"));
         let action = cx.signal(SharedString::from("Pause"));
+        let toggle_feed = move |cx: &mut Context<'_>| {
+            let run = !*cx.read(running)?;
+            cx.set(running, run)?;
+            cx.set(timing, None)?;
+            cx.set(fps, "--".into())?;
+            cx.set(action, if run { "Pause" } else { "Resume" }.into())
+        };
         let toolbar = div()
             .flex_row()
             .items_center()
@@ -297,7 +304,7 @@ pub(super) fn market() -> impl IntoElement {
                     .gap(px(8.0))
                     .child(label("Callback FPS", 12.0, 20.0).text_color(DIM))
                     .child(text(fps).w(px(49.0)).text_color(UP))
-                    .child(
+                    .child(activation_button(
                         div()
                             .rounded(px(6.0))
                             .bg(ACTIVE)
@@ -305,16 +312,10 @@ pub(super) fn market() -> impl IntoElement {
                             .h(px(28.0))
                             .items_center()
                             .justify_center()
-                            .child(text(action).text_size(px(13.0)))
-                            .cursor_pointer()
-                            .on_click(move |cx| {
-                                let run = !*cx.read(running)?;
-                                cx.set(running, run)?;
-                                cx.set(timing, None)?;
-                                cx.set(fps, "--".into())?;
-                                cx.set(action, if run { "Pause" } else { "Resume" }.into())
-                            }),
-                    ),
+                            .child(text(action).text_size(px(13.0))),
+                        Some(UP),
+                        toggle_feed,
+                    )),
             );
         let legend = |color, name| {
             div()
