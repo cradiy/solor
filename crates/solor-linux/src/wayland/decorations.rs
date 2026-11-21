@@ -10,7 +10,7 @@ use wayland_protocols::xdg::{
     shell::client::xdg_toplevel::XdgToplevel,
 };
 
-use super::Window;
+use super::{Role, Window};
 
 pub(super) struct Decorations {
     handle: ZxdgToplevelDecorationV1,
@@ -78,7 +78,10 @@ impl Dispatch<ZxdgToplevelDecorationV1, ()> for Window {
         _: &QueueHandle<Self>,
     ) {
         if let Event::Configure { .. } = event
-            && let Some(decorations) = &mut state.decorations
+            && let Role::Toplevel {
+                decorations: Some(decorations),
+                ..
+            } = &mut state.role
         {
             decorations.pending_configure = true;
         }

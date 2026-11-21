@@ -122,9 +122,20 @@ The primary press starts a native resize unless its handler captures the
 pointer. The window system supplies the resulting sizes through normal
 window configuration. The gallery uses the top edge and both top corners.
 
-The Linux host pairs Wayland with the CPU renderer and runs one XDG toplevel
-until close. The driver accepts a `WindowHandler<Rgba8>` and borrows its
-output for one submission.
+On Linux, `run_window` opens an XDG toplevel. Use
+`current_platform()?.run_layer_surface(options, ui, root)` for a panel,
+wallpaper or overlay. Both entry points mount the same types of components and
+run until the surface closes. The driver borrows the CPU renderer's output for
+one submission.
+
+Run `cargo run -p solor-platform --example layer_panel` to open a top panel.
+`LayerShellOptions::new(namespace, layer)` spans the compositor-selected output
+and leaves keyboard focus with the active application. Set a fixed axis with
+`Some(px(...))` or leave it as `None` with both opposite edges anchored.
+For instance, a top bar can stretch horizontally and use the same logical
+height for its fixed height and its reserved space. A corner overlay can set
+both dimensions and leave the exclusive zone at its default. Layer surfaces
+require `zwlr_layer_shell_v1`; on-demand keyboard focus requires version 4.
 
 Pointer positions and scroll distances arrive in logical pixels. The Linux
 adapter currently delivers mouse buttons, motion, cancellation and two-axis

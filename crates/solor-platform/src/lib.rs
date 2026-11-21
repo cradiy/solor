@@ -7,6 +7,8 @@ use solor::{Render, Ui};
 mod system;
 
 pub use solor::platform::WindowOptions;
+#[cfg(target_os = "linux")]
+pub use solor_linux::layer_shell;
 
 /// Hosts application windows with the window system and renderer selected for this target.
 pub struct SystemPlatform(system::Host);
@@ -22,5 +24,17 @@ impl SystemPlatform {
     /// On Linux this runs the event loop until the window closes.
     pub fn run_window(&self, options: WindowOptions<'_>, ui: Ui, root: impl Render) -> Result<()> {
         self.0.run_window(options, ui, root)
+    }
+
+    /// Mounts a Wayland desktop panel or overlay on the compositor-selected output.
+    /// Returns an error if the requested layer-shell protocol is unavailable.
+    #[cfg(target_os = "linux")]
+    pub fn run_layer_surface(
+        &self,
+        options: layer_shell::LayerShellOptions<'_>,
+        ui: Ui,
+        root: impl Render,
+    ) -> Result<()> {
+        self.0.run_layer_surface(options, ui, root)
     }
 }
