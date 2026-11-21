@@ -395,11 +395,12 @@ impl Ui {
             })
     }
 
-    /// Earliest time an idle host should record this view for pointer feedback.
+    /// Earliest time an idle host should record this view for pending updates or pointer feedback.
     /// A host rechecks this after input and after accepting a frame.
     pub fn next_redraw(&self, view: ViewId) -> Option<std::time::Instant> {
         let instance = self.instances.get(&view)?;
         if self.has_pending_bindings()
+            || !instance.repaints.borrow().dirty.is_empty()
             || instance.pointer.scroll_pending
             || instance.lists.values().any(|list| list.dirty.get())
         {

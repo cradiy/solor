@@ -9,7 +9,7 @@ use solor::{
     pointer::{PointerButton, PointerId, PointerInput, PointerKind, PointerSample, ScrollDelta},
     px,
     raster::RasterScale,
-    rgb, text, uniform_list, variable_list,
+    rgb, scrollbar, text, uniform_list, variable_list,
 };
 use solor_render_cpu::CpuWindow;
 
@@ -148,6 +148,50 @@ fn a_failed_row_mount_releases_partial_rows_and_can_be_retried() -> Result<()> {
     let rows = submit(&mut ui, view, 48.0)?;
     assert_eq!(rows[1], initial[0]);
     assert_eq!(*ui.context().read(owned.get().unwrap())?, 2);
+    Ok(())
+}
+
+#[test]
+fn growing_offscreen_content_resizes_the_thumb_in_the_first_cpu_frame() -> Result<()> {
+    let mut window = CpuWindow::mount(
+        Ui::new(),
+        component(|cx| {
+            let count = cx.signal(20usize);
+            let handle = ListScrollHandle::new();
+            div()
+                .flex_row()
+                .items_stretch()
+                .bg(rgb(0xffffff))
+                .child(
+                    uniform_list(count, px(10.0), move |_| {
+                        div().on_click(move |cx| cx.set(count, 40))
+                    })
+                    .scroll_handle(&handle)
+                    .flex_1(),
+                )
+                .child(scrollbar(&handle).p(px(0.0)))
+        }),
+    )?;
+    let size = Size {
+        width: px(120.0),
+        height: px(100.0),
+    };
+    let sample = |window: &mut CpuWindow| -> Result<[u8; 2]> {
+        let frame = window.frame(size, RasterScale::ONE)?;
+        let red = |y: usize| frame.rgba[4 * (y * 120 + 118)];
+        let channels = [red(10), red(38)];
+        window.frame_submitted()?;
+        Ok(channels)
+    };
+    assert_eq!(sample(&mut window)?, [0x99, 0x99]);
+    for input in [
+        PointerInput::Down(mouse(), PointerButton::Primary),
+        PointerInput::Up(mouse(), PointerButton::Primary),
+    ] {
+        window.event(WindowEvent::Pointer(input))?;
+    }
+    assert_eq!(sample(&mut window)?, [0x99, 0xff]);
+    assert!(window.next_redraw().is_none());
     Ok(())
 }
 

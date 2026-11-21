@@ -242,6 +242,8 @@ fn a_position_subscriber_repaints_for_settled_changes_and_list_removal() -> Resu
     handle.scroll_to_percent(10.0)?;
     handle.scroll_to_percent(75.0)?;
     submit(&mut ui, view, 100.0)?;
+    assert!(ui.next_redraw(view).is_none());
+    assert!(ui.next_redraw(indicator).is_some());
     submit(&mut ui, indicator, 10.0)?;
     assert_eq!(paints.get(), 2);
     assert_eq!(observed.get().unwrap().percent(), 75.0);

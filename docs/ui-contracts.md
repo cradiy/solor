@@ -558,8 +558,9 @@ div().flex_col()
     .child(uniform_list(items, px(32.0), build_row).scroll_handle(&list).flex_1())
 ```
 
-Layout publishes the final position once it settles. Subscribers run on the
-next binding flush when the position changes. Unmounting the list clears the
+Once list layout settles, a changed position invalidates subscribed drawings
+before frame recording. An indicator in the same view follows the list in that
+frame. An indicator in another view requests its own redraw. Unmounting the list clears the
 signal. Create it in a parent or application context to observe it across mounts.
 
 A uniform list knows the full document height. A variable list sets

@@ -88,7 +88,6 @@ fn custom_thumb_pages_drags_and_releases_capture_on_cancel() -> Result<()> {
     ui.dispatch_pointer(view, PointerInput::Down(page, PointerButton::Primary))?;
     ui.dispatch_pointer(view, PointerInput::Up(page, PointerButton::Primary))?;
     submit(&mut ui, view, 120.0)?;
-    submit(&mut ui, view, 120.0)?;
     assert_eq!(list.position().unwrap().offset_px, 120.0);
     assert_eq!(thumb(&ui, 0x223344)?.unwrap().0, px(48.0));
     // Pick up the thumb near its lower edge and move vertically outside the track.
@@ -125,13 +124,17 @@ fn custom_thumb_pages_drags_and_releases_capture_on_cancel() -> Result<()> {
     ui.dispatch_pointer(view, wheel)?;
     submit(&mut ui, view, 120.0)?;
     assert_eq!(list.position().unwrap().offset_px, 106.5);
+    let painted = thumb(&ui, 0x112233)?.or(thumb(&ui, 0x223344)?).unwrap();
+    assert_eq!(painted.0, px(42.6));
+    assert!(
+        ui.next_redraw(view).is_none(),
+        "settled wheel input scheduled a second frame"
+    );
     list.scroll_to_percent(100.0)?;
-    submit(&mut ui, view, 60.0)?;
     submit(&mut ui, view, 60.0)?;
     let (_, _, length, _) = thumb(&ui, 0x112233)?.or(thumb(&ui, 0x223344)?).unwrap();
     assert_eq!(length, px(20.0));
     ui.context().set(count, 2)?;
-    submit(&mut ui, view, 60.0)?;
     submit(&mut ui, view, 60.0)?;
     assert!(thumb(&ui, 0x112233)?.or(thumb(&ui, 0x223344)?).is_none());
     assert!(ui.next_redraw(view).is_none());
@@ -165,7 +168,6 @@ fn measured_list_and_short_track_share_wheel_distance_with_the_parent() -> Resul
     }))?;
     submit(&mut ui, view, 120.0)?;
     list.scroll_to_percent(100.0)?;
-    submit(&mut ui, view, 120.0)?;
     submit(&mut ui, view, 120.0)?;
     let pos = list.position().unwrap();
     assert_eq!(pos.offset_px, 30.0);
@@ -307,7 +309,6 @@ fn custom_painter_uses_application_visibility_and_the_interactive_thumb_interval
         PointerInput::Down(point(110.0, 24.0), PointerButton::Primary),
     )?;
     ui.dispatch_pointer(view, PointerInput::Move(point(70.0, 54.0)))?;
-    submit(&mut ui, view, 120.0)?;
     submit(&mut ui, view, 120.0)?;
     assert_eq!(dot(&ui)?, (px(54.0), px(8.0)));
     Ok(())

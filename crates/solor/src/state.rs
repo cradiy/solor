@@ -143,8 +143,18 @@ impl<N> Bindings<N> {
         }
     }
 
+    fn remove_pending(&mut self, index: usize) {
+        self.pending.swap_remove(index);
+        if let Some(&moved) = self.pending.get(index) {
+            self.entries[moved].pending_index = Some(index);
+        }
+    }
+
     fn remove(&mut self, key: BindingKey, signals: &mut SlotMap<SignalKey, SignalEntry>) {
         let binding = self.entries.remove(key).expect("binding is live");
+        if let Some(index) = binding.pending_index {
+            self.remove_pending(index);
+        }
 
         let signal_bindings = &mut signals[binding.signal].bindings;
         signal_bindings.swap_remove(binding.signal_index);
@@ -164,12 +174,6 @@ impl<N> Bindings<N> {
             self.by_node.remove(&binding.node);
         }
 
-        if let Some(index) = binding.pending_index {
-            self.pending.swap_remove(index);
-            if let Some(&moved) = self.pending.get(index) {
-                self.entries[moved].pending_index = Some(index);
-            }
-        }
         // Release user captures only after every index is consistent.
         drop(binding);
     }
@@ -267,6 +271,23 @@ impl<N> Runtime<N> {
         self.queue_subscribers(signal.id.key);
         drop(old);
         Ok(true)
+    }
+
+    /// Publishes a layout result to its subscribers before recording, leaving other signals queued.
+    pub(crate) fn publish_layout_value<S: PartialEq + 'static>(
+        &mut self,
+        signal: Signal<S>,
+        value: S,
+    ) -> Result<(), StateError> {
+        self.set(signal, value)?;
+        for index in 0..self.signals[signal.id.key].bindings.len() {
+            let key = self.signals[signal.id.key].bindings[index];
+            if let Some(pending) = self.bindings.entries[key].pending_index {
+                self.bindings.remove_pending(pending);
+                self.apply_binding(key);
+            }
+        }
+        Ok(())
     }
 
     /// Mutates the stored value directly and queues subscribers for the next flush.
@@ -403,19 +424,22 @@ impl<N> Runtime<N> {
     pub fn flush(&mut self) -> usize {
         let mut applied = 0;
         while let Some(key) = self.bindings.pending.pop() {
-            let binding = &mut self.bindings.entries[key];
-            binding.pending_index = None;
-            let signal = &mut self.signals[binding.signal];
-            signal.all_queued = false;
-            let value = &*signal.value;
-            let node = self
-                .tree
-                .get_mut(binding.node)
-                .expect("binding target is live");
-            (binding.apply)(value, node);
+            self.apply_binding(key);
             applied += 1;
         }
         applied
+    }
+
+    fn apply_binding(&mut self, key: BindingKey) {
+        let binding = &mut self.bindings.entries[key];
+        binding.pending_index = None;
+        let signal = &mut self.signals[binding.signal];
+        signal.all_queued = false;
+        let node = self
+            .tree
+            .get_mut(binding.node)
+            .expect("binding target is live");
+        (binding.apply)(&*signal.value, node);
     }
 
     /// Returns the number of pending updates tracked by the runtime.

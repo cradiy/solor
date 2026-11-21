@@ -287,12 +287,12 @@ impl ListScrollHandle {
         }
         if let Some(signal) = self.0.position_signal {
             // The scope owning the signal may have unmounted while the list was still live.
-            let _ = state.set(signal, position);
+            let _ = state.publish_layout_value(signal, position);
         }
         self.0.observers.borrow_mut().retain(|observer| {
             observer
                 .upgrade()
-                .is_some_and(|signal| state.set(*signal, position).is_ok())
+                .is_some_and(|signal| state.publish_layout_value(*signal, position).is_ok())
         });
     }
 
