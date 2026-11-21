@@ -111,6 +111,28 @@ pub(super) struct RegionSampler {
     top: f64,
 }
 
+/// Project source pixel edges using the fitted device-space rectangle used for sampling.
+pub(super) fn project_region(
+    image: &solor::CustomImage,
+    target: Size,
+    origin: solor::layout::Origin,
+    scale: RasterScale,
+    region: solor::raster::Clip,
+) -> Result<solor::raster::Clip> {
+    let (offset, fitted) = image.bounds(target).map_err(Error::other)?;
+    let intrinsic = image.dimensions();
+    let left = f64::from(origin.x) * scale.0 + f64::from(offset.x) * scale.0;
+    let top = f64::from(origin.y) * scale.0 + f64::from(offset.y) * scale.0;
+    let dx = f64::from(fitted.width) * scale.0 / f64::from(intrinsic.width);
+    let dy = f64::from(fitted.height) * scale.0 / f64::from(intrinsic.height);
+    Ok(solor::raster::Clip {
+        left: (left + region.left as f64 * dx).floor() as i64,
+        right: (left + region.right as f64 * dx).ceil() as i64,
+        top: (top + region.top as f64 * dy).floor() as i64,
+        bottom: (top + region.bottom as f64 * dy).ceil() as i64,
+    })
+}
+
 impl RegionSampler {
     pub(super) fn new(
         image: &solor::CustomImage,

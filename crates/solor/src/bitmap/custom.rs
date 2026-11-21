@@ -3,11 +3,14 @@ use super::{ImageAsset, Placement};
 use crate::{
     Fill, ImageSource,
     layout::{Origin, Size},
-    raster::DeviceSize,
+    raster::{Clip, DeviceSize},
     style::ObjectFit,
 };
 use anyhow::{Result, ensure};
-use std::{fmt, rc::Rc};
+use std::{
+    fmt,
+    rc::{Rc, Weak},
+};
 
 /// Mapping from a rectangular output buffer to intrinsic image pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -37,7 +40,13 @@ pub trait ImageRenderer {
 pub struct CustomImage {
     renderer: Rc<dyn ImageRenderer>,
     size: DeviceSize,
+    change: Option<Rc<ImageChange>>,
     pub(crate) placement: Placement,
+}
+
+struct ImageChange {
+    previous: Weak<dyn ImageRenderer>,
+    region: Clip,
 }
 
 impl CustomImage {
@@ -48,8 +57,43 @@ impl CustomImage {
         Ok(Self {
             renderer: Rc::new(renderer),
             size,
+            change: None,
             placement: Placement::centered(ObjectFit::Cover),
         })
+    }
+
+    /// Publishes a new snapshot of the same size, with changed pixels inside a
+    /// half-open rectangle in source coordinates. Include any filtering halo:
+    /// requests outside this rectangle must produce the same pixels at every scale.
+    pub fn updated_region(
+        &self,
+        region: Clip,
+        renderer: impl ImageRenderer + 'static,
+    ) -> Result<Self> {
+        let mut next = Self::new(renderer)?;
+        ensure!(
+            next.size == self.size,
+            "regional image update changed dimensions"
+        );
+        ensure!(
+            !region.empty() && region.intersect(Clip::canvas(self.size)) == region,
+            "invalid image update region"
+        );
+        next.change = Some(Rc::new(ImageChange {
+            previous: Rc::downgrade(&self.renderer),
+            region,
+        }));
+        next.placement = self.placement;
+        Ok(next)
+    }
+
+    /// Returns the declared change relative to the given painted snapshot when
+    /// its identity and placement match the previous version.
+    pub fn changed_region_since(&self, previous: &Self) -> Option<Clip> {
+        let change = self.change.as_ref()?;
+        (self.placement == previous.placement
+            && change.previous.ptr_eq(&Rc::downgrade(&previous.renderer)))
+        .then_some(change.region)
     }
 
     /// Returns the intrinsic image dimensions.

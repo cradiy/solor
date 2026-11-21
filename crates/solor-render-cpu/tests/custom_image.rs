@@ -181,3 +181,133 @@ fn application_reads_only_visible_scanlines_of_a_sparse_raw_image() -> Result<()
     assert_eq!(bytes_read.get(), 8 * 4 * 4);
     Ok(())
 }
+
+#[test]
+fn tile_publication_repairs_the_fitted_region_and_handles_skipped_snapshots() -> Result<()> {
+    use solor::raster::Clip;
+
+    #[derive(Clone)]
+    struct Tiles {
+        changed: Vec<Clip>,
+        requests: Rc<RefCell<Vec<ImageRegion>>>,
+    }
+
+    impl ImageRenderer for Tiles {
+        fn dimensions(&self) -> DeviceSize {
+            DeviceSize {
+                width: 8,
+                height: 8,
+            }
+        }
+        fn render(&self, region: ImageRegion) -> Result<ImageAsset> {
+            self.requests.borrow_mut().push(region);
+            let mut bytes = Vec::new();
+            for y in 0..region.output.height {
+                for x in 0..region.output.width {
+                    let sx = (region.source_origin[0]
+                        + (f64::from(x) + 0.5) * region.source_step[0])
+                        .floor() as i64;
+                    let sy = (region.source_origin[1]
+                        + (f64::from(y) + 0.5) * region.source_step[1])
+                        .floor() as i64;
+                    let painted = self.changed.iter().any(|r| {
+                        (r.left..r.right).contains(&sx) && (r.top..r.bottom).contains(&sy)
+                    });
+                    bytes.extend_from_slice(&[if painted { 240 } else { 12 }, 20, 30, 255]);
+                }
+            }
+            ImageAsset::from_rgba8(region.output.width, region.output.height, bytes)
+        }
+    }
+
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let mut tiles = Tiles {
+        changed: Vec::new(),
+        requests: requests.clone(),
+    };
+    let base = CustomImage::new(tiles.clone())?;
+    let a = Clip {
+        left: 2,
+        top: 2,
+        right: 5,
+        bottom: 4,
+    };
+    let b = Clip {
+        left: 0,
+        top: 0,
+        right: 1,
+        bottom: 1,
+    };
+    let c = Clip {
+        left: 7,
+        top: 7,
+        right: 8,
+        bottom: 8,
+    };
+    tiles.changed.push(a);
+    let first = base.updated_region(a, tiles.clone())?;
+    tiles.changed.push(b);
+    let skipped = first.updated_region(b, tiles.clone())?;
+    tiles.changed.push(c);
+    let last = skipped.updated_region(c, tiles)?;
+    let snapshots = [first.clone(), last.clone()];
+    let mut window = CpuWindow::mount(
+        Ui::new(),
+        component(move |cx| {
+            let current = cx.signal(base);
+            let mut pending = snapshots.into_iter();
+            div()
+                .items_stretch()
+                .on_frame(move |_, cx| {
+                    if let Some(next) = pending.next() {
+                        cx.set(current, next)?;
+                    }
+                    Ok(())
+                })
+                .child(image(current).w_full().h_full())
+        }),
+    )?;
+    let size = Size {
+        width: px(12.),
+        height: px(8.),
+    };
+    let scale = RasterScale(1.5);
+    window.frame(size, scale)?;
+    window.frame_submitted()?;
+    let canvas = Clip::canvas(scale.buffer_size(size)?);
+    let partial = Clip {
+        left: 6,
+        top: 3,
+        right: 11,
+        bottom: 6,
+    };
+    for (snapshot, expected, output) in [
+        (
+            first,
+            partial,
+            DeviceSize {
+                width: 5,
+                height: 3,
+            },
+        ),
+        (
+            last,
+            canvas,
+            DeviceSize {
+                width: 12,
+                height: 12,
+            },
+        ),
+    ] {
+        requests.borrow_mut().clear();
+        window.event(WindowEvent::FrameReady(Duration::ZERO))?;
+        let frame = window.frame(size, scale)?;
+        assert_eq!(frame.damage.bounds(), Some(expected));
+        assert_eq!(requests.borrow().len(), 1);
+        assert_eq!(requests.borrow()[0].output, output);
+        let mut reference = CpuWindow::mount(Ui::new(), component(move |_| image(snapshot)))?;
+        assert_eq!(frame.rgba, reference.frame(size, scale)?.rgba);
+        window.frame_submitted()?;
+    }
+    Ok(())
+}

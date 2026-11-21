@@ -622,7 +622,14 @@ Clamp boundary samples to the image edges. Return an `ImageAsset` the size of
 tile retention. This path works with all file codecs disabled. Each handle
 represents one immutable snapshot. For background decoding, render the pixels
 currently available and publish a new handle to `Signal<CustomImage>` when
-tiles arrive. The regional callback runs on the rendering thread.
+tiles arrive. To publish a tile, use
+`let next = current.updated_region(source_rect, renderer)?;` and set the
+signal to `next`. The rectangle uses half-open intrinsic pixel coordinates and
+must include the full influence of any filtering. CPU image elements and box
+backgrounds project this change through fit, alignment, clipping and device
+scale when the window still displays the direct predecessor with the same
+geometry. A skipped snapshot or a layout change triggers the usual redraw.
+The regional callback runs on the rendering thread.
 
 Run `cargo run -p solor-platform --example image --features solor/image-full`
 to compare cover and contain placement with a transparent WebP.
