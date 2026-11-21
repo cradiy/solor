@@ -148,6 +148,19 @@ pub(super) fn blend(pixel: &mut [u8; 4], color: solor::Rgba, coverage: u8) {
     }
 }
 
+pub(super) fn blend_premultiplied(dst: &mut [u8; 4], src: [u8; 4]) {
+    match src[3] {
+        0 => {}
+        255 => *dst = src,
+        alpha => {
+            let inverse = u16::from(255 - alpha);
+            for (dst, src) in dst.iter_mut().zip(src) {
+                *dst = src + ((u16::from(*dst) * inverse + 127) / 255) as u8;
+            }
+        }
+    }
+}
+
 // Solid spans share one effective alpha across all their destination pixels.
 pub(super) fn blend_solid_span(pixels: &mut [[u8; 4]], color: solor::Rgba, coverage: u8) {
     let alpha = (u16::from(coverage) * u16::from(color.alpha) + 127) / 255;

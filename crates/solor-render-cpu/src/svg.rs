@@ -145,17 +145,7 @@ impl SvgCache {
             } else {
                 let src = pixels[start * 4..(start + width) * 4].as_chunks::<4>().0;
                 for (dst, src) in row.iter_mut().zip(src) {
-                    match src[3] {
-                        0 => {}
-                        255 => *dst = *src,
-                        alpha => {
-                            for (dst, src) in dst.iter_mut().zip(src) {
-                                *dst = src
-                                    + ((u16::from(*dst) * u16::from(255 - alpha) + 127) / 255)
-                                        as u8;
-                            }
-                        }
-                    }
+                    crate::pixels::blend_premultiplied(dst, *src);
                 }
             }
         }

@@ -123,6 +123,21 @@ impl Surface {
                     Ok(())
                 })
             }
+            Fill::Image(image) => {
+                let bounds = PathBounds::new(origin, points, scale)?;
+                let size = Size {
+                    width: px(((bounds.right - bounds.left) / scale.0) as f32),
+                    height: px(((bounds.bottom - bounds.top) / scale.0) as f32),
+                };
+                let sampler = crate::bitmap::ImageSampler::new(image, size, scale)?;
+                for_each_span(points, origin, scale, clip, |row, from, to, coverage| {
+                    let y = (row as f64 + 0.5 - bounds.top) / scale.0;
+                    for (x, pixel) in (from..to).zip(self.span_pixels(row, from, to)) {
+                        sampler.blend(pixel, (x as f64 + 0.5 - bounds.left) / scale.0, y, coverage);
+                    }
+                    Ok(())
+                })
+            }
             Fill::Gradient(gradient) => {
                 let bounds = PathBounds::new(origin, points, scale)?;
                 if bounds.left == bounds.right || bounds.top == bounds.bottom {

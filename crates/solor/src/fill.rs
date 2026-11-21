@@ -446,6 +446,8 @@ pub enum Fill {
     Solid(Rgba),
     /// Samples a gradient in the bounds of the region.
     Gradient(Gradient),
+    /// Samples shared bitmap pixels within the painted bounds.
+    Image(crate::ImageFill),
 }
 impl From<Rgba> for Fill {
     fn from(color: Rgba) -> Self {

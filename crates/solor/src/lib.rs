@@ -62,6 +62,9 @@ pub use crate::{
     state::{Signal, SignalVec},
     tree::NodeId,
 };
+mod bitmap;
+pub use bitmap::{ImageAsset, ImageFill};
+pub use element::media::{ImageSource, image};
 pub use element::svg::{Svg, SvgAsset, svg};
 pub use element::{
     AnyElement, Children, Div, Draw, Element, IntoElement, Node, PaintContext, ParentElement,
@@ -214,7 +217,12 @@ type VisibilityBatch = BTreeMap<Rc<[usize]>, (NodeId, bool)>;
 type VisibilityUpdates = Rc<RefCell<HashMap<ViewId, VisibilityBatch>>>;
 type Restyle = Rc<dyn Fn(&mut Instance, NodeId, &mut Runtime<()>, bool) -> Result<()>>;
 type StyleUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), (Restyle, bool)>>>;
-type LabelUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), Signal<SharedString>>>>;
+#[derive(Clone, Copy)]
+enum ContentUpdate {
+    Text(Signal<SharedString>),
+    Image(Signal<ImageAsset>),
+}
+type ContentUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), ContentUpdate>>>;
 
 struct Instance {
     focused: Option<NodeId>,
@@ -241,7 +249,7 @@ struct Attachment<'a> {
     state: &'a mut Runtime<()>,
     pending: &'a Pending,
     styles: &'a StyleUpdates,
-    labels: &'a LabelUpdates,
+    content_updates: &'a ContentUpdates,
     visibility: &'a VisibilityUpdates,
     engine: &'a TextSystem,
 }
@@ -541,7 +549,9 @@ impl Instance {
             if let Some(target) = node.binding_target {
                 cx.state.remove_subtree(target)?;
                 cx.styles.borrow_mut().remove(&(ViewId(cx.scope), node.id));
-                cx.labels.borrow_mut().remove(&(ViewId(cx.scope), node.id));
+                cx.content_updates
+                    .borrow_mut()
+                    .remove(&(ViewId(cx.scope), node.id));
             }
             for signal in node.owned {
                 cx.state.remove_signal_by_id(signal)?;
@@ -608,7 +618,7 @@ pub struct Ui {
     instances: HashMap<ViewId, Instance>,
     pending: Pending,
     styles: StyleUpdates,
-    labels: LabelUpdates,
+    content_updates: ContentUpdates,
     visibility: VisibilityUpdates,
 }
 
@@ -622,7 +632,7 @@ impl Default for Ui {
             instances: HashMap::new(),
             pending: Pending::default(),
             styles: Default::default(),
-            labels: LabelUpdates::default(),
+            content_updates: ContentUpdates::default(),
             visibility: VisibilityUpdates::default(),
         }
     }
@@ -711,7 +721,7 @@ impl Ui {
             state: self.state.get_mut(),
             pending: &self.pending,
             styles: &self.styles,
-            labels: &self.labels,
+            content_updates: &self.content_updates,
             visibility: &self.visibility,
             engine: &self.engine,
         };
@@ -760,7 +770,7 @@ impl Ui {
         self.state.borrow().pending_count() != 0
             || !self.pending.borrow().is_empty()
             || !self.styles.borrow().is_empty()
-            || !self.labels.borrow().is_empty()
+            || !self.content_updates.borrow().is_empty()
             || !self.visibility.borrow().is_empty()
     }
 
@@ -791,7 +801,7 @@ impl Ui {
                 if let Some(error) = failure {
                     return Err(error);
                 }
-                self.flush_labels()?;
+                self.flush_content_updates()?;
                 if self.state.get_mut().pending_count() == 0 {
                     return Ok(visited);
                 }
@@ -808,7 +818,7 @@ impl Ui {
                     state: self.state.get_mut(),
                     pending: &self.pending,
                     styles: &self.styles,
-                    labels: &self.labels,
+                    content_updates: &self.content_updates,
                     visibility: &self.visibility,
                     engine: &self.engine,
                 };
@@ -832,18 +842,26 @@ impl Ui {
         }
     }
 
-    fn flush_labels(&mut self) -> Result<()> {
-        let mut labels = self.labels.borrow_mut();
-        if labels.is_empty() {
+    fn flush_content_updates(&mut self) -> Result<()> {
+        let mut content_updates = self.content_updates.borrow_mut();
+        if content_updates.is_empty() {
             return Ok(());
         }
         let mut failure = None;
-        labels.retain(|&(view, id), source| {
-            let Ok(value) = self.state.get_mut().read(*source) else {
-                return false;
+        content_updates.retain(|&(view, id), source| {
+            let instance = self.instances.get_mut(&view).expect("live content view");
+            let state = self.state.get_mut();
+            let result = match *source {
+                ContentUpdate::Text(source) => state
+                    .read(source)
+                    .ok()
+                    .map(|value| instance.update_label(id, value)),
+                ContentUpdate::Image(source) => state
+                    .read(source)
+                    .ok()
+                    .map(|value| instance.update_image(id, value)),
             };
-            let instance = self.instances.get_mut(&view).expect("live label view");
-            if let Err(error) = instance.update_label(id, value) {
+            if let Some(Err(error)) = result {
                 failure.get_or_insert(error);
                 return true;
             }
@@ -932,7 +950,7 @@ impl Ui {
                 state: self.state.get_mut(),
                 pending: &self.pending,
                 styles: &self.styles,
-                labels: &self.labels,
+                content_updates: &self.content_updates,
                 visibility: &self.visibility,
                 engine: &self.engine,
             };
@@ -997,7 +1015,7 @@ impl Ui {
         self.styles
             .borrow_mut()
             .retain(|(view, _), _| *view != scope);
-        self.labels
+        self.content_updates
             .borrow_mut()
             .retain(|(view, _), _| *view != scope);
         let instance = self.instances.remove(&scope).expect("live mounted scope");

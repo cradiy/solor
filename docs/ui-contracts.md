@@ -574,23 +574,29 @@ need concrete workloads before their public signatures are chosen.
 
 ## Image fills, image elements and SVG
 
-A background image should paint within the element's assigned box. Loading a
-new frame or replacing a background should invalidate paint. A standalone
-image element also has an intrinsic size and aspect ratio. If layout used
-those metrics, discovering or changing them should invalidate measurement.
+Decode a bitmap once with `ImageAsset::from_bytes`, or supply straight RGBA8
+pixels with `ImageAsset::from_rgba8`. Clones share the decoded pixels. The
+`solor` crate enables `png` and `jpeg` by default. Add `webp`, `gif`, `bmp`,
+`ico`, or `tiff` individually, or enable `image-full` for all seven formats. Use
+`default-features = false` to select codecs individually. Raw RGBA input works
+without any codec. Each asset contains one still image.
 
-Both uses should share a decoded image resource. A fill would carry a resource
-reference and placement parameters. Loading, decoding and caching belong to
-the resource owner. A paint command must retain its selected frame through
-submission. Changing the source or unmounting the element must detach its
-pending notification.
+```rust
+let photo = ImageAsset::from_bytes(include_bytes!("cover.jpg"))?;
+let thumbnail = image(photo.clone()).h(px(48.0));
+let card = div().size(px(160.0)).rounded_lg().bg(photo);
+```
 
-The acceptance case is one wide image used both as a rounded cover background
-and as an auto-sized image. The background must keep its box, preserve the
-source aspect ratio and clip to the rounded destination. The image element
-must remeasure when its intrinsic dimensions arrive. A previously recorded
-frame must remain valid after either use changes its source. Image fills,
-image elements and image loading are future work.
+Run `cargo run -p solor-platform --example image --features solor/image-full`
+to compare cover and contain placement with a transparent WebP.
+
+A standalone image uses its intrinsic dimensions and defaults to centered
+`ObjectFit::Contain`. A bitmap background covers the assigned box, including
+padding, and follows its corner radii. Both accept `object_fit`,
+`object_position_x` and `object_position_y`. Both also accept
+`Signal<ImageAsset>`. Replacing a background invalidates paint. An image leaf
+remeasures when the source dimensions change. Recorded frames retain their
+own image, and the CPU renderer filters premultiplied pixels before compositing.
 
 Parse self-contained vector artwork once and clone the asset to share it between
 elements. By default, `svg(asset)` uses the inherited foreground. The

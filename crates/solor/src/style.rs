@@ -23,10 +23,17 @@ pub enum Background {
     Bound(Signal<Fill>),
     /// Solid color sampled during paint.
     Color(Signal<Rgba>),
+    /// Shared bitmap sampled during paint.
+    Image(Signal<crate::ImageAsset>),
 }
 impl<T: Into<Fill>> From<T> for Background {
     fn from(fill: T) -> Self {
         Self::Fixed(fill.into())
+    }
+}
+impl From<Signal<crate::ImageAsset>> for Background {
+    fn from(signal: Signal<crate::ImageAsset>) -> Self {
+        Self::Image(signal)
     }
 }
 impl From<Signal<Fill>> for Background {

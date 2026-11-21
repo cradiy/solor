@@ -2,7 +2,7 @@
 use super::super::column::Edges;
 use super::{ContainingBlock, ItemQuery, LayoutError, Origin, Pixels, Query, Result, Size};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum ComputedLength {
     Pixels(Pixels),
     Fraction(f32),

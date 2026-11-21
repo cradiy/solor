@@ -10,8 +10,12 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
-solor.workspace = true
+solor = { path = "../solor", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 solor-linux = { path = "../solor-linux" }
 solor-render-cpu = { path = "../solor-render-cpu" }
+
+[[example]]
+name = "image"
+required-features = ["solor/webp"]

@@ -2,6 +2,7 @@
 use super::*;
 
 pub(super) struct PreparedStyle {
+    pub background: Option<Box<MountedBackground>>,
     pub style: Style,
     pub text: InheritedText,
     pub fixed: bool,
@@ -121,6 +122,7 @@ pub(super) fn prepare<E: Element>(
         _ => true,
     };
     Ok(PreparedStyle {
+        background: MountedBackground::resolve(&style, units)?,
         style,
         text,
         fixed,
@@ -244,10 +246,11 @@ pub(super) fn item_style(style: &Style) -> Result<crate::layout::FlexItemStyle> 
 impl crate::Instance {
     fn update_style<E: Element>(&mut self, id: NodeId, style: Style, layout: bool) -> Result<()> {
         let item = item_style(&style)?;
+        let background = MountedBackground::resolve(&style, self.units)?;
         // Custom content can use any declared property to determine its metrics.
         let builtin = std::any::TypeId::of::<E>() == std::any::TypeId::of::<FlexLayout>()
             || std::any::TypeId::of::<E>() == std::any::TypeId::of::<Text>()
-            || std::any::TypeId::of::<E>() == std::any::TypeId::of::<super::svg::SvgBody>();
+            || std::any::TypeId::of::<E>() == std::any::TypeId::of::<super::media::MediaBody>();
         let node = self.bodies.get_mut(&id).expect("mounted style target");
         let clip = item.overflow_clip;
         if layout || !builtin || clip != node.overflow_clip {
@@ -301,12 +304,7 @@ impl crate::Instance {
         node.cursor = cursor;
         node.hit_testable = hit_testable;
         node.text_color = style.text.color;
-        node.background = style.background.map(|source| {
-            Box::new(MountedBackground {
-                source,
-                corner_radii: style.corner_radii,
-            })
-        });
+        node.background = background;
         if routing_changed {
             self.invalidate_geometry();
         }

@@ -28,6 +28,7 @@ impl Default for ViewCaches {
 
 enum Brush<'a, F> {
     Solid(solor::Rgba),
+    Image(crate::bitmap::ImageSampler<'a>),
     Gradient(F, Option<OpaqueLinearGradient<'a>>),
 }
 
@@ -193,6 +194,9 @@ impl Surface {
         let bottom_radius = radii.bottom_left.max(radii.bottom_right);
         let mut brush = match fill {
             Fill::Solid(color) => Brush::Solid(*color),
+            Fill::Image(image) => {
+                Brush::Image(crate::bitmap::ImageSampler::new(image, size, scale)?)
+            }
             Fill::Gradient(gradient) => {
                 // Tiny damage on a dense ramp should not scan the complete stop list.
                 let spans = if gradient.stops().len() <= (clip.right - clip.left) as usize {
@@ -241,6 +245,16 @@ impl Surface {
                     let coverage = (row_height * 255.0).round() as u8;
                     blend_solid_span(middle, *c, coverage);
                 }
+                Brush::Image(image) => {
+                    for (x, pixel) in (from..to).zip(middle) {
+                        image.blend(
+                            pixel,
+                            (x as f64 + 0.5 - left) / scale.0,
+                            (dy + 0.5) / scale.0,
+                            255,
+                        );
+                    }
+                }
                 Brush::Gradient(_, Some(linear)) => linear
                     .write_span(from as u32, y as u32, middle)
                     .map_err(Error::other)?,
@@ -266,6 +280,15 @@ impl Surface {
                     if coverage != 0 {
                         let c = match &mut brush {
                             Brush::Solid(c) => *c,
+                            Brush::Image(image) => {
+                                image.blend(
+                                    pixel,
+                                    (dx + 0.5) / scale.0,
+                                    (dy + 0.5) / scale.0,
+                                    coverage,
+                                );
+                                continue;
+                            }
                             Brush::Gradient(sample, _) => {
                                 sample(local_x(x), local_y).map_err(Error::other)?
                             }

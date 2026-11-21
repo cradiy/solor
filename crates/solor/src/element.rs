@@ -1,4 +1,5 @@
 //! Composition, conversion at attachment, and retained element behavior.
+pub(crate) mod media;
 mod style_binding;
 pub(crate) mod svg;
 
@@ -477,10 +478,30 @@ impl<'paint> PaintContext<'paint> {
 pub(super) type Click = Box<dyn Fn(&mut Context<'_>) -> Result<()>>;
 
 struct MountedBackground {
+    placement: crate::bitmap::Placement,
     source: Background,
     corner_radii: Corners<Pixels>,
 }
 
+impl MountedBackground {
+    fn resolve(style: &Style, units: UnitResolver) -> Result<Option<Box<Self>>> {
+        let Some(source) = &style.background else {
+            return Ok(None);
+        };
+        use crate::{bitmap::Placement, style::ObjectFit};
+        let placement = match source {
+            Background::Fixed(Fill::Image(_)) | Background::Bound(_) | Background::Image(_) => {
+                Placement::resolve(style, units, ObjectFit::Cover)?
+            }
+            _ => Placement::centered(ObjectFit::Cover),
+        };
+        Ok(Some(Box::new(Self {
+            source: source.clone(),
+            corner_radii: style.corner_radii,
+            placement,
+        })))
+    }
+}
 /// When an element records new drawing commands.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RefreshMode {
@@ -628,12 +649,7 @@ impl MountedNode {
                 != Some(PointerEvents::None),
             text_style: mounted.text,
             text_color: style.text.color,
-            background: style.background.map(|source| {
-                Box::new(MountedBackground {
-                    source,
-                    corner_radii: style.corner_radii,
-                })
-            }),
+            background: mounted.background,
             owned: Vec::new(),
             record,
         }
@@ -682,11 +698,15 @@ impl MountedNode {
         };
         cx.next_frame = mode == RefreshMode::Continuous;
         if let Some(paint) = &self.background {
-            let fill = match &paint.source {
+            let mut fill = match &paint.source {
                 Background::Fixed(fill) => fill.clone(),
                 Background::Bound(signal) => cx.read(*signal)?.clone(),
                 Background::Color(signal) => Fill::from(*cx.read(*signal)?),
+                Background::Image(signal) => Fill::from(cx.read(*signal)?.clone()),
             };
+            if let Fill::Image(image) = &mut fill {
+                image.placement = paint.placement;
+            }
             cx.commands.push(Draw::Fill {
                 clip: clips.inherited.clone(),
                 origin: Origin::default(),
@@ -1148,6 +1168,20 @@ text_elements!(
     TextContent
 );
 
+fn content_watch<T: 'static>(signal: Signal<T>, update: crate::ContentUpdate) -> Watch {
+    Box::new(move |cx, target, id, _, repaints| {
+        let pending = Rc::clone(cx.content_updates);
+        let view = ViewId(cx.scope);
+        cx.state.bind(signal, target, move |_, _| {
+            pending.borrow_mut().insert((view, id), update);
+        })?;
+        if let Some(repaints) = repaints {
+            repaints.borrow_mut().invalidate(id);
+        }
+        Ok(())
+    })
+}
+
 impl IntoElement for Label {
     fn into_element(self) -> AnyElement {
         let fixed = matches!(self.content, TextContent::Fixed(_));
@@ -1165,17 +1199,7 @@ impl IntoElement for Label {
             node.style = self.style;
             if let Some(signal) = source {
                 node.watches
-                    .push(Box::new(move |cx, target, id, _, repaints| {
-                        let pending = Rc::clone(cx.labels);
-                        let view = ViewId(cx.scope);
-                        cx.state.bind(signal, target, move |_, _| {
-                            pending.borrow_mut().insert((view, id), signal);
-                        })?;
-                        if let Some(repaints) = repaints {
-                            repaints.borrow_mut().invalidate(id);
-                        }
-                        Ok(())
-                    }));
+                    .push(content_watch(signal, crate::ContentUpdate::Text(signal)));
             }
             Ok(node)
         })
