@@ -1,5 +1,7 @@
 use wayland_client::{
-    Connection, Dispatch, Proxy, QueueHandle, WEnum, delegate_noop,
+    Connection, Dispatch, Proxy, QueueHandle, WEnum,
+    backend::ObjectId,
+    delegate_noop,
     globals::GlobalListContents,
     protocol::{wl_pointer, wl_registry, wl_seat},
 };
@@ -9,7 +11,7 @@ use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
 };
 
-use super::{Window, keyboard::Keyboard};
+use super::{Desktop, Window, keyboard::Keyboard};
 use solor::{
     ResizeEdge,
     layout::Origin,
@@ -32,8 +34,8 @@ fn sample(id: u32, x: f64, y: f64, modifiers: Modifiers) -> PointerSample {
     }
 }
 
-delegate_noop!(Window: ignore WpCursorShapeDeviceV1);
-delegate_noop!(Window: ignore WpCursorShapeManagerV1);
+delegate_noop!(Desktop: ignore WpCursorShapeDeviceV1);
+delegate_noop!(Desktop: ignore WpCursorShapeManagerV1);
 
 fn native_shape(cursor: Cursor) -> Option<Shape> {
     Some(match cursor {
@@ -69,6 +71,7 @@ pub(super) struct Seat {
     seat: wl_seat::WlSeat,
     pointer: Option<wl_pointer::WlPointer>,
     position: Option<PointerSample>,
+    focus: Option<ObjectId>,
     shape_device: Option<WpCursorShapeDeviceV1>,
     enter_serial: Option<u32>,
     applied_cursor: Option<Cursor>,
@@ -89,14 +92,19 @@ impl Seat {
         })
     }
 
-    fn release_pointer(&mut self) {
-        if let Some(device) = self.shape_device.take() {
-            device.destroy();
-        }
+    fn clear_focus(&mut self) {
+        self.focus = None;
         self.enter_serial = None;
         self.applied_cursor = None;
         self.position = None;
         self.scroll = None;
+    }
+
+    fn release_pointer(&mut self) {
+        if let Some(device) = self.shape_device.take() {
+            device.destroy();
+        }
+        self.clear_focus();
         if let Some(pointer) = self.pointer.take()
             && pointer.version() >= 3
         {
@@ -105,20 +113,21 @@ impl Seat {
     }
 }
 
-impl Window {
-    pub(super) fn cancel_pointers(&mut self) {
-        for i in 0..self.seats.len() {
-            let seat = &mut self.seats[i];
-            seat.enter_serial = None;
-            seat.applied_cursor = None;
-            seat.scroll = None;
-            if seat.position.take().is_some() {
-                let id = PointerId(seat.name.into());
-                self.event(WindowEvent::Pointer(PointerInput::Cancel(id)));
-            }
+pub(super) fn cancel_focus(seats: &mut [Seat], id: &ObjectId, window: &mut Window) {
+    for seat in seats {
+        if seat.focus.as_ref() == Some(id) {
+            seat.clear_focus();
+            window.event(WindowEvent::Pointer(PointerInput::Cancel(PointerId(
+                seat.name.into(),
+            ))));
+        }
+        if let Some(keyboard) = &mut seat.keyboard {
+            keyboard.leave(id);
         }
     }
+}
 
+impl Desktop {
     pub(super) fn sync_cursors(&mut self) {
         for seat in &mut self.seats {
             let (Some(device), Some(pointer), Some(serial)) =
@@ -126,7 +135,10 @@ impl Window {
             else {
                 continue;
             };
-            let cursor = self.view.pointer_cursor(PointerId(seat.name.into()));
+            let Some(window) = seat.focus.as_ref().and_then(|id| self.windows.get(id)) else {
+                continue;
+            };
+            let cursor = window.view.pointer_cursor(PointerId(seat.name.into()));
             if seat.applied_cursor == Some(cursor) {
                 continue;
             }
@@ -152,6 +164,7 @@ impl Window {
                 pointer: None,
                 keyboard: None,
                 position: None,
+                focus: None,
                 shape_device: None,
                 enter_serial: None,
                 applied_cursor: None,
@@ -161,7 +174,7 @@ impl Window {
     }
 }
 
-impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Window {
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Desktop {
     fn event(
         state: &mut Self,
         registry: &wl_registry::WlRegistry,
@@ -179,9 +192,13 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Window {
             wl_registry::Event::GlobalRemove { name } => {
                 if let Some(index) = state.seats.iter().position(|s| s.name == name) {
                     let mut seat = state.seats.swap_remove(index);
-                    state.event(WindowEvent::Pointer(PointerInput::Cancel(PointerId(
-                        name.into(),
-                    ))));
+                    if let Some(window) =
+                        seat.focus.as_ref().and_then(|id| state.windows.get_mut(id))
+                    {
+                        window.event(WindowEvent::Pointer(PointerInput::Cancel(PointerId(
+                            name.into(),
+                        ))));
+                    }
                     seat.release_pointer();
                     seat.keyboard = None;
                     if seat.seat.version() >= 5 {
@@ -194,7 +211,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Window {
     }
 }
 
-impl Dispatch<wl_seat::WlSeat, u32> for Window {
+impl Dispatch<wl_seat::WlSeat, u32> for Desktop {
     fn event(
         state: &mut Self,
         seat: &wl_seat::WlSeat,
@@ -227,16 +244,22 @@ impl Dispatch<wl_seat::WlSeat, u32> for Window {
                     input.pointer = Some(pointer);
                 }
             } else {
+                if let Some(window) = input
+                    .focus
+                    .as_ref()
+                    .and_then(|id| state.windows.get_mut(id))
+                {
+                    window.event(WindowEvent::Pointer(PointerInput::Cancel(PointerId(
+                        (*name).into(),
+                    ))));
+                }
                 input.release_pointer();
-                state.event(WindowEvent::Pointer(PointerInput::Cancel(PointerId(
-                    (*name).into(),
-                ))));
             }
         }
     }
 }
 
-impl Dispatch<wl_pointer::WlPointer, u32> for Window {
+impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
     fn event(
         state: &mut Self,
         pointer: &wl_pointer::WlPointer,
@@ -252,6 +275,16 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
         else {
             return;
         };
+        let target = match &event {
+            wl_pointer::Event::Enter { surface, .. } => surface.id(),
+            _ => match &seat.focus {
+                Some(id) => id.clone(),
+                None => return,
+            },
+        };
+        let Some(window) = state.windows.get_mut(&target) else {
+            return;
+        };
         let mut press = None;
         let event = match event {
             wl_pointer::Event::Enter {
@@ -260,18 +293,16 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
                 surface_x,
                 surface_y,
                 ..
-            } if surface == state.surface && state.mapping == super::Mapping::Mapped => {
+            } if window.mapping == super::Mapping::Mapped => {
+                seat.focus = Some(surface.id());
                 let p = sample(*name, surface_x, surface_y, seat.modifiers());
                 seat.enter_serial = Some(serial);
                 seat.applied_cursor = None;
                 seat.position = Some(p);
                 PointerInput::Move(p)
             }
-            wl_pointer::Event::Leave { .. } => {
-                seat.enter_serial = None;
-                seat.applied_cursor = None;
-                seat.position = None;
-                seat.scroll = None;
+            wl_pointer::Event::Leave { surface, .. } if surface.id() == target => {
+                seat.clear_focus();
                 PointerInput::Cancel(PointerId((*name).into()))
             }
             wl_pointer::Event::Motion {
@@ -342,7 +373,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
             }
             _ => return,
         };
-        state.dispatch(WindowEvent::Pointer(event), press);
+        window.dispatch(WindowEvent::Pointer(event), press);
         state.sync_cursors();
     }
 }

@@ -10,12 +10,13 @@ use solor::{
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum, protocol::wl_keyboard};
 use xkbcommon::xkb::{self, Keysym};
 
-use super::Window;
+use super::Desktop;
+use wayland_client::backend::ObjectId;
 
 pub(super) struct Keyboard {
     device: wl_keyboard::WlKeyboard,
     layout: Option<xkb::State>,
-    entered: bool,
+    focus: Option<ObjectId>,
     pub(super) modifiers: Modifiers,
 }
 
@@ -24,8 +25,17 @@ impl Keyboard {
         Self {
             device,
             layout: None,
-            entered: false,
+            focus: None,
             modifiers: Modifiers::default(),
+        }
+    }
+    pub(super) fn leave(&mut self, id: &ObjectId) {
+        if self.focus.as_ref() == Some(id) {
+            self.focus = None;
+            self.modifiers = Modifiers::default();
+            if let Some(layout) = &mut self.layout {
+                layout.update_mask(0, 0, 0, 0, 0, 0);
+            }
         }
     }
 }
@@ -101,16 +111,16 @@ fn logical_key(sym: Keysym) -> Key {
     Key::Named(named)
 }
 
-impl Dispatch<wl_keyboard::WlKeyboard, u32> for Window {
+impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
     fn event(
-        window: &mut Self,
+        desktop: &mut Self,
         device: &wl_keyboard::WlKeyboard,
         event: wl_keyboard::Event,
         _: &u32,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let Some(keyboard) = window
+        let Some(keyboard) = desktop
             .seats
             .iter_mut()
             .filter_map(|seat| seat.keyboard.as_mut())
@@ -127,15 +137,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Window {
                 keyboard.modifiers = Modifiers::default();
             }
             wl_keyboard::Event::Enter { surface, .. } => {
-                keyboard.entered = surface == window.surface
+                keyboard.focus = Some(surface.id());
             }
-            wl_keyboard::Event::Leave { .. } => {
-                keyboard.entered = false;
-                keyboard.modifiers = Modifiers::default();
-                if let Some(layout) = &mut keyboard.layout {
-                    layout.update_mask(0, 0, 0, 0, 0, 0);
-                }
-            }
+            wl_keyboard::Event::Leave { surface, .. } => keyboard.leave(&surface.id()),
             wl_keyboard::Event::Modifiers {
                 mods_depressed,
                 mods_latched,
@@ -159,7 +163,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Window {
                 key,
                 state: WEnum::Value(state),
                 ..
-            } if keyboard.entered && window.mapping == super::Mapping::Mapped => {
+            } => {
+                let Some(window) = keyboard
+                    .focus
+                    .as_ref()
+                    .and_then(|id| desktop.windows.get_mut(id))
+                    .filter(|window| window.mapping == super::Mapping::Mapped)
+                else {
+                    return;
+                };
                 let state = match state {
                     wl_keyboard::KeyState::Pressed => KeyState::Down,
                     wl_keyboard::KeyState::Released => KeyState::Up,

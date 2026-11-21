@@ -2,7 +2,7 @@ use wayland_client::{
     QueueHandle, delegate_noop, globals::GlobalList, protocol::wl_surface::WlSurface,
 };
 
-use super::Window;
+use super::Desktop;
 use protocol::{
     treeland_dde_shell_manager_v2::TreelandDdeShellManagerV2,
     treeland_dde_shell_surface_v2::{Role, TreelandDdeShellSurfaceV2},
@@ -25,7 +25,7 @@ pub(super) struct Topmost(TreelandDdeShellSurfaceV2);
 impl Topmost {
     pub fn request(
         globals: &GlobalList,
-        qh: &QueueHandle<Window>,
+        qh: &QueueHandle<Desktop>,
         surface: &WlSurface,
     ) -> Option<Self> {
         let manager: TreelandDdeShellManagerV2 = globals.bind(qh, 2..=2, ()).ok()?;
@@ -42,5 +42,5 @@ impl Drop for Topmost {
     }
 }
 
-delegate_noop!(Window: ignore TreelandDdeShellManagerV2);
-delegate_noop!(Window: ignore TreelandDdeShellSurfaceV2);
+delegate_noop!(Desktop: ignore TreelandDdeShellManagerV2);
+delegate_noop!(Desktop: ignore TreelandDdeShellSurfaceV2);

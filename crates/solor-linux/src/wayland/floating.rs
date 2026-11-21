@@ -21,12 +21,12 @@ use wayland_protocols::wp::viewporter::client::{
     wp_viewport::WpViewport, wp_viewporter::WpViewporter,
 };
 
-use super::Window;
+use super::Desktop;
 use crate::layer_shell::Anchor;
 
-delegate_noop!(Window: ignore WlSubcompositor);
-delegate_noop!(Window: ignore WlSubsurface);
-delegate_noop!(Window: ignore WlBuffer);
+delegate_noop!(Desktop: ignore WlSubcompositor);
+delegate_noop!(Desktop: ignore WlSubsurface);
+delegate_noop!(Desktop: ignore WlBuffer);
 
 pub(super) struct FloatingPanel {
     pub content: WlSurface,
@@ -45,7 +45,7 @@ impl FloatingPanel {
         viewporter: &WpViewporter,
         parent: &WlSurface,
         geometry: Geometry,
-        qh: &QueueHandle<Window>,
+        qh: &QueueHandle<Desktop>,
     ) -> Result<Self> {
         let manager: WlSubcompositor = globals.bind(qh, 1..=1, ())?;
         let file = File::from(memfd_create("solor-transparent", MemfdFlags::CLOEXEC)?);

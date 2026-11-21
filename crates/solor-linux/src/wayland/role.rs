@@ -12,7 +12,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_surface_v1::{Event, ZwlrLayerSurfaceV1},
 };
 
-use super::{Window, decorations::Decorations, stacking::Topmost};
+use super::{Desktop, decorations::Decorations, stacking::Topmost};
 use crate::layer_shell::{Anchor, ExclusiveZone, KeyboardInteractivity, Layer, LayerShellOptions};
 
 pub(super) enum Request<'a> {
@@ -65,7 +65,7 @@ impl Request<'_> {
     pub(super) fn create(
         self,
         globals: &GlobalList,
-        qh: &QueueHandle<Window>,
+        qh: &QueueHandle<Desktop>,
         surface: &WlSurface,
     ) -> Result<(Role, Size)> {
         match self {
@@ -77,10 +77,11 @@ impl Request<'_> {
                 } else {
                     None
                 };
-                let xdg_surface = shell.get_xdg_surface(surface, qh, ());
-                let top = xdg_surface.get_toplevel(qh, ());
+                let xdg_surface = shell.get_xdg_surface(surface, qh, surface.id());
+                let top = xdg_surface.get_toplevel(qh, surface.id());
                 sizing.apply(&top);
-                let decorations = Decorations::bind(globals, qh, &top, options.native_decorations)?;
+                let decorations =
+                    Decorations::bind(globals, qh, &top, surface.id(), options.native_decorations)?;
                 top.set_title(options.title.into());
                 if let Some(app_id) = options.app_id {
                     top.set_app_id(app_id.into());
@@ -136,7 +137,7 @@ impl Request<'_> {
                     options.layer,
                     options.namespace.into(),
                     qh,
-                    (),
+                    surface.id(),
                 );
                 if shell.version() >= zwlr_layer_shell_v1::REQ_DESTROY_SINCE {
                     shell.destroy();
@@ -294,17 +295,20 @@ impl Drop for Role {
     }
 }
 
-delegate_noop!(Window: ignore ZwlrLayerShellV1);
+delegate_noop!(Desktop: ignore ZwlrLayerShellV1);
 
-impl Dispatch<ZwlrLayerSurfaceV1, ()> for Window {
+impl Dispatch<ZwlrLayerSurfaceV1, wayland_client::backend::ObjectId> for Desktop {
     fn event(
-        state: &mut Self,
+        desktop: &mut Self,
         surface: &ZwlrLayerSurfaceV1,
         event: Event,
-        _: &(),
+        id: &wayland_client::backend::ObjectId,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let Some(state) = desktop.windows.get_mut(id) else {
+            return;
+        };
         match event {
             Event::Configure {
                 serial,

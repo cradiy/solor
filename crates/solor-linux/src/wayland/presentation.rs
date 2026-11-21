@@ -1,5 +1,5 @@
 //! Presentation timestamps for traced buffer submissions.
-use super::Window;
+use super::Desktop;
 use rustix::time::{ClockId, clock_gettime};
 use wayland_client::{Connection, Dispatch, QueueHandle};
 use wayland_protocols::wp::presentation_time::client::{wp_presentation, wp_presentation_feedback};
@@ -10,7 +10,7 @@ pub(super) fn monotonic_ns() -> i128 {
     i128::from(time.tv_sec) * 1_000_000_000 + i128::from(time.tv_nsec)
 }
 
-impl Dispatch<wp_presentation::WpPresentation, ()> for Window {
+impl Dispatch<wp_presentation::WpPresentation, ()> for Desktop {
     fn event(
         _: &mut Self,
         _: &wp_presentation::WpPresentation,
@@ -25,7 +25,7 @@ impl Dispatch<wp_presentation::WpPresentation, ()> for Window {
     }
 }
 
-impl Dispatch<wp_presentation_feedback::WpPresentationFeedback, usize> for Window {
+impl Dispatch<wp_presentation_feedback::WpPresentationFeedback, usize> for Desktop {
     fn event(
         _: &mut Self,
         _: &wp_presentation_feedback::WpPresentationFeedback,

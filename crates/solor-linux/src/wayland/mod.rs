@@ -1,4 +1,5 @@
 use solor::px;
+mod application;
 mod buffer;
 mod decorations;
 mod floating;
@@ -8,19 +9,20 @@ mod pointer;
 mod presentation;
 mod role;
 mod stacking;
+use application::Desktop;
+pub use application::WaylandApplication;
 
-use crate::layer_shell::{Binding, LayerShellOptions};
-use role::{Request, Role};
+use role::Role;
 
 use std::{io, time::Instant};
 
 use wayland_client::{
-    Connection, Dispatch, EventQueue, QueueHandle, delegate_noop,
-    globals::registry_queue_init,
+    Connection, Dispatch, Proxy, QueueHandle,
+    backend::ObjectId,
+    delegate_noop,
     protocol::{wl_buffer, wl_callback, wl_compositor, wl_seat, wl_shm, wl_shm_pool, wl_surface},
 };
 use wayland_protocols::wp::{
-    cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
     fractional_scale::v1::client::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1},
     presentation_time::client::wp_presentation,
     viewporter::client::{wp_viewport, wp_viewporter},
@@ -62,8 +64,7 @@ struct Window {
     slots: [Option<Buffer>; 2],
     next_slot: usize,
     view: Box<dyn WindowHandler<Rgba8>>,
-    seats: Vec<pointer::Seat>,
-    cursor_shapes: Option<WpCursorShapeManagerV1>,
+    fractional: wp_fractional_scale_v1::WpFractionalScaleV1,
     full_damage: bool,
     failure: Option<anyhow::Error>,
     trace: bool,
@@ -97,17 +98,20 @@ impl Mapping {
     }
 }
 
-struct Unmapped;
+struct Unmapped(ObjectId);
 
-impl Dispatch<wl_callback::WlCallback, Unmapped> for Window {
+impl Dispatch<wl_callback::WlCallback, Unmapped> for Desktop {
     fn event(
-        state: &mut Self,
+        desktop: &mut Self,
         _: &wl_callback::WlCallback,
         _: wl_callback::Event,
-        _: &Unmapped,
+        unmapped: &Unmapped,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let Some(state) = desktop.windows.get_mut(&unmapped.0) else {
+            return;
+        };
         state.mapping = Mapping::Hidden;
     }
 }
@@ -182,218 +186,15 @@ impl Platform for Wayland {
         options: WindowOptions<'_>,
         view: Box<dyn WindowHandler<Self::Target>>,
     ) -> anyhow::Result<()> {
-        self.run_surface(Request::Toplevel(options), view)
+        self.run(|app| app.open_window(options, view))
     }
-}
-
-impl Wayland {
-    /// Runs a desktop layer surface until the compositor or the application closes it.
-    pub fn run_layer_surface(
-        &self,
-        options: LayerShellOptions<'_>,
-        view: Box<dyn WindowHandler<Rgba8>>,
-    ) -> anyhow::Result<()> {
-        self.run_surface(Request::Layer(options), view)
-    }
-
-    fn run_surface(
-        &self,
-        request: Request<'_>,
-        mut view: Box<dyn WindowHandler<Rgba8>>,
-    ) -> anyhow::Result<()> {
-        let (background, handle) = match &request {
-            Request::Layer(options) => (options.background, options.handle),
-            Request::Toplevel(options) => (options.background, None),
-        };
-        let control = handle.map(|handle| handle.claim()).transpose()?;
-        let start = Instant::now();
-        let connection = Connection::connect_to_env()?;
-        let (globals, mut queue) = registry_queue_init::<Window>(&connection)?;
-        let qh = queue.handle();
-        let compositor: wl_compositor::WlCompositor = globals.bind(&qh, 4..=4, ())?;
-        let shm = globals.bind(&qh, 1..=1, ())?;
-        let surface = compositor.create_surface(&qh, ());
-        let viewporter: wp_viewporter::WpViewporter = globals.bind(&qh, 1..=1, ())?;
-        let manager: wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1 =
-            globals.bind(&qh, 1..=1, ())?;
-        let fractional = manager.get_fractional_scale(&surface, &qh, ());
-        let (role, size) = request.create(&globals, &qh, &surface)?;
-        buffer_size(120, size)?;
-        view.set_window_resizable(matches!(
-            &role,
-            Role::Toplevel {
-                resizable: true,
-                ..
-            }
-        ))?;
-        let floating = match &role {
-            Role::Layer(_, p) if p.movable => Some(floating::FloatingPanel::new(
-                &globals,
-                &compositor,
-                &shm,
-                &viewporter,
-                &surface,
-                floating::Geometry::new(size, p.anchor, p.margin),
-                &qh,
-            )?),
-            _ => None,
-        };
-        let content = floating.as_ref().map_or(&surface, |p| &p.content);
-        let viewport = viewporter.get_viewport(content, &qh, ());
-        let presentation = if self.trace_submissions {
-            globals.bind(&qh, 1..=1, ()).ok()
-        } else {
-            None
-        };
-        let mut window = Window {
-            role,
-            floating,
-            maximized: false,
-            pending_maximized: false,
-            presentation,
-            viewport,
-            scale_120: 120,
-            surface,
-            shm,
-            background,
-            pixel_order: PixelOrder::Bgr,
-            slots: [None, None],
-            next_slot: 0,
-            view,
-            seats: Vec::new(),
-            cursor_shapes: globals.bind(&qh, 1..=1, ()).ok(),
-            full_damage: true,
-            failure: None,
-            trace: self.trace_submissions,
-            size,
-            pending_size: None,
-            mapping: Mapping::Hidden,
-            input_region: Default::default(),
-            dirty: true,
-            waiting: None,
-            closed: false,
-            commits: 0,
-            audit: self.verify_shm.then(DamageAudit::default),
-            start,
-        };
-        for global in globals.contents().clone_list() {
-            if global.interface == "wl_seat" {
-                window.add_seat(globals.registry(), global.name, global.version, &qh);
-            }
-        }
-        loop {
-            if let Some(error) = window.failure.take() {
-                return Err(error);
-            }
-            let Some(visible) = control.as_ref().map_or(Some(true), Binding::visibility) else {
-                break;
-            };
-            if window.closed {
-                break;
-            }
-            if visible
-                && window.mapping == Mapping::Hidden
-                && let Some(control) = &control
-            {
-                window.input_region.update(control.take_input_region());
-            }
-            if visible && (control.is_some() || window.floating.is_some()) {
-                window.apply_input_region(&compositor, &qh);
-            }
-            window.set_visible(visible, &connection, &qh);
-            if visible {
-                window.present(&qh)?;
-            }
-
-            let deadline = if visible
-                && window.mapping == Mapping::Mapped
-                && !window.dirty
-                && window.waiting.is_none()
-            {
-                window.view.next_redraw()
-            } else {
-                None
-            };
-            if deadline.is_some() || control.is_some() {
-                dispatch_until(&mut queue, &mut window, deadline, control.as_ref())?;
-                if deadline.is_some() {
-                    window.dirty |= window
-                        .view
-                        .next_redraw()
-                        .is_some_and(|time| time <= Instant::now());
-                }
-            } else {
-                queue.blocking_dispatch(&mut window)?;
-            }
-        }
-        drop(window.role);
-        fractional.destroy();
-        window.viewport.destroy();
-        drop(window.floating);
-        window.surface.destroy();
-        connection.flush()?;
-        if self.trace_submissions {
-            eprintln!("closed commits={}", window.commits);
-        }
-        Ok(())
-    }
-}
-
-// A pending hint can wake an otherwise idle window. Input queued before the
-// deadline gets the opportunity to cancel or replace it before presentation.
-fn dispatch_until(
-    queue: &mut EventQueue<Window>,
-    window: &mut Window,
-    deadline: Option<Instant>,
-    control: Option<&Binding<'_>>,
-) -> anyhow::Result<()> {
-    use rustix::event::{PollFd, PollFlags, Timespec, poll};
-    use wayland_client::backend::WaylandError;
-
-    if queue.dispatch_pending(window)? != 0 {
-        return Ok(());
-    }
-    queue.flush()?;
-    if let Some(guard) = queue.prepare_read() {
-        let fd = guard.connection_fd();
-        let mut fds: smallvec::SmallVec<[_; 2]> =
-            smallvec::smallvec![PollFd::new(&fd, PollFlags::IN)];
-        if let Some(control) = control {
-            fds.push(PollFd::new(control.fd(), PollFlags::IN));
-        }
-        let timeout = deadline
-            .map(|t| Timespec::try_from(t.saturating_duration_since(Instant::now())))
-            .transpose()?;
-        match poll(&mut fds, timeout.as_ref()) {
-            Ok(0) | Err(rustix::io::Errno::INTR) => return Ok(()),
-            Err(error) => return Err(error.into()),
-            Ok(_) => {}
-        }
-        if let Some(control) = control
-            && !fds[1].revents().is_empty()
-        {
-            control.drain()?;
-            window.input_region.update(control.take_input_region());
-        }
-        let readable = !fds[0].revents().is_empty();
-        drop(fds);
-        if readable {
-            match guard.read() {
-                Ok(_) => {}
-                Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-    }
-    queue.dispatch_pending(window)?;
-    Ok(())
 }
 
 impl Window {
     fn apply_input_region(
         &mut self,
         compositor: &wl_compositor::WlCompositor,
-        qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Desktop>,
     ) {
         let (bounds, moved) = match &mut self.floating {
             Some(panel) if matches!(self.mapping, Mapping::Mapped | Mapping::Ready) => {
@@ -492,7 +293,7 @@ impl Window {
         }
     }
 
-    fn set_visible(&mut self, visible: bool, connection: &Connection, qh: &QueueHandle<Self>) {
+    fn set_visible(&mut self, visible: bool, connection: &Connection, qh: &QueueHandle<Desktop>) {
         match (visible, self.mapping) {
             (true, Mapping::Hidden) => {
                 if let Role::Layer(layer, placement) = &self.role {
@@ -505,18 +306,17 @@ impl Window {
                 self.surface.attach(None, 0, 0);
                 self.surface.commit();
                 // Drain events issued before unmap before accepting a new configure.
-                connection.display().sync(qh, Unmapped);
+                connection.display().sync(qh, Unmapped(self.surface.id()));
                 self.mapping = Mapping::Unmapping;
                 self.waiting = None;
                 self.full_damage = true;
                 self.dirty = true;
-                self.cancel_pointers();
             }
             _ => {}
         }
     }
 
-    fn present(&mut self, qh: &QueueHandle<Self>) -> anyhow::Result<()> {
+    fn present(&mut self, qh: &QueueHandle<Desktop>) -> anyhow::Result<()> {
         if !matches!(self.mapping, Mapping::Ready | Mapping::Mapped)
             || !self.dirty
             || self.waiting.is_some()
@@ -546,12 +346,11 @@ impl Window {
         if frame.damage.is_empty() {
             if callback {
                 // A frame request takes effect at commit, even with no new buffer.
-                self.waiting = Some(self.surface.frame(qh, None));
+                self.waiting = Some(self.surface.frame(qh, (self.surface.id(), None)));
                 self.surface.commit();
             }
             self.dirty = false;
             self.view.frame_submitted()?;
-            self.sync_cursors();
             return Ok(());
         }
         for slot in self.slots.iter_mut().flatten().filter(|s| s.size == size) {
@@ -565,7 +364,7 @@ impl Window {
         if !reuse {
             self.slots[index] = Some(Buffer::new(
                 size,
-                index,
+                (self.surface.id(), index),
                 self.pixel_order,
                 self.background,
                 &self.shm,
@@ -594,7 +393,10 @@ impl Window {
             );
         }
         if callback {
-            self.waiting = Some(self.surface.frame(qh, Some(self.commits + 1)));
+            self.waiting = Some(
+                self.surface
+                    .frame(qh, (self.surface.id(), Some(self.commits + 1))),
+            );
         }
         if let Some(presentation) = &self.presentation {
             presentation.feedback(&self.surface, qh, self.commits + 1);
@@ -613,7 +415,6 @@ impl Window {
         self.dirty = false;
         self.full_damage = false;
         self.view.frame_submitted()?;
-        self.sync_cursors();
         self.commits += 1;
         if let Some(queued_ns) = queued_ns {
             eprintln!(
@@ -636,19 +437,22 @@ impl Window {
     }
 }
 
-delegate_noop!(Window: ignore wp_viewporter::WpViewporter);
-delegate_noop!(Window: ignore wp_viewport::WpViewport);
-delegate_noop!(Window: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
+delegate_noop!(Desktop: ignore wp_viewporter::WpViewporter);
+delegate_noop!(Desktop: ignore wp_viewport::WpViewport);
+delegate_noop!(Desktop: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
 
-impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ()> for Window {
+impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for Desktop {
     fn event(
-        state: &mut Self,
+        desktop: &mut Self,
         _: &wp_fractional_scale_v1::WpFractionalScaleV1,
         event: wp_fractional_scale_v1::Event,
-        _: &(),
+        id: &ObjectId,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let Some(state) = desktop.windows.get_mut(id) else {
+            return;
+        };
         if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event
             && state.scale_120 != scale
         {
@@ -659,9 +463,9 @@ impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ()> for Window {
     }
 }
 
-delegate_noop!(Window: ignore wl_compositor::WlCompositor);
-delegate_noop!(Window: ignore wl_surface::WlSurface);
-impl Dispatch<wl_shm::WlShm, ()> for Window {
+delegate_noop!(Desktop: ignore wl_compositor::WlCompositor);
+delegate_noop!(Desktop: ignore wl_surface::WlSurface);
+impl Dispatch<wl_shm::WlShm, ()> for Desktop {
     fn event(
         state: &mut Self,
         _: &wl_shm::WlShm,
@@ -673,23 +477,34 @@ impl Dispatch<wl_shm::WlShm, ()> for Window {
         if let wl_shm::Event::Format {
             format: wayland_client::WEnum::Value(format),
         } = event
-            && format == PixelOrder::Rgb.format(state.background)
         {
-            state.pixel_order = PixelOrder::Rgb;
+            match format {
+                wl_shm::Format::Xbgr8888 => state.rgb_opaque = true,
+                wl_shm::Format::Abgr8888 => state.rgb_transparent = true,
+                _ => return,
+            }
+            for window in state.windows.values_mut() {
+                if format == PixelOrder::Rgb.format(window.background) {
+                    window.pixel_order = PixelOrder::Rgb;
+                }
+            }
         }
     }
 }
-delegate_noop!(Window: ignore wl_shm_pool::WlShmPool);
+delegate_noop!(Desktop: ignore wl_shm_pool::WlShmPool);
 
-impl Dispatch<wl_callback::WlCallback, Option<usize>> for Window {
+impl Dispatch<wl_callback::WlCallback, (ObjectId, Option<usize>)> for Desktop {
     fn event(
-        state: &mut Self,
+        desktop: &mut Self,
         callback: &wl_callback::WlCallback,
         _: wl_callback::Event,
-        buffer_commit: &Option<usize>,
+        (id, buffer_commit): &(ObjectId, Option<usize>),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let Some(state) = desktop.windows.get_mut(id) else {
+            return;
+        };
         if state.waiting.as_ref() != Some(callback) {
             return;
         }
@@ -705,15 +520,18 @@ impl Dispatch<wl_callback::WlCallback, Option<usize>> for Window {
     }
 }
 
-impl Dispatch<wl_buffer::WlBuffer, usize> for Window {
+impl Dispatch<wl_buffer::WlBuffer, (ObjectId, usize)> for Desktop {
     fn event(
-        state: &mut Self,
+        desktop: &mut Self,
         _: &wl_buffer::WlBuffer,
         event: wl_buffer::Event,
-        index: &usize,
+        (id, index): &(ObjectId, usize),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let Some(state) = desktop.windows.get_mut(id) else {
+            return;
+        };
         if let wl_buffer::Event::Release = event
             && let Some(slot) = &mut state.slots[*index]
         {
@@ -722,7 +540,7 @@ impl Dispatch<wl_buffer::WlBuffer, usize> for Window {
     }
 }
 
-impl Dispatch<xdg_wm_base::XdgWmBase, ()> for Window {
+impl Dispatch<xdg_wm_base::XdgWmBase, ()> for Desktop {
     fn event(
         _: &mut Self,
         shell: &xdg_wm_base::XdgWmBase,
@@ -737,15 +555,18 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for Window {
     }
 }
 
-impl Dispatch<xdg_toplevel::XdgToplevel, ()> for Window {
+impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for Desktop {
     fn event(
-        state: &mut Self,
+        desktop: &mut Self,
         _: &xdg_toplevel::XdgToplevel,
         event: xdg_toplevel::Event,
-        _: &(),
+        id: &ObjectId,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let Some(state) = desktop.windows.get_mut(id) else {
+            return;
+        };
         match event {
             xdg_toplevel::Event::Configure {
                 width,
@@ -776,15 +597,18 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for Window {
     }
 }
 
-impl Dispatch<xdg_surface::XdgSurface, ()> for Window {
+impl Dispatch<xdg_surface::XdgSurface, ObjectId> for Desktop {
     fn event(
-        state: &mut Self,
+        desktop: &mut Self,
         surface: &xdg_surface::XdgSurface,
         event: xdg_surface::Event,
-        _: &(),
+        id: &ObjectId,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let Some(state) = desktop.windows.get_mut(id) else {
+            return;
+        };
         if let xdg_surface::Event::Configure { serial } = event {
             surface.ack_configure(serial);
             state.mapping.configure();

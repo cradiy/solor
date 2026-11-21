@@ -3,10 +3,10 @@ use wayland_client::{
     protocol::{wl_compositor::WlCompositor, wl_region::WlRegion, wl_surface::WlSurface},
 };
 
-use super::{Mapping, Window};
+use super::{Desktop, Mapping};
 use crate::layer_shell::InputRegion;
 
-delegate_noop!(Window: ignore WlRegion);
+delegate_noop!(Desktop: ignore WlRegion);
 
 #[derive(Default)]
 pub(super) struct SurfaceInputRegion {
@@ -29,7 +29,7 @@ impl SurfaceInputRegion {
         mapping: Mapping,
         compositor: &WlCompositor,
         surface: &WlSurface,
-        qh: &QueueHandle<Window>,
+        qh: &QueueHandle<Desktop>,
         panel: Option<[i32; 4]>,
         placement_changed: bool,
     ) {

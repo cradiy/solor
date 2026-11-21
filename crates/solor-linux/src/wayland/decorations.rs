@@ -10,7 +10,7 @@ use wayland_protocols::xdg::{
     shell::client::xdg_toplevel::XdgToplevel,
 };
 
-use super::{Role, Window};
+use super::{Desktop, Role};
 
 pub(super) struct Decorations {
     handle: ZxdgToplevelDecorationV1,
@@ -21,8 +21,9 @@ pub(super) struct Decorations {
 impl Decorations {
     pub(super) fn bind(
         globals: &GlobalList,
-        qh: &QueueHandle<Window>,
+        qh: &QueueHandle<Desktop>,
         top: &XdgToplevel,
+        id: wayland_client::backend::ObjectId,
         enabled: bool,
     ) -> Result<Option<Self>, BindError> {
         let manager: ZxdgDecorationManagerV1 = match globals.bind(qh, 1..=1, ()) {
@@ -31,7 +32,7 @@ impl Decorations {
             Err(error) => return Err(error),
         };
         // Version 1 requires creating the object before the first buffer attachment.
-        let handle = manager.get_toplevel_decoration(top, qh, ());
+        let handle = manager.get_toplevel_decoration(top, qh, id);
         manager.destroy();
         let decorations = Self {
             handle,
@@ -66,17 +67,20 @@ impl Drop for Decorations {
     }
 }
 
-delegate_noop!(Window: ignore ZxdgDecorationManagerV1);
+delegate_noop!(Desktop: ignore ZxdgDecorationManagerV1);
 
-impl Dispatch<ZxdgToplevelDecorationV1, ()> for Window {
+impl Dispatch<ZxdgToplevelDecorationV1, wayland_client::backend::ObjectId> for Desktop {
     fn event(
-        state: &mut Self,
+        desktop: &mut Self,
         _: &ZxdgToplevelDecorationV1,
         event: Event,
-        _: &(),
+        id: &wayland_client::backend::ObjectId,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let Some(state) = desktop.windows.get_mut(id) else {
+            return;
+        };
         if let Event::Configure { .. } = event
             && let Role::Toplevel {
                 decorations: Some(decorations),

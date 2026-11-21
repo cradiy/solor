@@ -1,9 +1,9 @@
 use anyhow::Result;
-use solor::{Render, Ui, platform::Platform};
+use solor::{Render, Ui};
 use solor_linux::{Wayland, layer_shell::LayerShellOptions};
 use solor_render_cpu::CpuWindow;
 
-use super::{WindowBackground, WindowOptions};
+use super::{Application, WindowBackground, WindowOptions};
 
 pub(super) struct Host(Wayland);
 
@@ -14,15 +14,20 @@ pub(super) fn select() -> Result<Host> {
     }))
 }
 
+pub(super) type Windows = solor_linux::WaylandApplication;
+
+pub(super) fn open_window(
+    app: &mut Windows,
+    options: WindowOptions<'_>,
+    ui: Ui,
+    root: impl Render,
+) -> Result<()> {
+    app.open_window(options, Box::new(mount(ui, root, options.background)?))
+}
+
 impl Host {
-    pub(super) fn run_window(
-        &self,
-        options: WindowOptions<'_>,
-        ui: Ui,
-        root: impl Render,
-    ) -> Result<()> {
-        self.0
-            .run_window(options, Box::new(mount(ui, root, options.background)?))
+    pub(super) fn run(&self, setup: impl FnOnce(&mut Application<'_>) -> Result<()>) -> Result<()> {
+        self.0.run(|app| setup(&mut Application(app)))
     }
 
     pub(super) fn run_layer_surface(

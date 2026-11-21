@@ -87,6 +87,13 @@ owns the pairing of the window system with a compatible renderer. The same
 application entry point compiles on other targets. Platform selection returns
 an unsupported-platform error where a host is unavailable.
 
+For multiple ordinary windows, call `platform.run(|app| { ... })` and open
+each window with `app.open_window(options, ui, root)?` in the setup callback.
+Each window owns its mounted UI, focus and redraw schedule. The event loop
+returns after the last window closes. The
+[multiple windows example](../crates/solor-platform/examples/multiple_windows.rs)
+opens two notes that can be bookmarked independently.
+
 `WindowOptions::new("Settings")` requests an 800 × 600 logical-pixel window.
 Use `.size(px(480.0), px(320.0))` for a different preference and
 `.app_id("org.example.settings")` to identify the application to the window system.

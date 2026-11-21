@@ -6,7 +6,7 @@ use wayland_client::{
     protocol::{wl_buffer, wl_shm},
 };
 
-use super::Window;
+use super::Desktop;
 use solor::raster::{Clip, Damage, DeviceSize};
 use solor::{platform::WindowBackground, raster::RasterFrame};
 
@@ -41,11 +41,11 @@ impl Buffer {
     // DeviceSize has already passed the rasterizer's pixel budget.
     pub fn new(
         size: DeviceSize,
-        slot: usize,
+        slot: (wayland_client::backend::ObjectId, usize),
         order: PixelOrder,
         background: WindowBackground,
         shm: &wl_shm::WlShm,
-        qh: &QueueHandle<Window>,
+        qh: &QueueHandle<Desktop>,
     ) -> io::Result<Self> {
         let file = File::from(memfd_create("solor-text", MemfdFlags::CLOEXEC)?);
         let bytes = size.width * size.height * 4;
