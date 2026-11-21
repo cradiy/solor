@@ -426,3 +426,82 @@ fn bound_custom_background_repairs_a_positioned_tile_inside_rounded_corners() ->
     assert_eq!(frame.rgba, reference.frame(size, scale)?.rgba);
     Ok(())
 }
+
+#[test]
+fn repairing_an_overlay_samples_only_exposed_backgrounds() -> Result<()> {
+    use solor::{layout::Origin, rgba};
+
+    let size = Size {
+        width: px(24.),
+        height: px(24.),
+    };
+    let scale = RasterScale(1.5);
+    let at = |n| Origin { x: px(n), y: px(n) };
+    let square = |n| Size {
+        width: px(n),
+        height: px(n),
+    };
+    // Each repair changes only the translucent marker above a clipped, rounded fill.
+    for (marker, clip_width, cover_alpha, samples_background) in [
+        (8., 16., 255, false),
+        (8., 8., 255, true),
+        (2., 16., 255, true),
+        (8., 16., 128, true),
+    ] {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let image = CustomImage::new(Pattern(calls.clone()))?;
+        let panel = |initial| {
+            let image = image.clone();
+            component(move |cx| {
+                let tint = cx.signal(initial);
+                div()
+                    .bg(image)
+                    .object_fit(ObjectFit::None)
+                    .on_frame(move |_, cx| cx.set(tint, rgba(0x15da4780)))
+                    .paint(move |cx| {
+                        cx.with_clip(
+                            at(2.),
+                            Size {
+                                width: px(clip_width),
+                                height: px(16.),
+                            },
+                            |cx| {
+                                cx.fill_rounded_rect(
+                                    at(2.),
+                                    square(16.),
+                                    px(4.),
+                                    rgba(0x98402000 | cover_alpha),
+                                )
+                            },
+                        )?;
+                        let color = *cx.read(tint)?;
+                        cx.fill_rect(at(marker), square(4.), color)
+                    })
+            })
+        };
+        let mut window = CpuWindow::mount(Ui::new(), panel(rgba(0xad358580)))?;
+        window.frame(size, scale)?;
+        window.frame_submitted()?;
+        calls.borrow_mut().clear();
+        window.event(WindowEvent::FrameReady(Duration::ZERO))?;
+        let repaired = window.frame(size, scale)?;
+        assert_eq!(
+            repaired.damage.rects(),
+            &[scale.bounds(at(marker), square(4.))]
+        );
+        let requests = calls.take();
+        assert_eq!(requests.len(), usize::from(samples_background));
+        if let Some(request) = requests.first() {
+            assert_eq!(
+                request.output,
+                DeviceSize {
+                    width: 6,
+                    height: 6
+                }
+            );
+        }
+        let mut reference = CpuWindow::mount(Ui::new(), panel(rgba(0x15da4780)))?;
+        assert_eq!(repaired.rgba, reference.frame(size, scale)?.rgba);
+    }
+    Ok(())
+}

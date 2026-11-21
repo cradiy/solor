@@ -70,36 +70,14 @@ impl Surface {
     ) -> Result<()> {
         let mut draws = frame.draws();
         let mut background = [clear_byte; 4];
-        while let Some((draw, tail)) = draws.split_first() {
-            let bounds = device_bounds(draw, scale)?.intersect(clip);
-            if !bounds.empty() {
-                let Draw::Fill {
-                    fill: Fill::Solid(color),
-                    origin,
-                    size,
-                    corner_radii,
-                    ..
-                } = draw
-                else {
-                    break;
-                };
-                let left = f64::from(origin.x) * scale.0;
-                let top = f64::from(origin.y) * scale.0;
-                if bounds != clip
-                    || color.alpha != 255
-                    || *corner_radii != Corners::default()
-                    || left > clip.left as f64
-                    || top > clip.top as f64
-                    || left + f64::from(size.width) * scale.0 < clip.right as f64
-                    || top + f64::from(size.height) * scale.0 < clip.bottom as f64
-                {
-                    break;
-                }
+        // Earlier commands cannot contribute once an opaque fill covers the repair.
+        for (index, draw) in draws.iter().enumerate().rev() {
+            if let Some(color) = opaque_cover(draw, scale, clip)? {
                 background = [color.red, color.green, color.blue, 255];
+                draws = &draws[index + 1..];
+                break;
             }
-            draws = tail;
         }
-        // Initialize the repaired pixels once, even with several opaque background layers.
         let stride = self.size.width as usize * 4;
         let start = clip.top as usize * stride + clip.left as usize * 4;
         let row = start..start + (clip.right - clip.left) as usize * 4;
@@ -392,6 +370,41 @@ impl Surface {
         }
         Ok(())
     }
+}
+
+fn opaque_cover(draw: &Draw, scale: RasterScale, area: Clip) -> Result<Option<solor::Rgba>> {
+    let Draw::Fill {
+        fill: Fill::Solid(color),
+        origin,
+        size,
+        corner_radii,
+        ..
+    } = draw
+    else {
+        return Ok(None);
+    };
+    if color.alpha != 255 {
+        return Ok(None);
+    }
+    let left = f64::from(origin.x) * scale.0;
+    let top = f64::from(origin.y) * scale.0;
+    let right = left + f64::from(size.width) * scale.0;
+    let bottom = top + f64::from(size.height) * scale.0;
+    let inset_x = (area.left as f64 - left).min(right - area.right as f64);
+    let inset_y = (area.top as f64 - top).min(bottom - area.bottom as f64);
+    if inset_x < 0.0 || inset_y < 0.0 {
+        return Ok(None);
+    }
+    // Either central strip of a rounded rectangle has full coverage.
+    let radius = corner_radii
+        .top_left
+        .max(corner_radii.top_right)
+        .max(corner_radii.bottom_left)
+        .max(corner_radii.bottom_right);
+    if inset_x.max(inset_y) < f64::from(radius) * scale.0 {
+        return Ok(None);
+    }
+    Ok((device_bounds(draw, scale)?.intersect(area) == area).then_some(*color))
 }
 
 // Fill coverage includes fractional edge pixels. Text is clipped to rounded layout edges.
