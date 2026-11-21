@@ -8,7 +8,7 @@ fn main() -> anyhow::Result<()> {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/image/kingfisher.webp"),
     );
     let view = component(move |cx| {
-        let fit = cx.signal(ObjectFit::Cover);
+        let fit = cx.signal(ObjectFit::Contain);
         div()
             .p(px(24.0))
             .gap(px(16.0))
@@ -33,7 +33,7 @@ fn main() -> anyhow::Result<()> {
             )
             .child({
                 let mut controls = div().flex_row().gap(px(8.0));
-                for (label, mode) in [("Cover", ObjectFit::Cover), ("Contain", ObjectFit::Contain)]
+                for (label, mode) in [("Contain", ObjectFit::Contain), ("Cover", ObjectFit::Cover)]
                 {
                     controls = controls.child(
                         div()
