@@ -11,7 +11,7 @@ workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 xkbcommon = { version = "0.9", default-features = false }
 dbus = "0.9"
-solor = { path = "../solor", default-features = false }
+solor.workspace = true
 smallvec.workspace = true
 anyhow.workspace = true
 log.workspace = true

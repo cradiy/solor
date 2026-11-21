@@ -7,8 +7,10 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
-solor = { path = "crates/solor" }
+solor = { path = "crates/solor", default-features = false }
+solor-linux = { path = "crates/solor-linux" }
 solor-platform = { path = "crates/solor-platform" }
+solor-render-cpu = { path = "crates/solor-render-cpu" }
 anyhow = "1"
 log = "0.4"
 slotmap = "1.1.1"

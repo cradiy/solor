@@ -10,8 +10,8 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
-solor.workspace = true
+solor = { workspace = true, default-features = true }
 solor-platform.workspace = true
 
 [dev-dependencies]
-solor-render-cpu = { path = "../solor-render-cpu" }
+solor-render-cpu.workspace = true
