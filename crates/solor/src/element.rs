@@ -106,27 +106,29 @@ impl Element for Text {
         let paragraph = self.resolve(Query::Exact(cx.size.width))?;
         let color = cx.text_color()?;
         let decorations = self.decorations.as_deref();
+        let stroke_color = decorations.and_then(|d| d.color).map(crate::Ink::from);
+        let stroke_color = stroke_color.as_ref().unwrap_or(&color);
         if let Some(background) = decorations.and_then(|d| d.background) {
-            cx.text_line_fills(&paragraph, background, |line| {
+            cx.text_line_fills(&paragraph, &background.into(), |line| {
                 (line.top, line.top + line.height)
             });
         }
         if let Some(d) = decorations
             && let Some(stroke) = d.underline
         {
-            cx.text_stroke(&paragraph, stroke, d.thickness, d.color.unwrap_or(color));
+            cx.text_stroke(&paragraph, stroke, d.thickness, stroke_color);
         }
         cx.commands.push(Draw::Text {
             clip: cx.clip.clone(),
             origin: cx.origin,
             size: cx.size,
             paragraph: Rc::clone(&paragraph),
-            color,
+            color: color.clone(),
         });
         if let Some(d) = decorations
             && let Some(stroke) = d.strike
         {
-            cx.text_stroke(&paragraph, stroke, d.thickness, d.color.unwrap_or(color));
+            cx.text_stroke(&paragraph, stroke, d.thickness, stroke_color);
         }
         Ok(())
     }
@@ -192,7 +194,7 @@ pub enum Draw {
         /// Parsed artwork retained through submission.
         asset: crate::SvgAsset,
         /// Foreground applied to the alpha mask, or source colors when absent.
-        tint: Option<Rgba>,
+        tint: Option<crate::Ink>,
     },
     /// Draws a shaped paragraph.
     Text {
@@ -205,7 +207,7 @@ pub enum Draw {
         /// Shaped text retained for this command.
         paragraph: Rc<Paragraph>,
         /// Foreground applied to the glyphs.
-        color: Rgba,
+        color: crate::Ink,
     },
 }
 
@@ -216,7 +218,7 @@ pub struct PaintContext<'a> {
     frame_offset: Origin,
     /// Assigned content area after removing padding.
     pub size: Size,
-    text_color: Foreground,
+    text_color: &'a Foreground,
     commands: &'a mut Vec<Draw>,
     clip: Option<Arc<ContentClip>>,
     next_frame: bool,
@@ -236,10 +238,12 @@ fn validate_points(points: &[Origin]) -> Result<()> {
 
 impl<'paint> PaintContext<'paint> {
     /// Reads the inherited foreground and tracks a bound color for repaint.
-    pub fn text_color(&self) -> Result<Rgba> {
+    pub fn text_color(&self) -> Result<crate::Ink> {
         match self.text_color {
-            Foreground::Fixed(color) => Ok(color),
-            Foreground::Bound(signal) => self.read(signal).copied(),
+            Foreground::Fixed(ink) => Ok(ink.clone()),
+            Foreground::Bound(signal) => Ok((*self.read(*signal)?).into()),
+            Foreground::Gradient(signal) => Ok(self.read(*signal)?.clone().into()),
+            Foreground::Ink(signal) => Ok(self.read(*signal)?.clone()),
         }
     }
 
@@ -304,7 +308,7 @@ impl<'paint> PaintContext<'paint> {
         paragraph: &Paragraph,
         stroke: crate::text::Stroke,
         thickness: Option<Pixels>,
-        color: Rgba,
+        color: &crate::Ink,
     ) {
         let em = paragraph.style.size.get();
         let height = thickness.map_or(stroke.thickness * em, Pixels::get);
@@ -317,10 +321,10 @@ impl<'paint> PaintContext<'paint> {
     fn text_line_fills(
         &mut self,
         paragraph: &Paragraph,
-        color: Rgba,
+        color: &crate::Ink,
         vertical_bounds: impl Fn(&Line) -> (f32, f32),
     ) {
-        if color.alpha == 0 {
+        if matches!(color, crate::Ink::Solid(c) if c.alpha == 0) {
             return;
         }
         for line in &paragraph.lines {
@@ -345,7 +349,7 @@ impl<'paint> PaintContext<'paint> {
                         width: px(right - left),
                         height: px(bottom - top),
                     },
-                    fill: color.into(),
+                    fill: color.clone().into(),
                     clip: self.clip.clone(),
                     corner_radii: Corners::default(),
                 });
@@ -708,7 +712,7 @@ impl MountedNode {
             frame_offset,
             origin: Origin::default(),
             size,
-            text_color: self.text_color,
+            text_color: &self.text_color,
             commands,
             next_frame: false,
             state,

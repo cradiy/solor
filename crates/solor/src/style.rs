@@ -56,15 +56,19 @@ impl From<Signal<Rgba>> for Background {
 }
 
 /// Inherited foreground sampled by text and custom content during paint.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Foreground {
     /// Use this color for the lifetime of the declaration.
-    Fixed(Rgba),
+    Fixed(crate::Ink),
     /// Read the current color when an element paints with the foreground.
     Bound(Signal<Rgba>),
+    /// Read the current gradient when painting.
+    Gradient(Signal<crate::Gradient>),
+    /// Read a foreground that may switch between solid and gradient paint.
+    Ink(Signal<crate::Ink>),
 }
 
-impl<T: Into<Rgba>> From<T> for Foreground {
+impl<T: Into<crate::Ink>> From<T> for Foreground {
     fn from(color: T) -> Self {
         Self::Fixed(color.into())
     }
@@ -73,6 +77,17 @@ impl<T: Into<Rgba>> From<T> for Foreground {
 impl From<Signal<Rgba>> for Foreground {
     fn from(signal: Signal<Rgba>) -> Self {
         Self::Bound(signal)
+    }
+}
+
+impl From<Signal<crate::Gradient>> for Foreground {
+    fn from(signal: Signal<crate::Gradient>) -> Self {
+        Self::Gradient(signal)
+    }
+}
+impl From<Signal<crate::Ink>> for Foreground {
+    fn from(signal: Signal<crate::Ink>) -> Self {
+        Self::Ink(signal)
     }
 }
 
@@ -101,7 +116,7 @@ impl Default for Typography {
             line_height: metrics.line_height,
             letter_spacing: px(0.0),
             decoration_thickness: None,
-            color: Foreground::Fixed(Rgba::new(0, 0, 0, 255)),
+            color: Rgba::new(0, 0, 0, 255).into(),
         }
     }
 }
@@ -126,7 +141,7 @@ impl TextStyleRefinement {
             attributes,
             size: higher.size.or(self.size),
             line_height: higher.line_height.or(self.line_height),
-            color: higher.color.or(self.color),
+            color: higher.color.clone().or_else(|| self.color.clone()),
         }
     }
 }
@@ -226,7 +241,9 @@ impl Style {
             }
             (None, None) => self.text.line_height,
         };
-        self.text.color = text.color.unwrap_or(self.text.color);
+        if let Some(color) = &text.color {
+            self.text.color = color.clone();
+        }
         overlay_group(&mut self.text.attributes, &text.attributes);
         if let Some(spacing) = self
             .text

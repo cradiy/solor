@@ -167,7 +167,9 @@ fn text_children_keep_borrowed_content_and_update_bound_content_in_place() -> Re
             .iter()
             .map(|draw| match draw {
                 Draw::Text {
-                    paragraph, color, ..
+                    paragraph,
+                    color: solor::Ink::Solid(color),
+                    ..
                 } => (paragraph.text.as_str(), *color),
                 _ => panic!("expected a text leaf"),
             })

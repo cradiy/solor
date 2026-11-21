@@ -172,9 +172,13 @@ impl Surface {
                 } => {
                     let viewport = scale.bounds(*origin, *size);
                     let visible = visible.intersect(Clip::canvas(self.size));
+                    let tint = tint
+                        .as_ref()
+                        .map(|ink| crate::mask::painter(ink, *origin, *size, scale, (0, 0)))
+                        .transpose()?;
                     replay
                         .svgs
-                        .draw(self, asset, *tint, viewport, visible, bounds)?;
+                        .draw(self, asset, tint, viewport, visible, bounds)?;
                 }
                 Draw::Text {
                     origin,
@@ -191,7 +195,7 @@ impl Surface {
                                 .insert(TextRaster::new(scale, (0, 0), replay.masks.take()))
                         }
                     };
-                    raster.draw(self, *origin, *allocated, paragraph, *color, bounds)?;
+                    raster.draw(self, *origin, *allocated, paragraph, color, bounds)?;
                 }
             }
         }

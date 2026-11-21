@@ -80,7 +80,7 @@ pub use element::{
     RefreshMode, RefreshPolicy, Render, TextContent, div, element, text,
 };
 pub use fill::{
-    ColorSpace, ColorStop, Fill, Gradient, GradientError, GradientKind, GradientMap, Rgba,
+    ColorSpace, ColorStop, Fill, Gradient, GradientError, GradientKind, GradientMap, Ink, Rgba,
     color_stop, gradient_bottom_to_top, gradient_left_to_right, gradient_right_to_left,
     gradient_top_to_bottom, linear_gradient, rgb, rgba,
 };

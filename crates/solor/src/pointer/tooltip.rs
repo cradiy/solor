@@ -233,7 +233,7 @@ impl ActiveTooltip {
             size: content,
             paragraph,
             clip: None,
-            color: style.text_color,
+            color: style.text_color.into(),
         });
         Ok(())
     }

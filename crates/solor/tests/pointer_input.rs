@@ -1008,7 +1008,9 @@ fn tooltip_without_a_callback_waits_cancels_and_draws_above_the_owner() -> Resul
             ..
         },
         Draw::Text {
-            paragraph, color, ..
+            paragraph,
+            color: solor::Ink::Solid(color),
+            ..
         },
     ] = frame.draws()
     else {
@@ -1202,7 +1204,7 @@ fn tooltip_defaults_update_pending_and_visible_hints_and_preserve_local_override
         },
         Draw::Text {
             origin: label,
-            color,
+            color: solor::Ink::Solid(color),
             paragraph,
             ..
         },
@@ -1246,7 +1248,9 @@ fn tooltip_defaults_update_pending_and_visible_hints_and_preserve_local_override
     let [
         Draw::Fill { size, fill, .. },
         Draw::Text {
-            paragraph, color, ..
+            paragraph,
+            color: solor::Ink::Solid(color),
+            ..
         },
     ] = frame.draws()
     else {

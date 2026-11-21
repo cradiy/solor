@@ -280,7 +280,7 @@ fn conditional_label_inherits_style_and_keeps_identity_when_it_wraps() -> Result
     ui.paint(view, root, &mut commands)?;
     ui.paint(view, title, &mut commands)?;
     assert!(
-        matches!(&commands[..], [Draw::Fill{fill: Fill::Solid(c), corner_radii, ..}, Draw::Text{color, ..}] if *corner_radii == Corners::all(px(18.0)) && *c == ACCENT && *color == ACCENT)
+        matches!(&commands[..], [Draw::Fill{fill: Fill::Solid(c), corner_radii, ..}, Draw::Text{color: solor::Ink::Solid(color), ..}] if *corner_radii == Corners::all(px(18.0)) && *c == ACCENT && *color == ACCENT)
     );
 
     ui.context().set(open, true)?;
@@ -303,7 +303,9 @@ fn conditional_label_inherits_style_and_keeps_identity_when_it_wraps() -> Result
     ui.paint(view, label, &mut commands)?;
     let [
         Draw::Text {
-            paragraph, color, ..
+            paragraph,
+            color: solor::Ink::Solid(color),
+            ..
         },
     ] = &commands[..]
     else {
@@ -376,9 +378,14 @@ fn inherited_color_only_repaints_consumers_and_reuses_shaped_text() -> Result<()
         let frame = ui.record_frame(view)?;
         let [
             Draw::Text {
-                color, paragraph, ..
+                color: solor::Ink::Solid(color),
+                paragraph,
+                ..
             },
-            Draw::Text { color: fixed, .. },
+            Draw::Text {
+                color: solor::Ink::Solid(fixed),
+                ..
+            },
         ] = frame.draws()
         else {
             panic!("expected two labels")
@@ -568,7 +575,7 @@ fn custom_content_gets_the_shared_box_and_gradient_without_style_hooks() -> Resu
     assert!(matches!(&commands[..], [
         Draw::Fill {size: outer_size, origin, fill: Fill::Gradient(g), ..},
         Draw::Fill {size: inner_size, origin: inner, fill: Fill::Solid(c), ..},
-        Draw::Text {color, ..},
+        Draw::Text {color: solor::Ink::Solid(color), ..},
     ] if *outer_size == (Size {width:px(40.0),height:px(40.0)}) && *inner_size == (Size {width:px(22.0),height:px(34.0)}) && *origin == Origin::default() && *inner == inset && *color == ACCENT && *c == ACCENT && g == &gradient));
     ui.context().set(tint, INK)?;
     ui.flush()?;
@@ -934,7 +941,10 @@ fn visibility_bindings_retire_with_branches_and_refresh_cached_text_order() -> R
             .draws()
             .iter()
             .map(|draw| match draw {
-                Draw::Text { color, .. } => *color,
+                Draw::Text {
+                    color: solor::Ink::Solid(color),
+                    ..
+                } => *color,
                 _ => panic!("expected text"),
             })
             .collect())

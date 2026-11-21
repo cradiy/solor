@@ -477,6 +477,36 @@ impl Gradient {
     }
 }
 
+/// Paint applied through a glyph or monochrome SVG mask.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Ink {
+    /// Uniform foreground color.
+    Solid(Rgba),
+    /// Gradient across the paragraph box or fitted SVG viewport.
+    Gradient(Arc<Gradient>),
+}
+
+impl<T: Into<Rgba>> From<T> for Ink {
+    fn from(value: T) -> Self {
+        Self::Solid(value.into())
+    }
+}
+
+impl From<Gradient> for Ink {
+    fn from(value: Gradient) -> Self {
+        Self::Gradient(Arc::new(value))
+    }
+}
+
+impl From<Ink> for Fill {
+    fn from(ink: Ink) -> Self {
+        match ink {
+            Ink::Solid(c) => Self::Solid(c),
+            Ink::Gradient(g) => Self::Gradient((*g).clone()),
+        }
+    }
+}
+
 /// Paint for a bounded region, shared by backgrounds and local drawing.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]

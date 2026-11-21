@@ -6,6 +6,7 @@ pub mod damage;
 pub mod frame;
 /// Bounded glyph mask storage.
 pub mod glyph_masks;
+mod mask;
 mod path;
 /// CPU pixel surfaces.
 pub mod pixels;

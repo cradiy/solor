@@ -1,7 +1,7 @@
 //! Compare SVG illustrations in foreground ink and their original colors.
 use solor::{
-    AssetSource, Div, Render, Rgba, Signal, Styled, Svg, Ui, component, div, percent, px, rgb, svg,
-    text,
+    AssetSource, Div, Ink, Render, Signal, Styled, Svg, Ui, color_stop, component, div,
+    gradient_left_to_right, percent, px, rgb, svg, text,
 };
 use solor_platform::{WindowOptions, current_platform};
 
@@ -37,11 +37,11 @@ fn specimen(label: &str, art: Svg) -> Div {
         .child(text(label).text_size(px(14.0)))
 }
 
-fn studies(name: &str, ink: Signal<Rgba>) -> Div {
+fn studies(name: &str, ink: Signal<Ink>) -> Div {
     div()
         .flex_row()
         .gap(px(12.0))
-        .child(specimen("Single color", svg(name).text_color(ink)))
+        .child(specimen("Foreground", svg(name).text_color(ink)))
         .child(specimen("Original colors", svg(name).preserve_colors()))
 }
 
@@ -54,11 +54,10 @@ fn button(label: &'static str) -> Div {
         .child(label)
 }
 
-fn comparison() -> impl Render {
+fn comparison(gradient: Ink) -> impl Render {
     component(move |cx| {
-        let teal = rgb(0x246b69);
-        let copper = rgb(0xa65432);
-        let ink = cx.signal(teal);
+        let teal = Ink::from(rgb(0x246b69));
+        let ink = cx.signal(gradient.clone());
         let show_nettle = cx.signal(true);
         let show_bird = cx.signal(false);
 
@@ -76,6 +75,7 @@ fn comparison() -> impl Render {
                     .child(
                         div()
                             .text_size(px(28.0))
+                            .text_color(ink)
                             .child_when(show_nettle, || "Sea nettle")
                             .child_when(show_bird, || "Kingfisher"),
                     )
@@ -98,7 +98,11 @@ fn comparison() -> impl Render {
                                     .text_color(rgb(0xffffff))
                                     .on_click(move |cx| {
                                         cx.update(ink, |color| {
-                                            *color = if *color == teal { copper } else { teal };
+                                            *color = if *color == teal {
+                                                gradient.clone()
+                                            } else {
+                                                teal.clone()
+                                            };
                                         })
                                     }),
                             ),
@@ -113,7 +117,14 @@ fn main() -> anyhow::Result<()> {
     let options = WindowOptions::new("Solor · SVG")
         .app_id("org.solor.SvgExample")
         .size(px(704.0), px(400.0));
-    current_platform()?
-        .with_assets(Illustrations)
-        .run_window(options, Ui::new(), comparison())
+    let gradient = gradient_left_to_right([
+        color_stop(rgb(0x164b64), 0.0),
+        color_stop(rgb(0x227e7b), 0.45),
+        color_stop(rgb(0xa64b34), 1.0),
+    ])?;
+    current_platform()?.with_assets(Illustrations).run_window(
+        options,
+        Ui::new(),
+        comparison(gradient.into()),
+    )
 }

@@ -132,7 +132,7 @@ fn activation_button(
                 },
                 px(1.),
                 match accent {
-                    Some(color) => color,
+                    Some(color) => color.into(),
                     None => paint.text_color()?,
                 },
             )

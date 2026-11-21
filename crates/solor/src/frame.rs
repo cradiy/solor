@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Context as _, Result};
 
 use crate::{
-    ContentClip, Draw, Instance, Rgba, Ui, ViewId,
+    ContentClip, Draw, Ink, Instance, Ui, ViewId,
     clip::NodeClips,
     element::{FramePaint, MountedNode},
     layout::{Origin, Size},
@@ -35,7 +35,7 @@ struct FixedLabel {
     origin: Origin,
     size: Size,
     paragraph: Rc<Paragraph>,
-    color: Rgba,
+    color: Ink,
 }
 
 impl FixedLabel {
@@ -58,7 +58,7 @@ impl FixedLabel {
             origin: *origin,
             size: *size,
             paragraph: paragraph.clone(),
-            color: *color,
+            color: color.clone(),
         })
     }
 
@@ -68,7 +68,7 @@ impl FixedLabel {
             origin: self.origin,
             size: self.size,
             paragraph: self.paragraph.clone(),
-            color: self.color,
+            color: self.color.clone(),
         }
     }
 }

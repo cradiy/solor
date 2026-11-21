@@ -440,7 +440,7 @@ pub trait Styled: Sized {
             .rounded_bl(r.clone())
             .rounded_br(r)
     }
-    /// Sets the inherited foreground to a fixed color or a color signal.
+    /// Sets the inherited solid or gradient foreground for text and monochrome SVGs.
     fn text_color(mut self, color: impl Into<Foreground>) -> Self {
         self.style().text.color = Some(color.into());
         self

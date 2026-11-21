@@ -427,9 +427,11 @@ all four edges use the column's content width. Their intrinsic contribution
 is zero while that width is indefinite, and placement resolves them against
 the assigned width. Root margins do not change the host's viewport allocation.
 
-Use `.text_color(ink)` with a color or a `Signal<Rgba>` on a label or an
-ancestor. Descendants inherit the source until they supply their own color.
-Custom elements read it with `cx.text_color()?` during paint. A color change
+Use `.text_color(ink)` with an `Rgba`, a `Gradient`, or a signal of either type
+on a label or an ancestor. A `Signal<Ink>` can switch between the two.
+Descendants inherit the foreground until they supply their own. A gradient
+spans the paragraph's content box across all lines. Custom elements read the
+resolved `Ink` with `cx.text_color()?` during paint. A color change
 repaints the elements that read it and reuses their shaped paragraphs and layout.
 
 Set OpenType features on a label or container with
@@ -673,8 +675,8 @@ own image, and the CPU renderer filters premultiplied pixels before compositing.
 
 Parse self-contained vector artwork once and clone the asset to share it between
 elements. Pass a `Signal<SvgAsset>` to `svg` to switch artwork on the mounted
-element. A change in intrinsic size also updates layout. By default, `svg(asset)` uses the inherited foreground. The
-`.text_color(...)` style accepts a fixed color or a signal. Use
+element. A change in intrinsic size also updates layout. By default, `svg(asset)`
+uses the inherited foreground across its fitted viewport. Use
 `.preserve_colors()` to draw the original fills, strokes and gradients.
 
 ```rust

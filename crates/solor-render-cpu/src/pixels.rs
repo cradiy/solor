@@ -89,7 +89,7 @@ impl Surface {
                 draw.origin,
                 draw.allocated,
                 &draw.paragraph,
-                draw.color,
+                &draw.color.into(),
                 viewport,
             )?;
         }
@@ -133,7 +133,14 @@ impl Surface {
         Ok(())
     }
 
-    fn composite(&mut self, mask: &Image, x: i64, y: i64, clip: Clip, color: solor::Rgba) {
+    fn composite(
+        &mut self,
+        mask: &Image,
+        x: i64,
+        y: i64,
+        clip: Clip,
+        paint: &mut impl crate::mask::MaskPainter,
+    ) -> Result<()> {
         let pitch = mask.placement.width as usize;
         let area = clip.intersect(Clip {
             left: x,
@@ -142,21 +149,20 @@ impl Surface {
             bottom: y.saturating_add(i64::from(mask.placement.height)),
         });
         if area.empty() {
-            return;
+            return Ok(());
         }
         for py in area.top..area.bottom {
             let offset = (py - y) as usize * pitch + (area.left - x) as usize;
             let len = (area.right - area.left) as usize;
             let dst = (py as usize * self.size.width as usize + area.left as usize) * 4;
-            for (pixel, &coverage) in self.rgba[dst..dst + len * 4]
-                .as_chunks_mut::<4>()
-                .0
-                .iter_mut()
-                .zip(&mask.data[offset..offset + len])
-            {
-                blend(pixel, color, coverage);
-            }
+            paint.paint_row(
+                self.rgba[dst..dst + len * 4].as_chunks_mut::<4>().0,
+                &mask.data[offset..offset + len],
+                area.left,
+                py,
+            )?;
         }
+        Ok(())
     }
 }
 
@@ -234,7 +240,7 @@ impl<'a> TextRaster<'a> {
         at: solor::layout::Origin,
         allocated: solor::layout::Size,
         paragraph: &solor::text::Paragraph,
-        color: solor::Rgba,
+        color: &solor::Ink,
         viewport: Clip,
     ) -> Result<()> {
         let scale = self.scale;
@@ -246,9 +252,10 @@ impl<'a> TextRaster<'a> {
             right: device.right.saturating_sub(origin.0),
             bottom: device.bottom.saturating_sub(origin.1),
         });
-        if bounds.empty() || color.alpha == 0 {
+        if bounds.empty() || matches!(color, solor::Ink::Solid(c) if c.alpha == 0) {
             return Ok(());
         }
+        let mut paint = crate::mask::painter(color, at, allocated, scale, origin)?;
         let renderer = Render::new(&[Source::Outline]);
         let em = paragraph.style.size.get();
         let factor = scale.0 as f32;
@@ -298,7 +305,7 @@ impl<'a> TextRaster<'a> {
                         )
                         .saturating_sub(origin.1)
                         .saturating_sub(i64::from(mask.placement.top));
-                    surface.composite(mask, x, y, bounds, color);
+                    surface.composite(mask, x, y, bounds, &mut paint)?;
                 }
             }
         }
