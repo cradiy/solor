@@ -1,17 +1,13 @@
 //! Open modal settings and close-confirmation dialogs from a workspace.
 use solor::{
-    Context, Div, Render, Styled, Ui, component, div,
+    Context, Div, IntoElement, Render, Styled, Ui, component, div,
     keyboard::{Key, KeyBinding},
-    px, rgb, text,
+    px, rgb,
 };
 use solor_platform::{Application, WindowHandle, WindowOptions, current_platform};
 
-fn button(label: &'static str) -> Div {
-    div()
-        .p(px(8.0))
-        .rounded_md()
-        .bg(rgb(0xd6e2da))
-        .child(text(label))
+fn button(label: impl IntoElement) -> Div {
+    div().p(px(8.0)).rounded_md().bg(rgb(0xd6e2da)).child(label)
 }
 
 fn settings() -> impl Render {
@@ -22,7 +18,7 @@ fn settings() -> impl Render {
             .p(px(12.0))
             .gap(px(6.0))
             .child(button("Show details").on_click(move |cx| cx.update(details, |v| *v = !*v)))
-            .child_when(details, || text("Settings apply to this session."))
+            .child_when(details, || "Settings apply to this session.")
             .child(button("Done").window_close_button())
     })
 }
@@ -65,7 +61,7 @@ fn main_view(app: Application, parent: WindowHandle) -> impl Render {
                             .flex_col()
                             .p(px(12.0))
                             .gap(px(6.0))
-                            .child(text("Close this workspace?"))
+                            .child("Close this workspace?")
                             .child(button("Cancel").window_close_button())
                             .child(button("Close workspace").on_click(move |_| {
                                 owner.close();

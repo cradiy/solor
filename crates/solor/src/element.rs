@@ -27,7 +27,8 @@ pub trait Render {
     fn render(self, cx: &mut Context<'_>) -> impl IntoElement;
 }
 
-/// Converts a component or primitive into a single-use declaration.
+/// Converts a component, primitive or text value into a single-use declaration.
+/// Strings become text leaves. A `Signal<SharedString>` updates the same leaf on flush.
 pub trait IntoElement {
     /// Erases the declaration's concrete type for heterogeneous composition.
     fn into_element(self) -> AnyElement;
@@ -1059,6 +1060,28 @@ pub fn text(content: impl Into<TextContent>) -> impl IntoElement + Styled {
         style: StyleRefinement::default(),
     }
 }
+
+macro_rules! text_elements {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl IntoElement for $ty {
+                fn into_element(self) -> AnyElement {
+                    text(self).into_element()
+                }
+            }
+        )+
+    };
+}
+
+text_elements!(
+    &str,
+    String,
+    &String,
+    SharedString,
+    &SharedString,
+    Signal<SharedString>,
+    TextContent
+);
 
 impl IntoElement for Label {
     fn into_element(self) -> AnyElement {

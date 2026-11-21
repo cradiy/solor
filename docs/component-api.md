@@ -94,6 +94,18 @@ component(|cx| {
 })
 ```
 
+Pass a string directly to `child` when the text should inherit its parent's
+typography. Borrowed strings are converted when the declaration is built.
+A status row can keep its caption fixed and pass a `Signal<SharedString>`
+as its second child to update the device name in place.
+
+```rust
+div().flex_row().gap(px(8.0))
+    .child("Output device")
+    .child(device_name)
+```
+
+Use `text(device_name).text_color(accent)` to style the value independently.
 The `text` builder accepts a literal, an owned string, a `SharedString`, or a
 `Signal<SharedString>`. Passing a clone of a long shared value lets multiple nodes retain the
 same bytes through layout. Short labels fit inline. The [source text

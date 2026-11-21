@@ -133,3 +133,53 @@ fn iterated_siblings_keep_order_and_identity_across_a_conditional_branch() -> Re
     assert_eq!(ui.children(view, root)?.collect::<Vec<_>>(), fixed);
     Ok(())
 }
+
+#[test]
+fn text_children_keep_borrowed_content_and_update_bound_content_in_place() -> Result<()> {
+    let mut ui = Ui::with_font(
+        include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf").to_vec(),
+    )?;
+    let value = ui.context().signal(solor::SharedString::from("Headphones"));
+    let row = {
+        let caption = String::from("Output device");
+        div()
+            .flex_row()
+            .text_color(rgb(0x123456))
+            .child(caption.as_str())
+            .child(value)
+    };
+    let view = ui.mount(component(move |_| row))?;
+    let root = ui.root(view)?;
+    let ids: Vec<_> = ui.children(view, root)?.collect();
+    assert_eq!(ids.len(), 2);
+    let check = |ui: &mut Ui, expected: &str| -> Result<()> {
+        ui.flush()?;
+        ui.layout(
+            view,
+            Size {
+                width: px(360.0),
+                height: px(50.0),
+            },
+        )?;
+        let frame = ui.record_frame(view)?;
+        let labels: Vec<_> = frame
+            .draws()
+            .iter()
+            .map(|draw| match draw {
+                Draw::Text {
+                    paragraph, color, ..
+                } => (paragraph.text.as_str(), *color),
+                _ => panic!("expected a text leaf"),
+            })
+            .collect();
+        assert_eq!(
+            labels,
+            [("Output device", rgb(0x123456)), (expected, rgb(0x123456))]
+        );
+        assert_eq!(ui.children(view, root)?.collect::<Vec<_>>(), ids);
+        Ok(())
+    };
+    check(&mut ui, "Headphones")?;
+    ui.context().set(value, "Speakers".into())?;
+    check(&mut ui, "Speakers")
+}
