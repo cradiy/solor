@@ -78,16 +78,7 @@ fn rgb_list() -> impl IntoElement {
         let seek = list.clone();
         div()
             .key_context(RGB_LIST)
-            .focus_indicator(|paint| {
-                paint.fill_rect(
-                    Origin::default(),
-                    Size {
-                        width: paint.size.width,
-                        height: px(2.0),
-                    },
-                    MUTED,
-                )
-            })
+            .focus_indicator(crate::viewport_focus_indicator)
             .on_action(move |action: &ScrollList, cx| action.apply(&seek, cx))
             .flex_1()
             .items_stretch()

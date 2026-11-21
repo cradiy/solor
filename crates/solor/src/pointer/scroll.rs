@@ -213,22 +213,33 @@ impl ScrollHandle {
         self.observers(axis).observe(cx, self.position(axis))
     }
 
-    pub(crate) fn scroll_by(&self, axis: ScrollAxis, delta: f64) -> f64 {
+    /// Scrolls relative to the current or queued destination in logical pixels.
+    /// Returns the portion of each component within the last published scroll bounds.
+    /// Before a nonempty viewport is available, both consumed components are zero.
+    pub fn scroll_by(&self, delta: ScrollDelta) -> Result<ScrollDelta> {
+        ensure!(
+            delta.x.get().is_finite() && delta.y.get().is_finite(),
+            "scroll delta must be finite"
+        );
         let Some(metrics) = self.metrics() else {
-            return 0.0;
+            return Ok(ScrollDelta::default());
         };
-        let limit = f64::from(axis.extent(metrics.max_offset));
-        let start = self
-            .0
-            .pending
-            .get()
-            .map_or(metrics.offset, |request| request.resolve(metrics));
-        let current = f64::from(axis.coordinate(start));
-        let used = delta.clamp(-current, limit - current);
-        if used != 0.0 {
-            self.request_axis(axis, AxisTarget::Pixels(px((current + used) as f32)));
+        if metrics.viewport.width == px(0.0) || metrics.viewport.height == px(0.0) {
+            return Ok(ScrollDelta::default());
         }
-        used
+        let mut request = self.0.pending.get().unwrap_or_default();
+        let start = request.resolve(metrics);
+        let (next, consumed) = advance(start, metrics.max_offset, delta);
+        if next != start {
+            if next.x != start.x {
+                request.x = AxisTarget::Pixels(next.x);
+            }
+            if next.y != start.y {
+                request.y = AxisTarget::Pixels(next.y);
+            }
+            self.0.pending.set(Some(request));
+        }
+        Ok(consumed)
     }
 
     fn publish(&self, metrics: Option<ScrollMetrics>, state: &mut Runtime<()>) {
@@ -354,20 +365,20 @@ impl ScrollAxes {
     }
 }
 
-/// Consume the available distance separately on each axis and pass any excess outward.
+/// Returns the bounded destination and the portion of the input consumed on each axis.
 fn advance(offset: Origin, limit: Size, delta: ScrollDelta) -> (Origin, ScrollDelta) {
     fn axis(offset: Pixels, limit: Pixels, delta: Pixels) -> (Pixels, Pixels) {
         let offset = offset.min(limit);
         let used = delta.max(Pixels::default() - offset).min(limit - offset);
-        ((offset + used).min(limit), delta - used)
+        ((offset + used).min(limit), used)
     }
-    let (x, left_x) = axis(offset.x, limit.width, delta.x);
-    let (y, left_y) = axis(offset.y, limit.height, delta.y);
+    let (x, used_x) = axis(offset.x, limit.width, delta.x);
+    let (y, used_y) = axis(offset.y, limit.height, delta.y);
     (
         Origin { x, y },
         ScrollDelta {
-            x: left_x,
-            y: left_y,
+            x: used_x,
+            y: used_y,
         },
     )
 }
@@ -445,12 +456,15 @@ impl Instance {
                     viewport: geometry.metrics.size,
                 })
             });
-        let (next, remaining) = advance(start, limit, delta);
+        let (next, consumed) = advance(start, limit, delta);
         self.apply_scroll_offset(owner, previous, next)?;
         if let Some(tracked) = self.tracked_scroll.get(&owner) {
             tracked.handle.publish(self.scroll_metrics(owner), state);
         }
-        Ok(remaining)
+        Ok(ScrollDelta {
+            x: delta.x - consumed.x,
+            y: delta.y - consumed.y,
+        })
     }
 
     fn apply_scroll_offset(

@@ -2,7 +2,9 @@ use crate::{INK, PAPER, label};
 use solor::{
     Div, Fill, IntoElement, Pixels, Rgba, ScrollHandle, SharedString, Signal, Styled, component,
     div, horizontal_scrollbar,
+    keyboard::{Key, KeyBinding},
     layout::{Origin, Size},
+    pointer::ScrollDelta,
     px, rgb, scrollbar, text,
 };
 
@@ -11,6 +13,24 @@ const TILE_SIZE: Size = Size {
     height: px(64.0),
 };
 const TILE_GAP: Pixels = px(4.0);
+
+const TONE_SHEET: &str = "ToneSheet";
+
+struct Pan(ScrollDelta);
+
+pub(super) fn bind_keys(ui: &mut solor::Ui) {
+    let column = TILE_SIZE.width + TILE_GAP;
+    let row = TILE_SIZE.height + TILE_GAP;
+    ui.bind_keys(
+        [
+            (Key::ArrowLeft, column * -1.0, px(0.0)),
+            (Key::ArrowRight, column, px(0.0)),
+            (Key::ArrowUp, px(0.0), row * -1.0),
+            (Key::ArrowDown, px(0.0), row),
+        ]
+        .map(|(key, x, y)| KeyBinding::new(key, Pan(ScrollDelta { x, y })).in_context(TONE_SHEET)),
+    );
+}
 
 const FAMILIES: [(&str, Rgba); 9] = [
     ("Clay", rgb(0xb86145)),
@@ -89,6 +109,7 @@ pub(super) fn sheet() -> impl IntoElement {
         )));
         let selected = cx.signal(Origin::default());
         let reveal = scroll.clone();
+        let pan = scroll.clone();
         let rows = (0..FAMILIES.len()).map(|row| {
             div()
                 .flex_row()
@@ -129,6 +150,13 @@ pub(super) fn sheet() -> impl IntoElement {
                     .flex_row()
                     .items_stretch()
                     .flex_1()
+                    .pt(px(2.0))
+                    .key_context(TONE_SHEET)
+                    .focus_indicator(crate::viewport_focus_indicator)
+                    .on_action(move |pan_by: &Pan, _| {
+                        pan.scroll_by(pan_by.0)?;
+                        Ok(())
+                    })
                     .child(
                         div()
                             .flex_1()

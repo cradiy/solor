@@ -15,7 +15,8 @@ browse swatches, or click and drag the position indicator to seek across all
 16,777,216 colors. With focus in the RGB list, Up and Down scroll one row, Page Up
 and Page Down scroll one viewport, and Home and End jump to the first and last swatches. A slim thumb sits over the list’s right edge and widens on hover.
 Choose **Tone sheet** to browse nine color families down the rows and nine tones
-across the columns. Both scrollbars control the same viewport. Selecting a swatch
+across the columns. With focus in the grid, arrow keys pan one column or row
+at a time. Both scrollbars control the same viewport. Selecting a swatch
 shows its name and hex value above the sheet, where they stay visible while scrolling.
 Choose **Show selection** to bring that swatch back into view.
 
@@ -813,6 +814,10 @@ For example, appending a row and requesting 100 percent in the same handler
 reveals the new bottom row. If wheel input arrives before layout, it continues
 from the requested position within the current range. Unmounting clears
 outstanding requests.
+
+Use `scroll.scroll_by(ScrollDelta { x: px(12.5), y: px(-8.0) })?` to pan a
+laid-out viewport. Each axis continues from its queued destination. The returned
+delta reports the signed distance within the current bounds on each axis.
 
 Use `scroll.scroll_to_reveal(origin, size)?` to show a rectangle identified in
 the container's unscrolled logical coordinates. Each axis moves the smallest

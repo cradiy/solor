@@ -3,7 +3,7 @@ use crate::{
     Context, Div, Fill, IntoElement, ListScrollHandle, PaintContext, Pixels, Render, ScrollAxis,
     ScrollHandle, ScrollPosition, StyleRefinement, Styled, div,
     layout::{Origin, Size},
-    pointer::PointerEvent,
+    pointer::{PointerEvent, ScrollDelta},
     px, rgb, rgba,
 };
 use std::rc::Rc;
@@ -92,10 +92,15 @@ impl ScrollSource {
         }
     }
 
-    fn scroll_by(&self, delta: f64, cx: &mut Context<'_>) -> anyhow::Result<f64> {
+    fn scroll_by(&self, delta: Pixels, cx: &mut Context<'_>) -> anyhow::Result<f64> {
         match self {
-            Self::List(handle) => handle.scroll_by(delta, cx),
-            Self::Container(handle, axis) => Ok(handle.scroll_by(*axis, delta)),
+            Self::List(handle) => handle.scroll_by(delta.into(), cx),
+            Self::Container(handle, axis) => {
+                let mut movement = ScrollDelta::default();
+                *axis.select(&mut movement.x, &mut movement.y) = delta;
+                let used = handle.scroll_by(movement)?;
+                Ok(axis.select(used.x, used.y).into())
+            }
         }
     }
 }
@@ -329,8 +334,15 @@ impl Render for Scrollbar {
                         Some((event.pointer_id(), (along - thumb.start) / thumb.length)),
                     )?;
                 } else {
-                    let page = f64::from(pos.viewport_extent);
-                    press.scroll_by(if along < thumb.start { -page } else { page }, cx)?;
+                    let page = pos.viewport_extent;
+                    press.scroll_by(
+                        if along < thumb.start {
+                            page * -1.0
+                        } else {
+                            page
+                        },
+                        cx,
+                    )?;
                 }
                 Ok(())
             })
@@ -359,10 +371,11 @@ impl Render for Scrollbar {
                 Ok(())
             })
             .on_scroll(move |event, cx| {
-                let delta = f64::from(axis.select(event.delta.x, event.delta.y));
+                let delta = axis.select(event.delta.x, event.delta.y);
                 let used = wheel.scroll_by(delta, cx)?;
                 let mut remaining = event.delta;
-                *axis.select(&mut remaining.x, &mut remaining.y) = px((delta - used) as f32);
+                *axis.select(&mut remaining.x, &mut remaining.y) =
+                    px((f64::from(delta) - used) as f32);
                 cx.propagate_remaining(remaining)
             })
     }

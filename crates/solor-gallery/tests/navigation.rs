@@ -862,6 +862,44 @@ fn open_tone_sheet(ui: &mut solor::Ui, view: solor::ViewId) -> Result<[PointerSa
 }
 
 #[test]
+fn tone_sheet_arrow_keys_pan_a_tile_at_a_time_and_keep_the_selection() -> Result<()> {
+    let (mut ui, root) = gallery()?;
+    let view = ui.mount(root)?;
+    open_tone_sheet(&mut ui, view)?;
+    submit_labels(&mut ui, view)?;
+    click_label(&mut ui, view, "Clay 200")?;
+    submit_labels(&mut ui, view)?;
+    let anchor = |ui: &solor::Ui| -> Result<Origin> {
+        Ok(label_target(&ui.record_frame(view)?, "Amber 200")
+            .expect("visible swatch")
+            .position)
+    };
+    let before = anchor(&ui)?;
+    let press = |ui: &mut solor::Ui, key| {
+        ui.dispatch_key(
+            view,
+            &KeyEvent {
+                key,
+                state: KeyState::Down,
+                modifiers: Default::default(),
+            },
+        )
+    };
+    assert!(press(&mut ui, Key::ArrowRight)?);
+    assert!(press(&mut ui, Key::ArrowDown)?);
+    let labels = submit_labels(&mut ui, view)?;
+    let after = anchor(&ui)?;
+    assert_eq!(before.x - after.x, px(128.0));
+    assert_eq!(before.y - after.y, px(68.0));
+    assert!(labels.iter().any(|s| s.starts_with("Clay 200  /  ")));
+    assert!(press(&mut ui, Key::ArrowUp)?);
+    assert!(press(&mut ui, Key::ArrowLeft)?);
+    submit_labels(&mut ui, view)?;
+    assert_eq!(anchor(&ui)?, before);
+    Ok(())
+}
+
+#[test]
 fn tone_sheet_selects_the_last_swatch_after_scrolling_both_axes() -> Result<()> {
     use solor::{Draw, pointer::ScrollDelta};
     use solor_render_cpu::pixels::{DeviceSize, Surface};

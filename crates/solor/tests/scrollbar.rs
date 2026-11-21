@@ -824,6 +824,46 @@ fn horizontal_painter_follows_its_axis_through_resize() -> Result<()> {
 }
 
 #[test]
+fn relative_motion_preserves_queued_axis_targets_and_clamps_each_component() -> Result<()> {
+    let delta = |x, y| ScrollDelta { x: px(x), y: px(y) };
+    let scroll = solor::ScrollHandle::new();
+    let tracked = scroll.clone();
+    let mut ui = Ui::new();
+    let view = ui.mount(component(move |_| {
+        div()
+            .overflow_auto()
+            .track_scroll(&tracked)
+            .child(div().min_w(px(400.0)).min_h(px(300.0)))
+    }))?;
+    scroll.scroll_to_percent(50.0)?;
+    assert_eq!(scroll.scroll_by(delta(2.0, 4.0))?, ScrollDelta::default());
+    submit(&mut ui, view, 100.0)?;
+    scroll.scroll_to_percent(100.0)?;
+    assert_eq!(scroll.scroll_by(delta(13.25, 12.0))?, delta(13.25, 0.0));
+    assert_eq!(scroll.scroll_by(delta(-0.5, 0.0))?, delta(-0.5, 0.0));
+    assert!(scroll.scroll_by(delta(8.0, f32::NAN)).is_err());
+    // The bottom request follows the resized viewport while the horizontal target accumulates.
+    submit(&mut ui, view, 80.0)?;
+    assert_eq!(
+        scroll.metrics().unwrap().offset,
+        Origin {
+            x: px(12.75),
+            y: px(220.0)
+        }
+    );
+    assert_eq!(scroll.scroll_by(delta(-30.0, -5.5))?, delta(-12.75, -5.5));
+    submit(&mut ui, view, 80.0)?;
+    assert_eq!(
+        scroll.metrics().unwrap().offset,
+        Origin {
+            x: px(0.0),
+            y: px(214.5)
+        }
+    );
+    Ok(())
+}
+
+#[test]
 fn revealing_a_content_rectangle_moves_each_axis_only_as_far_as_needed() -> Result<()> {
     use solor::ScrollHandle;
 

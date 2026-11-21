@@ -27,6 +27,17 @@ fn label(value: &'static str, size: f32, leading: f32) -> impl IntoElement + Sty
         .whitespace_nowrap()
 }
 
+fn viewport_focus_indicator(paint: &mut solor::PaintContext<'_>) -> anyhow::Result<()> {
+    paint.fill_rect(
+        Origin::default(),
+        Size {
+            width: paint.size.width,
+            height: px(2.0),
+        },
+        MUTED,
+    )
+}
+
 fn rule() -> Div {
     div().h(px(1.0)).bg(LINE)
 }
@@ -176,6 +187,7 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
         KeyBinding::new(Key::Space, ActivateChoice),
     ]);
     lists::bind_keys(&mut ui);
+    tone_sheet::bind_keys(&mut ui);
     ui.set_tooltip_style(TooltipStyle {
         background: INK.into(),
         text_color: PAPER,
