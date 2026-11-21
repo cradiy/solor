@@ -818,6 +818,8 @@ fn tone_sheet_recording_cost() -> Result<()> {
             width: px(width),
             height: px(height),
         };
+        let mut geometry = Vec::new();
+        let mut painting = Vec::new();
         let mut recording = Vec::new();
         let mut total = Vec::new();
         let mut text_commands = 0;
@@ -839,26 +841,34 @@ fn tone_sheet_recording_cost() -> Result<()> {
             ui.flush()?;
             ui.layout(view, size)?;
             let record = Instant::now();
+            drop(black_box(ui.prepare_pointer_frame(view)?));
+            let prepared = Instant::now();
             let frame = black_box(ui.record_frame(view)?);
-            let elapsed = record.elapsed();
+            let recorded = Instant::now();
             let (draws, pointer) = frame.into_parts();
             ui.accept_pointer_frame(pointer)?;
             let through_accept = start.elapsed();
             if i >= 64 {
                 total.push(through_accept);
-                recording.push(elapsed);
+                geometry.push(prepared - record);
+                painting.push(recorded - prepared);
+                recording.push(recorded - record);
                 text_commands += draws
                     .iter()
                     .filter(|d| matches!(d, Draw::Text { .. }))
                     .count();
             }
         }
+        geometry.sort_unstable();
+        painting.sort_unstable();
         recording.sort_unstable();
         total.sort_unstable();
         let mid = recording.len() / 2;
         eprintln!(
-            "{width}x{height} scrolling={scrolling} text/frame={:.1} record_p50_ns={} input_to_accept_p50_ns={}",
+            "{width}x{height} scrolling={scrolling} text/frame={:.1} geometry_p50_ns={} paint_p50_ns={} record_p50_ns={} input_to_accept_p50_ns={}",
             text_commands as f64 / recording.len() as f64,
+            geometry[mid].as_nanos(),
+            painting[mid].as_nanos(),
             recording[mid].as_nanos(),
             total[mid].as_nanos()
         );

@@ -515,6 +515,7 @@ pub(super) struct MountedNode {
     pub(super) id: NodeId,
     pub(super) offset: usize,
     pub(super) fixed_label: bool,
+    pub(super) skip_frame_paint: bool,
     pub(super) visible: bool,
     pub(super) local_visible: bool,
     paint_mode: RefreshPolicy,
@@ -522,7 +523,7 @@ pub(super) struct MountedNode {
     text_color: Foreground,
     background: Option<Box<MountedBackground>>,
     pub(super) binding_target: Option<NodeId>,
-    record: Record,
+    record: Option<Record>,
     pub(super) owned: Vec<SignalId>,
     pub(crate) handlers: Option<Box<Handlers>>,
     pub(super) z_index: i32,
@@ -539,7 +540,7 @@ impl MountedNode {
         mounted: style_binding::PreparedStyle,
         fixed_label: bool,
         paint_mode: RefreshPolicy,
-        record: Record,
+        record: Option<Record>,
     ) -> Self {
         let style = mounted.style;
         Self {
@@ -547,6 +548,10 @@ impl MountedNode {
             offset: 0,
             local_visible: mounted.visible,
             visible: mounted.visible,
+            skip_frame_paint: record.is_none()
+                && style.background.is_none()
+                && mounted.fixed
+                && matches!(paint_mode, RefreshPolicy::Fixed(RefreshMode::OnDemand)),
             fixed_label: fixed_label
                 && mounted.fixed
                 && style.background.is_none()
@@ -639,11 +644,13 @@ impl MountedNode {
                 corner_radii: paint.corner_radii.fit_to(size),
             });
         }
-        let result = (self.record)(scene, self.id, &mut cx).map(|()| cx.next_frame);
-        if result.is_err() {
+        if let Some(record) = &self.record
+            && let Err(error) = record(scene, self.id, &mut cx)
+        {
             commands.truncate(start);
+            return Err(error);
         }
-        result
+        Ok(cx.next_frame)
     }
 }
 
@@ -833,7 +840,7 @@ pub(super) enum Child {
 /// A primitive and the children, handlers and styles to attach with it.
 pub struct Node<E> {
     scroll_handle: Option<crate::ScrollHandle>,
-    record: Record,
+    record: Option<Record>,
     on_frame: Option<FrameHandler>,
     paint_mode: RefreshPolicy,
     style: StyleRefinement,
@@ -845,9 +852,13 @@ pub struct Node<E> {
 
 /// Wraps a custom layout body in the common element builder.
 pub fn element<E: Element>(body: E) -> Node<E> {
+    node(body, Some(Box::new(record_content::<E>)))
+}
+
+fn node<E>(body: E, record: Option<Record>) -> Node<E> {
     Node {
         scroll_handle: None,
-        record: Box::new(record_content::<E>),
+        record,
         on_frame: None,
         paint_mode: RefreshMode::OnDemand.into(),
         style: StyleRefinement::default(),
@@ -1025,20 +1036,23 @@ impl Div {
     /// Sets the drawing callback for this container's content box.
     /// It runs after the background and before the children. Signal reads track repaint.
     pub fn paint(mut self, draw: impl Fn(&mut PaintContext) -> Result<()> + 'static) -> Self {
-        self.record = Box::new(move |scene, id, cx| {
+        self.record = Some(Box::new(move |scene, id, cx| {
             record_content::<FlexLayout>(scene, id, cx)?;
             draw(cx)
-        });
+        }));
         self
     }
 }
 
 /// Creates a container that stacks children vertically by default.
 pub fn div() -> Div {
-    element(FlexLayout {
-        direction: FlexDirection::Column,
-        justify_content: crate::style::Distribution::Start,
-        align_items: Align::Start,
-        gap: px(0.0),
-    })
+    node(
+        FlexLayout {
+            direction: FlexDirection::Column,
+            justify_content: crate::style::Distribution::Start,
+            align_items: Align::Start,
+            gap: px(0.0),
+        },
+        None,
+    )
 }

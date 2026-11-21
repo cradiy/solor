@@ -43,6 +43,7 @@ struct Entry {
     area: HitBox,
     recipients: Recipients,
     testable: bool,
+    paints: bool,
     clips: NodeClips,
 }
 
@@ -71,6 +72,7 @@ impl PointerFrame {
         self.geometry
             .entries
             .iter()
+            .filter(|entry| entry.paints)
             .map(|entry| (entry.node, entry.area.origin, &entry.clips))
     }
 
@@ -293,6 +295,7 @@ impl HitGeometry {
                 area,
                 recipients,
                 testable: body.hit_testable,
+                paints: !body.skip_frame_paint,
             });
             let start = pending.len();
             for child in children {

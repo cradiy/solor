@@ -1,7 +1,42 @@
 //! Host frame opportunities belong to visible nodes in the accepted snapshot.
 use anyhow::Result;
-use solor::{Styled, Ui, component, div, layout::Size, px};
+use solor::{RefreshMode, Styled, Ui, component, div, layout::Size, px};
 use std::{cell::Cell, rc::Rc, time::Duration};
+
+#[test]
+fn a_container_without_draw_commands_can_switch_refresh_modes() -> Result<()> {
+    let mut ui = Ui::new();
+    let mode = ui.context().signal(RefreshMode::OnDemand);
+    let view = ui.mount(component(move |_| div().child(div().refresh_mode(mode))))?;
+    ui.flush()?;
+    ui.layout(
+        view,
+        Size {
+            width: px(40.0),
+            height: px(40.0),
+        },
+    )?;
+
+    for requested in [
+        RefreshMode::OnDemand,
+        RefreshMode::Continuous,
+        RefreshMode::OnDemand,
+    ] {
+        ui.context().set(mode, requested)?;
+        ui.flush()?;
+        for _ in 0..3 {
+            let frame = ui.record_frame(view)?;
+            assert_eq!(
+                frame.requests_animation_frame(),
+                requested == RefreshMode::Continuous
+            );
+            let (draws, pointer) = frame.into_parts();
+            assert!(draws.is_empty());
+            ui.accept_pointer_frame(pointer)?;
+        }
+    }
+    Ok(())
+}
 
 #[test]
 fn frame_listeners_require_acceptance_and_retire_with_the_mount() -> Result<()> {

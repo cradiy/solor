@@ -17,9 +17,16 @@ shows its name and hex value above the sheet, where they stay visible while scro
 
 Run `cargo test --release -p solor-gallery --test navigation tone_sheet_recording_cost -- --ignored --nocapture`
 to measure frame recording during two-axis scrolling and repeated stationary
-recordings. It reports text commands per frame, median recording time, and
-median time from the start of each iteration through pointer-frame acceptance.
+recordings. It reports text commands per frame and median times for preparing
+hit-test and clip geometry, recording drawing commands against that geometry,
+and the two stages together. A separate median covers the whole iteration
+through pointer-frame acceptance.
 Rasterization and presentation are outside the measurement.
+
+A plain on-demand `div()` with fixed styles, no background and no drawing
+callback participates in layout, clipping and input without recording commands
+of its own. Its children still paint in order, and its frame listeners can
+request host frames.
 
 The Markets tab runs a deterministic feed of six instruments. In a short window,
 the watchlist rows scroll beneath their fixed header. Each host frame
