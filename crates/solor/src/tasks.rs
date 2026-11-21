@@ -66,14 +66,28 @@ pub struct AsyncContext {
 impl AsyncContext {
     /// Publishes a value to a live signal and queues its subscribers on change.
     pub fn set<T: PartialEq + 'static>(&self, signal: Signal<T>, value: T) -> Result<()> {
-        let state = self.state.upgrade().context("UI has closed")?;
-        let active = state.try_borrow()?;
-        active
-            .as_ref()
-            .context("outside foreground task dispatch")?
-            .try_borrow_mut()?
-            .set(signal, value)?;
+        self.active_state()?.try_borrow_mut()?.set(signal, value)?;
         Ok(())
+    }
+
+    /// Edits the current value in place and queues subscribers for the next flush.
+    pub fn update_in_place<T: 'static, R>(
+        &self,
+        signal: Signal<T>,
+        edit: impl FnOnce(&mut T) -> R,
+    ) -> Result<R> {
+        Ok(self
+            .active_state()?
+            .try_borrow_mut()?
+            .update_in_place(signal, edit)?)
+    }
+
+    fn active_state(&self) -> Result<SharedState> {
+        let state = self.state.upgrade().context("UI has closed")?;
+        state
+            .try_borrow()?
+            .clone()
+            .context("outside foreground task dispatch")
     }
 }
 

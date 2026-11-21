@@ -30,7 +30,7 @@ impl Wake for Host {
 fn blocking_result_wakes_the_foreground_and_updates_its_signal() -> anyhow::Result<()> {
     let _serial = POOL_TEST.lock().unwrap();
     let mut ui = Ui::new();
-    let value = ui.context().signal(0);
+    let values = ui.context().signal(Vec::<i32>::new());
     let owner = thread::current().id();
     let (release, gate) = mpsc::channel();
     let (notify, wakes) = mpsc::channel();
@@ -45,14 +45,15 @@ fn blocking_result_wakes_the_foreground_and_updates_its_signal() -> anyhow::Resu
             })
             .await?;
         assert_eq!(thread::current().id(), owner);
-        cx.set(value, answer)
+        cx.update_in_place(values, |items| items.push(answer))
     });
     ui.poll_tasks(&waker)?;
-    assert_eq!(*ui.context().read(value)?, 0);
+    ui.context()
+        .update_in_place(values, |items| items.push(1))?;
     release.send(())?;
     wakes.recv_timeout(WAIT)?;
     ui.poll_tasks(&waker)?;
-    assert_eq!(*ui.context().read(value)?, 42);
+    assert_eq!(ui.context().read(values)?, &[1, 42]);
     Ok(())
 }
 
