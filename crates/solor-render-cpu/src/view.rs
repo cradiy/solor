@@ -215,6 +215,7 @@ impl Surface {
         let rows = (65536 / width).max(1) as i64;
         let mut backdrop =
             Vec::with_capacity(width * (bounds.bottom - bounds.top).min(rows) as usize * 4);
+        let mut sampler = gradient_map.map(|map| (map.palette().ramp_sampler(), map.strength()));
         for top in (bounds.top..bounds.bottom).step_by(rows as usize) {
             let band = Clip {
                 top,
@@ -233,10 +234,13 @@ impl Surface {
             for (y, saved) in (band.top..band.bottom).zip(backdrop.chunks_exact(width * 4)) {
                 let start = row_start(y);
                 let pixels = self.rgba[start..start + width * 4].as_chunks_mut::<4>().0;
-                if let Some(map) = gradient_map {
-                    map_colors(pixels, map)?;
+                if let Some((sample, strength)) = &mut sampler {
+                    map_colors(pixels, sample, *strength)?;
                 }
                 for (pixel, &background) in pixels.iter_mut().zip(saved.as_chunks::<4>().0) {
+                    if alpha == 255 && pixel[3] == 255 {
+                        continue;
+                    }
                     let layer =
                         pixel.map(|v| ((u16::from(v) * u16::from(alpha) + 127) / 255) as u8);
                     *pixel = background;
@@ -508,7 +512,11 @@ fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     }
 }
 
-fn map_colors(mut row: &mut [[u8; 4]], map: &solor::GradientMap) -> Result<()> {
+fn map_colors(
+    mut row: &mut [[u8; 4]],
+    sample: &mut impl FnMut(f32) -> std::result::Result<solor::Rgba, solor::GradientError>,
+    strength: f32,
+) -> Result<()> {
     while let Some(&source) = row.first() {
         let run = row.iter().take_while(|&&p| p == source).count();
         let (pixels, rest) = row.split_at_mut(run);
@@ -518,12 +526,16 @@ fn map_colors(mut row: &mut [[u8; 4]], map: &solor::GradientMap) -> Result<()> {
             continue;
         }
         let luminance = (2126 * r + 7152 * g + 722 * b) as f32 / (10000 * a) as f32;
-        let color = map.palette().sample(luminance).map_err(Error::other)?;
+        let color = sample(luminance).map_err(Error::other)?;
+        if a == 255 && color.alpha == 255 && strength == 1.0 {
+            pixels.fill([color.red, color.green, color.blue, 255]);
+            continue;
+        }
         let alpha = color.alpha as f32 * a as f32 / 255.0;
         let mapped = [color.red, color.green, color.blue, 255].map(|v| v as f32 * (alpha / 255.0));
         let result = std::array::from_fn(|i| {
             let original = f32::from(source[i]);
-            (original + (mapped[i] - original) * map.strength()).round() as u8
+            (original + (mapped[i] - original) * strength).round() as u8
         });
         pixels.fill(result);
     }

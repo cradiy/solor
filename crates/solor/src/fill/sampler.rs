@@ -11,14 +11,22 @@ impl Gradient {
         size: Size,
     ) -> Result<impl FnMut(f32, f32) -> Result<Rgba, GradientError> + '_, GradientError> {
         let project = self.projector(size)?;
+        let mut sample = self.ramp_sampler();
+        Ok(move |x, y| sample(project(x, y)?))
+    }
+
+    /// Samples successive normalized positions, reusing the current stop interval.
+    pub fn ramp_sampler(&self) -> impl FnMut(f32) -> Result<Rgba, GradientError> + '_ {
         let mut ramp = OpaqueRamp::new(self);
-        Ok(move |x, y| {
-            let position = project(x, y)?;
+        move |position| {
+            if !(0.0..=1.0).contains(&position) {
+                return Err(GradientError::InvalidOffset);
+            }
             match &mut ramp {
                 Some(ramp) => ramp.sample(position),
                 None => self.sample(position),
             }
-        })
+        }
     }
 
     pub(super) fn projector(
