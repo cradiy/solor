@@ -50,6 +50,9 @@ impl WindowHandler<Rgba8> for CpuWindow {
             WindowEvent::Pointer(input) => {
                 response.window_control = self.ui.dispatch_pointer(self.view, input)?
             }
+            WindowEvent::Key(event) => {
+                self.ui.dispatch_key(self.view, &event)?;
+            }
             WindowEvent::FrameReady(time) if std::mem::take(&mut self.animate) => {
                 self.ui.dispatch_frame(self.view, time)?;
                 response.redraw = true;

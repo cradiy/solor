@@ -9,6 +9,7 @@ description = "Platform-independent Solor GUI framework"
 layout-audit = []
 
 [dependencies]
+keyboard-types = "0.8"
 slotmap.workspace = true
 smallvec.workspace = true
 ttf-parser = { version = "0.25", default-features = false }

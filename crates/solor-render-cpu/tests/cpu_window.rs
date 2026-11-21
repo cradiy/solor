@@ -196,3 +196,95 @@ fn changing_only_an_ancestor_clip_repairs_old_pixels_and_publishes_hits_on_submi
     assert_eq!(clicks.get(), 3);
     Ok(())
 }
+
+#[test]
+fn window_keys_follow_focus_and_retire_with_their_controls() -> Result<()> {
+    use solor::keyboard::{KeyEvent, KeyState, Modifiers, NamedKey};
+
+    let transitions = Rc::new(Cell::new(0));
+    let observed = transitions.clone();
+    let mut window = CpuWindow::mount(
+        Ui::new(),
+        component(move |cx| {
+            let shown = cx.signal(true);
+            let attached = cx.signal(true);
+            div()
+                .flex_row()
+                .child(
+                    div()
+                        .focusable()
+                        .visible_when(shown)
+                        .size(px(20.))
+                        .on_key_down(move |event, cx| {
+                            assert_eq!(event.key, NamedKey::Enter.into());
+                            assert!(event.modifiers.shift);
+                            cx.set(shown, false)
+                        }),
+                )
+                .child_when(attached, move || {
+                    let observed = observed.clone();
+                    div().focusable().size(px(20.)).on_key_up(move |_, cx| {
+                        observed.set(observed.get() + 1);
+                        cx.set(attached, false)
+                    })
+                })
+        }),
+    )?;
+    let submit = |window: &mut CpuWindow| -> Result<()> {
+        window.frame(
+            Size {
+                width: px(60.),
+                height: px(24.),
+            },
+            RasterScale::ONE,
+        )?;
+        window.frame_submitted()
+    };
+    let press = |window: &mut CpuWindow, x| -> Result<()> {
+        let pointer = PointerSample {
+            id: PointerId(1),
+            kind: PointerKind::Mouse,
+            position: Origin {
+                x: px(x),
+                y: px(2.),
+            },
+            modifiers: Modifiers::default(),
+        };
+        window.event(WindowEvent::Pointer(PointerInput::Down(
+            pointer,
+            PointerButton::Primary,
+        )))?;
+        window.event(WindowEvent::Pointer(PointerInput::Up(
+            pointer,
+            PointerButton::Primary,
+        )))?;
+        Ok(())
+    };
+    let key = |window: &mut CpuWindow, state| -> Result<bool> {
+        Ok(window
+            .event(WindowEvent::Key(KeyEvent {
+                key: NamedKey::Enter.into(),
+                state,
+                modifiers: Modifiers {
+                    shift: true,
+                    ..Default::default()
+                },
+            }))?
+            .redraw)
+    };
+
+    submit(&mut window)?;
+    assert!(!key(&mut window, KeyState::Down)?);
+    press(&mut window, 2.)?;
+    press(&mut window, 22.)?;
+    assert!(!key(&mut window, KeyState::Down)?);
+    assert!(key(&mut window, KeyState::Up)?);
+    submit(&mut window)?;
+    assert!(!key(&mut window, KeyState::Up)?);
+    assert_eq!(transitions.get(), 1);
+    press(&mut window, 2.)?;
+    assert!(key(&mut window, KeyState::Down)?);
+    submit(&mut window)?;
+    assert!(!key(&mut window, KeyState::Down)?);
+    Ok(())
+}

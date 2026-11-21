@@ -18,6 +18,25 @@ Only a visible, mounted, focusable element in the same view can receive focus.
 Hiding its subtree or removing its mount clears focus during reconciliation.
 Showing it again starts it unfocused.
 
+Use `.focusable().on_key_down(...).on_key_up(...)` to handle key transitions.
+Each transition goes directly to the element focused at delivery time. Callbacks
+can read and update signals through their context. Wayland resolves character
+keys through the active layout and reports named keys such as Enter and Tab.
+The adapter delivers individual presses and releases. Text composition, key
+repeat and automatic Tab navigation are outside this input path.
+
+```rust
+div().focusable().on_key_down(move |event, cx| {
+    if event.key == NamedKey::Enter.into() {
+        cx.update(open, |value| *value = !*value)?;
+    }
+    Ok(())
+})
+```
+
+Custom window hosts forward `WindowEvent::Key(event)` through
+`ui.dispatch_key(view, &event)`. The CPU window does this automatically.
+
 ## Authoring
 
 Buttons use the context-only click callback. Controls that need coordinates use `on_pointer_down`, `on_pointer_move`, `on_pointer_up`
@@ -146,7 +165,7 @@ accepted frame. Captured coordinates may fall outside the box and its ancestor c
 After flushing and laying out a view, call `ui.prepare_pointer_frame(view)?`
 alongside its paint recording. Keep the returned snapshot with that submission.
 On successful presentation call `ui.accept_pointer_frame(frame)?`. Drop a
-failed submission's snapshot. Input before the first acceptance has no target.
+failed submission's snapshot. Pointer input before the first acceptance has no target.
 If the newly accepted snapshot omits a live press owner, acceptance cancels
 that sequence. A cancel callback error leaves the new snapshot in effect.
 
@@ -220,7 +239,6 @@ frame submission leaves the last accepted frame authoritative for input.
   retired handler nor the replacement. A fresh press can reach the replacement
   after the host accepts its frame.
 
-The integration tests drive the public host API with logical coordinates. Focus,
-keyboard activation and ancestor event propagation have separate contracts.
+The integration tests drive the public host API with logical coordinates. Key callbacks follow logical focus independently of pointer capture.
 The existing disclosure and mount-lifetime experiments provide the starting
 fixtures. [Disclosure interaction](disclosure.md) and [mount lifetime](node-execution.md#removing-a-pressed-child).

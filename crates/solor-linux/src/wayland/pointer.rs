@@ -9,16 +9,18 @@ use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
 };
 
-use super::Window;
+use super::{Window, keyboard::Keyboard};
 use solor::{
     ResizeEdge,
     layout::Origin,
     platform::WindowEvent,
-    pointer::{PointerButton, PointerId, PointerInput, PointerKind, PointerSample, ScrollDelta},
+    pointer::{
+        Modifiers, PointerButton, PointerId, PointerInput, PointerKind, PointerSample, ScrollDelta,
+    },
     px,
     style::Cursor,
 };
-fn sample(id: u32, x: f64, y: f64) -> PointerSample {
+fn sample(id: u32, x: f64, y: f64, modifiers: Modifiers) -> PointerSample {
     PointerSample {
         id: PointerId(id.into()),
         kind: PointerKind::Mouse,
@@ -26,7 +28,7 @@ fn sample(id: u32, x: f64, y: f64) -> PointerSample {
             x: px(x as f32),
             y: px(y as f32),
         },
-        modifiers: Default::default(),
+        modifiers,
     }
 }
 
@@ -62,6 +64,7 @@ fn native_shape(cursor: Cursor) -> Option<Shape> {
 }
 
 pub(super) struct Seat {
+    pub(super) keyboard: Option<Keyboard>,
     name: u32,
     seat: wl_seat::WlSeat,
     pointer: Option<wl_pointer::WlPointer>,
@@ -73,6 +76,19 @@ pub(super) struct Seat {
 }
 
 impl Seat {
+    fn modifiers(&self) -> Modifiers {
+        self.keyboard
+            .as_ref()
+            .map_or(Modifiers::default(), |keyboard| keyboard.modifiers)
+    }
+
+    fn pointer_sample(&self) -> Option<PointerSample> {
+        Some(PointerSample {
+            modifiers: self.modifiers(),
+            ..self.position?
+        })
+    }
+
     fn release_pointer(&mut self) {
         if let Some(device) = self.shape_device.take() {
             device.destroy();
@@ -121,6 +137,7 @@ impl Window {
                 name,
                 seat: registry.bind(name, version.min(5), qh, name),
                 pointer: None,
+                keyboard: None,
                 position: None,
                 shape_device: None,
                 enter_serial: None,
@@ -153,6 +170,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Window {
                         name.into(),
                     ))));
                     seat.release_pointer();
+                    seat.keyboard = None;
                     if seat.seat.version() >= 5 {
                         seat.seat.release();
                     }
@@ -179,6 +197,13 @@ impl Dispatch<wl_seat::WlSeat, u32> for Window {
             capabilities: WEnum::Value(caps),
         } = event
         {
+            if caps.contains(wl_seat::Capability::Keyboard) {
+                input
+                    .keyboard
+                    .get_or_insert_with(|| Keyboard::new(seat.get_keyboard(qh, *name)));
+            } else {
+                input.keyboard = None;
+            }
             if caps.contains(wl_seat::Capability::Pointer) {
                 if input.pointer.is_none() {
                     let pointer = seat.get_pointer(qh, *name);
@@ -223,7 +248,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
                 surface_y,
                 ..
             } if surface == state.surface => {
-                let p = sample(*name, surface_x, surface_y);
+                let p = sample(*name, surface_x, surface_y, seat.modifiers());
                 seat.enter_serial = Some(serial);
                 seat.applied_cursor = None;
                 seat.position = Some(p);
@@ -241,7 +266,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
                 surface_y,
                 ..
             } if seat.position.is_some() => {
-                let p = sample(*name, surface_x, surface_y);
+                let p = sample(*name, surface_x, surface_y, seat.modifiers());
                 seat.position = Some(p);
                 PointerInput::Move(p)
             }
@@ -250,7 +275,9 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
                 value,
                 ..
             } => {
-                let Some(p) = seat.position else { return };
+                let Some(p) = seat.pointer_sample() else {
+                    return;
+                };
                 let (sample, delta) = seat.scroll.get_or_insert((p, ScrollDelta::default()));
                 match axis {
                     wl_pointer::Axis::HorizontalScroll => delta.x += px(value as f32),
@@ -277,7 +304,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
                 state: WEnum::Value(button_state),
                 ..
             } => {
-                let Some(p) = seat.position else {
+                let Some(p) = seat.pointer_sample() else {
                     return;
                 };
                 let button = match button {

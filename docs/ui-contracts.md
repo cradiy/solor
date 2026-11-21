@@ -122,7 +122,8 @@ output for one submission.
 
 Pointer positions and scroll distances arrive in logical pixels. The Linux
 adapter currently delivers mouse buttons, motion, cancellation and two-axis
-scroll input. Keyboard modifiers are currently reported as empty. An event
+scroll input. Key presses and releases use the seat’s XKB layout. Key and
+pointer samples carry the seat’s effective Shift, Control, Alt and Super modifiers. An event
 handler can request a redraw. The host supplies the logical allocation and
 device scale at frame preparation, validates the returned buffer, then
 acknowledges submission with `frame_submitted`. A successful empty-damage

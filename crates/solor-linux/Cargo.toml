@@ -9,6 +9,7 @@ description = "Linux platform implementation for Solor"
 workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+xkbcommon = { version = "0.9", default-features = false }
 dbus = "0.9"
 solor.workspace = true
 smallvec.workspace = true

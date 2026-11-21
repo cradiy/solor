@@ -14,6 +14,7 @@ mod element;
 mod fill;
 mod frame;
 pub use frame::ViewFrame;
+pub mod keyboard;
 pub mod layout;
 mod length;
 pub mod node_store;

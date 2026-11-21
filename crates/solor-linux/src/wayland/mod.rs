@@ -1,6 +1,7 @@
 use solor::px;
 mod buffer;
 mod decorations;
+mod keyboard;
 mod pointer;
 mod presentation;
 

@@ -241,6 +241,8 @@ pub(crate) struct Handlers {
     scroll: Option<ScrollHandler>,
     up: Option<PositionHandler>,
     cancel: Option<CancelHandler>,
+    pub(crate) key_down: Option<crate::keyboard::KeyHandler>,
+    pub(crate) key_up: Option<crate::keyboard::KeyHandler>,
     pub(crate) click: Option<crate::element::Click>,
 }
 
@@ -255,7 +257,7 @@ impl Handlers {
     }
 }
 
-macro_rules! pointer_handlers {
+macro_rules! event_handlers {
     ($($(#[$doc:meta])* $name:ident => $slot:ident ($event:ty, $cx:ty);)+) => {$(
         $(#[$doc])*
         pub fn $name(mut self, handler: impl Fn($event, $cx) -> Result<()> + 'static) -> Self {
@@ -307,7 +309,11 @@ impl<E: crate::Element> crate::Node<E> {
         self
     }
 
-    pointer_handlers! {
+    event_handlers! {
+        /// Handles a key press while this element holds focus.
+        on_key_down => key_down (&crate::keyboard::KeyEvent, &mut Context<'_>);
+        /// Handles a key release while this element holds focus.
+        on_key_up => key_up (&crate::keyboard::KeyEvent, &mut Context<'_>);
         /// Notifies when the first mouse enters this subtree or the last mouse leaves it.
         on_hover => hover (bool, &mut Context<'_>);
         /// Observes the most recently sampled mouse over this subtree, independently of capture.
