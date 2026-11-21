@@ -1,5 +1,5 @@
 //! Composition, conversion at attachment, and retained element behavior.
-pub(crate) mod media;
+pub(crate) mod image;
 mod style_binding;
 pub(crate) mod svg;
 
@@ -490,9 +490,13 @@ impl MountedBackground {
         };
         use crate::{bitmap::Placement, style::ObjectFit};
         let placement = match source {
-            Background::Fixed(Fill::Image(_)) | Background::Bound(_) | Background::Image(_) => {
+            #[cfg(feature = "image")]
+            Background::Fixed(Fill::ImageFile(_)) => {
                 Placement::resolve(style, units, ObjectFit::Cover)?
             }
+            Background::Fixed(Fill::Image(_) | Fill::CustomImage(_))
+            | Background::Bound(_)
+            | Background::Image(_) => Placement::resolve(style, units, ObjectFit::Cover)?,
             _ => Placement::centered(ObjectFit::Cover),
         };
         Ok(Some(Box::new(Self {
@@ -707,6 +711,13 @@ impl MountedNode {
             if let Fill::Image(image) = &mut fill {
                 image.placement = paint.placement;
             }
+            if let Fill::CustomImage(image) = &mut fill {
+                image.placement = paint.placement;
+            }
+            #[cfg(feature = "image")]
+            if let Fill::ImageFile(file) = &mut fill {
+                file.placement = paint.placement;
+            }
             cx.commands.push(Draw::Fill {
                 clip: clips.inherited.clone(),
                 origin: Origin::default(),
@@ -796,7 +807,9 @@ impl Drop for PaintSubscription {
 
 pub(super) type Watch =
     Box<dyn FnOnce(&mut Attachment<'_>, NodeId, NodeId, &[usize], Option<&Repaints>) -> Result<()>>;
-type Install = Box<dyn FnOnce(Target<'_>, &mut Context<'_>, UnitResolver) -> Result<Installation>>;
+type MountResources<'a> = (UnitResolver, &'a crate::Assets);
+type Install =
+    Box<dyn FnOnce(Target<'_>, &mut Context<'_>, MountResources<'_>) -> Result<Installation>>;
 
 enum Target<'a> {
     Root(&'a mut Option<Scene>),
@@ -814,10 +827,11 @@ pub struct AnyElement(Install);
 impl AnyElement {
     fn new<E: Element>(
         fixed_label: bool,
-        make: impl FnOnce(&mut Context<'_>, UnitResolver) -> Result<Node<E>> + 'static,
+        make: impl FnOnce(&mut Context<'_>, MountResources<'_>) -> Result<Node<E>> + 'static,
     ) -> Self {
-        Self(Box::new(move |target, cx, units| {
-            let mut node = make(cx, units)?;
+        Self(Box::new(move |target, cx, resources| {
+            let (units, _) = resources;
+            let mut node = make(cx, resources)?;
             if let Some(source) = node.on_frame.as_ref().and_then(|handler| handler.enabled) {
                 node.watches.push(Box::new(move |cx, target, _, _, _| {
                     // Wake an idle host. Frame scheduling reads the live gate directly.
@@ -876,10 +890,10 @@ impl AnyElement {
     pub(super) fn root(
         self,
         cx: &mut Context<'_>,
-        units: UnitResolver,
+        resources: MountResources<'_>,
     ) -> Result<(Scene, Installation)> {
         let mut scene = None;
-        let installed = (self.0)(Target::Root(&mut scene), cx, units)?;
+        let installed = (self.0)(Target::Root(&mut scene), cx, resources)?;
         Ok((
             scene.expect("successful root attachment creates a scene"),
             installed,
@@ -892,7 +906,7 @@ impl AnyElement {
         parent: NodeId,
         index: usize,
         inherited: InheritedText,
-        units: UnitResolver,
+        resources: MountResources<'_>,
         cx: &mut Context<'_>,
     ) -> Result<Installation> {
         (self.0)(
@@ -903,7 +917,7 @@ impl AnyElement {
                 inherited,
             },
             cx,
-            units,
+            resources,
         )
     }
 }

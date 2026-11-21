@@ -25,6 +25,8 @@ macro_rules! impl_event_context {
     };
 }
 
+mod assets;
+pub use assets::{AssetSource, Assets, ImageResource};
 mod clip;
 pub use clip::ContentClip;
 mod column;
@@ -63,9 +65,11 @@ pub use crate::{
     tree::NodeId,
 };
 mod bitmap;
-pub use bitmap::{ImageAsset, ImageFill};
-pub use element::media::{ImageSource, image};
-pub use element::svg::{Svg, SvgAsset, svg};
+#[cfg(feature = "image")]
+pub use bitmap::ImageFile;
+pub use bitmap::{CustomImage, ImageAsset, ImageCache, ImageFill, ImageRegion, ImageRenderer};
+pub use element::image::{ImageSource, image};
+pub use element::svg::{Svg, SvgAsset, SvgSource, svg};
 pub use element::{
     AnyElement, Children, Div, Draw, Element, IntoElement, Node, PaintContext, ParentElement,
     RefreshMode, RefreshPolicy, Render, TextContent, div, element, text,
@@ -221,6 +225,7 @@ type StyleUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), (Restyle, bool)>>>;
 enum ContentUpdate {
     Text(Signal<SharedString>),
     Image(Signal<ImageAsset>),
+    CustomImage(Signal<CustomImage>),
 }
 type ContentUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), ContentUpdate>>>;
 
@@ -245,6 +250,7 @@ struct Instance {
 }
 
 struct Attachment<'a> {
+    assets: &'a Assets,
     scope: NodeId,
     state: &'a mut Runtime<()>,
     pending: &'a Pending,
@@ -492,7 +498,7 @@ impl Instance {
             parent,
             index,
             self.bodies[&parent].text_style.clone(),
-            self.units,
+            (self.units, cx.assets),
             &mut mount.context(cx.engine),
         )?;
         node.owned = std::mem::take(&mut mount.owned);
@@ -611,6 +617,7 @@ pub struct ViewId(NodeId);
 
 /// Owns the application signals and its mounted component trees.
 pub struct Ui {
+    assets: Assets,
     keymap: HashMap<keyboard::Shortcut, Vec<keyboard::BoundAction>>,
     tooltip_style: TooltipStyle,
     state: RefCell<Runtime<()>>,
@@ -625,6 +632,7 @@ pub struct Ui {
 impl Default for Ui {
     fn default() -> Self {
         Self {
+            assets: Assets::default(),
             keymap: HashMap::new(),
             tooltip_style: TooltipStyle::default(),
             state: RefCell::new(Runtime::new(())),
@@ -689,7 +697,7 @@ impl Ui {
                 children,
                 watches,
             },
-        ) = item.root(&mut cx, units)?;
+        ) = item.root(&mut cx, (units, &self.assets))?;
         let scope = mount.state.append(mount.state.tree().root(), ())?;
         root_node.owned = std::mem::take(&mut mount.owned);
         drop(mount);
@@ -717,6 +725,7 @@ impl Ui {
             tracked_scroll: HashMap::new(),
         };
         let mut cx = Attachment {
+            assets: &self.assets,
             scope,
             state: self.state.get_mut(),
             pending: &self.pending,
@@ -814,6 +823,7 @@ impl Ui {
                     .get_mut(&ViewId(scope))
                     .expect("queued scope is live");
                 let mut cx = Attachment {
+                    assets: &self.assets,
                     scope,
                     state: self.state.get_mut(),
                     pending: &self.pending,
@@ -856,6 +866,10 @@ impl Ui {
                     .read(source)
                     .ok()
                     .map(|value| instance.update_label(id, value)),
+                ContentUpdate::CustomImage(source) => state
+                    .read(source)
+                    .ok()
+                    .map(|value| instance.update_custom_image(id, value)),
                 ContentUpdate::Image(source) => state
                     .read(source)
                     .ok()
@@ -946,6 +960,7 @@ impl Ui {
                 break instance;
             }
             let mut cx = Attachment {
+                assets: &self.assets,
                 scope: view.0,
                 state: self.state.get_mut(),
                 pending: &self.pending,

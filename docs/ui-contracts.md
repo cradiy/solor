@@ -582,10 +582,47 @@ pixels with `ImageAsset::from_rgba8`. Clones share the decoded pixels. The
 without any codec. Each asset contains one still image.
 
 ```rust
-let photo = ImageAsset::from_bytes(include_bytes!("cover.jpg"))?;
+let photo = ImageFile::new(absolute_path);
 let thumbnail = image(photo.clone()).h(px(48.0));
 let card = div().size(px(160.0)).rounded_lg().bg(photo);
 ```
+
+For `svg` and `image`, a string is a resource name, including strings with
+a leading slash. Pass an absolute `&Path` or `PathBuf` for a filesystem
+lookup. Both elements also accept encoded byte slices and owned byte vectors.
+
+Implement `AssetSource::svg` to supply SVG bytes and `AssetSource::image` to
+supply `ImageResource::Path`, `ImageResource::Bytes`, or `ImageResource::Custom`. Register a pack for the
+application with `current_platform()?.with_assets((Theme, LibraryIcons))`.
+A tuple tries its sources from left to right. A missing name advances to the
+next source. A match or error ends the search. Tuples can include other tuples.
+A standalone `Ui` accepts the same packs through `with_assets`.
+
+Registration stores the providers. Attaching a named element requests its
+resource. Windows on the same configured host share the parsed tree of a live
+named SVG. A file-backed bitmap probes dimensions for element layout and
+decodes synchronously on visible CPU paint. Each window caches up to 64 MiB of
+decoded file images by path. File contents should remain stable while in use.
+The current whole-image decoder accepts regular files up to 64 MiB and checks
+pixel storage against a 128 MiB decode budget. Encoded bytes supplied directly
+or returned by a pack are decoded at element attachment.
+
+For an application-owned format, tile pyramid, or generated image, implement
+`ImageRenderer` and pass `CustomImage::new(renderer)?` to `image` or `.bg()`.
+`dimensions()` supplies the full image extent in source pixels. During CPU
+rasterization, `render(region)` receives the output dimensions in device
+pixels and the mapping to the source. The requested rectangle covers the
+intersection of the fitted image, clip, and damage bounds. Shape coverage,
+rounded corners and compositing are applied by the backend.
+
+Output pixel `(x, y)` samples the source at
+`source_origin + ([x, y] + 0.5) * source_step`, component by component.
+Clamp boundary samples to the image edges. Return an `ImageAsset` the size of
+`region.output`. The application controls I/O, resolution level, sampling, and
+tile retention. This path works with all file codecs disabled. Each handle
+represents one immutable snapshot. For background decoding, render the pixels
+currently available and publish a new handle to `Signal<CustomImage>` when
+tiles arrive. The regional callback runs on the rendering thread.
 
 Run `cargo run -p solor-platform --example image --features solor/image-full`
 to compare cover and contain placement with a transparent WebP.

@@ -1,9 +1,24 @@
 //! Compare SVG illustrations in foreground ink and their original colors.
 use solor::{
-    Div, Render, Rgba, Signal, Styled, Svg, SvgAsset, Ui, component, div, percent, px, rgb, svg,
+    AssetSource, Div, Render, Rgba, Signal, Styled, Svg, Ui, component, div, percent, px, rgb, svg,
     text,
 };
 use solor_platform::{WindowOptions, current_platform};
+
+use std::borrow::Cow;
+
+struct Illustrations;
+
+impl AssetSource for Illustrations {
+    fn svg(&self, name: &str) -> anyhow::Result<Option<Cow<'_, [u8]>>> {
+        let bytes: &[u8] = match name {
+            "sea-nettle" => include_bytes!("sea-nettle.svg"),
+            "kingfisher" => include_bytes!("kingfisher.svg"),
+            _ => return Ok(None),
+        };
+        Ok(Some(Cow::Borrowed(bytes)))
+    }
+}
 
 fn specimen(label: &str, art: Svg) -> Div {
     div()
@@ -22,15 +37,12 @@ fn specimen(label: &str, art: Svg) -> Div {
         .child(text(label).text_size(px(14.0)))
 }
 
-fn studies(asset: &SvgAsset, ink: Signal<Rgba>) -> Div {
+fn studies(name: &str, ink: Signal<Rgba>) -> Div {
     div()
         .flex_row()
         .gap(px(12.0))
-        .child(specimen("Single color", svg(asset.clone()).text_color(ink)))
-        .child(specimen(
-            "Original colors",
-            svg(asset.clone()).preserve_colors(),
-        ))
+        .child(specimen("Single color", svg(name).text_color(ink)))
+        .child(specimen("Original colors", svg(name).preserve_colors()))
 }
 
 fn button(label: &'static str) -> Div {
@@ -42,7 +54,7 @@ fn button(label: &'static str) -> Div {
         .child(label)
 }
 
-fn comparison(nettle: SvgAsset, kingfisher: SvgAsset) -> impl Render {
+fn comparison() -> impl Render {
     component(move |cx| {
         let teal = rgb(0x246b69);
         let copper = rgb(0xa65432);
@@ -92,16 +104,16 @@ fn comparison(nettle: SvgAsset, kingfisher: SvgAsset) -> impl Render {
                             ),
                     ),
             )
-            .child_when(show_nettle, move || studies(&nettle, ink))
-            .child_when(show_bird, move || studies(&kingfisher, ink))
+            .child_when(show_nettle, move || studies("sea-nettle", ink))
+            .child_when(show_bird, move || studies("kingfisher", ink))
     })
 }
 
 fn main() -> anyhow::Result<()> {
-    let nettle = SvgAsset::from_bytes(include_bytes!("sea-nettle.svg"))?;
-    let kingfisher = SvgAsset::from_bytes(include_bytes!("kingfisher.svg"))?;
     let options = WindowOptions::new("Solor · SVG")
         .app_id("org.solor.SvgExample")
         .size(px(704.0), px(400.0));
-    current_platform()?.run_window(options, Ui::new(), comparison(nettle, kingfisher))
+    current_platform()?
+        .with_assets(Illustrations)
+        .run_window(options, Ui::new(), comparison())
 }

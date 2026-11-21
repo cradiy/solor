@@ -1,6 +1,6 @@
 //! Selects the window system and rendering backend for mounted Solor views.
 use anyhow::Result;
-use solor::{Render, Ui};
+use solor::{Assets, Render, Ui};
 
 #[cfg_attr(target_os = "linux", path = "linux.rs")]
 #[cfg_attr(not(target_os = "linux"), path = "unsupported.rs")]
@@ -11,18 +11,27 @@ pub use solor::platform::{WindowBackground, WindowHandle, WindowOptions};
 pub use solor_linux::layer_shell;
 
 /// Hosts application windows with the window system and renderer selected for this target.
-pub struct SystemPlatform(system::Host);
+pub struct SystemPlatform {
+    host: system::Host,
+    assets: Option<Assets>,
+}
 
 /// Selects the platform for this process. Returns an unsupported-platform error
 /// on targets without a window implementation.
 pub fn current_platform() -> Result<SystemPlatform> {
-    system::select().map(SystemPlatform)
+    Ok(SystemPlatform {
+        host: system::select()?,
+        assets: None,
+    })
 }
 
 /// A cloneable UI-thread handle for opening windows during setup or from event handlers.
 /// Keeping a handle does not keep the event loop alive.
 #[derive(Clone)]
-pub struct Application(system::Windows);
+pub struct Application {
+    windows: system::Windows,
+    assets: Option<Assets>,
+}
 
 impl Application {
     /// Mounts an independent view and opens a window on the current event loop.
@@ -43,15 +52,38 @@ impl Application {
         ui: Ui,
         root: impl FnOnce(WindowHandle) -> R,
     ) -> Result<WindowHandle> {
-        system::open_window(&self.0, options, ui, root)
+        system::open_window(
+            &self.windows,
+            options,
+            configured_ui(ui, &self.assets),
+            root,
+        )
+    }
+}
+
+fn configured_ui(ui: Ui, assets: &Option<Assets>) -> Ui {
+    match assets {
+        Some(assets) => ui.with_assets(assets.clone()),
+        None => ui,
     }
 }
 
 impl SystemPlatform {
+    /// Supplies the shared resource pack for all windows and layer surfaces on this host.
+    pub fn with_assets(mut self, source: impl Into<Assets>) -> Self {
+        self.assets = Some(source.into());
+        self
+    }
+
     /// Calls the setup function once, then runs the windows together on the calling thread
     /// until the last one closes. Each window owns its UI and frame schedule.
     pub fn run(&self, setup: impl FnOnce(Application) -> Result<()>) -> Result<()> {
-        self.0.run(setup)
+        self.host.run(|windows| {
+            setup(Application {
+                windows,
+                assets: self.assets.clone(),
+            })
+        })
     }
 
     /// Mounts the root and hands input, frame scheduling and presentation to the host.
@@ -69,6 +101,7 @@ impl SystemPlatform {
         ui: Ui,
         root: impl Render,
     ) -> Result<()> {
-        self.0.run_layer_surface(options, ui, root)
+        self.host
+            .run_layer_surface(options, configured_ui(ui, &self.assets), root)
     }
 }

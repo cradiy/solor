@@ -1,4 +1,7 @@
 //! Shared bitmap pixels and placement within a painted box.
+mod custom;
+pub use custom::{CustomImage, ImageRegion, ImageRenderer};
+
 use crate::{
     Fill, Style,
     layout::{ComputedLength, Origin, Size},
@@ -19,37 +22,12 @@ struct Bitmap {
     rgba: Vec<u8>,
 }
 
-impl ImageAsset {
-    /// Decodes a still image with the enabled codecs and applies its encoded orientation.
-    /// PNG and JPEG are enabled by default.
-    #[cfg(any(
-        feature = "png",
-        feature = "jpeg",
-        feature = "webp",
-        feature = "gif",
-        feature = "bmp",
-        feature = "ico",
-        feature = "tiff"
-    ))]
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        use image::{DynamicImage, ImageDecoder, ImageReader};
-        let mut decoder = ImageReader::new(std::io::Cursor::new(bytes))
-            .with_guessed_format()?
-            .into_decoder()?;
-        let (width, height) = decoder.dimensions();
-        let mut limits = image::Limits::default();
-        limits.reserve(
-            decoder
-                .total_bytes()
-                .max((u64::from(width) * u64::from(height)).saturating_mul(4)),
-        )?;
-        let orientation = decoder.orientation()?;
-        let mut decoded = DynamicImage::from_decoder(decoder)?;
-        decoded.apply_orientation(orientation);
-        let rgba = decoded.into_rgba8();
-        Self::from_rgba8(rgba.width(), rgba.height(), rgba.into_raw())
-    }
+#[cfg(feature = "image")]
+mod decode;
+#[cfg(feature = "image")]
+pub use decode::ImageFile;
 
+impl ImageAsset {
     /// Takes ownership of tightly packed, straight-alpha RGBA8 pixels in top-to-bottom row order.
     pub fn from_rgba8(width: u32, height: u32, mut bytes: Vec<u8>) -> Result<Self> {
         let len = (width as usize)
@@ -182,5 +160,52 @@ impl Placement {
             "invalid image position"
         );
         Ok((origin, size))
+    }
+}
+
+/// Window-owned decoded file images. Each cache retains at most 64 MiB and 128 entries.
+#[derive(Default)]
+pub struct ImageCache {
+    #[cfg(feature = "image")]
+    entries: std::collections::VecDeque<(Arc<std::path::Path>, ImageAsset)>,
+    #[cfg(feature = "image")]
+    bytes: usize,
+}
+
+impl ImageCache {
+    /// Resolves file pixels for a visible paint command, keeping its placement.
+    pub fn resolve<'a>(&mut self, fill: &'a Fill) -> Result<std::borrow::Cow<'a, Fill>> {
+        #[cfg(feature = "image")]
+        if let Fill::ImageFile(file) = fill {
+            let asset = self.load(file)?;
+            return Ok(std::borrow::Cow::Owned(Fill::Image(ImageFill::new(
+                asset,
+                file.placement,
+            ))));
+        }
+        Ok(std::borrow::Cow::Borrowed(fill))
+    }
+
+    #[cfg(feature = "image")]
+    fn load(&mut self, file: &ImageFile) -> Result<ImageAsset> {
+        if let Some(i) = self.entries.iter().position(|(path, _)| path == &file.path) {
+            let entry = self.entries.remove(i).expect("index found in cache");
+            let asset = entry.1.clone();
+            self.entries.push_back(entry);
+            return Ok(asset);
+        }
+
+        const BUDGET: usize = 64 * 1024 * 1024;
+        let asset = file.decode()?;
+        let bytes = asset.0.rgba.capacity();
+        if bytes <= BUDGET {
+            while self.bytes + bytes > BUDGET || self.entries.len() >= 128 {
+                let (_, oldest) = self.entries.pop_front().expect("nonempty image cache");
+                self.bytes -= oldest.0.rgba.capacity();
+            }
+            self.entries.push_back((file.path.clone(), asset.clone()));
+            self.bytes += bytes;
+        }
+        Ok(asset)
     }
 }

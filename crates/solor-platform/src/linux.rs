@@ -3,7 +3,7 @@ use solor::{Render, Ui};
 use solor_linux::{Wayland, layer_shell::LayerShellOptions};
 use solor_render_cpu::CpuWindow;
 
-use super::{Application, WindowBackground, WindowHandle, WindowOptions};
+use super::{WindowBackground, WindowHandle, WindowOptions};
 
 pub(super) struct Host(Wayland);
 
@@ -28,8 +28,8 @@ pub(super) fn open_window<R: Render>(
 }
 
 impl Host {
-    pub(super) fn run(&self, setup: impl FnOnce(Application) -> Result<()>) -> Result<()> {
-        self.0.run(|app| setup(Application(app)))
+    pub(super) fn run(&self, setup: impl FnOnce(Windows) -> Result<()>) -> Result<()> {
+        self.0.run(setup)
     }
 
     pub(super) fn run_layer_surface(

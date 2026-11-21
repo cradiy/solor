@@ -737,6 +737,7 @@ dependencies = [
  "ttf-parser",
  "unicode-segmentation",
  "usvg",
+ "zune-jpeg",
 ]
 
 [[package]]

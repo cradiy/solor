@@ -448,6 +448,11 @@ pub enum Fill {
     Gradient(Gradient),
     /// Samples shared bitmap pixels within the painted bounds.
     Image(crate::ImageFill),
+    /// Samples an application-rendered image within the painted bounds.
+    CustomImage(crate::CustomImage),
+    /// A file-backed bitmap resolved when its paint intersects the damage region.
+    #[cfg(feature = "image")]
+    ImageFile(crate::bitmap::ImageFile),
 }
 impl From<Rgba> for Fill {
     fn from(color: Rgba) -> Self {

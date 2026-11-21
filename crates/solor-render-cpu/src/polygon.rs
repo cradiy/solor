@@ -123,6 +123,29 @@ impl Surface {
                     Ok(())
                 })
             }
+            Fill::CustomImage(image) => {
+                let bounds = PathBounds::new(origin, points, scale)?;
+                let size = Size {
+                    width: px(((bounds.right - bounds.left) / scale.0) as f32),
+                    height: px(((bounds.bottom - bounds.top) / scale.0) as f32),
+                };
+                let Some(sampler) = crate::bitmap::RegionSampler::new(
+                    image,
+                    [bounds.left, bounds.top],
+                    size,
+                    scale,
+                    clip,
+                )?
+                else {
+                    return Ok(());
+                };
+                for_each_span(points, origin, scale, clip, |row, from, to, coverage| {
+                    for (x, pixel) in (from..to).zip(self.span_pixels(row, from, to)) {
+                        sampler.blend(pixel, x, row, scale, coverage);
+                    }
+                    Ok(())
+                })
+            }
             Fill::Image(image) => {
                 let bounds = PathBounds::new(origin, points, scale)?;
                 let size = Size {

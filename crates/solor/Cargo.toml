@@ -8,16 +8,17 @@ description = "Platform-independent Solor GUI framework"
 [features]
 default = ["png", "jpeg"]
 image-full = ["png", "jpeg", "webp", "gif", "bmp", "ico", "tiff"]
-png = ["dep:image", "image/png"]
-jpeg = ["dep:image", "image/jpeg"]
-webp = ["dep:image", "image/webp"]
-gif = ["dep:image", "image/gif"]
-bmp = ["dep:image", "image/bmp"]
-ico = ["dep:image", "image/ico"]
-tiff = ["dep:image", "image/tiff"]
+png = ["image/png"]
+jpeg = ["image/jpeg", "dep:zune-jpeg"]
+webp = ["image/webp"]
+gif = ["image/gif"]
+bmp = ["image/bmp"]
+ico = ["image/ico"]
+tiff = ["image/tiff"]
 layout-audit = []
 
 [dependencies]
+zune-jpeg = { version = "0.5", optional = true, default-features = false, features = ["std"] }
 image = { version = "0.25.10", optional = true, default-features = false }
 usvg = { version = "=0.48.1", default-features = false }
 keyboard-types = "0.8"

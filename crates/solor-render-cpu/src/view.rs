@@ -13,6 +13,7 @@ use solor::{
 };
 
 pub(super) struct ViewCaches {
+    images: solor::ImageCache,
     glyphs: GlyphMasks,
     svgs: crate::svg::SvgCache,
 }
@@ -20,6 +21,7 @@ pub(super) struct ViewCaches {
 impl Default for ViewCaches {
     fn default() -> Self {
         Self {
+            images: Default::default(),
             glyphs: GlyphMasks::new(64, 32 * 1024),
             svgs: Default::default(),
         }
@@ -28,6 +30,7 @@ impl Default for ViewCaches {
 
 enum Brush<'a, F> {
     Solid(solor::Rgba),
+    Region(crate::bitmap::RegionSampler),
     Image(crate::bitmap::ImageSampler<'a>),
     Gradient(F, Option<OpaqueLinearGradient<'a>>),
 }
@@ -126,7 +129,8 @@ impl Surface {
                     corner_radii,
                     ..
                 } => {
-                    self.fill_box(*origin, *size, fill, *corner_radii, scale, bounds)?;
+                    let fill = caches.images.resolve(fill).map_err(Error::other)?;
+                    self.fill_box(*origin, *size, &fill, *corner_radii, scale, bounds)?;
                 }
                 Draw::Polygon {
                     origin,
@@ -134,7 +138,8 @@ impl Surface {
                     fill,
                     ..
                 } => {
-                    self.fill_polygon(*origin, points, fill, scale, bounds)?;
+                    let fill = caches.images.resolve(fill).map_err(Error::other)?;
+                    self.fill_polygon(*origin, points, &fill, scale, bounds)?;
                 }
                 Draw::Polyline {
                     origin,
@@ -194,6 +199,14 @@ impl Surface {
         let bottom_radius = radii.bottom_left.max(radii.bottom_right);
         let mut brush = match fill {
             Fill::Solid(color) => Brush::Solid(*color),
+            Fill::CustomImage(image) => {
+                let Some(sampler) =
+                    crate::bitmap::RegionSampler::new(image, [left, top], size, scale, clip)?
+                else {
+                    return Ok(());
+                };
+                Brush::Region(sampler)
+            }
             Fill::Image(image) => {
                 Brush::Image(crate::bitmap::ImageSampler::new(image, size, scale)?)
             }
@@ -245,6 +258,11 @@ impl Surface {
                     let coverage = (row_height * 255.0).round() as u8;
                     blend_solid_span(middle, *c, coverage);
                 }
+                Brush::Region(image) => {
+                    for (x, pixel) in (from..to).zip(middle) {
+                        image.blend(pixel, x, y, scale, 255);
+                    }
+                }
                 Brush::Image(image) => {
                     for (x, pixel) in (from..to).zip(middle) {
                         image.blend(
@@ -280,6 +298,10 @@ impl Surface {
                     if coverage != 0 {
                         let c = match &mut brush {
                             Brush::Solid(c) => *c,
+                            Brush::Region(image) => {
+                                image.blend(pixel, x, y, scale, coverage);
+                                continue;
+                            }
                             Brush::Image(image) => {
                                 image.blend(
                                     pixel,

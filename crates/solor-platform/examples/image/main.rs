@@ -1,9 +1,12 @@
 //! Display one decoded WebP as an image and a resizable card background.
-use solor::{ImageAsset, Styled, Ui, component, div, image, px, rgb, style::ObjectFit, text};
+use solor::{ImageFile, Styled, Ui, component, div, image, px, rgb, style::ObjectFit, text};
 use solor_platform::{WindowOptions, current_platform};
+use std::path::Path;
 
 fn main() -> anyhow::Result<()> {
-    let bird = ImageAsset::from_bytes(include_bytes!("kingfisher.webp"))?;
+    let bird = ImageFile::new(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/image/kingfisher.webp"),
+    );
     let view = component(move |cx| {
         let fit = cx.signal(ObjectFit::Cover);
         div()
