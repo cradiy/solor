@@ -644,6 +644,26 @@ The range is `0..0` for an empty list. Use its start index to decide when to
 load earlier messages. The position signal also publishes range changes caused
 by remeasuring rows at the same scroll offset.
 
+Attach `.on_visible_range_change(...)` to run application logic after a list's
+layout settles. The handler receives the initial range and subsequent changes
+without requiring a scroll handle. A visible empty list reports `0..0`. A hidden
+or zero-sized viewport pauses delivery until it becomes visible again.
+
+```rust
+let mut older_page = Some(cached_messages);
+variable_list(messages, px(32.0), |message| text(message))
+    .on_visible_range_change(move |visible, cx| {
+        if visible.start < 5 && let Some(page) = older_page.take() {
+            messages.splice(0..0, page, cx)?;
+        }
+        Ok(())
+    })
+```
+
+The next flush processes the insertion. If the visible indices change as a
+result, the handler receives that new range after layout. Keep pagination
+cursors and outstanding requests in application state.
+
 For a progress indicator, create the handle and its position signal together.
 Reading the signal in a paint closure subscribes that element to changes.
 

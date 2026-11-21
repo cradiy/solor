@@ -884,6 +884,7 @@ impl Ui {
         if !instance.tracked_scroll.is_empty() {
             instance.update_tracked_scroll(self.state.get_mut())?;
         }
+        instance.notify_list_ranges(self.state.get_mut(), &self.engine)?;
         Ok(total)
     }
 

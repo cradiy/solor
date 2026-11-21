@@ -186,6 +186,7 @@ where
 {
     VirtualList {
         scroll: None,
+        range_listener: None,
         follow_tail: false,
         measured: false,
         items: items.into(),
@@ -211,6 +212,7 @@ where
 {
     VirtualList {
         scroll: None,
+        range_listener: None,
         follow_tail: false,
         items: items.into(),
         height: estimated_height,
@@ -224,6 +226,7 @@ where
 /// A stylable virtual list declaration with an optional scroll handle.
 pub struct VirtualList<K, F> {
     scroll: Option<ListScrollHandle>,
+    range_listener: Option<RangeListener>,
     follow_tail: bool,
     measured: bool,
     items: ListItems<K>,
@@ -233,6 +236,22 @@ pub struct VirtualList<K, F> {
 }
 
 impl<K, F> VirtualList<K, F> {
+    /// Calls the handler with the visible row indices after layout settles.
+    ///
+    /// Fires on first display (including an empty list), when the range changes,
+    /// and when the viewport becomes visible again. State edits in the handler
+    /// are processed by the next flush.
+    pub fn on_visible_range_change(
+        mut self,
+        callback: impl FnMut(Range<usize>, &mut crate::Context<'_>) -> Result<()> + 'static,
+    ) -> Self {
+        self.range_listener = Some(RangeListener {
+            callback: Box::new(callback),
+            delivered: None,
+        });
+        self
+    }
+
     /// Opens the list at its end and keeps the last row in view as content grows.
     /// Scrolling away pauses following. Returning to the bottom resumes it.
     pub fn follow_tail(mut self) -> Self {
@@ -254,9 +273,16 @@ impl<K, F> Styled for VirtualList<K, F> {
 }
 
 type Reconcile = Box<dyn FnMut(&mut Instance, NodeId, &Path, &mut Attachment<'_>) -> Result<()>>;
+type RangeCallback = Box<dyn FnMut(Range<usize>, &mut crate::Context<'_>) -> Result<()>>;
+
+struct RangeListener {
+    callback: RangeCallback,
+    delivered: Option<Range<usize>>,
+}
 
 pub(super) struct UpdateList {
     pub(super) scroll: Option<ListScrollHandle>,
+    range_listener: Option<RangeListener>,
     pub(super) dirty: Rc<Cell<bool>>,
     reconcile: Reconcile,
 }
@@ -286,7 +312,10 @@ where
             let offset = cx.signal(0_f64);
             let items = Rc::new(self.items);
             let scroll_items = items.clone();
-            let wheel_handle = self.scroll.clone();
+            let scroll = self
+                .scroll
+                .or_else(|| self.range_listener.is_some().then(ListScrollHandle::new));
+            let wheel_handle = scroll.clone();
             let index = self
                 .measured
                 .then(|| Rc::new(RefCell::new(HeightIndex::default())));
@@ -316,7 +345,7 @@ where
             let keys_changed = Rc::new(Cell::new(true));
             let source_changed = keys_changed.clone();
             let source = items.signal();
-            let handle = self.scroll.clone();
+            let handle = scroll.clone();
             node.watches.push(Box::new(move |cx, target, _, _, _| {
                 if let Some(handle) = handle {
                     handle.attach(&viewport_dirty, offset, cx.state)?;
@@ -333,7 +362,7 @@ where
                 Ok(())
             }));
             let mut viewport = Viewport {
-                scroll: self.scroll.clone(),
+                scroll: scroll.clone(),
                 previous_limit: self.follow_tail.then_some(0.0),
                 measured: index.map(|index| MeasuredWindow {
                     index,
@@ -349,7 +378,8 @@ where
                 rows: MountedRows::default(),
             };
             node.children.push(Child::List(UpdateList {
-                scroll: self.scroll,
+                scroll,
+                range_listener: self.range_listener,
                 dirty,
                 reconcile: Box::new(move |instance, id, path, cx| {
                     viewport.update(instance, id, path, cx, &self.row)
@@ -596,6 +626,42 @@ impl<K: Eq + Hash + Clone> MountedRows<K> {
 }
 
 impl Instance {
+    pub(super) fn notify_list_ranges(
+        &mut self,
+        state: &mut Runtime<()>,
+        engine: &crate::TextSystem,
+    ) -> Result<()> {
+        for (path, list) in &mut self.lists {
+            let Some(listener) = &mut list.range_listener else {
+                continue;
+            };
+            let range = list
+                .scroll
+                .as_ref()
+                .and_then(ListScrollHandle::position)
+                .map(ListScrollPosition::visible_range);
+            if listener.delivered == range {
+                continue;
+            }
+            listener.delivered = range.clone();
+            if let Some(range) = range {
+                let node = self
+                    .bodies
+                    .get_mut(&self.nodes[path])
+                    .expect("mounted list");
+                (listener.callback)(
+                    range,
+                    &mut crate::Context {
+                        state,
+                        engine,
+                        owned: Some(&mut node.owned),
+                    },
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn update_lists(
         &mut self,
         cx: &mut Attachment<'_>,

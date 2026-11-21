@@ -1,5 +1,8 @@
 //! One-shot scroll requests through retained layout and accepted pointer frames.
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use anyhow::Result;
 use solor::{
@@ -398,6 +401,66 @@ fn percentage_and_pixel_positions_round_trip_through_layout_and_wheel_input() ->
     assert!(ui.context().read(position)?.is_none());
     ui.unmount(view)?;
     assert!(handle.position().is_none());
+    Ok(())
+}
+
+#[test]
+fn a_settled_range_can_prepend_history_without_interrupting_the_reading_row() -> Result<()> {
+    let mut ui = Ui::new();
+    let rows = ui.context().signal_vec([px(20.0); 20]);
+    let list = ListScrollHandle::new();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let changes = seen.clone();
+    let view = ui.mount(component(|_| {
+        let mut loaded = false;
+        variable_list(rows, px(16.0), |height| div().h(height))
+            .scroll_handle(&list)
+            .on_visible_range_change(move |range, cx| {
+                if range.start == 1 && !loaded {
+                    loaded = true;
+                    rows.splice(0..0, [px(20.0); 3], cx)?;
+                }
+                changes.borrow_mut().push(range);
+                Ok(())
+            })
+    }))?;
+    list.scroll_to(5, Top);
+    submit(&mut ui, view, 60.0)?;
+    assert_eq!(seen.borrow().last(), Some(&(5..8)));
+    list.scroll_to(1, Top);
+    submit(&mut ui, view, 60.0)?;
+    assert_eq!(&*seen.borrow(), &[5..8, 1..4]);
+    assert!(ui.next_redraw(view).is_some());
+    let reading = ui.children(view, ui.root(view)?)?.nth(1).unwrap();
+    submit(&mut ui, view, 60.0)?;
+    assert_eq!(&*seen.borrow(), &[5..8, 1..4, 4..7]);
+    assert_eq!(ui.geometry(view, reading).unwrap().origin.y, px(0.0));
+    list.scroll_to_offset_px(list.position().unwrap().offset_px + 0.25)?;
+    submit(&mut ui, view, 60.0)?;
+    assert_eq!(seen.borrow().last(), Some(&(4..8)));
+    let deliveries = seen.borrow().len();
+    list.scroll_to_offset_px(list.position().unwrap().offset_px + 0.25)?;
+    submit(&mut ui, view, 60.0)?;
+    assert_eq!(seen.borrow().len(), deliveries);
+    Ok(())
+}
+
+#[test]
+fn an_empty_list_reports_first_display_and_redisplay_without_a_handle() -> Result<()> {
+    let mut ui = Ui::new();
+    let calls = Rc::new(Cell::new(0));
+    let count = calls.clone();
+    let view = ui.mount(component(|_| {
+        uniform_list(0usize, px(20.0), |_| div()).on_visible_range_change(move |range, _| {
+            assert_eq!(range, 0..0);
+            count.set(count.get() + 1);
+            Ok(())
+        })
+    }))?;
+    for (height, expected) in [(0.0, 0), (40.0, 1), (80.0, 1), (0.0, 1), (40.0, 2)] {
+        submit(&mut ui, view, height)?;
+        assert_eq!(calls.get(), expected);
+    }
     Ok(())
 }
 
