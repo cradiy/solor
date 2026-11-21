@@ -14,6 +14,7 @@ dbus = "0.9"
 solor = { path = "../solor", default-features = false }
 smallvec.workspace = true
 anyhow.workspace = true
+log.workspace = true
 rustix = { version = "1", features = ["fs", "time", "event"] }
 bitflags = "2"
 wayland-scanner = "0.31"

@@ -3,6 +3,7 @@ use std::{
     os::{fd::OwnedFd, unix::fs::FileExt},
 };
 
+use anyhow::{Context as _, Result, ensure};
 use solor::{
     keyboard::{Key, KeyEvent, KeyState, Modifiers, NamedKey},
     platform::WindowEvent,
@@ -48,24 +49,26 @@ impl Drop for Keyboard {
     }
 }
 
-fn read_layout(fd: OwnedFd, size: u32) -> Option<xkb::State> {
+fn read_layout(fd: OwnedFd, size: u32) -> Result<xkb::State> {
     // The advertised range starts at offset zero and may include a trailing NUL.
     // Bound the allocation even for a malformed size.
-    if !(1..=16 * 1024 * 1024).contains(&size) {
-        return None;
-    }
+    ensure!(
+        (1..=16 * 1024 * 1024).contains(&size),
+        "invalid keymap size ({size} bytes)"
+    );
     let mut bytes = vec![0; size as usize];
-    File::from(fd).read_exact_at(&mut bytes, 0).ok()?;
+    File::from(fd).read_exact_at(&mut bytes, 0)?;
     if bytes.last() == Some(&0) {
         bytes.pop();
     }
     let keymap = xkb::Keymap::new_from_string(
         &xkb::Context::new(xkb::CONTEXT_NO_FLAGS),
-        String::from_utf8(bytes).ok()?,
+        String::from_utf8(bytes)?,
         xkb::KEYMAP_FORMAT_TEXT_V1,
         xkb::KEYMAP_COMPILE_NO_FLAGS,
-    )?;
-    Some(xkb::State::new(&keymap))
+    )
+    .context("XKB could not compile the keymap")?;
+    Ok(xkb::State::new(&keymap))
 }
 
 fn key_for_code(layout: &xkb::State, evdev_code: u32) -> Option<Key> {
@@ -131,7 +134,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
         match event {
             wl_keyboard::Event::Keymap { format, fd, size } => {
                 keyboard.layout = match format {
-                    WEnum::Value(wl_keyboard::KeymapFormat::XkbV1) => read_layout(fd, size),
+                    WEnum::Value(wl_keyboard::KeymapFormat::XkbV1) => read_layout(fd, size)
+                        .inspect_err(|err| {
+                            log::warn!("failed to load Wayland keyboard keymap: {err:#}")
+                        })
+                        .ok(),
                     _ => None,
                 };
                 keyboard.modifiers = Modifiers::default();

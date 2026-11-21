@@ -10,6 +10,7 @@ publish = false
 solor = { path = "crates/solor" }
 solor-platform = { path = "crates/solor-platform" }
 anyhow = "1"
+log = "0.4"
 slotmap = "1.1.1"
 smallvec = "1"
 

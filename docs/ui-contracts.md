@@ -614,8 +614,8 @@ pending work. A worker checks for cancellation between body reads and before
 decoding. A read already in progress can last until the request timeout (30 s).
 
 The encoded size limit is 64 MiB and the decode budget is 128 MiB. A failed
-request leaves its element empty and logs the error. A subsequent attachment
-can retry the URL.
+request leaves its element empty. Mounting another element with the same URL
+can retry the request.
 
 Implement `AssetSource::svg` to supply SVG bytes and `AssetSource::image` to
 supply `ImageResource::Path`, `ImageResource::Bytes`, or `ImageResource::Custom`. Register a pack for the

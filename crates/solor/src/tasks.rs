@@ -170,7 +170,12 @@ impl Driver {
                 async move {
                     let _registration = registration;
                     if let Err(error) = start(cx).await {
-                        errors.borrow_mut().get_or_insert(error);
+                        let mut first = errors.borrow_mut();
+                        if first.is_some() {
+                            log::error!("additional foreground task failed: {error:#}");
+                        } else {
+                            *first = Some(error);
+                        }
                     }
                 },
                 move |runnable| {
