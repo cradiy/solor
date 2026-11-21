@@ -1,5 +1,9 @@
 //! Sampling in the fitted image viewport, independent of the current damage rectangle.
-use solor::{ImageFill, Pixels, layout::Size, raster::RasterScale};
+use solor::{
+    ImageFill, Pixels,
+    layout::Size,
+    raster::{Clip, RasterScale},
+};
 use std::io::{Error, Result};
 
 struct Axis {
@@ -67,6 +71,43 @@ impl<'a> ImageSampler<'a> {
             half_pixel: 0.5 / scale.0,
         })
     }
+
+    /// Device bounds when a whole source texel lands exactly on each output pixel.
+    pub(super) fn native_bounds(&self, origin: [f64; 2], scale: RasterScale) -> Option<Clip> {
+        if self.x.density != scale.0 || self.y.density != scale.0 {
+            return None;
+        }
+        let x = origin[0] + self.x.start * scale.0;
+        let y = origin[1] + self.y.start * scale.0;
+        if x.fract() != 0.0 || y.fract() != 0.0 {
+            return None;
+        }
+        let left = x as i64;
+        let top = y as i64;
+        Some(Clip {
+            left,
+            top,
+            right: left.saturating_add(self.x.texels as i64),
+            bottom: top.saturating_add(self.y.texels as i64),
+        })
+    }
+
+    /// Composites the visible part of a fully covered row without filtering.
+    pub(super) fn blend_native_span(&self, dst: &mut [[u8; 4]], x: i64, y: i64, image: Clip) {
+        let left = x.max(image.left);
+        let right = (x + dst.len() as i64).min(image.right);
+        if left >= right || !(image.top..image.bottom).contains(&y) {
+            return;
+        }
+        let source = (y - image.top) as usize * self.x.texels + (left - image.left) as usize;
+        let count = (right - left) as usize;
+        let output = &mut dst[(left - x) as usize..(right - x) as usize];
+        for (pixel, &texel) in output.iter_mut().zip(&self.pixels[source..source + count]) {
+            crate::pixels::blend_premultiplied(pixel, texel);
+        }
+    }
+
+    #[inline]
     pub(super) fn blend(&self, dst: &mut [u8; 4], x: f64, y: f64, coverage: u8) {
         let coverage = (f64::from(coverage)
             * self.x.coverage(x, self.half_pixel)

@@ -130,3 +130,38 @@ fn bilinear_sampling_keeps_transparent_rgb_out_of_blended_edges() -> Result<()> 
     assert_eq!(surface.rgba.as_chunks::<4>().0, expected.repeat(2));
     Ok(())
 }
+
+#[test]
+fn native_bitmap_rows_respect_crop_letterboxing_and_alpha() -> Result<()> {
+    let bytes: Vec<_> = (0..24u8)
+        .flat_map(|i| [i * 9, i * 3, 0, [0, 128, 255][usize::from(i % 3)]])
+        .collect();
+    let asset = ImageAsset::from_rgba8(6, 4, bytes)?;
+    let mut ui = Ui::new();
+    let source = asset.clone();
+    let view = ui.mount(component(move |_| {
+        image(source).object_fit(ObjectFit::None)
+    }))?;
+    for (width, height, left, top) in [(10, 2, 2, -1), (4, 6, -1, 1)] {
+        let extent = size(width as f32, height as f32);
+        ui.layout(view, extent)?;
+        let surface = Surface::draw_view(
+            &ui.record_frame(view)?,
+            RasterScale::ONE.buffer_size(extent)?,
+            RasterScale::ONE,
+        )?;
+        for y in 0..height {
+            for x in 0..width {
+                let (sx, sy) = (x - left, y - top);
+                let expected = if (0..6).contains(&sx) && (0..4).contains(&sy) {
+                    let [r, g, b, a] = asset.pixels()[(sy * 6 + sx) as usize];
+                    [r + (255 - a), g + (255 - a), b + (255 - a), 255]
+                } else {
+                    [255; 4]
+                };
+                assert_eq!(pixel(&surface, x as usize, y as usize), expected);
+            }
+        }
+    }
+    Ok(())
+}
