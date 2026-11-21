@@ -517,6 +517,31 @@ fn atlas_scrubs_across_the_color_space_and_returns_to_idle() -> Result<()> {
         .expect("seek thumb");
     assert!((thumb - start.x - size.width * 0.75).get().abs() < 0.5);
     assert!(ui.next_redraw(view).is_none());
+    for (key, swatch) in [(Key::Home, "#000000"), (Key::End, "#FFFFFF")] {
+        let press = KeyEvent {
+            key,
+            state: KeyState::Down,
+            modifiers: Default::default(),
+        };
+        assert!(ui.dispatch_key(view, &press)?);
+        assert!(
+            submit_labels(&mut ui, view)?
+                .iter()
+                .any(|s| s.as_str() == swatch)
+        );
+    }
+    click_label(&mut ui, view, "Lists")?;
+    let home = KeyEvent {
+        key: Key::Home,
+        state: KeyState::Down,
+        modifiers: Default::default(),
+    };
+    assert!(!ui.dispatch_key(view, &home)?);
+    assert!(
+        submit_labels(&mut ui, view)?
+            .iter()
+            .any(|s| s.as_str() == "#FFFFFF")
+    );
     Ok(())
 }
 

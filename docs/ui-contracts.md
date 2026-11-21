@@ -12,7 +12,8 @@ From the initial Typography page, Tab or Shift+Tab moves between page and specim
 choices. Enter or Space selects the focused choice and leaves focus on its button.
 The Lists tab shows the 24-bit RGB color space in a virtual list. Scroll to
 browse swatches, or click and drag the position indicator to seek across all
-16,777,216 colors. A slim thumb sits over the list’s right edge and widens on hover.
+16,777,216 colors. With focus in the RGB list, Home goes to the first swatch
+and End to the last. A slim thumb sits over the list’s right edge and widens on hover.
 Choose **Tone sheet** to browse nine color families down the rows and nine tones
 across the columns. Both scrollbars control the same viewport. Selecting a swatch
 shows its name and hex value above the sheet, where they stay visible while scrolling.

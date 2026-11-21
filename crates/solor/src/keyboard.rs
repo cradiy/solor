@@ -6,8 +6,8 @@ use anyhow::Result;
 pub use crate::pointer::Modifiers;
 mod binding;
 mod shortcut;
-pub(crate) use binding::ActionHandler;
 pub use binding::KeyBinding;
+pub(crate) use binding::{ActionHandler, BoundAction};
 pub use keyboard_types::{KeyState, NamedKey};
 pub use shortcut::{Key, Modifier, Shortcut};
 
@@ -174,6 +174,7 @@ impl Ui {
             && !self.keymap.is_empty()
             && let Some(actions) = self.keymap.get(&Shortcut::from_event(event))
         {
+            let contexts = instance.key_contexts(actions)?;
             let mut target = instance.focused;
             while let Some(id) = target {
                 let node = instance
@@ -181,7 +182,8 @@ impl Ui {
                     .get_mut(&id)
                     .ok_or(TreeError::InvalidNode(id))?;
                 if let Some(handlers) = node.handlers.as_deref()
-                    && let Some((handler, action)) = ActionHandler::find(&handlers.actions, actions)
+                    && let Some((handler, action)) =
+                        ActionHandler::find(&handlers.actions, actions, &contexts)
                 {
                     handler(
                         action,

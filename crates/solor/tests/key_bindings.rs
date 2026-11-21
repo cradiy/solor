@@ -78,3 +78,37 @@ fn focused_key_handler_can_consume_a_bound_press_before_action_dispatch() -> Res
     assert_eq!(*ui.context().read(value)?, 3);
     Ok(())
 }
+
+#[test]
+fn one_handler_resolves_the_same_shortcut_across_nested_and_sibling_regions() -> Result<()> {
+    let mut ui = Ui::new();
+    let selected = ui.context().signal(0);
+    let view = ui.mount(component(|_| {
+        div()
+            .on_action(move |choice: &Select, cx| cx.set(selected, choice.0))
+            .child(
+                div()
+                    .key_context("Atlas")
+                    .child(div().key_context("Palette").child(div().focusable()))
+                    .child(div().focusable()),
+            )
+            .child(div().focusable())
+    }))?;
+    ui.bind_keys([
+        KeyBinding::new(Key::Home, Select(1)).in_context("Palette"),
+        KeyBinding::new(Key::Home, Select(2)).in_context("Atlas"),
+        KeyBinding::new(Key::Home, Select(3)),
+        KeyBinding::new(Key::Home, Select(4)).in_context("Atlas"),
+    ]);
+    let home = KeyEvent {
+        key: Key::Home,
+        modifiers: Default::default(),
+        state: KeyState::Down,
+    };
+    for expected in [1, 4, 3, 1] {
+        ui.focus_next(view)?;
+        assert!(ui.dispatch_key(view, &home)?);
+        assert_eq!(*ui.context().read(selected)?, expected);
+    }
+    Ok(())
+}

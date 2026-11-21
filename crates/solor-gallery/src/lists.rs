@@ -2,12 +2,24 @@ use crate::{INK, LINE, MUTED, Selection, label, tone_sheet};
 use solor::{
     Context, Div, IntoElement, ListScrollHandle, ListScrollPosition, Signal, Styled, component,
     div,
+    keyboard::{Key, KeyBinding},
     layout::{Origin, Size},
     pointer::PointerEvent,
     px, rgb, scrollbar, text, uniform_list,
 };
 
 const COLORS: usize = 1 << 24;
+
+const RGB_LIST: &str = "RgbList";
+
+struct SeekToPercent(f64);
+
+pub(super) fn bind_keys(ui: &mut solor::Ui) {
+    ui.bind_keys([
+        KeyBinding::new(Key::Home, SeekToPercent(0.0)).in_context(RGB_LIST),
+        KeyBinding::new(Key::End, SeekToPercent(100.0)).in_context(RGB_LIST),
+    ]);
+}
 
 pub(super) fn palette() -> impl IntoElement {
     component(|cx| {
@@ -33,7 +45,20 @@ pub(super) fn palette() -> impl IntoElement {
 fn rgb_list() -> impl IntoElement {
     component(|cx| {
         let (list, position) = ListScrollHandle::with_position_signal(cx);
+        let seek = list.clone();
         div()
+            .key_context(RGB_LIST)
+            .focus_indicator(|paint| {
+                paint.fill_rect(
+                    Origin::default(),
+                    Size {
+                        width: paint.size.width,
+                        height: px(2.0),
+                    },
+                    MUTED,
+                )
+            })
+            .on_action(move |action: &SeekToPercent, _| seek.scroll_to_percent(action.0))
             .flex_1()
             .items_stretch()
             .child(

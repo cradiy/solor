@@ -600,7 +600,7 @@ pub struct ViewId(NodeId);
 
 /// Owns the application signals and its mounted component trees.
 pub struct Ui {
-    keymap: HashMap<keyboard::Shortcut, Vec<Box<dyn std::any::Any>>>,
+    keymap: HashMap<keyboard::Shortcut, Vec<keyboard::BoundAction>>,
     tooltip_style: TooltipStyle,
     state: RefCell<Runtime<()>>,
     engine: TextSystem,

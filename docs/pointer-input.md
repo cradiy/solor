@@ -54,8 +54,13 @@ div().focusable().on_action(move |_: &Save, cx| save_document(cx))
 A shortcut matches the logical key and exact modifier set on key-down. ASCII
 letters match either case. Shift must be bound explicitly when held. Actions
 can carry data. Dispatch starts at the focused element and walks towards the
-view root until a handler accepts the action type. At the same element, the
-most recently bound matching action wins.
+view root until a handler accepts the action type.
+
+Use `.key_context("Editor")` on a container and
+`KeyBinding::new(Key::Home, StartOfLine).in_context("Editor")` to enable a
+binding while focus is in that subtree. At a given handler, the innermost
+matching context has priority, followed by enclosing contexts and then global
+bindings. Within one context, later registrations take priority.
 
 Use `.on_key_down(...)` and `.on_key_up(...)` on the focused element to handle
 individual transitions. The key-down handler runs first and can call

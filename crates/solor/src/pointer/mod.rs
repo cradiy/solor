@@ -222,6 +222,7 @@ pub(crate) struct Handlers {
     scroll: Option<ScrollHandler>,
     up: Option<PositionHandler>,
     cancel: Option<CancelHandler>,
+    pub(crate) key_context: Option<crate::SharedString>,
     pub(crate) actions: Vec<crate::keyboard::ActionHandler>,
     pub(crate) key_down: Option<crate::keyboard::KeyDownHandler>,
     pub(crate) key_up: Option<crate::keyboard::KeyHandler>,
