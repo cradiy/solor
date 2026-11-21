@@ -7,7 +7,7 @@ use solor::{
     px, rgb, scrollbar, uniform_list,
 };
 
-fn submit(ui: &mut Ui, view: ViewId, height: f32) -> Result<()> {
+fn submit(ui: &mut Ui, view: ViewId, height: f32) -> Result<Vec<Draw>> {
     ui.flush()?;
     ui.layout(
         view,
@@ -16,9 +16,9 @@ fn submit(ui: &mut Ui, view: ViewId, height: f32) -> Result<()> {
             height: px(height),
         },
     )?;
-    let frame = ui.record_frame(view)?;
-    ui.accept_pointer_frame(frame.into_pointer_frame())?;
-    Ok(())
+    let (draws, pointer) = ui.record_frame(view)?.into_parts();
+    ui.accept_pointer_frame(pointer)?;
+    Ok(draws)
 }
 
 fn point(x: f32, y: f32) -> PointerSample {
@@ -581,5 +581,91 @@ fn container_seek_waits_for_scrollable_layout_and_expires_on_unmount() -> Result
     let next = mount(&mut ui)?;
     submit(&mut ui, next, 80.0)?;
     assert_eq!(scroll.metrics().unwrap().offset, Origin::default());
+    Ok(())
+}
+
+#[test]
+fn container_progress_repaints_on_both_axes_and_viewport_changes() -> Result<()> {
+    use solor::{ScrollHandle, style::Overflow};
+    use std::{cell::Cell, rc::Rc};
+
+    let mut ui = Ui::new();
+    let (scroll, metrics) = ScrollHandle::with_metrics_signal(&mut ui.context());
+    assert!(ui.context().read(metrics)?.is_none());
+    let tracked = scroll.clone();
+    let overflow = ui.context().signal(Overflow::Auto);
+    let paints = Rc::new(Cell::new(0));
+    let count = paints.clone();
+    let view = ui.mount(component(move |_| {
+        div()
+            .flex_row()
+            .items_stretch()
+            .child(
+                div()
+                    .flex_1()
+                    .overflow(overflow)
+                    .track_scroll(&tracked)
+                    .child(div().min_w(px(180.0)).min_h(px(200.0))),
+            )
+            .child(div().w(px(20.0)).paint(move |cx| {
+                count.set(count.get() + 1);
+                if let Some(m) = *cx.read(metrics)? {
+                    let size = Size {
+                        width: cx.size.width * (m.horizontal_percent() / 100.0) as f32,
+                        height: cx.size.height * (m.vertical_percent() / 100.0) as f32,
+                    };
+                    cx.fill(size, rgb(0x224466));
+                }
+                Ok(())
+            }))
+    }))?;
+    let indicator_size = |draws: &[Draw]| {
+        draws.iter().find_map(|draw| match draw {
+            Draw::Fill { size, .. } => Some((size.width, size.height)),
+            _ => None,
+        })
+    };
+
+    submit(&mut ui, view, 80.0)?;
+    scroll.scroll_to_offset(Origin {
+        x: px(20.0),
+        y: px(30.0),
+    })?;
+    let draws = submit(&mut ui, view, 80.0)?;
+    assert_eq!(indicator_size(&draws), Some((px(5.0), px(20.0))));
+
+    ui.dispatch_pointer(
+        view,
+        PointerInput::Scroll(
+            point(10.0, 10.0),
+            ScrollDelta {
+                x: px(20.0),
+                y: px(0.0),
+            },
+        ),
+    )?;
+    let draws = submit(&mut ui, view, 80.0)?;
+    assert_eq!(indicator_size(&draws), Some((px(10.0), px(20.0))));
+
+    let draws = submit(&mut ui, view, 120.0)?;
+    assert_eq!(indicator_size(&draws), Some((px(10.0), px(45.0))));
+    let before = paints.get();
+    scroll.scroll_to_percent(37.5)?;
+    submit(&mut ui, view, 120.0)?;
+    assert_eq!(paints.get(), before);
+    assert!(ui.next_redraw(view).is_none());
+
+    submit(&mut ui, view, 240.0)?;
+    let m = ui.context().read(metrics)?.unwrap();
+    assert_eq!((m.horizontal_percent(), m.vertical_percent()), (50.0, 0.0));
+    ui.context().set(overflow, Overflow::Hidden)?;
+    let draws = submit(&mut ui, view, 240.0)?;
+    assert!(ui.context().read(metrics)?.is_none());
+    assert_eq!(indicator_size(&draws), None);
+    ui.context().set(overflow, Overflow::Auto)?;
+    submit(&mut ui, view, 80.0)?;
+    assert_eq!(*ui.context().read(metrics)?, scroll.metrics());
+    ui.unmount(view)?;
+    assert!(ui.context().read(metrics)?.is_none());
     Ok(())
 }

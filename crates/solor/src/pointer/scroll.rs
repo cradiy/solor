@@ -1,9 +1,9 @@
 //! Mounted container scroll policies and logical scroll distances.
 use crate::{
-    Context, Instance, ListScrollPosition, NodeId, Pixels, Result, Ui, ViewId,
+    Context, Instance, ListScrollPosition, NodeId, Pixels, Result, Signal, Ui, ViewId,
     layout::{Geometry, Origin, Size},
     px,
-    scroll_position::{PositionObservers, PositionSignal},
+    scroll_position::{PositionObservers, PositionSignal, scroll_percent},
     state::Runtime,
     style::{LayoutProperties, Overflow},
 };
@@ -21,6 +21,18 @@ pub struct ScrollMetrics {
     pub max_offset: Size,
     /// Size of the container's clipping box.
     pub viewport: Size,
+}
+
+impl ScrollMetrics {
+    /// Horizontal travel as a percentage from 0 to 100. Returns zero when the content fits.
+    pub fn horizontal_percent(self) -> f64 {
+        scroll_percent(self.offset.x.into(), self.max_offset.width.into())
+    }
+
+    /// Vertical travel as a percentage from 0 to 100. Returns zero when the content fits.
+    pub fn vertical_percent(self) -> f64 {
+        scroll_percent(self.offset.y.into(), self.max_offset.height.into())
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -68,6 +80,7 @@ impl ScrollRequest {
 #[derive(Default)]
 struct ContainerState {
     metrics: Cell<Option<ScrollMetrics>>,
+    metrics_signal: Option<Signal<Option<ScrollMetrics>>>,
     pending: Cell<Option<ScrollRequest>>,
     attached: Cell<bool>,
     observers: PositionObservers,
@@ -82,6 +95,18 @@ impl ScrollHandle {
     /// Creates an unattached handle.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates a handle and a context-owned signal that mirrors [Self::metrics].
+    /// Offset, scroll range and viewport changes update subscribers before frame recording.
+    /// The signal contains `None` until scrollable layout and after the container unmounts.
+    pub fn with_metrics_signal(cx: &mut Context<'_>) -> (Self, Signal<Option<ScrollMetrics>>) {
+        let signal = cx.signal(None);
+        let handle = Self(Rc::new(ContainerState {
+            metrics_signal: Some(signal),
+            ..ContainerState::default()
+        }));
+        (handle, signal)
     }
 
     /// Returns the live container's last published metrics, or none until layout and after unmount.
@@ -147,6 +172,10 @@ impl ScrollHandle {
 
     fn publish(&self, metrics: Option<ScrollMetrics>, state: &mut Runtime<()>) {
         if self.0.metrics.replace(metrics) != metrics {
+            if let Some(signal) = self.0.metrics_signal {
+                // The scope owning the signal can unmount before the container.
+                let _ = state.publish_layout_value(signal, metrics);
+            }
             self.0.observers.publish(state, self.vertical_position());
         }
     }

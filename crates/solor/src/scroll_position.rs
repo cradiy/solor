@@ -21,11 +21,15 @@ pub struct ListScrollPosition {
 impl ListScrollPosition {
     /// Percentage of scrollable travel, from 0 to 100. Content that fits returns 0.
     pub fn percent(self) -> f64 {
-        if self.max_offset_px > 0.0 {
-            self.offset_px / self.max_offset_px * 100.0
-        } else {
-            0.0
-        }
+        scroll_percent(self.offset_px, self.max_offset_px)
+    }
+}
+
+pub(crate) fn scroll_percent(offset: f64, maximum: f64) -> f64 {
+    if maximum > 0.0 {
+        offset / maximum * 100.0
+    } else {
+        0.0
     }
 }
 

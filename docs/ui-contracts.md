@@ -595,6 +595,30 @@ pixels after layout. The bar moves the vertical offset and preserves the horizon
 offset. Each handle tracks one mounted container at a time and can be reused
 after unmount.
 
+For a reading progress indicator, create the handle with
+`ScrollHandle::with_metrics_signal(cx)` and attach it to the container as above.
+The signal carries both axes, including changes to the viewport and scroll range.
+
+```rust
+let (scroll, metrics) = ScrollHandle::with_metrics_signal(cx);
+let progress = div().h(px(3.0)).paint(move |cx| {
+    if let Some(m) = *cx.read(metrics)? {
+        let mut bar = cx.size;
+        bar.width = bar.width * (m.vertical_percent() / 100.0) as f32;
+        cx.fill(bar, rgb(0x3888dd));
+    }
+    Ok(())
+});
+div().flex_col().items_stretch()
+    .child(progress)
+    .child(div().flex_1().overflow_y_scroll().track_scroll(&scroll).children(rows))
+```
+
+Both `horizontal_percent()` and `vertical_percent()` report zero for an axis
+whose content fits. Reading the signal during paint subscribes the indicator to
+changes. It receives `None` before the first scrollable layout, while the
+container is hidden or both scroll axes are disabled, and after unmount.
+
 Use the handle directly from an event handler to jump to a logical-pixel
 coordinate or a percentage of the vertical range.
 
