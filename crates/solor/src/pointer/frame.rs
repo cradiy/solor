@@ -7,6 +7,7 @@ use super::{PointerButton, PointerEvent, PointerSample};
 use crate::clip::{NodeClips, OverflowClip};
 use crate::{
     Instance, NodeId, Result, Ui, ViewId,
+    element::FramePaint,
     layout::{Origin, Size},
     styled_body::StyledBody,
     text::Text,
@@ -225,7 +226,7 @@ impl HitGeometry {
             };
             // A fixed label is a leaf. Omit it only when neither its border hit box
             // nor its padded text command can intersect the inherited clip.
-            if body.fixed_label
+            if body.frame_paint == FramePaint::FixedLabel
                 && let Some(clip) = &frame.clips[inherited_clip].content
                 && !clip.intersects(origin, area.size)
             {
@@ -299,7 +300,7 @@ impl HitGeometry {
                 area,
                 recipients,
                 testable: body.hit_testable,
-                paints: !body.skip_frame_paint,
+                paints: body.frame_paint != FramePaint::Empty,
             });
             let start = pending.len();
             for child in children {

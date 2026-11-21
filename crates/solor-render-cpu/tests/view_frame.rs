@@ -440,6 +440,9 @@ fn asymmetric_background_radii_fit_each_allocation_and_survive_replay() -> Resul
         let frame = ui.record_frame(view)?;
         assert!(matches!(frame.draws(), [Draw::Fill { corner_radii, .. }]
             if *corner_radii == radii.map(|r| r * factor)));
+        for _ in 0..2 {
+            assert_eq!(ui.record_frame(view)?.draws(), frame.draws());
+        }
         if held.is_none() {
             held = Some(frame);
         }

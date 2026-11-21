@@ -418,7 +418,7 @@ impl Instance {
         }
         self.pointer.scroll_pending = true;
         self.pointer.invalidate_geometry();
-        self.fixed_labels = Default::default();
+        self.fixed_draws = Default::default();
         // Retained draw commands include absolute origins and inherited clips.
         let mut paint = self.repaints.borrow_mut();
         let mut pending: Vec<_> = self.scene.children(owner)?.collect();

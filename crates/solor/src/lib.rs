@@ -199,7 +199,7 @@ struct Instance {
     paint_reads: RefCell<Vec<SignalId>>,
     observers: RefCell<HashMap<NodeId, Vec<(SignalId, BindingId)>>>,
     pointer: pointer::PointerRouter,
-    fixed_labels: frame::FixedLabels,
+    fixed_draws: frame::FixedDraws,
     units: UnitResolver,
     repaints: Repaints,
     scene: Scene,
@@ -282,7 +282,7 @@ impl Instance {
 
     fn invalidate_geometry(&mut self) {
         self.pointer.invalidate_geometry();
-        self.fixed_labels = Default::default();
+        self.fixed_draws = Default::default();
         self.repaints.borrow_mut().commands.clear();
     }
 
@@ -331,7 +331,7 @@ impl Instance {
                 list.dirty.set(true);
             }
             self.pointer.invalidate_geometry();
-            self.fixed_labels = Default::default();
+            self.fixed_draws = Default::default();
         }
         Ok(())
     }
@@ -657,7 +657,7 @@ impl Ui {
             paint_reads: Default::default(),
             observers: Default::default(),
             pointer: Default::default(),
-            fixed_labels: Default::default(),
+            fixed_draws: Default::default(),
             units,
             repaints: Repaints::default(),
             scene,

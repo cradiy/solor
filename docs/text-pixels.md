@@ -206,16 +206,17 @@ covers steady-state local updates, excluding mount, upload and compositor time.
 Run the scaling workload with
 `cargo test --release -p solor-render-cpu --test meter_updates --offline -- time_static_label_scaling --exact --ignored --nocapture`.
 
-### Reusing fixed label commands
+### Reusing fixed drawing commands
 
-A view retains the drawing commands of fixed text labels without backgrounds
-after a second successful recording with the same geometry. Subsequent frames
-copy those commands in paint order. Each cache entry shares the shaped
-paragraph and stores the label's position, content size, foreground and order.
-On x86-64 the entry occupies 40 bytes, or 40 KiB of entries for 1,024 labels,
-excluding vector spare capacity and allocator overhead. Insertion, removal or
-changed geometry discards the cache. Bound text, labels with backgrounds and
-custom elements follow their normal recording paths.
+A view retains fixed text and background commands after a second successful
+recording with the same geometry. Eligible labels have fixed text and style,
+with no background or text decorations. Each label entry shares the shaped
+paragraph and stores its clip, origin, content size, foreground and paint order.
+A plain on-demand container with a fixed background and no drawing callback
+records its fill directly on the first frame. Repeated recordings retain that
+fill, including its fitted corner radii, in a separate array. Both arrays
+replay in tree paint order alongside dynamic elements. Scrolling, changes to
+geometry or visibility, and structural edits discard the arrays.
 
 The same six-pair release comparison uses shared pointer geometry in both
 builds. Each measurement below is the median of twelve pass statistics in µs.

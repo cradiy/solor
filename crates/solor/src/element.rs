@@ -511,11 +511,24 @@ fn record_content<E: Element>(scene: &Scene, id: NodeId, cx: &mut PaintContext) 
     body.content.paint(cx)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum FramePaint {
+    Empty,
+    FixedBackground,
+    FixedLabel,
+    Recorded,
+}
+
+impl FramePaint {
+    pub(super) fn is_fixed_draw(self) -> bool {
+        matches!(self, Self::FixedBackground | Self::FixedLabel)
+    }
+}
+
 pub(super) struct MountedNode {
     pub(super) id: NodeId,
     pub(super) offset: usize,
-    pub(super) fixed_label: bool,
-    pub(super) skip_frame_paint: bool,
+    pub(super) frame_paint: FramePaint,
     pub(super) visible: bool,
     pub(super) local_visible: bool,
     paint_mode: RefreshPolicy,
@@ -543,25 +556,35 @@ impl MountedNode {
         record: Option<Record>,
     ) -> Self {
         let style = mounted.style;
+        let frame_paint = if !mounted.fixed
+            || !matches!(paint_mode, RefreshPolicy::Fixed(RefreshMode::OnDemand))
+        {
+            FramePaint::Recorded
+        } else if record.is_none() {
+            match &style.background {
+                None => FramePaint::Empty,
+                Some(Background::Fixed(_)) => FramePaint::FixedBackground,
+                Some(_) => FramePaint::Recorded,
+            }
+        } else if fixed_label
+            && style.background.is_none()
+            && !style.text.attributes.as_deref().is_some_and(|a| {
+                a.underline == Some(true)
+                    || a.strikethrough == Some(true)
+                    || a.text_background.is_some_and(|color| color.alpha != 0)
+            })
+            && matches!(style.text.color, Foreground::Fixed(_))
+        {
+            FramePaint::FixedLabel
+        } else {
+            FramePaint::Recorded
+        };
         Self {
             id,
             offset: 0,
             local_visible: mounted.visible,
             visible: mounted.visible,
-            skip_frame_paint: record.is_none()
-                && style.background.is_none()
-                && mounted.fixed
-                && matches!(paint_mode, RefreshPolicy::Fixed(RefreshMode::OnDemand)),
-            fixed_label: fixed_label
-                && mounted.fixed
-                && style.background.is_none()
-                && !style.text.attributes.as_deref().is_some_and(|a| {
-                    a.underline == Some(true)
-                        || a.strikethrough == Some(true)
-                        || a.text_background.is_some_and(|color| color.alpha != 0)
-                })
-                && matches!(style.text.color, Foreground::Fixed(_))
-                && matches!(paint_mode, RefreshPolicy::Fixed(RefreshMode::OnDemand)),
+            frame_paint,
             paint_mode,
             binding_target: None,
             handlers,
