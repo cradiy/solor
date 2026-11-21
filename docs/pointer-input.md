@@ -138,11 +138,12 @@ failed submission's snapshot. Input before the first acceptance has no target.
 If the newly accepted snapshot omits a live press owner, acceptance cancels
 that sequence. A cancel callback error leaves the new snapshot in effect.
 
-Recordings of the same mounted tree share its immutable hit geometry until a
-node is inserted or removed, layout publishes changed geometry, or a
-listener's resolved padding changes. The next
-recording then builds a new snapshot. Accepting a submission selects its own
-snapshot for input, even if the view has already prepared a different layout.
+Recordings of the same mounted tree share its immutable hit geometry. Changes
+to scroll offsets, layout geometry, tree structure or input styles invalidate
+the snapshot. The next recording resolves each viewport's clip against its
+ancestors. Descendants that inherit the same clip share it within that snapshot.
+Accepting a submission selects its own snapshot for input, even if the view
+has already prepared a different layout.
 
 Hit testing visits axis-aligned border boxes in reverse paint order within the
 view rectangle. Higher sibling `z_index` values are in front. For ties the

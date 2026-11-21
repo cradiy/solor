@@ -4,9 +4,9 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{Context as _, ensure};
 
 use super::{PointerButton, PointerEvent, PointerSample};
-use crate::clip::NodeClips;
+use crate::clip::{NodeClips, OverflowClip};
 use crate::{
-    ContentClip, Instance, NodeId, Result, Ui, ViewId,
+    Instance, NodeId, Result, Ui, ViewId,
     layout::{Origin, Size},
     styled_body::StyledBody,
     text::Text,
@@ -44,7 +44,7 @@ struct Entry {
     recipients: Recipients,
     testable: bool,
     paints: bool,
-    clips: NodeClips,
+    clips: usize,
 }
 
 /// Immutable input geometry prepared alongside a view's pending presentation.
@@ -56,6 +56,7 @@ pub struct PointerFrame {
 pub(super) struct HitGeometry {
     frame_listeners: Vec<NodeId>,
     entries: Vec<Entry>,
+    clips: Vec<NodeClips>,
     interactive: HashMap<NodeId, InteractiveBox>,
     hover_parents: HashMap<NodeId, Option<NodeId>>,
     scroll_parents: HashMap<NodeId, NodeId>,
@@ -73,7 +74,13 @@ impl PointerFrame {
             .entries
             .iter()
             .filter(|entry| entry.paints)
-            .map(|entry| (entry.node, entry.area.origin, &entry.clips))
+            .map(|entry| {
+                (
+                    entry.node,
+                    entry.area.origin,
+                    &self.geometry.clips[entry.clips],
+                )
+            })
     }
 
     pub(super) fn has_recipient(&self, node: NodeId) -> bool {
@@ -87,8 +94,7 @@ impl PointerFrame {
         let hit = self.geometry.entries.iter().rev().find(|entry| {
             entry.testable
                 && entry.area.contains(p)
-                && entry
-                    .clips
+                && self.geometry.clips[entry.clips]
                     .inherited
                     .as_deref()
                     .is_none_or(|clip| clip.contains(p))
@@ -182,6 +188,7 @@ impl HitGeometry {
         let mut frame = Self {
             frame_listeners: Vec::new(),
             entries: Vec::with_capacity(instance.visible_nodes),
+            clips: vec![NodeClips::default()],
             interactive: HashMap::new(),
             hover_parents: HashMap::new(),
             scroll_parents: HashMap::new(),
@@ -192,12 +199,7 @@ impl HitGeometry {
         if !root.visible {
             return Ok(frame);
         }
-        let mut pending = vec![(
-            root,
-            Origin::default(),
-            Recipients::default(),
-            None::<Arc<ContentClip>>,
-        )];
+        let mut pending = vec![(root, Origin::default(), Recipients::default(), 0)];
         while let Some((body, offset, inherited, inherited_clip)) = pending.pop() {
             let id = body.id;
             if instance.frame_handlers.contains_key(&id) {
@@ -224,7 +226,7 @@ impl HitGeometry {
             // A fixed label is a leaf. Omit it only when neither its border hit box
             // nor its padded text command can intersect the inherited clip.
             if body.fixed_label
-                && let Some(clip) = &inherited_clip
+                && let Some(clip) = &frame.clips[inherited_clip].content
                 && !clip.intersects(origin, area.size)
             {
                 let label = instance.scene.body::<StyledBody<Text>>(id)?;
@@ -285,10 +287,12 @@ impl HitGeometry {
                 }
                 recipients.scroll = Some(id);
             }
-            let clips = body
-                .overflow_clip
-                .resolve(inherited_clip, origin, area.size)?;
-            let child_clip = clips.content.clone();
+            let (clips, child_clip) = frame.resolve_clips(
+                inherited_clip,
+                body.overflow_clip,
+                area,
+                children.len() > 0,
+            )?;
             frame.entries.push(Entry {
                 clips,
                 node: id,
@@ -301,7 +305,7 @@ impl HitGeometry {
             for child in children {
                 let child = &instance.bodies[&child];
                 if child.visible {
-                    pending.push((child, child_origin, recipients, child_clip.clone()));
+                    pending.push((child, child_origin, recipients, child_clip));
                 }
             }
             let siblings = &mut pending[start..];
@@ -312,5 +316,35 @@ impl HitGeometry {
             siblings.reverse();
         }
         Ok(frame)
+    }
+
+    fn resolve_clips(
+        &mut self,
+        inherited: usize,
+        overflow: OverflowClip,
+        area: HitBox,
+        has_children: bool,
+    ) -> Result<(usize, usize)> {
+        if overflow == OverflowClip::default() {
+            return Ok((inherited, inherited));
+        }
+        let clips = overflow.resolve(
+            self.clips[inherited].content.clone(),
+            area.origin,
+            area.size,
+        )?;
+        let own = self.clips.len();
+        self.clips.push(clips);
+        if !has_children {
+            return Ok((own, own));
+        }
+        // Descendants use the viewport's content clip for both their border and content.
+        let content = self.clips[own].content.clone();
+        let children = self.clips.len();
+        self.clips.push(NodeClips {
+            inherited: content.clone(),
+            content,
+        });
+        Ok((own, children))
     }
 }

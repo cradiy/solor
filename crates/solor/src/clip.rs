@@ -96,6 +96,7 @@ fn intersect_axis(axis: &mut Option<Range<Pixels>>, start: Pixels, length: Pixel
     Ok(())
 }
 
+#[derive(Default)]
 pub(crate) struct NodeClips {
     pub(crate) inherited: Option<Arc<ContentClip>>,
     pub(crate) content: Option<Arc<ContentClip>>,
