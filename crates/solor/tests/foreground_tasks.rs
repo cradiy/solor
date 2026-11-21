@@ -37,12 +37,14 @@ fn foreign_wake_resumes_local_state_on_the_owner_thread() -> anyhow::Result<()> 
         })
         .await;
         assert_eq!(thread::current().id(), owner);
-        cx.set(value, *local + 1)
+        let sum = cx.read(value, |current| *local + *current)?;
+        cx.set(value, sum)
     });
     let (host, wakes) = mpsc::channel();
     let waker = Waker::from(Arc::new(Host(host)));
     ui.poll_tasks(&waker)?;
     assert_eq!(*ui.context().read(value)?, 0);
+    ui.context().set(value, 1)?;
     wakes.try_iter().for_each(drop);
     thread::spawn(move || receive.recv().unwrap().wake())
         .join()

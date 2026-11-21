@@ -64,6 +64,12 @@ pub struct AsyncContext {
 }
 
 impl AsyncContext {
+    /// Borrows the signal's current value for the duration of the closure.
+    pub fn read<T: 'static, R>(&self, signal: Signal<T>, read: impl FnOnce(&T) -> R) -> Result<R> {
+        let state = self.active_state()?;
+        Ok(read(state.try_borrow()?.read(signal)?))
+    }
+
     /// Publishes a value to a live signal and queues its subscribers on change.
     pub fn set<T: PartialEq + 'static>(&self, signal: Signal<T>, value: T) -> Result<()> {
         self.active_state()?.try_borrow_mut()?.set(signal, value)?;
