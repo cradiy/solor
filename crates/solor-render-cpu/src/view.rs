@@ -28,6 +28,13 @@ impl Default for ViewCaches {
     }
 }
 
+struct Replay<'a> {
+    images: &'a mut solor::ImageCache,
+    svgs: &'a mut crate::svg::SvgCache,
+    masks: Option<&'a mut GlyphMasks>,
+    text: Option<TextRaster<'a>>,
+}
+
 enum Brush<'a, F> {
     Solid(solor::Rgba),
     Region(crate::bitmap::RegionSampler),
@@ -113,8 +120,22 @@ impl Surface {
         clip: Clip,
         caches: &mut ViewCaches,
     ) -> Result<()> {
-        let mut masks = Some(&mut caches.glyphs);
-        let mut text = None;
+        let mut replay = Replay {
+            images: &mut caches.images,
+            svgs: &mut caches.svgs,
+            masks: Some(&mut caches.glyphs),
+            text: None,
+        };
+        self.replay_commands(draws, scale, clip, &mut replay)
+    }
+
+    fn replay_commands(
+        &mut self,
+        draws: &[Draw],
+        scale: RasterScale,
+        clip: Clip,
+        replay: &mut Replay<'_>,
+    ) -> Result<()> {
         for draw in draws {
             let visible = device_bounds(draw, scale)?;
             let bounds = visible.intersect(clip);
@@ -122,6 +143,9 @@ impl Surface {
                 continue;
             }
             match draw {
+                Draw::Opacity { alpha, draws } => {
+                    self.opacity_group(draws, *alpha, scale, bounds, replay)?;
+                }
                 Draw::Fill {
                     origin,
                     size,
@@ -129,7 +153,7 @@ impl Surface {
                     corner_radii,
                     ..
                 } => {
-                    let fill = caches.images.resolve(fill).map_err(Error::other)?;
+                    let fill = replay.images.resolve(fill).map_err(Error::other)?;
                     self.fill_box(*origin, *size, &fill, *corner_radii, scale, bounds)?;
                 }
                 Draw::Polygon {
@@ -138,7 +162,7 @@ impl Surface {
                     fill,
                     ..
                 } => {
-                    let fill = caches.images.resolve(fill).map_err(Error::other)?;
+                    let fill = replay.images.resolve(fill).map_err(Error::other)?;
                     self.fill_polygon(*origin, points, &fill, scale, bounds)?;
                 }
                 Draw::Polyline {
@@ -159,7 +183,7 @@ impl Surface {
                 } => {
                     let viewport = scale.bounds(*origin, *size);
                     let visible = visible.intersect(Clip::canvas(self.size));
-                    caches
+                    replay
                         .svgs
                         .draw(self, asset, *tint, viewport, visible, bounds)?;
                 }
@@ -170,11 +194,64 @@ impl Surface {
                     color,
                     ..
                 } => {
-                    let raster = match &mut text {
+                    let raster = match &mut replay.text {
                         Some(raster) => raster,
-                        None => text.insert(TextRaster::new(scale, (0, 0), masks.take())),
+                        None => {
+                            replay
+                                .text
+                                .insert(TextRaster::new(scale, (0, 0), replay.masks.take()))
+                        }
                     };
                     raster.draw(self, *origin, *allocated, paragraph, *color, bounds)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn opacity_group(
+        &mut self,
+        draws: &[Draw],
+        alpha: u8,
+        scale: RasterScale,
+        bounds: Clip,
+        replay: &mut Replay<'_>,
+    ) -> Result<()> {
+        // Save the backdrop for the damaged pixels, then use their original device
+        // coordinates to draw into transparent black. Limit temporary storage on
+        // large surfaces by compositing one horizontal band at a time.
+        let width = (bounds.right - bounds.left) as usize;
+        let stride = self.size.width as usize * 4;
+        let rows = (65536 / width).max(1) as i64;
+        let mut backdrop =
+            Vec::with_capacity(width * (bounds.bottom - bounds.top).min(rows) as usize * 4);
+        for top in (bounds.top..bounds.bottom).step_by(rows as usize) {
+            let band = Clip {
+                top,
+                bottom: (top + rows).min(bounds.bottom),
+                ..bounds
+            };
+            let row_start = |y| y as usize * stride + bounds.left as usize * 4;
+            backdrop.clear();
+            for y in band.top..band.bottom {
+                let start = row_start(y);
+                let row = &mut self.rgba[start..start + width * 4];
+                backdrop.extend_from_slice(row);
+                row.fill(0);
+            }
+            self.replay_commands(draws, scale, band, replay)?;
+            for (y, saved) in (band.top..band.bottom).zip(backdrop.chunks_exact(width * 4)) {
+                let start = row_start(y);
+                for (pixel, &background) in self.rgba[start..start + width * 4]
+                    .as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
+                    .zip(saved.as_chunks::<4>().0)
+                {
+                    let layer =
+                        pixel.map(|v| ((u16::from(v) * u16::from(alpha) + 127) / 255) as u8);
+                    *pixel = background;
+                    crate::pixels::blend_premultiplied(pixel, layer);
                 }
             }
         }
@@ -331,7 +408,10 @@ fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     | Draw::Polygon { clip, .. }
     | Draw::Polyline { clip, .. }
     | Draw::Svg { clip, .. }
-    | Draw::Text { clip, .. }) = draw;
+    | Draw::Text { clip, .. }) = draw
+    else {
+        return Ok(bounds);
+    };
     if let Some(clip) = clip {
         if let Some(x) = &clip.x {
             bounds.left = bounds.left.max(scale.edge(f64::from(x.start)));
@@ -347,6 +427,21 @@ fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
 
 fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     match draw {
+        Draw::Opacity { draws, .. } => {
+            let mut total: Option<Clip> = None;
+            for child in draws {
+                let bounds = device_bounds(child, scale)?;
+                if !bounds.empty() {
+                    total = Some(total.map_or(bounds, |old| old.union(bounds)));
+                }
+            }
+            Ok(total.unwrap_or(Clip {
+                left: 0,
+                right: 0,
+                top: 0,
+                bottom: 0,
+            }))
+        }
         Draw::Polygon { origin, points, .. } => {
             crate::path::PathBounds::new(*origin, points, scale)?.clip(0.0)
         }
@@ -398,6 +493,17 @@ fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
 
 fn same_draw(a: &Draw, b: &Draw) -> bool {
     match (a, b) {
+        (
+            Draw::Opacity { alpha, draws },
+            Draw::Opacity {
+                alpha: other,
+                draws: children,
+            },
+        ) => {
+            alpha == other
+                && draws.len() == children.len()
+                && draws.iter().zip(children).all(|(a, b)| same_draw(a, b))
+        }
         (
             Draw::Text {
                 origin,
@@ -470,6 +576,18 @@ pub(super) fn damage(
     scale: RasterScale,
     canvas: Clip,
 ) -> Result<Damage> {
+    let mut area = Damage::default();
+    include_changes(old, new, scale, canvas, &mut area)?;
+    Ok(area)
+}
+
+fn include_changes(
+    old: &[Draw],
+    new: &[Draw],
+    scale: RasterScale,
+    canvas: Clip,
+    area: &mut Damage,
+) -> Result<()> {
     // An insertion or removal can shift identical trailing commands to new indices.
     // They still replay in paint order wherever the changed draws cause damage.
     let suffix = if old.len() != new.len() {
@@ -483,14 +601,25 @@ pub(super) fn damage(
     };
     let old = &old[..old.len() - suffix];
     let new = &new[..new.len() - suffix];
-    let mut area = Damage::default();
     for i in 0..old.len().max(new.len()) {
         let (before, after) = (old.get(i), new.get(i));
         if let Some((a, b)) = before.zip(after) {
+            if let (
+                Draw::Opacity { alpha, draws },
+                Draw::Opacity {
+                    alpha: other,
+                    draws: children,
+                },
+            ) = (a, b)
+                && alpha == other
+            {
+                include_changes(draws, children, scale, canvas, area)?;
+                continue;
+            }
             if same_draw(a, b) {
                 continue;
             }
-            if include_image_change(a, b, scale, canvas, &mut area)? {
+            if include_image_change(a, b, scale, canvas, area)? {
                 continue;
             }
         }
@@ -499,7 +628,7 @@ pub(super) fn damage(
             area.include(bounds);
         }
     }
-    Ok(area)
+    Ok(())
 }
 
 fn rectangle_coverage(x: f64, width: f64, row_height: f64) -> u8 {

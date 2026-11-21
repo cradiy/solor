@@ -7,6 +7,7 @@ pub(super) struct PreparedStyle {
     pub text: InheritedText,
     pub fixed: bool,
     pub visible: bool,
+    pub opacity: u8,
 }
 
 pub(super) fn prepare<E: Element>(
@@ -122,12 +123,23 @@ pub(super) fn prepare<E: Element>(
         _ => true,
     };
     Ok(PreparedStyle {
+        opacity: opacity(&style)?,
         background: MountedBackground::resolve(&style, units)?,
         style,
         text,
         fixed,
         visible: local_visible,
     })
+}
+
+fn opacity(style: &Style) -> Result<u8> {
+    let value = style
+        .appearance
+        .as_deref()
+        .and_then(|a| a.opacity)
+        .unwrap_or(1.0);
+    anyhow::ensure!(value.is_finite(), "opacity must be finite");
+    Ok((value.clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
 struct VisibilityObserver {
@@ -245,6 +257,7 @@ pub(super) fn item_style(style: &Style) -> Result<crate::layout::FlexItemStyle> 
 
 impl crate::Instance {
     fn update_style<E: Element>(&mut self, id: NodeId, style: Style, layout: bool) -> Result<()> {
+        let opacity = opacity(&style)?;
         let item = item_style(&style)?;
         let background = MountedBackground::resolve(&style, self.units)?;
         // Custom content can use any declared property to determine its metrics.
@@ -299,6 +312,10 @@ impl crate::Instance {
             self.pointer.scroll_offsets.remove(&id);
         }
         node.scroll_axes = scroll_axes;
+        if (node.opacity == 255) != (opacity == 255) {
+            self.pointer.invalidate_geometry();
+        }
+        node.opacity = opacity;
         node.z_index = z_index;
         node.overflow_clip = clip;
         node.cursor = cursor;

@@ -6,7 +6,7 @@ use solor::{
     percent,
     platform::{WindowEvent, WindowHandler},
     px,
-    raster::{DeviceSize, RasterScale},
+    raster::{Clip, DeviceSize, RasterScale},
     rgb,
     style::ObjectFit,
 };
@@ -182,44 +182,41 @@ fn application_reads_only_visible_scanlines_of_a_sparse_raw_image() -> Result<()
     Ok(())
 }
 
+#[derive(Clone)]
+struct Tiles {
+    changed: Vec<Clip>,
+    requests: Rc<RefCell<Vec<ImageRegion>>>,
+}
+
+impl ImageRenderer for Tiles {
+    fn dimensions(&self) -> DeviceSize {
+        DeviceSize {
+            width: 8,
+            height: 8,
+        }
+    }
+    fn render(&self, region: ImageRegion) -> Result<ImageAsset> {
+        self.requests.borrow_mut().push(region);
+        let mut bytes = Vec::new();
+        for y in 0..region.output.height {
+            for x in 0..region.output.width {
+                let sx = (region.source_origin[0] + (f64::from(x) + 0.5) * region.source_step[0])
+                    .floor() as i64;
+                let sy = (region.source_origin[1] + (f64::from(y) + 0.5) * region.source_step[1])
+                    .floor() as i64;
+                let painted = self
+                    .changed
+                    .iter()
+                    .any(|r| (r.left..r.right).contains(&sx) && (r.top..r.bottom).contains(&sy));
+                bytes.extend_from_slice(&[if painted { 240 } else { 12 }, 20, 30, 255]);
+            }
+        }
+        ImageAsset::from_rgba8(region.output.width, region.output.height, bytes)
+    }
+}
+
 #[test]
 fn tile_publication_repairs_the_fitted_region_and_handles_skipped_snapshots() -> Result<()> {
-    use solor::raster::Clip;
-
-    #[derive(Clone)]
-    struct Tiles {
-        changed: Vec<Clip>,
-        requests: Rc<RefCell<Vec<ImageRegion>>>,
-    }
-
-    impl ImageRenderer for Tiles {
-        fn dimensions(&self) -> DeviceSize {
-            DeviceSize {
-                width: 8,
-                height: 8,
-            }
-        }
-        fn render(&self, region: ImageRegion) -> Result<ImageAsset> {
-            self.requests.borrow_mut().push(region);
-            let mut bytes = Vec::new();
-            for y in 0..region.output.height {
-                for x in 0..region.output.width {
-                    let sx = (region.source_origin[0]
-                        + (f64::from(x) + 0.5) * region.source_step[0])
-                        .floor() as i64;
-                    let sy = (region.source_origin[1]
-                        + (f64::from(y) + 0.5) * region.source_step[1])
-                        .floor() as i64;
-                    let painted = self.changed.iter().any(|r| {
-                        (r.left..r.right).contains(&sx) && (r.top..r.bottom).contains(&sy)
-                    });
-                    bytes.extend_from_slice(&[if painted { 240 } else { 12 }, 20, 30, 255]);
-                }
-            }
-            ImageAsset::from_rgba8(region.output.width, region.output.height, bytes)
-        }
-    }
-
     let requests = Rc::new(RefCell::new(Vec::new()));
     let mut tiles = Tiles {
         changed: Vec::new(),
@@ -354,6 +351,78 @@ fn tile_publication_repairs_the_fitted_region_and_handles_skipped_snapshots() ->
             .all(|request| request.output == tile_size)
     );
     let mut reference = CpuWindow::mount(Ui::new(), component(move |_| image(batch)))?;
+    assert_eq!(frame.rgba, reference.frame(size, scale)?.rgba);
+    Ok(())
+}
+
+#[test]
+fn bound_custom_background_repairs_a_positioned_tile_inside_rounded_corners() -> Result<()> {
+    fn panel(background: impl Into<solor::style::Background>) -> impl solor::IntoElement {
+        div()
+            .w_full()
+            .h_full()
+            .bg(background)
+            .object_fit(ObjectFit::None)
+            .object_position_x(percent(100.))
+            .rounded(px(4.))
+    }
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let mut tiles = Tiles {
+        changed: Vec::new(),
+        requests: requests.clone(),
+    };
+    let base = CustomImage::new(tiles.clone())?;
+    let tile = Clip {
+        left: 4,
+        top: 0,
+        right: 8,
+        bottom: 4,
+    };
+    tiles.changed.push(tile);
+    let next = base.updated_region(tile, tiles)?;
+    let reference_image = next.clone();
+    let mut window = CpuWindow::mount(
+        Ui::new(),
+        component(move |cx| {
+            let source = cx.signal(base);
+            div()
+                .on_frame(move |_, cx| cx.set(source, next.clone()))
+                .child(panel(source))
+        }),
+    )?;
+    let size = Size {
+        width: px(14.),
+        height: px(8.),
+    };
+    let scale = RasterScale::ONE;
+    let before = window.frame(size, scale)?.rgba.to_vec();
+    window.frame_submitted()?;
+    requests.borrow_mut().clear();
+    window.event(WindowEvent::FrameReady(Duration::ZERO))?;
+    let frame = window.frame(size, scale)?;
+    assert_eq!(
+        frame.damage.rects(),
+        &[Clip {
+            left: 10,
+            right: 14,
+            ..tile
+        }]
+    );
+    let calls = requests.take();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].source_origin, [4., 0.]);
+    assert_eq!(
+        calls[0].output,
+        DeviceSize {
+            width: 4,
+            height: 4
+        }
+    );
+    let inside = 4 * (2 * 14 + 11);
+    assert_eq!(&frame.rgba[inside..inside + 4], &[240, 20, 30, 255]);
+    assert_ne!(frame.rgba[inside], before[inside]);
+    assert_eq!(frame.rgba[4 * 13..4 * 14], before[4 * 13..4 * 14]);
+    let mut reference = CpuWindow::mount(Ui::new(), component(move |_| panel(reference_image)))?;
     assert_eq!(frame.rgba, reference.frame(size, scale)?.rgba);
     Ok(())
 }

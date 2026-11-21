@@ -102,6 +102,42 @@ impl ViewFrame {
     }
 }
 
+/// Wraps completed subtrees after their individual commands have been cached.
+struct OpacityGroups<'a> {
+    events: &'a [(usize, Option<crate::NodeId>)],
+    stack: Vec<(usize, u8)>,
+}
+
+impl OpacityGroups<'_> {
+    fn advance(&mut self, index: usize, instance: &Instance, draws: &mut Vec<Draw>) {
+        while let Some((&(at, owner), rest)) = self.events.split_first() {
+            if at > index {
+                break;
+            }
+            self.events = rest;
+            if let Some(owner) = owner {
+                self.stack
+                    .push((draws.len(), instance.bodies[&owner].opacity));
+            } else {
+                let (start, alpha) = self.stack.pop().expect("paired subtree boundaries");
+                wrap_opacity(draws, start, alpha);
+            }
+        }
+    }
+}
+
+pub(super) fn wrap_opacity(draws: &mut Vec<Draw>, start: usize, alpha: u8) {
+    if alpha == 0 {
+        draws.truncate(start);
+    } else if alpha < 255 && start < draws.len() {
+        let children = draws.split_off(start);
+        draws.push(Draw::Opacity {
+            alpha,
+            draws: children,
+        });
+    }
+}
+
 impl Instance {
     fn replay_commands(&self, id: crate::NodeId, draws: &mut Vec<Draw>) -> bool {
         if let Some(saved) = self.repaints.borrow().commands.get(&id) {
@@ -147,6 +183,7 @@ impl MountedNode {
         )?;
         for draw in &mut draws[start..] {
             let origin = match draw {
+                Draw::Opacity { .. } => unreachable!("groups are formed after node recording"),
                 Draw::Fill { origin, .. }
                 | Draw::Polygon { origin, .. }
                 | Draw::Polyline { origin, .. }
@@ -216,11 +253,16 @@ impl Ui {
             }
         }
         let mut draws = Vec::new();
+        let mut groups = OpacityGroups {
+            events: pointer.opacity_events(),
+            stack: Vec::new(),
+        };
         if let Some(commands) = cache.commands.get() {
             draws.reserve(commands.labels.len() + commands.backgrounds.len());
             let mut labels = commands.labels.iter().peekable();
             let mut backgrounds = commands.backgrounds.iter().peekable();
             for (index, (id, offset, clips)) in pointer.paint_order().enumerate() {
+                groups.advance(index, instance, &mut draws);
                 if let Some(label) = labels.next_if(|label| label.index == index) {
                     draws.push(label.draw());
                 } else if let Some((_, draw)) =
@@ -235,6 +277,7 @@ impl Ui {
         } else if cache.recorded.get() {
             let mut fixed = FixedCommands::default();
             for (index, (id, offset, clips)) in pointer.paint_order().enumerate() {
+                groups.advance(index, instance, &mut draws);
                 let start = draws.len();
                 let body = &instance.bodies[&id];
                 next_frame |= body.paint_at(offset, clips, instance, &mut state, &mut draws)?;
@@ -251,12 +294,14 @@ impl Ui {
             cache.commands.get_or_init(|| fixed);
         } else {
             // Keep one-off layouts allocation-free with respect to the fixed draw cache.
-            for (id, offset, clips) in pointer.paint_order() {
+            for (index, (id, offset, clips)) in pointer.paint_order().enumerate() {
+                groups.advance(index, instance, &mut draws);
                 next_frame |= instance.bodies[&id]
                     .paint_at(offset, clips, instance, &mut state, &mut draws)?;
             }
             cache.recorded.set(true);
         }
+        groups.advance(usize::MAX, instance, &mut draws);
         instance
             .pointer
             .tooltips

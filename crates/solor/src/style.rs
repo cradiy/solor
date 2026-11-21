@@ -25,6 +25,8 @@ pub enum Background {
     Color(Signal<Rgba>),
     /// Shared bitmap sampled during paint.
     Image(Signal<crate::ImageAsset>),
+    /// Application-rendered image snapshot sampled during paint.
+    CustomImage(Signal<crate::CustomImage>),
 }
 impl<T: Into<Fill>> From<T> for Background {
     fn from(fill: T) -> Self {
@@ -34,6 +36,11 @@ impl<T: Into<Fill>> From<T> for Background {
 impl From<Signal<crate::ImageAsset>> for Background {
     fn from(signal: Signal<crate::ImageAsset>) -> Self {
         Self::Image(signal)
+    }
+}
+impl From<Signal<crate::CustomImage>> for Background {
+    fn from(signal: Signal<crate::CustomImage>) -> Self {
+        Self::CustomImage(signal)
     }
 }
 impl From<Signal<Fill>> for Background {

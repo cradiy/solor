@@ -135,6 +135,13 @@ impl Element for Text {
 /// A recorded drawing operation. Origins are local to the recording target.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Draw {
+    /// Composites the enclosed commands as a single layer over the destination.
+    Opacity {
+        /// Group opacity, with 255 representing full coverage.
+        alpha: u8,
+        /// Commands in paint order, in the same coordinates as the enclosing frame.
+        draws: Vec<Draw>,
+    },
     /// Fills a rounded rectangle.
     Fill {
         /// Effective clip in the same coordinates as the origin.
@@ -496,7 +503,8 @@ impl MountedBackground {
             }
             Background::Fixed(Fill::Image(_) | Fill::CustomImage(_))
             | Background::Bound(_)
-            | Background::Image(_) => Placement::resolve(style, units, ObjectFit::Cover)?,
+            | Background::Image(_)
+            | Background::CustomImage(_) => Placement::resolve(style, units, ObjectFit::Cover)?,
             _ => Placement::centered(ObjectFit::Cover),
         };
         Ok(Some(Box::new(Self {
@@ -587,6 +595,7 @@ pub(super) struct MountedNode {
     record: Option<Record>,
     pub(super) owned: Vec<SignalId>,
     pub(crate) handlers: Option<Box<Handlers>>,
+    pub(super) opacity: u8,
     pub(super) z_index: i32,
     pub(crate) cursor: Option<crate::style::Cursor>,
     pub(crate) hit_testable: bool,
@@ -641,6 +650,7 @@ impl MountedNode {
             paint_mode,
             binding_target: None,
             handlers,
+            opacity: mounted.opacity,
             z_index: style
                 .appearance
                 .as_deref()
@@ -707,6 +717,7 @@ impl MountedNode {
                 Background::Bound(signal) => cx.read(*signal)?.clone(),
                 Background::Color(signal) => Fill::from(*cx.read(*signal)?),
                 Background::Image(signal) => Fill::from(cx.read(*signal)?.clone()),
+                Background::CustomImage(signal) => Fill::from(cx.read(*signal)?.clone()),
             };
             if let Fill::Image(image) = &mut fill {
                 image.placement = paint.placement;

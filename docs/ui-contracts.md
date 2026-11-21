@@ -546,6 +546,12 @@ each axis to the current bounds and requests a redraw when the offset changes.
 Readback reflects the new offset immediately. Pointer hits switch to the new
 geometry when the host accepts the frame.
 
+`.opacity(0.5)` or `.opacity(signal)` applies to the element and all its
+descendants as one group. On the CPU backend the group is drawn against
+transparent black, then blended once with the pixels behind it. Nested groups
+compose from the inside out. Finite values are clamped to 0–1 and rounded to
+8-bit alpha. An opacity of zero preserves layout and hit testing.
+
 Each background corner has an independent circular radius. If two adjacent
 radii exceed their shared edge, the frame scales all four by the same factor
 until they fit. The CPU renderer applies this shape to solid and gradient
@@ -562,7 +568,7 @@ expresses placement but does not yet move a child or remove it from column flow.
 | 2. Sizing, placement and scrolling | Apply positioning and per-edge borders during measurement and placement. Resolve scrolling and overflow. Validate a long label between a fixed icon and an action at narrow and wide widths. Scrolling must share the visual clip and hit-test transform. |
 | 3. Input and state-dependent styles | Connect platform pointer adapters and define propagation, custom tab ordering and actions. Define precedence for hover, press, focus and disabled states, including removing an override. Validate a pressed element that moves, loses capture or unmounts before release. |
 | 4. Text, editing and semantics | Apply font selection and fallback, weight and richer inline styles. Define editable ranges, composition, caret bounds and accessibility actions. A bilingual field must expose the same selection to keyboard, IME and assistive input. Preserve explicit units when converting platform text ranges. |
-| 5. Paint and animation | Define border and shadow paint order, opacity of overlapping descendants, transformed and rounded clipping, and animation timing. A frame-clock repaint must stop on unmount. CPU replay must draw every gradient stop, preserve hard edges and match the declared interpolation. A GPU representation needs equivalent output and a resource lifetime through submission. |
+| 5. Paint and animation | Define border and shadow paint order, transformed and rounded clipping, and animation timing. A frame-clock repaint must stop on unmount. CPU replay must draw every gradient stop, preserve hard edges and match the declared interpolation. A GPU representation needs equivalent output and a resource lifetime through submission. |
 | 6. Large collections and resources | Define keyed identity, viewport materialization, scroll anchoring, image/font resource ownership and cancellation. Replace and reorder items while keeping focus on a surviving key. Late resource completion must not invalidate a recycled node. |
 
 Linux is the first presentation target. Geometry, semantic actions, text ranges
@@ -639,8 +645,9 @@ to compare cover and contain placement with a transparent WebP.
 A standalone image uses its intrinsic dimensions and defaults to centered
 `ObjectFit::Contain`. A bitmap background covers the assigned box, including
 padding, and follows its corner radii. Both accept `object_fit`,
-`object_position_x` and `object_position_y`. Both also accept
-`Signal<ImageAsset>`. Replacing a background invalidates paint. An image leaf
+`object_position_x` and `object_position_y`. Both `image(signal)` and `.bg(signal)` accept
+`Signal<ImageAsset>` or `Signal<CustomImage>`. Replacing a background invalidates
+paint. An image leaf
 remeasures when the source dimensions change. Recorded frames retain their
 own image, and the CPU renderer filters premultiplied pixels before compositing.
 

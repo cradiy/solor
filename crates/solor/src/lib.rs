@@ -1005,6 +1005,7 @@ impl Ui {
             .get(&node)
             .ok_or(crate::tree::TreeError::InvalidNode(node))?;
         let mut state = self.state.try_borrow_mut()?;
+        let start = commands.len();
         body.paint(
             &instance.scene,
             &state,
@@ -1012,6 +1013,7 @@ impl Ui {
             None,
             commands,
         )?;
+        frame::wrap_opacity(commands, start, body.opacity);
         instance.observe_paint(node, &mut state)?;
         let mut repaints = instance.repaints.borrow_mut();
         repaints.commands.remove(&node);
