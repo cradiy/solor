@@ -214,7 +214,7 @@ pub trait Styled: Sized {
     property_setters! { appearance_mut;
         object_fit => object_fit: ObjectFit, outline_style => outline_style: BorderStyle,
         visibility => visibility: Visibility, z_index => z_index: i32,
-        opacity => opacity: f32, cursor => cursor: Cursor, pointer_events => pointer_events: PointerEvents
+        gradient_map => gradient_map: crate::GradientMap, opacity => opacity: f32, cursor => cursor: Cursor, pointer_events => pointer_events: PointerEvents
     }
     property_setters! { appearance_mut;
         outline_width => outline_width: AbsoluteLength, outline_offset => outline_offset: AbsoluteLength,

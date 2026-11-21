@@ -103,12 +103,12 @@ impl ViewFrame {
 }
 
 /// Wraps completed subtrees after their individual commands have been cached.
-struct OpacityGroups<'a> {
+struct PaintGroups<'a> {
     events: &'a [(usize, Option<crate::NodeId>)],
-    stack: Vec<(usize, u8)>,
+    stack: Vec<(usize, crate::NodeId)>,
 }
 
-impl OpacityGroups<'_> {
+impl PaintGroups<'_> {
     fn advance(&mut self, index: usize, instance: &Instance, draws: &mut Vec<Draw>) {
         while let Some((&(at, owner), rest)) = self.events.split_first() {
             if at > index {
@@ -116,23 +116,23 @@ impl OpacityGroups<'_> {
             }
             self.events = rest;
             if let Some(owner) = owner {
-                self.stack
-                    .push((draws.len(), instance.bodies[&owner].opacity));
+                self.stack.push((draws.len(), owner));
             } else {
-                let (start, alpha) = self.stack.pop().expect("paired subtree boundaries");
-                wrap_opacity(draws, start, alpha);
+                let (start, owner) = self.stack.pop().expect("paired subtree boundaries");
+                wrap_group(draws, start, &instance.bodies[&owner]);
             }
         }
     }
 }
 
-pub(super) fn wrap_opacity(draws: &mut Vec<Draw>, start: usize, alpha: u8) {
-    if alpha == 0 {
+pub(super) fn wrap_group(draws: &mut Vec<Draw>, start: usize, node: &MountedNode) {
+    if node.opacity == 0 {
         draws.truncate(start);
-    } else if alpha < 255 && start < draws.len() {
+    } else if node.is_group() && start < draws.len() {
         let children = draws.split_off(start);
-        draws.push(Draw::Opacity {
-            alpha,
+        draws.push(Draw::Group {
+            alpha: node.opacity,
+            gradient_map: node.gradient_map.clone(),
             draws: children,
         });
     }
@@ -183,7 +183,7 @@ impl MountedNode {
         )?;
         for draw in &mut draws[start..] {
             let origin = match draw {
-                Draw::Opacity { .. } => unreachable!("groups are formed after node recording"),
+                Draw::Group { .. } => unreachable!("groups are formed after node recording"),
                 Draw::Fill { origin, .. }
                 | Draw::Polygon { origin, .. }
                 | Draw::Polyline { origin, .. }
@@ -254,8 +254,8 @@ impl Ui {
             }
         }
         let mut draws = Vec::new();
-        let mut groups = OpacityGroups {
-            events: pointer.opacity_events(),
+        let mut groups = PaintGroups {
+            events: pointer.group_events(),
             stack: Vec::new(),
         };
         if let Some(commands) = cache.commands.get() {

@@ -124,6 +124,16 @@ pub(super) fn prepare<E: Element>(
     })
 }
 
+pub(super) fn gradient_map(style: &Style) -> Option<crate::GradientMap> {
+    style
+        .appearance
+        .as_ref()?
+        .gradient_map
+        .as_ref()
+        .filter(|map| map.strength() > 0.0)
+        .cloned()
+}
+
 fn opacity(style: &Style) -> Result<u8> {
     let value = style
         .appearance
@@ -304,10 +314,12 @@ impl crate::Instance {
             self.pointer.scroll_offsets.remove(&id);
         }
         node.scroll_axes = scroll_axes;
-        if (node.opacity == 255) != (opacity == 255) {
+        let was_group = node.is_group();
+        node.gradient_map = gradient_map(&style);
+        node.opacity = opacity;
+        if was_group != node.is_group() {
             self.pointer.invalidate_geometry();
         }
-        node.opacity = opacity;
         node.z_index = z_index;
         node.overflow_clip = clip;
         node.cursor = cursor;

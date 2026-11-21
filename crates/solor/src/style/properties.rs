@@ -137,6 +137,8 @@ properties! {
         z_index: i32,
         /// Opacity of the composited subtree, from zero to one.
         opacity: f32,
+        /// Luminance remapping applied to the composited subtree before group opacity.
+        gradient_map: crate::GradientMap,
         /// Ordered shadow layers. An empty list clears all layers.
         shadows: Rc<[BoxShadow]>,
         /// Blur radius applied to the backdrop.

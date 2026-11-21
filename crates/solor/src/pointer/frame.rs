@@ -58,7 +58,7 @@ pub struct PointerFrame {
 pub(super) struct HitGeometry {
     frame_listeners: Vec<NodeId>,
     entries: Vec<Entry>,
-    opacity_events: Vec<(usize, Option<NodeId>)>,
+    group_events: Vec<(usize, Option<NodeId>)>,
     clips: Vec<NodeClips>,
     interactive: HashMap<NodeId, InteractiveBox>,
     hover_parents: HashMap<NodeId, Option<NodeId>>,
@@ -74,8 +74,8 @@ impl PointerFrame {
 
     // Group boundaries use indices in paint_order, including when the group owner
     // has no commands of its own. Siblings are traversed in stacking order.
-    pub(crate) fn opacity_events(&self) -> &[(usize, Option<NodeId>)] {
-        &self.geometry.opacity_events
+    pub(crate) fn group_events(&self) -> &[(usize, Option<NodeId>)] {
+        &self.geometry.group_events
     }
 
     pub(crate) fn paint_order(&self) -> impl Iterator<Item = (NodeId, Origin, &NodeClips)> + '_ {
@@ -196,7 +196,7 @@ impl HitGeometry {
     fn from_layout(instance: &Instance) -> Result<Self> {
         let mut frame = Self {
             frame_listeners: Vec::new(),
-            opacity_events: Vec::new(),
+            group_events: Vec::new(),
             entries: Vec::with_capacity(instance.visible_nodes),
             clips: vec![NodeClips::default()],
             interactive: HashMap::new(),
@@ -215,7 +215,7 @@ impl HitGeometry {
         loop {
             while open_groups.last() == Some(&pending.len()) {
                 open_groups.pop();
-                frame.opacity_events.push((paint_index, None));
+                frame.group_events.push((paint_index, None));
             }
             let Some((body, offset, inherited, inherited_clip)) = pending.pop() else {
                 break;
@@ -315,8 +315,8 @@ impl HitGeometry {
                 area,
                 children.len() > 0,
             )?;
-            if body.opacity < 255 {
-                frame.opacity_events.push((paint_index, Some(id)));
+            if body.is_group() {
+                frame.group_events.push((paint_index, Some(id)));
                 open_groups.push(pending.len());
             }
             let paints = body.frame_paint != FramePaint::Empty;

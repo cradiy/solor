@@ -19,3 +19,7 @@ solor-render-cpu.workspace = true
 [[example]]
 name = "image"
 required-features = ["solor/webp"]
+
+[[example]]
+name = "gradient_map"
+required-features = ["solor/webp"]

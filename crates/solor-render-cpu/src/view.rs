@@ -121,8 +121,19 @@ impl Surface {
                 continue;
             }
             match draw {
-                Draw::Opacity { alpha, draws } => {
-                    self.opacity_group(draws, *alpha, scale, bounds, replay)?;
+                Draw::Group {
+                    alpha,
+                    gradient_map,
+                    draws,
+                } => {
+                    self.composite_group(
+                        draws,
+                        *alpha,
+                        gradient_map.as_ref(),
+                        scale,
+                        bounds,
+                        replay,
+                    )?;
                 }
                 Draw::Fill {
                     origin,
@@ -187,10 +198,11 @@ impl Surface {
         Ok(())
     }
 
-    fn opacity_group(
+    fn composite_group(
         &mut self,
         draws: &[Draw],
         alpha: u8,
+        gradient_map: Option<&solor::GradientMap>,
         scale: RasterScale,
         bounds: Clip,
         replay: &mut Replay<'_>,
@@ -220,12 +232,11 @@ impl Surface {
             self.replay_commands(draws, scale, band, replay)?;
             for (y, saved) in (band.top..band.bottom).zip(backdrop.chunks_exact(width * 4)) {
                 let start = row_start(y);
-                for (pixel, &background) in self.rgba[start..start + width * 4]
-                    .as_chunks_mut::<4>()
-                    .0
-                    .iter_mut()
-                    .zip(saved.as_chunks::<4>().0)
-                {
+                let pixels = self.rgba[start..start + width * 4].as_chunks_mut::<4>().0;
+                if let Some(map) = gradient_map {
+                    map_colors(pixels, map)?;
+                }
+                for (pixel, &background) in pixels.iter_mut().zip(saved.as_chunks::<4>().0) {
                     let layer =
                         pixel.map(|v| ((u16::from(v) * u16::from(alpha) + 127) / 255) as u8);
                     *pixel = background;
@@ -433,7 +444,7 @@ fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
 
 fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     match draw {
-        Draw::Opacity { draws, .. } => {
+        Draw::Group { draws, .. } => {
             let mut total: Option<Clip> = None;
             for child in draws {
                 let bounds = device_bounds(child, scale)?;
@@ -497,16 +508,44 @@ fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     }
 }
 
+fn map_colors(mut row: &mut [[u8; 4]], map: &solor::GradientMap) -> Result<()> {
+    while let Some(&source) = row.first() {
+        let run = row.iter().take_while(|&&p| p == source).count();
+        let (pixels, rest) = row.split_at_mut(run);
+        row = rest;
+        let [r, g, b, a] = source.map(u32::from);
+        if a == 0 {
+            continue;
+        }
+        let luminance = (2126 * r + 7152 * g + 722 * b) as f32 / (10000 * a) as f32;
+        let color = map.palette().sample(luminance).map_err(Error::other)?;
+        let alpha = color.alpha as f32 * a as f32 / 255.0;
+        let mapped = [color.red, color.green, color.blue, 255].map(|v| v as f32 * (alpha / 255.0));
+        let result = std::array::from_fn(|i| {
+            let original = f32::from(source[i]);
+            (original + (mapped[i] - original) * map.strength()).round() as u8
+        });
+        pixels.fill(result);
+    }
+    Ok(())
+}
+
 fn same_draw(a: &Draw, b: &Draw) -> bool {
     match (a, b) {
         (
-            Draw::Opacity { alpha, draws },
-            Draw::Opacity {
+            Draw::Group {
+                alpha,
+                gradient_map,
+                draws,
+            },
+            Draw::Group {
                 alpha: other,
+                gradient_map: other_map,
                 draws: children,
             },
         ) => {
             alpha == other
+                && gradient_map == other_map
                 && draws.len() == children.len()
                 && draws.iter().zip(children).all(|(a, b)| same_draw(a, b))
         }
@@ -611,13 +650,19 @@ fn include_changes(
         let (before, after) = (old.get(i), new.get(i));
         if let Some((a, b)) = before.zip(after) {
             if let (
-                Draw::Opacity { alpha, draws },
-                Draw::Opacity {
+                Draw::Group {
+                    alpha,
+                    gradient_map,
+                    draws,
+                },
+                Draw::Group {
                     alpha: other,
+                    gradient_map: other_map,
                     draws: children,
                 },
             ) = (a, b)
                 && alpha == other
+                && gradient_map == other_map
             {
                 include_changes(draws, children, scale, canvas, area)?;
                 continue;

@@ -136,7 +136,9 @@ impl Element for Text {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Draw {
     /// Composites the enclosed commands as a single layer over the destination.
-    Opacity {
+    Group {
+        /// Optional luminance mapping applied before group opacity.
+        gradient_map: Option<crate::GradientMap>,
         /// Group opacity, with 255 representing full coverage.
         alpha: u8,
         /// Commands in paint order, in the same coordinates as the enclosing frame.
@@ -596,6 +598,7 @@ pub(super) struct MountedNode {
     pub(super) owned: crate::Owned,
     pub(crate) handlers: Option<Box<Handlers>>,
     pub(super) opacity: u8,
+    pub(super) gradient_map: Option<crate::GradientMap>,
     pub(super) z_index: i32,
     pub(crate) cursor: Option<crate::style::Cursor>,
     pub(crate) hit_testable: bool,
@@ -604,6 +607,10 @@ pub(super) struct MountedNode {
 }
 
 impl MountedNode {
+    pub(super) fn is_group(&self) -> bool {
+        self.opacity < 255 || self.gradient_map.is_some()
+    }
+
     fn new(
         id: NodeId,
         handlers: Option<Box<Handlers>>,
@@ -651,6 +658,7 @@ impl MountedNode {
             binding_target: None,
             handlers,
             opacity: mounted.opacity,
+            gradient_map: style_binding::gradient_map(&style),
             z_index: style
                 .appearance
                 .as_deref()

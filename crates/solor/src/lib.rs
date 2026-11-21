@@ -80,9 +80,9 @@ pub use element::{
     RefreshMode, RefreshPolicy, Render, TextContent, div, element, text,
 };
 pub use fill::{
-    ColorSpace, ColorStop, Fill, Gradient, GradientError, GradientKind, Rgba, color_stop,
-    gradient_bottom_to_top, gradient_left_to_right, gradient_right_to_left, gradient_top_to_bottom,
-    linear_gradient, rgb, rgba,
+    ColorSpace, ColorStop, Fill, Gradient, GradientError, GradientKind, GradientMap, Rgba,
+    color_stop, gradient_bottom_to_top, gradient_left_to_right, gradient_right_to_left,
+    gradient_top_to_bottom, linear_gradient, rgb, rgba,
 };
 use length::UnitResolver;
 pub use length::{AbsoluteLength, Length, percent, rem};
@@ -1030,7 +1030,7 @@ impl Ui {
             None,
             commands,
         )?;
-        frame::wrap_opacity(commands, start, body.opacity);
+        frame::wrap_group(commands, start, body);
         instance.observe_paint(node, &mut state)?;
         let mut repaints = instance.repaints.borrow_mut();
         repaints.commands.remove(&node);

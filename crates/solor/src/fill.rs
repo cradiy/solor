@@ -123,6 +123,45 @@ pub enum ColorSpace {
     Oklab,
 }
 
+/// Recolors the composited pixels of a subtree using their display-RGB luminance.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GradientMap {
+    palette: Arc<Gradient>,
+    strength: f32,
+}
+
+impl GradientMap {
+    /// Blends from the original pixels at zero to the mapped colors at one.
+    pub fn new(palette: Gradient, strength: f32) -> Result<Self, GradientError> {
+        if !(0.0..=1.0).contains(&strength) {
+            return Err(GradientError::InvalidParameter);
+        }
+        Ok(Self {
+            palette: Arc::new(palette),
+            strength,
+        })
+    }
+
+    /// Color ramp sampled from black to white.
+    pub fn palette(&self) -> &Gradient {
+        &self.palette
+    }
+
+    /// Fraction of the mapped premultiplied color in the output.
+    pub fn strength(&self) -> f32 {
+        self.strength
+    }
+}
+
+impl From<Gradient> for GradientMap {
+    fn from(palette: Gradient) -> Self {
+        Self {
+            palette: Arc::new(palette),
+            strength: 1.0,
+        }
+    }
+}
+
 /// A shared stop sequence and the parameters used to sample it.
 #[derive(Clone, Debug)]
 pub struct Gradient {

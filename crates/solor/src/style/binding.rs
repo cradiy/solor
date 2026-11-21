@@ -50,6 +50,7 @@ macro_rules! exact {
 
 converted!(
     Visibility,
+    crate::GradientMap,
     Length,
     AbsoluteLength,
     Fill,
