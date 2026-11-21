@@ -572,6 +572,17 @@ are outside the measured interval.
 
 ### Positioning a row
 
+Use `.follow_tail()` on a uniform or variable-height list for a chat transcript
+or live log. The list opens at the bottom and follows appended rows while the
+reader stays there. Scrolling up or jumping to an earlier row pauses following.
+Scrolling back to the bottom resumes it. A scroll handle is optional.
+
+```rust
+variable_list(messages, px(32.0), |message| text(message))
+    .follow_tail()
+    .flex_1()
+```
+
 Both list builders accept a `ListScrollHandle`. Keep the handle with the view
 that issues navigation commands. For example, a search result can reveal its
 zero-based row with the minimum amount of scrolling.

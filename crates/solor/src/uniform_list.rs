@@ -186,6 +186,7 @@ where
 {
     VirtualList {
         scroll: None,
+        follow_tail: false,
         measured: false,
         items: items.into(),
         height,
@@ -210,6 +211,7 @@ where
 {
     VirtualList {
         scroll: None,
+        follow_tail: false,
         items: items.into(),
         height: estimated_height,
         row,
@@ -222,6 +224,7 @@ where
 /// A stylable virtual list declaration with an optional scroll handle.
 pub struct VirtualList<K, F> {
     scroll: Option<ListScrollHandle>,
+    follow_tail: bool,
     measured: bool,
     items: ListItems<K>,
     height: Pixels,
@@ -230,6 +233,13 @@ pub struct VirtualList<K, F> {
 }
 
 impl<K, F> VirtualList<K, F> {
+    /// Opens the list at its end and keeps the last row in view as content grows.
+    /// Scrolling away pauses following. Returning to the bottom resumes it.
+    pub fn follow_tail(mut self) -> Self {
+        self.follow_tail = true;
+        self
+    }
+
     /// Attaches a handle for programmatic row positioning.
     pub fn scroll_handle(mut self, handle: &ListScrollHandle) -> Self {
         self.scroll = Some(handle.clone());
@@ -253,6 +263,8 @@ pub(super) struct UpdateList {
 
 struct Viewport<K> {
     scroll: Option<ListScrollHandle>,
+    // When tail following is enabled, compare user input with the previous scroll limit.
+    previous_limit: Option<f64>,
     measured: Option<MeasuredWindow<K>>,
     items: Rc<ListItems<K>>,
     height: Pixels,
@@ -322,6 +334,7 @@ where
             }));
             let mut viewport = Viewport {
                 scroll: self.scroll.clone(),
+                previous_limit: self.follow_tail.then_some(0.0),
                 measured: index.map(|index| MeasuredWindow {
                     index,
                     keys: Vec::new(),
@@ -350,6 +363,7 @@ where
 
 struct Window {
     offset: f64,
+    limit: f64,
     range: Range<usize>,
     first_y: Pixels,
 }
@@ -359,7 +373,7 @@ impl Window {
         count: usize,
         size: Size,
         visible: bool,
-        distance: f64,
+        distance_from_top: Option<f64>,
         estimate: f64,
         measured: Option<&HeightIndex>,
         handle: Option<&ListScrollHandle>,
@@ -367,7 +381,7 @@ impl Window {
         let top = |i| measured.map_or_else(|| i as f64 * estimate, |index| index.top(i, estimate));
         let viewport = f64::from(size.height);
         let limit = (top(count) - viewport).max(0.0);
-        let mut offset = distance.min(limit);
+        let mut offset = distance_from_top.unwrap_or(limit).min(limit);
         let active = visible && size.width.get() > 0.0 && viewport > 0.0;
         let is_estimated = measured.is_some_and(|index| !index.covers(count));
 
@@ -382,6 +396,7 @@ impl Window {
             }
             return Self {
                 offset,
+                limit,
                 range: 0..0,
                 first_y: px(0.0),
             };
@@ -416,6 +431,7 @@ impl Window {
         let first_y = px((top(range.start) - offset) as f32);
         Self {
             offset,
+            limit,
             range,
             first_y,
         }
@@ -442,6 +458,7 @@ impl<K: Clone + Eq + Hash + 'static> Viewport<K> {
         );
         let count = self.items.len(cx.state)?;
         let distance = *cx.state.read(self.offset)?;
+        let at_tail = self.previous_limit.is_some_and(|limit| distance >= limit);
         let (distance, index) = if self.measured.is_some() {
             let (anchored, index) =
                 self.measured_offset(instance, id, size, cx, count, distance)?;
@@ -451,13 +468,14 @@ impl<K: Clone + Eq + Hash + 'static> Viewport<K> {
         };
         let Window {
             offset,
+            limit,
             range,
             first_y,
         } = Window::resolve(
             count,
             size,
             instance.bodies[&id].visible,
-            distance,
+            (!at_tail).then_some(distance),
             f64::from(self.height),
             index.as_ref(),
             self.scroll.as_ref(),
@@ -480,6 +498,9 @@ impl<K: Clone + Eq + Hash + 'static> Viewport<K> {
             measured.height = size.height;
         }
         cx.state.set(self.offset, offset)?;
+        if let Some(previous) = &mut self.previous_limit {
+            *previous = limit;
+        }
         if moved || refresh_measurements {
             instance
                 .scene

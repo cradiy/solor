@@ -3,7 +3,7 @@ use std::{cell::Cell, rc::Rc};
 
 use anyhow::Result;
 use solor::{
-    ListScrollHandle,
+    IntoElement, ListScrollHandle,
     ScrollAlignment::{Bottom, Center, Nearest, Top},
     Styled, Ui, ViewId, component, div,
     layout::{Origin, Size},
@@ -43,6 +43,86 @@ fn click(ui: &mut Ui, view: ViewId, y: f32) -> Result<()> {
         PointerInput::Up(p, PointerButton::Primary),
     ] {
         ui.dispatch_pointer(view, input)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn tail_following_yields_to_navigation_and_resumes_at_the_bottom() -> Result<()> {
+    for measured in [false, true] {
+        let mut ui = Ui::new();
+        let rows = ui.context().signal_vec([px(20.0); 12]);
+        let clicked = ui.context().signal(None);
+        let handle = ListScrollHandle::new();
+        let view = ui.mount(component(|_| {
+            let row = move |height| {
+                div()
+                    .h(height)
+                    .on_click(move |cx| cx.set(clicked, Some(height)))
+            };
+            if measured {
+                variable_list(rows, px(20.0), row)
+                    .follow_tail()
+                    .scroll_handle(&handle)
+                    .into_element()
+            } else {
+                uniform_list(rows, px(20.0), row)
+                    .follow_tail()
+                    .scroll_handle(&handle)
+                    .into_element()
+            }
+        }))?;
+        let check_tail = |ui: &mut Ui, height: f32| -> Result<()> {
+            submit(ui, view, height)?;
+            let position = handle.position().unwrap();
+            assert_eq!(position.offset_px, position.max_offset_px);
+            ui.context().set(clicked, None)?;
+            click(ui, view, height - 0.5)?;
+            let cx = ui.context();
+            assert_eq!(cx.read(clicked)?.as_ref(), rows.items(&cx)?.last());
+            Ok(())
+        };
+        check_tail(&mut ui, 80.0)?;
+        rows.push(px(57.25), &mut ui.context())?;
+        check_tail(&mut ui, 80.0)?;
+        if measured {
+            rows.set(12, px(85.5), &mut ui.context())?;
+            check_tail(&mut ui, 80.0)?;
+        }
+
+        let wheel = |ui: &mut Ui, delta| -> Result<()> {
+            ui.dispatch_pointer(
+                view,
+                PointerInput::Scroll(
+                    mouse(10.0),
+                    ScrollDelta {
+                        x: px(0.0),
+                        y: px(delta),
+                    },
+                ),
+            )?;
+            Ok(())
+        };
+        wheel(&mut ui, -40.25)?;
+        submit(&mut ui, view, 80.0)?;
+        let reading = handle.position().unwrap().offset_px;
+        rows.push(px(29.5), &mut ui.context())?;
+        submit(&mut ui, view, 80.0)?;
+        assert_eq!(handle.position().unwrap().offset_px, reading);
+
+        wheel(&mut ui, 1000.0)?;
+        check_tail(&mut ui, 80.0)?;
+        rows.push(px(64.0), &mut ui.context())?;
+        check_tail(&mut ui, 100.0)?;
+        handle.scroll_to(0, Top);
+        submit(&mut ui, view, 100.0)?;
+        rows.push(px(18.0), &mut ui.context())?;
+        submit(&mut ui, view, 100.0)?;
+        assert_eq!(handle.position().unwrap().offset_px, 0.0);
+        handle.scroll_to_percent(100.0)?;
+        check_tail(&mut ui, 100.0)?;
+        rows.push(px(48.0), &mut ui.context())?;
+        check_tail(&mut ui, 100.0)?;
     }
     Ok(())
 }
