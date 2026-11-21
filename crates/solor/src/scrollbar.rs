@@ -1,9 +1,9 @@
-//! A retained vertical scrollbar for scrollable viewports.
+//! A retained scrollbar for scrollable viewports.
 use crate::{
-    Context, Div, Fill, IntoElement, ListScrollHandle, ListScrollPosition, PaintContext, Pixels,
-    Render, ScrollHandle, StyleRefinement, Styled, div,
+    Context, Div, Fill, IntoElement, ListScrollHandle, PaintContext, Pixels, Render, ScrollAxis,
+    ScrollHandle, ScrollPosition, StyleRefinement, Styled, div,
     layout::{Origin, Size},
-    pointer::{PointerEvent, ScrollDelta},
+    pointer::PointerEvent,
     px, rgb, rgba,
 };
 use std::rc::Rc;
@@ -17,7 +17,7 @@ pub struct ScrollbarThumbStyle {
     pub hover_fill: Fill,
     /// Fill while a pointer owns the drag.
     pub drag_fill: Fill,
-    /// Width of the resting thumb, aligned to the right edge of the track content.
+    /// Thickness of the resting thumb, aligned to the right or bottom edge of the track.
     pub idle_width: Pixels,
     /// Nonnegative corner radius, limited to half the rendered dimensions.
     pub radius: Pixels,
@@ -41,10 +41,12 @@ impl Default for ScrollbarThumbStyle {
 /// Scroll position, pointer state and content-local geometry for custom scrollbar drawing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScrollbarPaintState {
-    /// Vertical scroll position and viewport extent of the bound content.
-    pub position: ListScrollPosition,
-    /// Top of the draggable interval, relative to the track's content origin.
-    pub thumb_top: Pixels,
+    /// Direction of travel along the track.
+    pub axis: ScrollAxis,
+    /// Position and viewport extent along the track.
+    pub position: ScrollPosition,
+    /// Start of the draggable interval, relative to the track's content origin.
+    pub thumb_start: Pixels,
     /// Length of the draggable interval in logical pixels.
     pub thumb_length: Pixels,
     /// Whether the pointer is over the track.
@@ -58,40 +60,47 @@ type Painter = Box<dyn Fn(&mut PaintContext<'_>, ScrollbarPaintState) -> anyhow:
 #[derive(Clone)]
 enum ScrollSource {
     List(ListScrollHandle),
-    Container(ScrollHandle),
+    Container(ScrollHandle, ScrollAxis),
 }
 
 impl ScrollSource {
-    fn position(&self) -> Option<ListScrollPosition> {
+    fn axis(&self) -> ScrollAxis {
         match self {
-            Self::List(handle) => handle.position(),
-            Self::Container(handle) => handle.vertical_position(),
+            Self::List(_) => ScrollAxis::Vertical,
+            Self::Container(_, axis) => *axis,
+        }
+    }
+
+    fn position(&self) -> Option<ScrollPosition> {
+        match self {
+            Self::List(handle) => handle.position().map(Into::into),
+            Self::Container(handle, axis) => handle.position(*axis),
         }
     }
 
     fn observe(&self, cx: &mut Context<'_>) -> Rc<crate::scroll_position::PositionSignal> {
         match self {
             Self::List(handle) => handle.observe(cx),
-            Self::Container(handle) => handle.observe(cx),
+            Self::Container(handle, axis) => handle.observe(*axis, cx),
         }
     }
 
     fn scroll_to_percent(&self, percent: f64) -> anyhow::Result<()> {
         match self {
             Self::List(handle) => handle.scroll_to_percent(percent),
-            Self::Container(handle) => handle.scroll_to_percent(percent),
+            Self::Container(handle, axis) => handle.scroll_to_percent_on(*axis, percent),
         }
     }
 
     fn scroll_by(&self, delta: f64, cx: &mut Context<'_>) -> anyhow::Result<f64> {
         match self {
             Self::List(handle) => handle.scroll_by(delta, cx),
-            Self::Container(handle) => Ok(handle.scroll_by(delta)),
+            Self::Container(handle, axis) => Ok(handle.scroll_by(*axis, delta)),
         }
     }
 }
 
-/// A vertical scrollbar. Use the shared style builders for its track.
+/// A scrollbar. Use the shared style builders for its track.
 pub struct Scrollbar {
     source: ScrollSource,
     track: Div,
@@ -107,6 +116,15 @@ pub fn scrollbar(handle: impl Into<Scrollbar>) -> Scrollbar {
     handle.into()
 }
 
+/// Creates a horizontal scrollbar for a container tracked by this handle.
+/// Place it below the viewport in a stretched flex column.
+pub fn horizontal_scrollbar(handle: &ScrollHandle) -> Scrollbar {
+    Scrollbar::new(ScrollSource::Container(
+        handle.clone(),
+        ScrollAxis::Horizontal,
+    ))
+}
+
 impl From<&ListScrollHandle> for Scrollbar {
     fn from(handle: &ListScrollHandle) -> Self {
         Self::new(ScrollSource::List(handle.clone()))
@@ -115,15 +133,23 @@ impl From<&ListScrollHandle> for Scrollbar {
 
 impl From<&ScrollHandle> for Scrollbar {
     fn from(handle: &ScrollHandle) -> Self {
-        Self::new(ScrollSource::Container(handle.clone()))
+        Self::new(ScrollSource::Container(
+            handle.clone(),
+            ScrollAxis::Vertical,
+        ))
     }
 }
 
 impl Scrollbar {
     fn new(source: ScrollSource) -> Self {
+        let track = div().p(px(2.0)).flex_shrink(0.0);
+        let track = match source.axis() {
+            ScrollAxis::Vertical => track.w(px(12.0)),
+            ScrollAxis::Horizontal => track.h(px(12.0)),
+        };
         Self {
             source,
-            track: div().w(px(12.0)).p(px(2.0)).flex_shrink(0.0),
+            track,
             thumb: ScrollbarThumbStyle::default(),
             auto_hide: false,
             painter: None,
@@ -175,12 +201,12 @@ struct Thumb {
 }
 
 impl Thumb {
-    fn resolve(position: ListScrollPosition, height: Pixels, minimum: Pixels) -> Option<Self> {
-        let track = f64::from(height);
+    fn resolve(position: ScrollPosition, extent: Pixels, minimum: Pixels) -> Option<Self> {
+        let track = f64::from(extent);
         if track <= 0.0 || position.max_offset_px <= 0.0 {
             return None;
         }
-        let viewport = f64::from(position.viewport_height);
+        let viewport = f64::from(position.viewport_extent);
         let length = (track * viewport / (viewport + position.max_offset_px))
             .max(f64::from(minimum).min(track / 2.0));
         let travel = track - length;
@@ -194,6 +220,7 @@ impl Thumb {
 
 impl Render for Scrollbar {
     fn render(self, cx: &mut Context<'_>) -> impl IntoElement {
+        let axis = self.source.axis();
         let position = self.source.observe(cx);
         let hover = cx.signal(false);
         let drag = cx.signal(None);
@@ -204,11 +231,13 @@ impl Render for Scrollbar {
             if let Some(thumb) = self
                 .source
                 .position()
-                .and_then(|p| Thumb::resolve(p, event.content_size().height, minimum))
+                .and_then(|p| Thumb::resolve(p, axis.extent(event.content_size()), minimum))
                 && thumb.travel > 0.0
             {
-                let top = f64::from(event.content_position().y) - fraction * thumb.length;
-                self.source.scroll_to_percent(100.0 * top / thumb.travel)?;
+                let start =
+                    f64::from(axis.coordinate(event.content_position())) - fraction * thumb.length;
+                self.source
+                    .scroll_to_percent(100.0 * start / thumb.travel)?;
             }
             Ok(())
         };
@@ -230,33 +259,35 @@ impl Render for Scrollbar {
                 let Some(position) = *cx.read(*position)? else {
                     return Ok(());
                 };
-                let Some(thumb) = Thumb::resolve(position, cx.size.height, minimum) else {
+                let Some(thumb) = Thumb::resolve(position, axis.extent(cx.size), minimum) else {
                     return Ok(());
                 };
-                let thumb_top = px(thumb.start as f32);
+                let thumb_start = px(thumb.start as f32);
                 let thumb_length = px(thumb.length as f32);
                 if let Some(paint) = &self.painter {
                     return paint(
                         cx,
                         ScrollbarPaintState {
+                            axis,
                             position,
-                            thumb_top,
+                            thumb_start,
                             thumb_length,
                             hovered,
                             dragging,
                         },
                     );
                 }
-                let width = if active {
+                let cross_extent = axis.select(cx.size.height, cx.size.width);
+                let thickness = if active {
                     cx.fill_rounded_rect(
                         Origin::default(),
                         cx.size,
                         self.thumb.radius,
                         self.hover_track.clone(),
                     )?;
-                    cx.size.width
+                    cross_extent
                 } else {
-                    self.thumb.idle_width.min(cx.size.width)
+                    self.thumb.idle_width.min(cross_extent)
                 };
                 let fill = if dragging {
                     &self.thumb.drag_fill
@@ -267,12 +298,12 @@ impl Render for Scrollbar {
                 };
                 cx.fill_rounded_rect(
                     Origin {
-                        x: cx.size.width - width,
-                        y: thumb_top,
+                        x: axis.select(thumb_start, cross_extent - thickness),
+                        y: axis.select(cross_extent - thickness, thumb_start),
                     },
                     Size {
-                        width,
-                        height: thumb_length,
+                        width: axis.select(thumb_length, thickness),
+                        height: axis.select(thickness, thumb_length),
                     },
                     self.thumb.radius,
                     fill.clone(),
@@ -286,19 +317,20 @@ impl Render for Scrollbar {
                 let Some(pos) = press.position() else {
                     return Ok(());
                 };
-                let Some(thumb) = Thumb::resolve(pos, event.content_size().height, minimum) else {
+                let Some(thumb) = Thumb::resolve(pos, axis.extent(event.content_size()), minimum)
+                else {
                     return Ok(());
                 };
-                let y = f64::from(event.content_position().y);
-                if (thumb.start..=thumb.start + thumb.length).contains(&y) {
+                let along = f64::from(axis.coordinate(event.content_position()));
+                if (thumb.start..=thumb.start + thumb.length).contains(&along) {
                     cx.capture_pointer();
                     cx.set(
                         drag,
-                        Some((event.pointer_id(), (y - thumb.start) / thumb.length)),
+                        Some((event.pointer_id(), (along - thumb.start) / thumb.length)),
                     )?;
                 } else {
-                    let page = f64::from(pos.viewport_height);
-                    press.scroll_by(if y < thumb.start { -page } else { page }, cx)?;
+                    let page = f64::from(pos.viewport_extent);
+                    press.scroll_by(if along < thumb.start { -page } else { page }, cx)?;
                 }
                 Ok(())
             })
@@ -327,12 +359,11 @@ impl Render for Scrollbar {
                 Ok(())
             })
             .on_scroll(move |event, cx| {
-                let delta = f64::from(event.delta.y);
+                let delta = f64::from(axis.select(event.delta.x, event.delta.y));
                 let used = wheel.scroll_by(delta, cx)?;
-                cx.propagate_remaining(ScrollDelta {
-                    x: event.delta.x,
-                    y: px((delta - used) as f32),
-                })
+                let mut remaining = event.delta;
+                *axis.select(&mut remaining.x, &mut remaining.y) = px((delta - used) as f32);
+                cx.propagate_remaining(remaining)
             })
     }
 }

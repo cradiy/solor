@@ -1,6 +1,6 @@
 //! Mounted container scroll policies and logical scroll distances.
 use crate::{
-    Context, Instance, ListScrollPosition, NodeId, Pixels, Result, Signal, Ui, ViewId,
+    Context, Instance, NodeId, Pixels, Result, ScrollAxis, ScrollPosition, Signal, Ui, ViewId,
     layout::{Geometry, Origin, Size},
     px,
     scroll_position::{PositionObservers, PositionSignal, scroll_percent},
@@ -35,16 +35,29 @@ impl ScrollMetrics {
     }
 }
 
-#[derive(Clone, Copy)]
-enum VerticalTarget {
+#[derive(Clone, Copy, Default)]
+enum AxisTarget {
+    #[default]
+    Current,
     Pixels(Pixels),
     Percent(f64),
 }
 
-#[derive(Clone, Copy)]
+impl AxisTarget {
+    fn resolve(self, current: Pixels, limit: Pixels) -> Pixels {
+        let target = match self {
+            Self::Current => current,
+            Self::Pixels(value) => value,
+            Self::Percent(percent) => px((f64::from(limit) * (percent / 100.0)) as f32),
+        };
+        target.max(Pixels::default()).min(limit)
+    }
+}
+
+#[derive(Clone, Copy, Default)]
 struct ScrollRequest {
-    x: Option<Pixels>,
-    y: VerticalTarget,
+    x: AxisTarget,
+    y: AxisTarget,
 }
 
 impl ScrollRequest {
@@ -54,25 +67,15 @@ impl ScrollRequest {
             "scroll offset must be finite"
         );
         Ok(Self {
-            x: Some(offset.x),
-            y: VerticalTarget::Pixels(offset.y),
+            x: AxisTarget::Pixels(offset.x),
+            y: AxisTarget::Pixels(offset.y),
         })
     }
 
     fn resolve(self, current: Origin, limit: Size) -> Origin {
-        let y = match self.y {
-            VerticalTarget::Pixels(y) => y,
-            VerticalTarget::Percent(percent) => {
-                px((f64::from(limit.height) * (percent / 100.0)) as f32)
-            }
-        };
         Origin {
-            x: self
-                .x
-                .unwrap_or(current.x)
-                .max(Pixels::default())
-                .min(limit.width),
-            y: y.max(Pixels::default()).min(limit.height),
+            x: self.x.resolve(current.x, limit.width),
+            y: self.y.resolve(current.y, limit.height),
         }
     }
 }
@@ -83,7 +86,8 @@ struct ContainerState {
     metrics_signal: Option<Signal<Option<ScrollMetrics>>>,
     pending: Cell<Option<ScrollRequest>>,
     attached: Cell<bool>,
-    observers: PositionObservers,
+    horizontal: PositionObservers,
+    vertical: PositionObservers,
 }
 
 /// Reads and positions one scrollable overflow container.
@@ -128,44 +132,55 @@ impl ScrollHandle {
     /// input continues from the requested percentage of the current range.
     /// Finite values are clamped to 0..=100.
     pub fn scroll_to_percent(&self, percent: f64) -> Result<()> {
+        self.scroll_to_percent_on(ScrollAxis::Vertical, percent)
+    }
+
+    /// Requests a percentage of travel on one axis and keeps the other axis's destination.
+    /// Finite values are clamped to 0..=100 and resolved against the scrollable range.
+    pub fn scroll_to_percent_on(&self, axis: ScrollAxis, percent: f64) -> Result<()> {
         ensure!(percent.is_finite(), "scroll percentage must be finite");
-        self.request_vertical(VerticalTarget::Percent(percent.clamp(0.0, 100.0)));
+        self.request_axis(axis, AxisTarget::Percent(percent.clamp(0.0, 100.0)));
         Ok(())
     }
 
-    fn request_vertical(&self, y: VerticalTarget) {
-        let x = self.0.pending.get().and_then(|request| request.x);
-        self.0.pending.set(Some(ScrollRequest { x, y }));
+    fn request_axis(&self, axis: ScrollAxis, target: AxisTarget) {
+        let mut request = self.0.pending.get().unwrap_or_default();
+        *axis.select(&mut request.x, &mut request.y) = target;
+        self.0.pending.set(Some(request));
     }
 
-    pub(crate) fn vertical_position(&self) -> Option<ListScrollPosition> {
+    pub(crate) fn position(&self, axis: ScrollAxis) -> Option<ScrollPosition> {
         let metrics = self.metrics()?;
         (metrics.viewport.width.get() > 0.0 && metrics.viewport.height.get() > 0.0).then_some(
-            ListScrollPosition {
-                offset_px: f64::from(metrics.offset.y),
-                max_offset_px: f64::from(metrics.max_offset.height),
-                viewport_height: metrics.viewport.height,
+            ScrollPosition {
+                offset_px: axis.coordinate(metrics.offset).into(),
+                max_offset_px: axis.extent(metrics.max_offset).into(),
+                viewport_extent: axis.extent(metrics.viewport),
                 is_estimated: false,
             },
         )
     }
 
-    pub(crate) fn observe(&self, cx: &mut Context<'_>) -> Rc<PositionSignal> {
-        self.0.observers.observe(cx, self.vertical_position())
+    fn observers(&self, axis: ScrollAxis) -> &PositionObservers {
+        axis.select(&self.0.horizontal, &self.0.vertical)
     }
 
-    pub(crate) fn scroll_by(&self, delta: f64) -> f64 {
-        let Some(metrics) = self.0.metrics.get() else {
+    pub(crate) fn observe(&self, axis: ScrollAxis, cx: &mut Context<'_>) -> Rc<PositionSignal> {
+        self.observers(axis).observe(cx, self.position(axis))
+    }
+
+    pub(crate) fn scroll_by(&self, axis: ScrollAxis, delta: f64) -> f64 {
+        let Some(metrics) = self.metrics() else {
             return 0.0;
         };
-        let limit = f64::from(metrics.max_offset.height);
+        let limit = f64::from(axis.extent(metrics.max_offset));
         let start = self.0.pending.get().map_or(metrics.offset, |request| {
             request.resolve(metrics.offset, metrics.max_offset)
         });
-        let current = f64::from(start.y);
+        let current = f64::from(axis.coordinate(start));
         let used = delta.clamp(-current, limit - current);
         if used != 0.0 {
-            self.request_vertical(VerticalTarget::Pixels(px((current + used) as f32)));
+            self.request_axis(axis, AxisTarget::Pixels(px((current + used) as f32)));
         }
         used
     }
@@ -176,7 +191,9 @@ impl ScrollHandle {
                 // The scope owning the signal can unmount before the container.
                 let _ = state.publish_layout_value(signal, metrics);
             }
-            self.0.observers.publish(state, self.vertical_position());
+            for axis in [ScrollAxis::Horizontal, ScrollAxis::Vertical] {
+                self.observers(axis).publish(state, self.position(axis));
+            }
         }
     }
 }

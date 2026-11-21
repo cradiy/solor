@@ -23,7 +23,9 @@ pub mod pointer;
 pub mod raster;
 mod scroll_position;
 mod scrollbar;
-pub use scrollbar::{Scrollbar, ScrollbarPaintState, ScrollbarThumbStyle, scrollbar};
+pub use scrollbar::{
+    Scrollbar, ScrollbarPaintState, ScrollbarThumbStyle, horizontal_scrollbar, scrollbar,
+};
 mod shared_string;
 pub mod state;
 pub mod style;
@@ -54,7 +56,7 @@ pub use platform::{ResizeEdge, WindowControl};
 pub use pointer::{
     ScrollHandle, ScrollMetrics, Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle,
 };
-pub use scroll_position::ListScrollPosition;
+pub use scroll_position::{ListScrollPosition, ScrollAxis, ScrollPosition};
 pub use shared_string::SharedString;
 pub use style::{Style, StyleRefinement, Styled};
 

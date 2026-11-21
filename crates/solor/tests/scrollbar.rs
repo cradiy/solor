@@ -276,7 +276,7 @@ fn custom_painter_uses_application_visibility_and_the_interactive_thumb_interval
                             cx.fill_circle(
                                 Origin {
                                     x: cx.size.width / 2.0,
-                                    y: bar.thumb_top + bar.thumb_length / 2.0,
+                                    y: bar.thumb_start + bar.thumb_length / 2.0,
                                 },
                                 radius,
                                 rgb(0x123456),
@@ -349,7 +349,7 @@ fn overflow_container_and_bar_share_one_offset_and_presented_hits() -> Result<()
                         cx.fill_rect(
                             Origin {
                                 x: px(0.0),
-                                y: bar.thumb_top,
+                                y: bar.thumb_start,
                             },
                             Size {
                                 width: cx.size.width,
@@ -667,5 +667,158 @@ fn container_progress_repaints_on_both_axes_and_viewport_changes() -> Result<()>
     assert_eq!(*ui.context().read(metrics)?, scroll.metrics());
     ui.unmount(view)?;
     assert!(ui.context().read(metrics)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn two_scrollbars_share_a_viewport_and_route_input_by_axis() -> Result<()> {
+    use solor::{ScrollHandle, horizontal_scrollbar, style::Overflow};
+    use std::{cell::Cell, rc::Rc};
+
+    let mut ui = Ui::new();
+    let scroll = ScrollHandle::new();
+    let tracked = scroll.clone();
+    let remaining = Rc::new(Cell::new(None));
+    let bubbled = remaining.clone();
+    let width = ui.context().signal(px(324.0));
+    let view = ui.mount(component(move |_| {
+        div()
+            .flex_col()
+            .items_stretch()
+            .on_scroll(move |event, _| {
+                bubbled.set(Some(event.delta));
+                Ok(())
+            })
+            .child(
+                div()
+                    .flex_row()
+                    .flex_1()
+                    .items_stretch()
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow(Overflow::Auto)
+                            .track_scroll(&tracked)
+                            .child(div().min_w(width).min_h(px(200.0))),
+                    )
+                    .child(scrollbar(&tracked).p(px(0.0))),
+            )
+            .child(horizontal_scrollbar(&tracked).p(px(0.0)))
+    }))?;
+    let offset = |x, y| Origin { x: px(x), y: px(y) };
+    let delta = |x, y| ScrollDelta { x: px(x), y: px(y) };
+    let draws = submit(&mut ui, view, 112.0)?;
+    assert!(
+        draws
+            .iter()
+            .any(|d| matches!(d, Draw::Fill { origin, size, .. }
+        if *origin == offset(0.0, 109.0) && size.width == px(40.0) && size.height == px(3.0)))
+    );
+    ui.dispatch_pointer(
+        view,
+        PointerInput::Scroll(point(10.0, 106.0), delta(10.5, 7.25)),
+    )?;
+    assert_eq!(remaining.take(), Some(delta(0.0, 7.25)));
+    ui.dispatch_pointer(
+        view,
+        PointerInput::Scroll(point(114.0, 15.0), delta(5.0, 18.25)),
+    )?;
+    assert_eq!(remaining.take(), Some(delta(5.0, 0.0)));
+    submit(&mut ui, view, 112.0)?;
+    assert_eq!(scroll.metrics().unwrap().offset, offset(10.5, 18.25));
+
+    let page = point(110.0, 106.0);
+    ui.dispatch_pointer(view, PointerInput::Down(page, PointerButton::Primary))?;
+    ui.dispatch_pointer(view, PointerInput::Up(page, PointerButton::Primary))?;
+    submit(&mut ui, view, 112.0)?;
+    assert_eq!(scroll.metrics().unwrap().offset, offset(118.5, 18.25));
+    let grab = point(60.0, 106.0);
+    ui.dispatch_pointer(view, PointerInput::Down(grab, PointerButton::Primary))?;
+    scroll.scroll_to_percent(75.0)?;
+    let outside = point(160.0, 50.0);
+    ui.dispatch_pointer(view, PointerInput::Move(outside))?;
+    ui.dispatch_pointer(view, PointerInput::Up(outside, PointerButton::Primary))?;
+    submit(&mut ui, view, 112.0)?;
+    assert_eq!(scroll.metrics().unwrap().offset, offset(216.0, 75.0));
+
+    ui.dispatch_pointer(view, PointerInput::Scroll(page, delta(4.25, -2.5)))?;
+    assert_eq!(remaining.take(), Some(delta(4.25, -2.5)));
+    ui.context().set(width, px(80.0))?;
+    let draws = submit(&mut ui, view, 112.0)?;
+    assert_eq!(scroll.metrics().unwrap().offset, offset(0.0, 75.0));
+    assert!(
+        !draws
+            .iter()
+            .any(|d| matches!(d, Draw::Fill { origin, .. } if origin.y >= px(100.0)))
+    );
+    assert!(ui.next_redraw(view).is_none());
+    Ok(())
+}
+
+#[test]
+fn horizontal_painter_follows_its_axis_through_resize() -> Result<()> {
+    use solor::{ScrollAxis, ScrollHandle, horizontal_scrollbar, style::Overflow};
+    use std::{cell::Cell, rc::Rc};
+
+    let mut ui = Ui::new();
+    let scroll = ScrollHandle::new();
+    let tracked = scroll.clone();
+    let content_width = ui.context().signal(px(240.0));
+    let last = Rc::new(Cell::new(None));
+    let seen = last.clone();
+    let view = ui.mount(component(move |_| {
+        div()
+            .flex_col()
+            .items_stretch()
+            .child(
+                div()
+                    .flex_1()
+                    .overflow(Overflow::Auto)
+                    .track_scroll(&tracked)
+                    .child(div().min_w(content_width).min_h(px(200.0))),
+            )
+            .child(
+                horizontal_scrollbar(&tracked)
+                    .p(px(0.0))
+                    .paint_with(move |_, bar| {
+                        seen.set(Some(bar));
+                        Ok(())
+                    }),
+            )
+    }))?;
+    scroll.scroll_to_percent(25.0)?;
+    scroll.scroll_to_percent_on(ScrollAxis::Horizontal, 50.0)?;
+    submit(&mut ui, view, 112.0)?;
+    let bar = last.take().unwrap();
+    assert_eq!(bar.axis, ScrollAxis::Horizontal);
+    assert_eq!(bar.position.viewport_extent, px(120.0));
+    assert_eq!(bar.position.percent(), 50.0);
+    assert_eq!((bar.thumb_start, bar.thumb_length), (px(30.0), px(60.0)));
+    assert_eq!(
+        scroll.metrics().unwrap().offset,
+        Origin {
+            x: px(60.0),
+            y: px(25.0)
+        }
+    );
+
+    scroll.scroll_to_percent(75.0)?;
+    submit(&mut ui, view, 112.0)?;
+    assert!(
+        last.get().is_none(),
+        "vertical movement repainted the horizontal track"
+    );
+    ui.context().set(content_width, px(360.0))?;
+    scroll.scroll_to_percent_on(ScrollAxis::Horizontal, 75.0)?;
+    submit(&mut ui, view, 112.0)?;
+    let bar = last.take().unwrap();
+    assert_eq!((bar.thumb_start, bar.thumb_length), (px(60.0), px(40.0)));
+    assert_eq!(
+        scroll.metrics().unwrap().offset,
+        Origin {
+            x: px(180.0),
+            y: px(75.0)
+        }
+    );
     Ok(())
 }

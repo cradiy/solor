@@ -595,6 +595,22 @@ pixels after layout. The bar moves the vertical offset and preserves the horizon
 offset. Each handle tracks one mounted container at a time and can be reused
 after unmount.
 
+For a wide table, put a horizontal scrollbar below the content. Both tracks can
+share the same handle when the container scrolls on both axes.
+
+```rust
+let scroll = ScrollHandle::new();
+div().flex_col().items_stretch()
+    .child(div().flex_row().flex_1().items_stretch()
+        .child(div().flex_1().overflow(Overflow::Auto).track_scroll(&scroll).child(table))
+        .child(scrollbar(&scroll)))
+    .child(horizontal_scrollbar(&scroll))
+```
+
+To show the horizontal midpoint, call
+`scroll.scroll_to_percent_on(ScrollAxis::Horizontal, 50.0)?`. A request on one
+axis keeps the other axis's pending destination.
+
 For a reading progress indicator, create the handle with
 `ScrollHandle::with_metrics_signal(cx)` and attach it to the container as above.
 The signal carries both axes, including changes to the viewport and scroll range.
@@ -646,10 +662,10 @@ div().flex_row().items_stretch().h(px(320.0))
 ```
 
 The thumb represents the visible fraction of the content. Dragging preserves the
-grab point, including outside the track. Pressing the track above or below the
-thumb scrolls one viewport. Wheel input over the track scrolls the bound content
-and passes unused distance to its parent. When the content fits, the track keeps
-its width and the thumb disappears.
+grab point, including outside the track. Pressing the track on either side of the
+thumb scrolls one viewport along its axis. Wheel input passes the other axis's
+delta and any unused distance to the parent. When the content fits along the
+track's axis, the track keeps its thickness and the thumb disappears.
 
 By default only a narrow thumb is visible at rest. Hovering the track or
 dragging the thumb reveals the rail and widens the thumb inside the same hit
@@ -672,8 +688,9 @@ scrollbar(&list)
 ```
 
 For application-specific rendering, `paint_with` receives the track's paint
-context, scroll position, hover and drag state, and the thumb interval used for
-input. For example, an application can reveal a thin indicator while the list is
+context, track axis, scroll position, hover and drag state, and the thumb interval
+used for input. The interval starts at `thumb_start` along the track's axis.
+For example, an application can reveal a thin indicator while the list is
 active and widen it during a drag. Paint-time signal reads subscribe automatically.
 
 ```rust
@@ -683,7 +700,7 @@ scrollbar(&list).paint_with(move |cx, bar| {
     }
     let width = cx.size.width.min(px(if bar.dragging { 6.0 } else { 2.0 }));
     cx.fill_rounded_rect(
-        Origin { x: cx.size.width - width, y: bar.thumb_top },
+        Origin { x: cx.size.width - width, y: bar.thumb_start },
         Size { width, height: bar.thumb_length },
         px(3.0),
         *cx.read(accent_color)?,

@@ -1,9 +1,70 @@
 //! Vertical position shared by scroll containers, virtual lists and scrollbars.
-use crate::{Context, Signal, state::Runtime};
+use crate::{
+    Context, Pixels, Signal,
+    layout::{Origin, Size},
+    state::Runtime,
+};
 use std::{
     cell::RefCell,
     rc::{Rc, Weak},
 };
+
+/// Direction of travel along a scrollbar track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollAxis {
+    /// Left to right.
+    Horizontal,
+    /// Top to bottom.
+    Vertical,
+}
+
+impl ScrollAxis {
+    pub(crate) fn select<T>(self, horizontal: T, vertical: T) -> T {
+        match self {
+            Self::Horizontal => horizontal,
+            Self::Vertical => vertical,
+        }
+    }
+
+    pub(crate) fn extent(self, size: Size) -> Pixels {
+        self.select(size.width, size.height)
+    }
+
+    pub(crate) fn coordinate(self, point: Origin) -> Pixels {
+        self.select(point.x, point.y)
+    }
+}
+
+/// Scroll position and viewport extent along a scrollbar's axis.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScrollPosition {
+    /// Distance from the start in logical pixels.
+    pub offset_px: f64,
+    /// Maximum distance from the start in logical pixels.
+    pub max_offset_px: f64,
+    /// Length of the visible content along this axis.
+    pub viewport_extent: Pixels,
+    /// Whether any part of the document extent is estimated.
+    pub is_estimated: bool,
+}
+
+impl ScrollPosition {
+    /// Percentage of the available travel. Content that fits returns zero.
+    pub fn percent(self) -> f64 {
+        scroll_percent(self.offset_px, self.max_offset_px)
+    }
+}
+
+impl From<ListScrollPosition> for ScrollPosition {
+    fn from(list: ListScrollPosition) -> Self {
+        Self {
+            offset_px: list.offset_px,
+            max_offset_px: list.max_offset_px,
+            viewport_extent: list.viewport_height,
+            is_estimated: list.is_estimated,
+        }
+    }
+}
 
 /// Vertical position and extent of a laid-out scrollable viewport.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -33,7 +94,7 @@ pub(crate) fn scroll_percent(offset: f64, maximum: f64) -> f64 {
     }
 }
 
-pub(crate) type PositionSignal = Signal<Option<ListScrollPosition>>;
+pub(crate) type PositionSignal = Signal<Option<ScrollPosition>>;
 
 #[derive(Default)]
 pub(crate) struct PositionObservers(RefCell<Vec<Weak<PositionSignal>>>);
@@ -42,7 +103,7 @@ impl PositionObservers {
     pub(crate) fn observe(
         &self,
         cx: &mut Context<'_>,
-        position: Option<ListScrollPosition>,
+        position: Option<ScrollPosition>,
     ) -> Rc<PositionSignal> {
         let signal = Rc::new(cx.signal(position));
         let mut observers = self.0.borrow_mut();
@@ -51,7 +112,7 @@ impl PositionObservers {
         signal
     }
 
-    pub(crate) fn publish(&self, state: &mut Runtime<()>, position: Option<ListScrollPosition>) {
+    pub(crate) fn publish(&self, state: &mut Runtime<()>, position: Option<ScrollPosition>) {
         self.0.borrow_mut().retain(|observer| {
             observer
                 .upgrade()

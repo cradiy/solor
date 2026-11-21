@@ -164,7 +164,9 @@ impl ListScrollHandle {
     }
 
     pub(crate) fn observe(&self, cx: &mut Context<'_>) -> Rc<PositionSignal> {
-        self.0.observers.observe(cx, self.position())
+        self.0
+            .observers
+            .observe(cx, self.position().map(Into::into))
     }
 
     pub(crate) fn scroll_by(&self, delta: f64, cx: &mut Context<'_>) -> Result<f64> {
@@ -263,7 +265,7 @@ impl ListScrollHandle {
             // The scope owning the signal may have unmounted while the list was still live.
             let _ = state.publish_layout_value(signal, position);
         }
-        self.0.observers.publish(state, position);
+        self.0.observers.publish(state, position.map(Into::into));
     }
 
     pub(super) fn pending(&self) -> Option<Request> {
