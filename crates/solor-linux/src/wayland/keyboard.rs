@@ -169,7 +169,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
                     .focus
                     .as_ref()
                     .and_then(|id| desktop.windows.get_mut(id))
-                    .filter(|window| window.mapping == super::Mapping::Mapped)
+                    .filter(|window| {
+                        window.mapping == super::Mapping::Mapped && !window.life.blocked()
+                    })
                 else {
                     return;
                 };

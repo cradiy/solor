@@ -94,7 +94,47 @@ impl WaylandApplication {
 pub(super) struct WindowLife {
     pub(super) activation: Option<ActivationTarget>,
     open: Cell<bool>,
+    modal_parent: Weak<Self>,
+    modal_children: RefCell<Vec<Weak<Self>>>,
+    cancel_pointer: Cell<bool>,
     pub(super) revisit: Rc<Cell<bool>>,
+}
+
+impl WindowLife {
+    fn new(
+        activation: Option<ActivationTarget>,
+        revisit: Rc<Cell<bool>>,
+        modal_parent: Weak<Self>,
+    ) -> Rc<Self> {
+        Rc::new(Self {
+            activation,
+            open: Cell::new(true),
+            revisit,
+            modal_parent,
+            modal_children: RefCell::default(),
+            cancel_pointer: Cell::default(),
+        })
+    }
+
+    fn attach_modal(self: &Rc<Self>, parent: &Self) {
+        if !parent.is_open() {
+            self.close();
+        } else if self.is_open() {
+            let mut children = parent.modal_children.borrow_mut();
+            if children.is_empty() {
+                parent.cancel_pointer.set(true);
+            }
+            children.push(Rc::downgrade(self));
+        }
+    }
+
+    pub(super) fn blocked(&self) -> bool {
+        !self.modal_children.borrow().is_empty()
+    }
+
+    pub(super) fn take_pointer_cancel(&self) -> bool {
+        self.cancel_pointer.replace(false)
+    }
 }
 
 impl PlatformWindow for WindowLife {
@@ -114,6 +154,16 @@ impl PlatformWindow for WindowLife {
                 target.cancel();
             }
 
+            if let Some(parent) = self.modal_parent.upgrade() {
+                parent
+                    .modal_children
+                    .borrow_mut()
+                    .retain(|child| !std::ptr::eq(child.as_ptr(), self));
+            }
+            let children = self.modal_children.take();
+            for child in children.into_iter().filter_map(|child| child.upgrade()) {
+                child.close();
+            }
             self.revisit.set(true);
         }
     }
@@ -221,15 +271,32 @@ impl WindowFactory {
         request: Request<'_>,
         build: impl FnOnce(WindowHandle) -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
     ) -> anyhow::Result<(ObjectId, WindowHandle)> {
-        if let Request::Toplevel(options) = &request
-            && let Some(parent) = options.parent
-        {
-            self.toplevels.check_parent(parent)?;
-        }
+        let modal_parent = match &request {
+            Request::Toplevel(options) => {
+                anyhow::ensure!(
+                    !options.modal || options.parent.is_some(),
+                    "a modal window requires a parent"
+                );
+                options
+                    .parent
+                    .map(|handle| self.toplevels.parent_life(handle))
+                    .transpose()?
+                    .filter(|_| options.modal)
+            }
+            Request::Layer(_) => None,
+        };
         let surface = self.compositor.create_surface(&self.qh, ());
         let id = surface.id();
-        match self.create_window(&surface, request, build) {
+        match self.create_window(
+            &surface,
+            request,
+            modal_parent.as_ref().map(Rc::downgrade).unwrap_or_default(),
+            build,
+        ) {
             Ok((window, handle)) => {
+                if let Some(parent) = modal_parent {
+                    window.life.attach_modal(&parent);
+                }
                 self.pending.borrow_mut().push(window);
                 Ok((id, handle))
             }
@@ -244,6 +311,7 @@ impl WindowFactory {
         &self,
         surface: &wl_surface::WlSurface,
         request: Request<'_>,
+        modal_parent: Weak<WindowLife>,
         build: impl FnOnce(WindowHandle) -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
     ) -> anyhow::Result<(Window, WindowHandle)> {
         let qh = &self.qh;
@@ -265,16 +333,12 @@ impl WindowFactory {
         };
         let (role, size) = request.create(&self.globals, qh, surface)?;
         buffer_size(120, size)?;
-        let life = Rc::new(WindowLife {
-            activation,
-            open: Cell::new(true),
-            revisit: self.revisit.clone(),
-        });
+        let life = WindowLife::new(activation, self.revisit.clone(), modal_parent);
         let target = Rc::downgrade(&life);
         let handle = WindowHandle::new(target);
         let registration = match &role {
             Role::Toplevel { top, .. } => {
-                Some(self.toplevels.register(handle.clone(), top, parent))
+                Some(self.toplevels.register(handle.clone(), &life, top, parent))
             }
             Role::Layer(..) => None,
         };
@@ -364,6 +428,7 @@ impl EventLoop {
                     closed.push(id.clone());
                     continue;
                 };
+                pointer::cancel_modal_gestures(&mut self.desktop.seats, id, window);
                 if let Some(handle) = handle {
                     window.input_region.update(handle.take_input_region());
                 }

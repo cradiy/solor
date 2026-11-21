@@ -1,7 +1,12 @@
 //! Application-local toplevels available as native parents.
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    rc::{Rc, Weak},
+};
 
-use anyhow::{Result, ensure};
+use super::WindowLife;
+use anyhow::{Result, anyhow};
 use solor::platform::WindowHandle;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::XdgToplevel;
 
@@ -11,20 +16,23 @@ pub(super) struct Toplevels(Rc<RefCell<HashMap<WindowHandle, Parent>>>);
 struct Parent {
     top: XdgToplevel,
     mapped: bool,
+    life: Weak<WindowLife>,
 }
 
 impl Toplevels {
-    pub(super) fn check_parent(&self, parent: &WindowHandle) -> Result<()> {
-        ensure!(
-            parent.is_open() && self.0.borrow().contains_key(parent),
-            "parent must be an open toplevel in this application"
-        );
-        Ok(())
+    pub(super) fn parent_life(&self, parent: &WindowHandle) -> Result<Rc<WindowLife>> {
+        self.0
+            .borrow()
+            .get(parent)
+            .filter(|_| parent.is_open())
+            .and_then(|entry| entry.life.upgrade())
+            .ok_or_else(|| anyhow!("parent must be an open toplevel in this application"))
     }
 
     pub(super) fn register(
         &self,
         handle: WindowHandle,
+        life: &Rc<WindowLife>,
         top: &XdgToplevel,
         parent: Option<&WindowHandle>,
     ) -> Registration {
@@ -33,6 +41,7 @@ impl Toplevels {
             Parent {
                 top: top.clone(),
                 mapped: false,
+                life: Rc::downgrade(life),
             },
         );
         Registration {

@@ -127,6 +127,21 @@ pub(super) fn cancel_focus(seats: &mut [Seat], id: &ObjectId, window: &mut Windo
     }
 }
 
+/// Clear UI captures and partial axis frames while retaining the seat's native focus.
+pub(super) fn cancel_modal_gestures(seats: &mut [Seat], id: &ObjectId, window: &mut Window) {
+    if window.life.take_pointer_cancel() {
+        for seat in seats
+            .iter_mut()
+            .filter(|seat| seat.focus.as_ref() == Some(id))
+        {
+            seat.scroll = None;
+            window.event(WindowEvent::Pointer(PointerInput::Cancel(PointerId(
+                seat.name.into(),
+            ))));
+        }
+    }
+}
+
 impl Desktop {
     pub(super) fn sync_cursors(&mut self) {
         for seat in &mut self.seats {
@@ -138,7 +153,11 @@ impl Desktop {
             let Some(window) = seat.focus.as_ref().and_then(|id| self.windows.get(id)) else {
                 continue;
             };
-            let cursor = window.view.pointer_cursor(PointerId(seat.name.into()));
+            let cursor = if window.life.blocked() {
+                Cursor::Default
+            } else {
+                window.view.pointer_cursor(PointerId(seat.name.into()))
+            };
             if seat.applied_cursor == Some(cursor) {
                 continue;
             }
@@ -268,16 +287,16 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let Some(seat) = state
+        let Some(index) = state
             .seats
-            .iter_mut()
-            .find(|s| s.pointer.as_ref() == Some(pointer))
+            .iter()
+            .position(|s| s.pointer.as_ref() == Some(pointer))
         else {
             return;
         };
         let target = match &event {
             wl_pointer::Event::Enter { surface, .. } => surface.id(),
-            _ => match &seat.focus {
+            _ => match &state.seats[index].focus {
                 Some(id) => id.clone(),
                 None => return,
             },
@@ -285,6 +304,9 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
         let Some(window) = state.windows.get_mut(&target) else {
             return;
         };
+        cancel_modal_gestures(&mut state.seats, &target, window);
+        let seat = &mut state.seats[index];
+        let blocked = window.life.blocked();
         let mut input = None;
         let mut press = None;
         let event = match event {
@@ -319,7 +341,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
                 axis: WEnum::Value(axis),
                 value,
                 ..
-            } => {
+            } if !blocked => {
                 let Some(p) = seat.pointer_sample() else {
                     return;
                 };
@@ -348,7 +370,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
                 button,
                 state: WEnum::Value(button_state),
                 ..
-            } => {
+            } if !blocked => {
                 let Some(p) = seat.pointer_sample() else {
                     return;
                 };
@@ -378,7 +400,9 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
             }
             _ => return,
         };
-        window.dispatch(WindowEvent::Pointer(event), press);
+        if !blocked {
+            window.dispatch(WindowEvent::Pointer(event), press);
+        }
         drop(input);
         state.sync_cursors();
     }

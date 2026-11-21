@@ -229,7 +229,9 @@ impl Window {
         match self.view.event(event) {
             Ok(response) => {
                 self.dirty |= response.redraw;
-                if let Some(control) = response.window_control {
+                if let Some(control) = response.window_control
+                    && !self.life.blocked()
+                {
                     if control == WindowControl::Drag
                         && let (Some(panel), Some((id, local))) = (&mut self.floating, panel_press)
                     {
@@ -606,7 +608,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for Desktop {
                     },
                 });
             }
-            xdg_toplevel::Event::Close => state.life.close(),
+            xdg_toplevel::Event::Close if !state.life.blocked() => state.life.close(),
             _ => {}
         }
     }

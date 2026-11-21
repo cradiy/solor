@@ -113,8 +113,10 @@ pub enum WindowBackground {
 #[derive(Clone, Copy, Debug)]
 #[must_use]
 pub struct WindowOptions<'a> {
-    /// Optional parent for a nonmodal auxiliary window in the same application.
+    /// Optional parent for an auxiliary window in the same application.
     pub parent: Option<&'a WindowHandle>,
+    /// Blocks input to the parent while this window is open. Requires an open parent.
+    pub modal: bool,
     /// Whether to request stacking above other ordinary windows.
     pub always_on_top: bool,
     /// Composition of the window background with the desktop.
@@ -140,6 +142,7 @@ impl<'a> WindowOptions<'a> {
     pub const fn new(title: &'a str) -> Self {
         Self {
             parent: None,
+            modal: false,
             always_on_top: false,
             native_decorations: true,
             background: WindowBackground::Opaque,
@@ -158,6 +161,15 @@ impl<'a> WindowOptions<'a> {
     /// Associates this window with an open parent. Each window can be closed independently.
     pub const fn parent(mut self, parent: &'a WindowHandle) -> Self {
         self.parent = Some(parent);
+        self.modal = false;
+        self
+    }
+
+    /// Blocks input to the given parent until the dialog closes.
+    /// Closing the parent also closes its modal dialogs.
+    pub const fn modal_for(mut self, parent: &'a WindowHandle) -> Self {
+        self.parent = Some(parent);
+        self.modal = true;
         self
     }
 

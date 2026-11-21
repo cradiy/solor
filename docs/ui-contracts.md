@@ -100,16 +100,24 @@ Keep the `WindowHandle` returned by `app.open_window(...)?` to manage a
 specific window. Use `window.is_open()` to reuse a settings window, and
 `window.close()` to close it from another window's callback. A close request
 immediately changes the status observed by every clone. Reopening creates a
-distinct handle. Dropping a handle leaves its window open. See the
-[settings window example](../crates/solor-platform/examples/settings_window.rs).
+distinct handle. Dropping a handle leaves its window open.
 
-Pass `WindowOptions::new("Settings").parent(&main)` to associate a settings
+Pass `WindowOptions::new("Inspector").parent(&main)` to associate an inspector
 window with its main window. The parent must be an open ordinary window in the
 same application run. To capture the main window's own handle in a button
 callback, build its root with `app.open_window_with(options, ui, |main| ...)`.
 Both windows can also open during setup. On Wayland, the child waits for its
 parent's first buffer before requesting the native relationship. Each window
 continues to accept input and can close independently.
+
+Use `WindowOptions::new("Discard changes?").modal_for(&editor)` for a dialog
+that blocks its parent. Pointer and keyboard input resume when the last modal
+child closes. The parent keeps rendering and other windows remain interactive.
+Closing the parent through its handle closes its modal descendants. On Wayland
+the host filters input and native close requests to blocked windows and sends
+the compositor a modal hint when `xdg-dialog-v1` is available. In the
+[settings window example](../crates/solor-platform/examples/settings_window.rs),
+**Open settings** blocks the workspace until the settings dialog closes.
 
 Call `window.activate()` when the user selects an already open window.
 On Wayland the host requests activation through `xdg_activation_v1` when

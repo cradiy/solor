@@ -9,6 +9,9 @@ use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle, delegate_noop, globals::GlobalList,
     protocol::wl_surface::WlSurface,
 };
+use wayland_protocols::xdg::dialog::v1::client::{
+    xdg_dialog_v1::XdgDialogV1, xdg_wm_dialog_v1::XdgWmDialogV1,
+};
 use wayland_protocols::xdg::shell::client::{
     xdg_surface::XdgSurface, xdg_toplevel::XdgToplevel, xdg_wm_base::XdgWmBase,
 };
@@ -32,6 +35,7 @@ pub(super) enum Role {
         surface: XdgSurface,
         top: XdgToplevel,
         decorations: Option<Decorations>,
+        dialog: Option<Box<XdgDialogV1>>,
         topmost: Option<Topmost>,
     },
     Layer(ZwlrLayerSurfaceV1, LayerPlacement),
@@ -95,6 +99,19 @@ impl Request<'_> {
                 sizing.apply(&top);
                 let decorations =
                     Decorations::bind(globals, qh, &top, surface.id(), options.native_decorations)?;
+                let dialog = if options.modal {
+                    globals
+                        .bind::<XdgWmDialogV1, _, _>(qh, 1..=1, ())
+                        .ok()
+                        .map(|manager| {
+                            let dialog = manager.get_xdg_dialog(&top, qh, ());
+                            manager.destroy();
+                            dialog.set_modal();
+                            Box::new(dialog)
+                        })
+                } else {
+                    None
+                };
                 top.set_title(options.title.into());
                 if let Some(app_id) = options.app_id {
                     top.set_app_id(app_id.into());
@@ -106,6 +123,7 @@ impl Request<'_> {
                         surface: xdg_surface,
                         top,
                         decorations,
+                        dialog,
                         topmost,
                     },
                     sizing.initial,
@@ -292,11 +310,15 @@ impl Drop for Role {
             Self::Toplevel {
                 decorations,
                 topmost,
+                dialog,
                 top,
                 surface,
                 shell,
                 ..
             } => {
+                if let Some(dialog) = dialog.take() {
+                    dialog.destroy();
+                }
                 drop(topmost.take());
                 drop(decorations.take());
                 top.destroy();
@@ -308,6 +330,8 @@ impl Drop for Role {
     }
 }
 
+delegate_noop!(Desktop: ignore XdgDialogV1);
+delegate_noop!(Desktop: ignore XdgWmDialogV1);
 delegate_noop!(Desktop: ignore ZwlrLayerShellV1);
 
 impl Dispatch<ZwlrLayerSurfaceV1, wayland_client::backend::ObjectId> for Desktop {
