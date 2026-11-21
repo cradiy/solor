@@ -71,6 +71,8 @@ impl From<ListScrollPosition> for ScrollPosition {
 pub struct ListScrollPosition {
     /// Index of the first row intersecting the list viewport, or zero for an empty list.
     pub first_visible_index: usize,
+    /// Logical pixels scrolled into the first visible row, or zero for an empty list.
+    pub offset_in_row_px: f64,
     /// Number of rows intersecting the list viewport, including partially visible rows.
     pub visible_count: usize,
     /// Distance from the top in logical pixels.

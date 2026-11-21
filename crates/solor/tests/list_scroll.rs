@@ -169,6 +169,69 @@ fn a_handle_jumps_from_a_row_callback_and_publishes_the_matching_hits() -> Resul
 }
 
 #[test]
+fn remount_restores_the_reading_row_after_its_height_is_measured() -> Result<()> {
+    let mut ui = Ui::new();
+    let list = ListScrollHandle::new();
+    let clicked = ui.context().signal(None);
+    let mount = |ui: &mut Ui, normal: f32, tall: f32| {
+        ui.mount(component(|_| {
+            variable_list(500usize, px(normal), move |i| {
+                div()
+                    .h(px(if i == 300 { tall } else { normal }))
+                    .on_click(move |cx| cx.set(clicked, Some(i)))
+            })
+            .scroll_handle(&list)
+        }))
+    };
+
+    let first = mount(&mut ui, 20.0, 150.0)?;
+    list.scroll_to(300, Top);
+    submit(&mut ui, first, 60.0)?;
+    ui.dispatch_pointer(
+        first,
+        PointerInput::Scroll(
+            mouse(5.0),
+            ScrollDelta {
+                x: px(0.0),
+                y: px(87.25),
+            },
+        ),
+    )?;
+    submit(&mut ui, first, 60.0)?;
+    let saved = list.position().unwrap();
+    assert_eq!(
+        (saved.first_visible_index, saved.offset_in_row_px),
+        (300, 87.25)
+    );
+    ui.unmount(first)?;
+
+    for (row_height, expected) in [(130.0, 87.25), (50.0, 0.0)] {
+        list.scroll_to_row_offset(saved.first_visible_index, saved.offset_in_row_px)?;
+        assert!(list.scroll_to_row_offset(0, f64::NAN).is_err());
+        let view = mount(&mut ui, 12.0, row_height)?;
+        submit(&mut ui, view, 0.0)?;
+        assert!(list.position().is_none());
+        submit(&mut ui, view, 60.0)?;
+        let restored = list.position().unwrap();
+        assert_eq!(
+            (restored.first_visible_index, restored.offset_in_row_px),
+            (300, expected)
+        );
+        assert_ne!(restored.offset_px, saved.offset_px);
+        let reading = ui.children(view, ui.root(view)?)?.nth(1).unwrap();
+        assert_eq!(
+            ui.geometry(view, reading).unwrap().origin.y,
+            px(-expected as f32)
+        );
+        ui.context().set(clicked, None)?;
+        click(&mut ui, view, 1.0)?;
+        assert_eq!(*ui.context().read(clicked)?, Some(300));
+        ui.unmount(view)?;
+    }
+    Ok(())
+}
+
+#[test]
 fn variable_row_alignment_uses_measured_height_and_yields_to_wheel_input() -> Result<()> {
     let mut ui = Ui::new();
     let handle = ListScrollHandle::new();
@@ -373,6 +436,7 @@ fn percentage_and_pixel_positions_round_trip_through_layout_and_wheel_input() ->
     assert_eq!(handle.position(), Some(initial));
     submit(&mut ui, view, 100.0)?;
     assert_eq!(handle.position().unwrap().offset_px, 40_000_000.25);
+    assert_eq!(handle.position().unwrap().offset_in_row_px, 0.25);
     assert_eq!(handle.position().unwrap().visible_range(), 800_000..800_003);
     let visible = ui.children(view, ui.root(view)?)?.nth(1).unwrap();
     assert_eq!(ui.geometry(view, visible).unwrap().origin.y, px(-0.25));

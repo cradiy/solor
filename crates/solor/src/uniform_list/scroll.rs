@@ -25,6 +25,10 @@ pub enum ScrollAlignment {
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Request {
+    RowOffset {
+        index: usize,
+        within: f64,
+    },
     Row {
         index: usize,
         alignment: ScrollAlignment,
@@ -52,6 +56,15 @@ impl Request {
         top: impl Fn(usize) -> f64,
     ) -> f64 {
         match self {
+            Self::RowOffset { index, within } => {
+                let index = (*index).min(count - 1);
+                let start = top(index);
+                if *within < top(index + 1) - start {
+                    start + *within
+                } else {
+                    start
+                }
+            }
             Self::Coordinate { target, anchor } => {
                 // Keep the selected reading position while distant estimates are replaced.
                 if let Some((index, within)) = *anchor {
@@ -133,6 +146,20 @@ impl ListScrollHandle {
         });
     }
 
+    /// Places a point inside a row at the top of the viewport, subject to the scroll bounds.
+    /// The distance is in logical pixels. Negative distances and distances at or beyond
+    /// the measured row height select its top. A nonfinite distance returns an error.
+    /// Like `scroll_to`, the request can be issued before the list is mounted.
+    pub fn scroll_to_row_offset(&self, index: usize, offset_px: impl Into<f64>) -> Result<()> {
+        let within = offset_px.into();
+        ensure!(within.is_finite(), "row offset must be finite");
+        self.enqueue(Request::RowOffset {
+            index,
+            within: within.max(0.0),
+        });
+        Ok(())
+    }
+
     /// Scrolls to a percentage of the available travel, with 100 at the bottom.
     /// Finite inputs are clamped to 0..=100.
     pub fn scroll_to_percent(&self, percent: f64) -> Result<()> {
@@ -200,6 +227,7 @@ impl ListScrollHandle {
         // A deferred command may outlive a previous mount. Resolve it against this document.
         if let Some(mut request) = self.pending() {
             match &mut request {
+                Request::RowOffset { .. } => {}
                 Request::Coordinate { anchor, .. } => *anchor = None,
                 Request::Row {
                     initial_relative_offset,

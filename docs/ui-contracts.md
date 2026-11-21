@@ -617,6 +617,22 @@ a nonzero content area. The index addresses the order at layout time and an
 index past the end selects the last row. Scroll input that moves the list
 supersedes a queued request. A handle can be attached to one live list at a time.
 
+To restore a reading position across mounts, save the position before leaving
+the list and pass its row index and within-row offset to the next list:
+
+```rust
+let saved = list.position();
+// When opening the list again:
+if let Some(saved) = saved.filter(|p| p.visible_count > 0) {
+    list.scroll_to_row_offset(saved.first_visible_index, saved.offset_in_row_px)?;
+}
+```
+
+For data that can be reordered while the list is closed, save the item's key
+and look up its current index when restoring. A variable list refines the
+requested position after measuring that row. If the saved point is outside
+its new height, the list aligns the row's top within the scroll bounds.
+
 ### Scroll progress
 
 Use `scroll_to_percent` for a position along the scrollable distance and

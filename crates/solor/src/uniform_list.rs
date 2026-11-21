@@ -434,6 +434,7 @@ impl Window {
             if let Some(handle) = handle {
                 handle.stage(active.then_some(ListScrollPosition {
                     first_visible_index: 0,
+                    offset_in_row_px: 0.0,
                     visible_count: 0,
                     offset_px: offset,
                     max_offset_px: limit,
@@ -467,8 +468,10 @@ impl Window {
             .min(count);
         let range = first.saturating_sub(1)..end.saturating_add(1).min(count);
         if let Some(handle) = handle {
+            let within = (offset - top(first)).max(0.0);
             handle.stage(Some(ListScrollPosition {
                 first_visible_index: first,
+                offset_in_row_px: within,
                 visible_count: end - first,
                 offset_px: offset,
                 max_offset_px: limit,
@@ -476,7 +479,7 @@ impl Window {
                 is_estimated,
             }));
             if measured.is_some() && range != (0..count) && offset > 0.0 && offset < limit {
-                handle.anchor_estimated_target(first, offset - top(first));
+                handle.anchor_estimated_target(first, within);
             }
         }
         let first_y = px((top(range.start) - offset) as f32);
