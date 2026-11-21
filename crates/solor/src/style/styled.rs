@@ -139,6 +139,22 @@ macro_rules! presets {
     )+)+};
 }
 
+macro_rules! corner_presets {
+    ($($setter:ident => $corners:literal),+ $(,)?) => { $(
+        corner_presets!(@scale $setter, $corners;
+            _none: px(0.0), _xs: rem(0.125), _sm: rem(0.25), _md: rem(0.375),
+            _lg: rem(0.5), _xl: rem(0.75), _2xl: rem(1.0), _3xl: rem(1.5),
+            _full: px(9999.0),
+        );
+    )+ };
+    (@scale $setter:ident, $corners:literal; $($suffix:ident: $unit:ident($radius:literal)),+ $(,)?) => {
+        pastey::paste! { $(
+            #[doc = concat!(stringify!($radius), stringify!($unit), " on ", $corners, ".")]
+            fn [<$setter $suffix>](self) -> Self { self.$setter($unit($radius)) }
+        )+ }
+    };
+}
+
 /// Common style declarations for containers, text and custom nodes.
 ///
 /// Builders compose field by field. Custom elements can read the cascaded values
@@ -329,11 +345,27 @@ pub trait Styled: Sized {
     }
 
     box_methods! { corner_radii;
+        rounded_t, rounded_top => [top_left, top_right];
+        rounded_r, rounded_right => [top_right, bottom_right];
+        rounded_b, rounded_bottom => [bottom_left, bottom_right];
+        rounded_l, rounded_left => [top_left, bottom_left];
         rounded_tl, rounded_top_left => [top_left];
         rounded_tr, rounded_top_right => [top_right];
         rounded_br, rounded_bottom_right => [bottom_right];
         rounded_bl, rounded_bottom_left => [bottom_left];
     }
+
+    corner_presets!(
+        rounded => "all corners",
+        rounded_t => "top corners",
+        rounded_r => "right corners",
+        rounded_b => "bottom corners",
+        rounded_l => "left corners",
+        rounded_tl => "the top-left corner",
+        rounded_tr => "the top-right corner",
+        rounded_br => "the bottom-right corner",
+        rounded_bl => "the bottom-left corner",
+    );
 
     // One spacing step is a quarter rem.
     presets! {
@@ -348,7 +380,6 @@ pub trait Styled: Sized {
         pb { pb_0: 0.0, pb_1: 0.25, pb_2: 0.5 };
         pl { pl_0: 0.0, pl_1: 0.25, pl_2: 0.5 };
         gap { gap_0: 0.0, gap_1: 0.25, gap_2: 0.5, gap_3: 0.75, gap_4: 1.0 };
-        rounded { rounded_none: 0.0, rounded_sm: 0.125, rounded_md: 0.375, rounded_lg: 0.5 };
     }
 
     /// Sets the preferred width of the box selected by `box_sizing`.

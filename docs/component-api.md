@@ -264,6 +264,14 @@ floating-point logical pixels. Device scale and pixel snapping apply during rast
 Use `w_auto()`,
 `h_auto()` or `clear_bg()` to clear an earlier declaration.
 
+Corner presets use `xs`, `sm`, `md`, `lg`, `xl`, `2xl` and `3xl` for
+0.125, 0.25, 0.375, 0.5, 0.75, 1 and 1.5rem respectively. Use `none` for
+square corners and `rounded_full()` for a pill or circle. Apply a preset to
+the whole box, one side (`t`, `r`, `b`, `l`) or one corner (`tl`, `tr`,
+`br`, `bl`). For example, `div().rounded_lg().rounded_b_none()` keeps only
+the top corners rounded. Each group also accepts an explicit radius, as in
+`.rounded_r(px(10.0))`.
+
 ```rust
 let surface = gradient_left_to_right([
     color_stop(rgb(0x203048), 0.0),

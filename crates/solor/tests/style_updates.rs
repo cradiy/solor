@@ -15,6 +15,58 @@ const INK: Rgba = Rgba::new(30, 40, 50, 255);
 const ACCENT: Rgba = Rgba::new(25, 100, 200, 255);
 
 #[test]
+fn corner_presets_compose_per_corner_and_fit_the_assigned_box() -> Result<()> {
+    let mut ui = Ui::new();
+    let view = ui.mount_with_rem_size(
+        component(|_| {
+            div()
+                .flex_col()
+                .child(
+                    div()
+                        .size(px(80.0))
+                        .bg(INK)
+                        .rounded_xs()
+                        .rounded_t_3xl()
+                        .rounded_r_sm()
+                        .rounded_br_none(),
+                )
+                .child(div().w(px(48.0)).h(px(16.0)).bg(INK).rounded_full())
+        }),
+        px(20.0),
+    )?;
+    ui.layout(
+        view,
+        Size {
+            width: px(100.0),
+            height: px(100.0),
+        },
+    )?;
+    let frame = ui.record_frame(view)?;
+    let [
+        Draw::Fill {
+            corner_radii: card, ..
+        },
+        Draw::Fill {
+            corner_radii: pill, ..
+        },
+    ] = frame.draws()
+    else {
+        panic!("expected two backgrounds")
+    };
+    assert_eq!(
+        *card,
+        Corners {
+            top_left: px(30.0),
+            top_right: px(5.0),
+            bottom_right: px(0.0),
+            bottom_left: px(2.5),
+        }
+    );
+    assert_eq!(*pill, Corners::all(px(8.0)));
+    Ok(())
+}
+
+#[test]
 fn signed_letter_spacing_uses_the_view_rem_and_changes_wrapping() -> Result<()> {
     const LABEL: &str = "中fi AV";
     let mut ui = Ui::with_font(FONT.to_vec())?;

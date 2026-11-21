@@ -10,6 +10,7 @@ layout-audit = []
 
 [dependencies]
 keyboard-types = "0.8"
+pastey = "0.2"
 slotmap.workspace = true
 smallvec.workspace = true
 ttf-parser = { version = "0.25", default-features = false }
