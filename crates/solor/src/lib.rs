@@ -39,7 +39,10 @@ pub use uniform_list::{
 };
 
 pub use crate::layout::Edges;
-pub use crate::{state::Signal, tree::NodeId};
+pub use crate::{
+    state::{Signal, SignalVec},
+    tree::NodeId,
+};
 pub use element::{
     AnyElement, Div, Draw, Element, IntoElement, Node, PaintContext, RefreshMode, RefreshPolicy,
     Render, TextContent, div, element, text,

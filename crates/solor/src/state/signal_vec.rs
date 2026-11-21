@@ -1,0 +1,124 @@
+//! An ordered collection with independent item and membership notifications.
+use super::{Runtime, Signal};
+use crate::Context;
+use anyhow::{Context as _, Result, ensure};
+
+/// A context-owned sequence of independently observable items.
+///
+/// Both virtual list builders accept this handle and pass a stable `Signal<T>` to
+/// the row builder. Moving an item preserves that signal. Removing it retires
+/// its storage once its last reactive binding detaches.
+pub struct SignalVec<T> {
+    pub(crate) order: Signal<Vec<Signal<T>>>,
+}
+
+impl<T> Copy for SignalVec<T> {}
+impl<T> Clone for SignalVec<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl Context<'_> {
+    /// Creates a sequence in the current scope, with one signal per value.
+    pub fn signal_vec<T: 'static>(&mut self, values: impl IntoIterator<Item = T>) -> SignalVec<T> {
+        let values = values.into_iter();
+        let order = self.signal(Vec::<Signal<T>>::with_capacity(values.size_hint().0));
+        self.state
+            .vector_disposers
+            .insert(order.id.key, |value, state| {
+                let order = value
+                    .downcast::<Vec<Signal<T>>>()
+                    .expect("typed signal vector");
+                for item in *order {
+                    state.retire_item(item);
+                }
+            });
+        let rows = SignalVec { order };
+        for value in values {
+            rows.push(value, self).expect("new signal vector");
+        }
+        rows
+    }
+}
+
+impl<N> Runtime<N> {
+    fn retire_item<T>(&mut self, item: Signal<T>) {
+        let entry = &mut self.signals[item.id.key];
+        if entry.bindings.is_empty() {
+            self.signals.remove(item.id.key);
+        } else {
+            // A mounted row can still read the value before list reconciliation.
+            entry.retire_after_unbind = true;
+        }
+    }
+}
+
+impl<T: 'static> SignalVec<T> {
+    /// Borrows the ordered item handles without cloning their values.
+    pub fn items<'a>(self, cx: &'a Context<'_>) -> Result<&'a [Signal<T>]> {
+        Ok(cx.read(self.order)?.as_slice())
+    }
+
+    /// Returns the item signal at the index, or an error if out of bounds.
+    pub fn item(self, index: usize, cx: &Context<'_>) -> Result<Signal<T>> {
+        self.items(cx)?
+            .get(index)
+            .copied()
+            .context("item index out of bounds")
+    }
+
+    /// Replaces a single value, notifying its subscribers only if it changes.
+    pub fn set(self, index: usize, value: T, cx: &mut Context<'_>) -> Result<()>
+    where
+        T: PartialEq,
+    {
+        cx.set(self.item(index, cx)?, value)
+    }
+
+    /// Edits one item without cloning it and notifies its subscribers unconditionally.
+    pub fn update_in_place<R>(
+        self,
+        index: usize,
+        cx: &mut Context<'_>,
+        edit: impl FnOnce(&mut T) -> R,
+    ) -> Result<R> {
+        cx.update_in_place(self.item(index, cx)?, edit)
+    }
+
+    /// Appends a new value and returns its stable item signal.
+    pub fn push(self, value: T, cx: &mut Context<'_>) -> Result<Signal<T>> {
+        cx.read(self.order)?;
+        let item = cx.state.create_signal(value);
+        cx.update_in_place(self.order, |items| items.push(item))?;
+        Ok(item)
+    }
+
+    /// Inserts a new item before the index. An index equal to the length appends it.
+    pub fn insert(self, index: usize, value: T, cx: &mut Context<'_>) -> Result<Signal<T>> {
+        ensure!(index <= self.items(cx)?.len(), "item index out of bounds");
+        let item = cx.state.create_signal(value);
+        cx.update_in_place(self.order, |items| items.insert(index, item))?;
+        Ok(item)
+    }
+
+    /// Removes the item at the index and publishes the new order.
+    pub fn remove(self, index: usize, cx: &mut Context<'_>) -> Result<()> {
+        self.item(index, cx)?;
+        let removed = cx.update_in_place(self.order, |items| items.remove(index))?;
+        cx.state.retire_item(removed);
+        Ok(())
+    }
+
+    /// Moves an item to its final zero-based index. Both indices must exist.
+    pub fn move_item(self, from: usize, to: usize, cx: &mut Context<'_>) -> Result<()> {
+        let len = self.items(cx)?.len();
+        ensure!(from < len && to < len, "item index out of bounds");
+        if from < to {
+            cx.update_in_place(self.order, |items| items[from..=to].rotate_left(1))?;
+        } else if from > to {
+            cx.update_in_place(self.order, |items| items[to..=from].rotate_right(1))?;
+        }
+        Ok(())
+    }
+}

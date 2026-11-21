@@ -152,6 +152,57 @@ fn a_failed_row_mount_releases_partial_rows_and_can_be_retried() -> Result<()> {
 }
 
 #[test]
+fn a_signal_vec_color_edit_repairs_only_the_clicked_row() -> Result<()> {
+    let mut window = CpuWindow::mount(
+        Ui::new(),
+        component(|cx| {
+            let colors = cx.signal_vec([rgb(0x112233); 4]);
+            uniform_list(colors, px(10.0), |color| {
+                div()
+                    .bg(color)
+                    .on_click(move |cx| cx.set(color, rgb(0x775533)))
+            })
+        }),
+    )?;
+    let size = Size {
+        width: px(32.0),
+        height: px(30.0),
+    };
+    let previous = window.frame(size, RasterScale::ONE)?.rgba.to_vec();
+    window.frame_submitted()?;
+    let mut target = mouse();
+    target.position.y = px(15.0);
+    for input in [
+        PointerInput::Down(target, PointerButton::Primary),
+        PointerInput::Up(target, PointerButton::Primary),
+    ] {
+        window.event(WindowEvent::Pointer(input))?;
+    }
+    let frame = window.frame(size, RasterScale::ONE)?;
+    assert_eq!(
+        frame.damage.bounds(),
+        Some(solor::raster::Clip {
+            left: 0,
+            top: 10,
+            right: 32,
+            bottom: 20,
+        })
+    );
+    let row_bytes = 10 * 32 * 4;
+    assert_eq!(&frame.rgba[..row_bytes], &previous[..row_bytes]);
+    assert!(
+        frame.rgba[row_bytes..2 * row_bytes]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| *p == [0x77, 0x55, 0x33, 255])
+    );
+    assert_eq!(&frame.rgba[2 * row_bytes..], &previous[2 * row_bytes..]);
+    window.frame_submitted()?;
+    Ok(())
+}
+
+#[test]
 fn growing_offscreen_content_resizes_the_thumb_in_the_first_cpu_frame() -> Result<()> {
     let mut window = CpuWindow::mount(
         Ui::new(),

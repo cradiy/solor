@@ -1,5 +1,8 @@
 //! Explicit signal-to-node bindings with batched, deduplicated updates.
 
+mod signal_vec;
+pub use signal_vec::SignalVec;
+
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
@@ -41,6 +44,12 @@ impl<S> PartialEq for Signal<S> {
 }
 
 impl<S> Eq for Signal<S> {}
+
+impl<S> std::hash::Hash for Signal<S> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
 
 impl<S> Copy for Signal<S> {}
 
@@ -105,6 +114,7 @@ impl From<TreeError> for StateError {
 struct SignalEntry {
     // True only while every live subscriber is already pending.
     all_queued: bool,
+    retire_after_unbind: bool,
     value: Box<dyn Any>,
     bindings: Vec<BindingKey>,
 }
@@ -174,10 +184,16 @@ impl<N> Bindings<N> {
             self.by_node.remove(&binding.node);
         }
 
+        let source = &signals[binding.signal];
+        if source.retire_after_unbind && source.bindings.is_empty() {
+            signals.remove(binding.signal);
+        }
         // Release user captures only after every index is consistent.
         drop(binding);
     }
 }
+
+type DisposeItems<N> = fn(Box<dyn Any>, &mut Runtime<N>);
 
 /// Owns a tree, signals, and explicit one-source bindings.
 ///
@@ -189,6 +205,7 @@ pub struct Runtime<N> {
     tree: Tree<N>,
     signals: SlotMap<SignalKey, SignalEntry>,
     bindings: Bindings<N>,
+    vector_disposers: HashMap<SignalKey, DisposeItems<N>>,
 }
 
 impl<N> Runtime<N> {
@@ -198,6 +215,7 @@ impl<N> Runtime<N> {
             tree: Tree::new(root),
             signals: SlotMap::with_key(),
             bindings: Bindings::new(),
+            vector_disposers: HashMap::new(),
         }
     }
 
@@ -217,6 +235,7 @@ impl<N> Runtime<N> {
             tree,
             signals,
             bindings,
+            ..
         } = self;
         tree.remove_subtree_with(node, |node| {
             while let Some(&key) = bindings.by_node.get(&node).and_then(|keys| keys.last()) {
@@ -229,6 +248,7 @@ impl<N> Runtime<N> {
     pub fn create_signal<S: 'static>(&mut self, value: S) -> Signal<S> {
         let key = self.signals.insert(SignalEntry {
             all_queued: true,
+            retire_after_unbind: false,
             value: Box::new(value),
             bindings: Vec::new(),
         });
@@ -410,10 +430,14 @@ impl<N> Runtime<N> {
     /// Removes a signal by identity, including its bindings and pending work.
     pub fn remove_signal_by_id(&mut self, id: SignalId) -> Result<(), StateError> {
         self.signal(id)?;
+        self.signals[id.key].retire_after_unbind = false;
         while let Some(&key) = self.signals[id.key].bindings.last() {
             self.bindings.remove(key, &mut self.signals);
         }
-        self.signals.remove(id.key);
+        let entry = self.signals.remove(id.key).expect("validated signal");
+        if let Some(dispose) = self.vector_disposers.remove(&id.key) {
+            dispose(entry.value, self);
+        }
         Ok(())
     }
 

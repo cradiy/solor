@@ -79,6 +79,12 @@ impl<K> From<Signal<Vec<K>>> for ListItems<K> {
     }
 }
 
+impl<T: 'static> From<crate::SignalVec<T>> for ListItems<Signal<T>> {
+    fn from(rows: crate::SignalVec<T>) -> Self {
+        rows.order.into()
+    }
+}
+
 impl<K: Clone + 'static> ListItems<K> {
     fn signal(&self) -> Option<SignalId> {
         match &self.0 {

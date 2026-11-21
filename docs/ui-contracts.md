@@ -494,6 +494,30 @@ Leaving the buffer retires the row and its subscriptions. Keep selection and edi
 outlive the row in application state. Signal changes to the key sequence preserve the
 logical scroll distance, clamped to the new extent.
 
+### Editing individual items
+
+Create a `SignalVec<T>` when rows have independently changing values. Both
+virtual list builders pass the item's stable signal to the row builder.
+
+```rust
+let rows = cx.signal_vec([SharedString::from("Ready"), SharedString::from("Queued")]);
+let list = uniform_list(rows, px(28.0), |status| text(status));
+
+rows.set(1, SharedString::from("Running"), cx)?;
+rows.move_item(1, 0, cx)?;
+```
+
+A changed value notifies that item's subscribers. `update_in_place` supports
+non-cloneable values and publishes after every edit. For a custom struct the
+subscription covers the whole item. Updates that affect row height can still
+reflow the viewport. `insert`, `push`, `remove` and `move_item` publish the
+order. Use `rows.item(index, cx)?` to keep addressing an item after it moves.
+
+Each stored item occupies one runtime signal, including items outside the
+mounted window. Removing an item releases its value after its last binding
+detaches. The collection and later insertions belong to the scope that
+created the collection.
+
 ## Variable-height lists
 
 Use `variable_list(items, estimated_height, build_row)` for rows whose height
