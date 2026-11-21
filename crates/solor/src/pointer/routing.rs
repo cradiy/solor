@@ -75,6 +75,7 @@ impl PointerRouter {
 
 // The callback can change signals, but structural reconciliation occurs only at flush.
 struct Delivery<'a> {
+    tasks: &'a crate::Tasks,
     tooltip_style: &'a crate::TooltipStyle,
     instance: &'a mut Instance,
     state: &'a mut Runtime<()>,
@@ -85,10 +86,12 @@ fn context_and_handlers<'a>(
     node: &'a mut MountedNode,
     state: &'a mut Runtime<()>,
     engine: &'a TextSystem,
+    tasks: &'a crate::Tasks,
 ) -> (&'a Handlers, Context<'a>) {
     (
         node.handlers.as_deref().expect("interactive recipient"),
         Context {
+            tasks,
             state,
             engine,
             owned: Some(&mut node.owned),
@@ -114,7 +117,8 @@ impl Delivery<'_> {
                 .bodies
                 .get_mut(&id)
                 .expect("live hover listener");
-            let (handlers, mut cx) = context_and_handlers(node, self.state, self.engine);
+            let (handlers, mut cx) =
+                context_and_handlers(node, self.state, self.engine, self.tasks);
             match change {
                 HoverChange::Presence(entered) => {
                     if let Some(handler) = &handlers.hover {
@@ -203,7 +207,7 @@ impl Delivery<'_> {
             .bodies
             .get_mut(&owner)
             .expect("live recipient");
-        let (handlers, context) = context_and_handlers(node, self.state, self.engine);
+        let (handlers, context) = context_and_handlers(node, self.state, self.engine, self.tasks);
         let control = handlers.window_control(self.instance.pointer.fixed_size);
         let mut cx = PointerDownContext {
             context,
@@ -262,7 +266,8 @@ impl Delivery<'_> {
                     .bodies
                     .get_mut(&owner)
                     .expect("live scroll ancestor");
-                let (handlers, context) = context_and_handlers(node, self.state, self.engine);
+                let (handlers, context) =
+                    context_and_handlers(node, self.state, self.engine, self.tasks);
                 let scroll = handlers.scroll.as_ref().expect("accepted scroll listener");
                 let mut cx = ScrollContext {
                     context,
@@ -300,7 +305,7 @@ impl Delivery<'_> {
             .bodies
             .get_mut(&target)
             .expect("live recipient");
-        let (handlers, mut cx) = context_and_handlers(node, self.state, self.engine);
+        let (handlers, mut cx) = context_and_handlers(node, self.state, self.engine, self.tasks);
         if let Some(moved) = &handlers.moved {
             moved(&event, &mut cx)?;
         }
@@ -325,7 +330,7 @@ impl Delivery<'_> {
             .bodies
             .get_mut(&target)
             .expect("live recipient");
-        let (handlers, mut cx) = context_and_handlers(node, self.state, self.engine);
+        let (handlers, mut cx) = context_and_handlers(node, self.state, self.engine, self.tasks);
         if let Some(up) = &handlers.up {
             up(&event, &mut cx)?;
         }
@@ -363,7 +368,8 @@ impl Delivery<'_> {
                 .bodies
                 .get_mut(&press.owner)
                 .expect("live press owner");
-            let (handlers, mut cx) = context_and_handlers(node, self.state, self.engine);
+            let (handlers, mut cx) =
+                context_and_handlers(node, self.state, self.engine, self.tasks);
             if let Some(cancel) = &handlers.cancel {
                 result = result.and(cancel(id, &mut cx));
             }
@@ -402,6 +408,7 @@ impl Ui {
         Ok(Delivery {
             tooltip_style: &self.tooltip_style,
             instance,
+            tasks: &self.tasks,
             state: self.state.get_mut(),
             engine: &self.engine,
         })

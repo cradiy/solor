@@ -428,6 +428,8 @@ impl WindowFactory {
 impl EventLoop {
     fn dispatch(&mut self, control: Option<(ObjectId, Binding<'_>)>) -> anyhow::Result<()> {
         let qh = self.queue.handle();
+        let wake = super::wake::EventWake::new()?;
+        let waker = std::task::Waker::from(wake.clone());
         loop {
             self.windows.revisit.set(false);
             for mut window in self.windows.pending.take() {
@@ -451,6 +453,7 @@ impl EventLoop {
                     closed.push(id.clone());
                     continue;
                 };
+                window.view.poll_tasks(&waker)?;
                 pointer::cancel_modal_gestures(&mut self.desktop.seats, id, window);
                 if let Some(handle) = handle {
                     window.input_region.update(handle.take_input_region());
@@ -501,6 +504,7 @@ impl EventLoop {
                 &mut self.queue,
                 &mut self.desktop,
                 deadline,
+                &wake,
                 control.as_ref().map(|(_, h)| h),
             )?;
         }
@@ -533,6 +537,7 @@ fn dispatch_until(
     queue: &mut EventQueue<Desktop>,
     desktop: &mut Desktop,
     deadline: Option<Instant>,
+    wake: &super::wake::EventWake,
     control: Option<&Binding<'_>>,
 ) -> anyhow::Result<()> {
     use rustix::event::{PollFd, PollFlags, Timespec, poll};
@@ -544,8 +549,10 @@ fn dispatch_until(
     queue.flush()?;
     if let Some(guard) = queue.prepare_read() {
         let fd = guard.connection_fd();
-        let mut fds: smallvec::SmallVec<[_; 2]> =
-            smallvec::smallvec![PollFd::new(&fd, PollFlags::IN)];
+        let mut fds: smallvec::SmallVec<[_; 3]> = smallvec::smallvec![
+            PollFd::new(&fd, PollFlags::IN),
+            PollFd::new(&wake.0, PollFlags::IN)
+        ];
         if let Some(control) = control {
             fds.push(PollFd::new(control.fd(), PollFlags::IN));
         }
@@ -557,8 +564,11 @@ fn dispatch_until(
             Err(error) => return Err(error.into()),
             Ok(_) => {}
         }
+        if !fds[1].revents().is_empty() {
+            wake.drain()?;
+        }
         if let Some(control) = control
-            && !fds[1].revents().is_empty()
+            && !fds[2].revents().is_empty()
         {
             control.drain()?;
         }

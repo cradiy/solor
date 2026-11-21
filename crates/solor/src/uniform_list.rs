@@ -693,6 +693,7 @@ impl Instance {
         &mut self,
         state: &mut Runtime<()>,
         engine: &crate::TextSystem,
+        tasks: &crate::Tasks,
     ) -> Result<()> {
         for (path, list) in &mut self.lists {
             let Some(listener) = &mut list.range_listener else {
@@ -715,6 +716,7 @@ impl Instance {
                 (listener.callback)(
                     range,
                     &mut crate::Context {
+                        tasks,
                         state,
                         engine,
                         owned: Some(&mut node.owned),

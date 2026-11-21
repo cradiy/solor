@@ -25,6 +25,9 @@ macro_rules! impl_event_context {
     };
 }
 
+mod tasks;
+pub use tasks::AsyncContext;
+use tasks::{TaskScope, Tasks};
 mod assets;
 pub use assets::{AssetSource, Assets, ImageResource};
 mod clip;
@@ -101,13 +104,20 @@ mod tests;
 
 struct Mount<'a> {
     state: &'a mut Runtime<()>,
-    owned: Vec<SignalId>,
+    owned: Owned,
+}
+
+#[derive(Default)]
+struct Owned {
+    signals: Vec<SignalId>,
+    tasks: TaskScope,
 }
 
 impl Mount<'_> {
-    fn context<'a>(&'a mut self, engine: &'a TextSystem) -> Context<'a> {
+    fn context<'a>(&'a mut self, engine: &'a TextSystem, tasks: &'a Tasks) -> Context<'a> {
         Context {
             state: self.state,
+            tasks,
             engine,
             owned: Some(&mut self.owned),
         }
@@ -116,7 +126,7 @@ impl Mount<'_> {
 
 impl Drop for Mount<'_> {
     fn drop(&mut self) {
-        for signal in self.owned.drain(..) {
+        for signal in self.owned.signals.drain(..) {
             self.state
                 .remove_signal_by_id(signal)
                 .expect("live mount signal");
@@ -126,10 +136,11 @@ impl Drop for Mount<'_> {
 
 /// State access during an application operation, component mount, or event.
 pub struct Context<'a> {
+    tasks: &'a Tasks,
     engine: &'a TextSystem,
     state: &'a mut Runtime<()>,
     // Application-owned signals live with the runtime. Component scopes retire theirs together.
-    owned: Option<&'a mut Vec<SignalId>>,
+    owned: Option<&'a mut Owned>,
 }
 
 impl Context<'_> {
@@ -137,7 +148,7 @@ impl Context<'_> {
     pub fn signal<T: 'static>(&mut self, initial: T) -> Signal<T> {
         let signal = self.state.create_signal(initial);
         if let Some(owned) = &mut self.owned {
-            owned.push(signal.id());
+            owned.signals.push(signal.id());
         }
         signal
     }
@@ -251,6 +262,7 @@ struct Instance {
 }
 
 struct Attachment<'a> {
+    tasks: &'a Tasks,
     assets: &'a Assets,
     scope: NodeId,
     state: &'a mut Runtime<()>,
@@ -401,7 +413,7 @@ impl Instance {
             handle.detach(state);
         }
         for node in self.bodies.into_values() {
-            for signal in node.owned {
+            for signal in node.owned.signals {
                 state.remove_signal_by_id(signal)?;
             }
         }
@@ -486,7 +498,7 @@ impl Instance {
     ) -> Result<()> {
         let mut mount = Mount {
             state: cx.state,
-            owned: Vec::new(),
+            owned: Owned::default(),
         };
         let Installation {
             mut node,
@@ -500,7 +512,7 @@ impl Instance {
             index,
             self.bodies[&parent].text_style.clone(),
             (self.units, cx.assets),
-            &mut mount.context(cx.engine),
+            &mut mount.context(cx.engine, cx.tasks),
         )?;
         node.owned = std::mem::take(&mut mount.owned);
         drop(mount);
@@ -560,7 +572,7 @@ impl Instance {
                     .borrow_mut()
                     .remove(&(ViewId(cx.scope), node.id));
             }
-            for signal in node.owned {
+            for signal in node.owned.signals {
                 cx.state.remove_signal_by_id(signal)?;
             }
         }
@@ -617,34 +629,19 @@ fn subtree_keys<V>(map: &BTreeMap<Path, V>, path: &Path) -> Vec<Path> {
 pub struct ViewId(NodeId);
 
 /// Owns the application signals and its mounted component trees.
+#[derive(Default)]
 pub struct Ui {
+    tasks: Tasks,
     assets: Assets,
     keymap: HashMap<keyboard::Shortcut, Vec<keyboard::BoundAction>>,
     tooltip_style: TooltipStyle,
-    state: RefCell<Runtime<()>>,
+    state: tasks::UiState,
     engine: TextSystem,
     instances: HashMap<ViewId, Instance>,
     pending: Pending,
     styles: StyleUpdates,
     content_updates: ContentUpdates,
     visibility: VisibilityUpdates,
-}
-
-impl Default for Ui {
-    fn default() -> Self {
-        Self {
-            assets: Assets::default(),
-            keymap: HashMap::new(),
-            tooltip_style: TooltipStyle::default(),
-            state: RefCell::new(Runtime::new(())),
-            engine: TextSystem::default(),
-            instances: HashMap::new(),
-            pending: Pending::default(),
-            styles: Default::default(),
-            content_updates: ContentUpdates::default(),
-            visibility: VisibilityUpdates::default(),
-        }
-    }
 }
 
 impl Ui {
@@ -685,9 +682,9 @@ impl Ui {
         let units = UnitResolver::new(rem_size)?;
         let mut mount = Mount {
             state: self.state.get_mut(),
-            owned: Vec::new(),
+            owned: Owned::default(),
         };
-        let mut cx = mount.context(&self.engine);
+        let mut cx = mount.context(&self.engine, &self.tasks);
         let item = item.render(&mut cx).into_element();
         let (
             scene,
@@ -726,6 +723,7 @@ impl Ui {
             tracked_scroll: HashMap::new(),
         };
         let mut cx = Attachment {
+            tasks: &self.tasks,
             assets: &self.assets,
             scope,
             state: self.state.get_mut(),
@@ -738,8 +736,8 @@ impl Ui {
         if let Err(error) =
             instance.finish_attachment(root, &[], watches, children, scroll_handle, &mut cx)
         {
-            self.state.get_mut().remove_subtree(scope)?;
-            instance.dispose(self.state.get_mut())?;
+            cx.state.remove_subtree(scope)?;
+            instance.dispose(cx.state)?;
             return Err(error);
         }
         let view = ViewId(scope);
@@ -750,6 +748,7 @@ impl Ui {
     /// Opens an application-owned state context.
     pub fn context(&mut self) -> Context<'_> {
         Context {
+            tasks: &self.tasks,
             state: self.state.get_mut(),
             engine: &self.engine,
             owned: None,
@@ -768,6 +767,7 @@ impl Ui {
             return Ok(false);
         };
         click(&mut Context {
+            tasks: &self.tasks,
             state: self.state.get_mut(),
             engine: &self.engine,
             owned: Some(&mut node.owned),
@@ -824,6 +824,7 @@ impl Ui {
                     .get_mut(&ViewId(scope))
                     .expect("queued scope is live");
                 let mut cx = Attachment {
+                    tasks: &self.tasks,
                     assets: &self.assets,
                     scope,
                     state: self.state.get_mut(),
@@ -965,6 +966,7 @@ impl Ui {
                 break instance;
             }
             let mut cx = Attachment {
+                tasks: &self.tasks,
                 assets: &self.assets,
                 scope: view.0,
                 state: self.state.get_mut(),
@@ -989,7 +991,7 @@ impl Ui {
         if !instance.tracked_scroll.is_empty() {
             instance.update_tracked_scroll(self.state.get_mut())?;
         }
-        instance.notify_list_ranges(self.state.get_mut(), &self.engine)?;
+        instance.notify_list_ranges(self.state.get_mut(), &self.engine, &self.tasks)?;
         Ok(total)
     }
 

@@ -228,6 +228,7 @@ impl Ui {
                 (handler.callback)(
                     now,
                     &mut crate::Context {
+                        tasks: &self.tasks,
                         state: self.state.get_mut(),
                         engine: &self.engine,
                         owned: Some(&mut node.owned),

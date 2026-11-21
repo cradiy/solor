@@ -45,6 +45,30 @@ fills headlessly. The [stage contracts](node-execution.md#stage-contracts)
 describe composition, clipping and accepted-frame routing. Raster submission,
 focus and accessibility for custom elements still require integration.
 
+## Foreground tasks
+
+A component can await an application-provided future and publish the result to
+a signal. For example, given a future `next_title` producing a `SharedString`:
+
+```rust
+component(move |cx| {
+    let title = cx.signal(SharedString::from("Loading…"));
+    cx.spawn(async move |cx| cx.set(title, next_title.await));
+    text(title)
+})
+```
+
+The Wayland host wakes on task readiness, including a wake from another
+thread. Each task runs on the UI thread and can hold `Rc` values across an
+await. Use futures that return promptly from each poll. A changed signal
+follows the usual binding and redraw path. Handle recoverable application
+errors inside the task. Returning an error forwards it to the window host.
+
+Tasks started during mount or event delivery are cancelled when their element
+unmounts. Tasks started with `Ui::context` belong to the UI. A custom host
+calls `Ui::poll_tasks` before checking redraw deadlines and supplies a waker
+that interrupts its event wait.
+
 ## Composition
 
 Start with a general container and a text leaf. The container arranges children

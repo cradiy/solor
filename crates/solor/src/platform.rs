@@ -275,6 +275,12 @@ pub trait WindowHandler<T: Presentation> {
         Ok(())
     }
 
+    /// Polls foreground work before checking redraw deadlines. The waker interrupts
+    /// the event loop when a pending task becomes ready.
+    fn poll_tasks(&mut self, _waker: &std::task::Waker) -> Result<()> {
+        Ok(())
+    }
+
     /// Handles an event and returns any requested redraw and native window operation.
     fn event(&mut self, event: WindowEvent) -> Result<EventResponse>;
 

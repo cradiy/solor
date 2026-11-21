@@ -144,6 +144,7 @@ impl Ui {
             && let Some(handlers) = node.handlers.as_deref()
         {
             let mut context = Context {
+                tasks: &self.tasks,
                 state: self.state.get_mut(),
                 engine: &self.engine,
                 owned: Some(&mut node.owned),
@@ -188,6 +189,7 @@ impl Ui {
                     handler(
                         action,
                         &mut Context {
+                            tasks: &self.tasks,
                             state: self.state.get_mut(),
                             engine: &self.engine,
                             owned: Some(&mut node.owned),

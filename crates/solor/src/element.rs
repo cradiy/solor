@@ -593,7 +593,7 @@ pub(super) struct MountedNode {
     background: Option<Box<MountedBackground>>,
     pub(super) binding_target: Option<NodeId>,
     record: Option<Record>,
-    pub(super) owned: Vec<SignalId>,
+    pub(super) owned: crate::Owned,
     pub(crate) handlers: Option<Box<Handlers>>,
     pub(super) opacity: u8,
     pub(super) z_index: i32,
@@ -664,7 +664,7 @@ impl MountedNode {
             text_style: mounted.text,
             text_color: style.text.color,
             background: mounted.background,
-            owned: Vec::new(),
+            owned: Default::default(),
             record,
         }
     }

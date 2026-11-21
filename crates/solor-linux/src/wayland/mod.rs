@@ -11,6 +11,7 @@ mod pointer;
 mod presentation;
 mod role;
 mod stacking;
+mod wake;
 pub use application::WaylandApplication;
 use application::{Desktop, WindowLife};
 

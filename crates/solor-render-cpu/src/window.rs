@@ -57,6 +57,10 @@ impl CpuWindow {
 }
 
 impl WindowHandler<Rgba8> for CpuWindow {
+    fn poll_tasks(&mut self, waker: &std::task::Waker) -> Result<()> {
+        self.ui.poll_tasks(waker)
+    }
+
     fn set_window_resizable(&mut self, resizable: bool) -> Result<()> {
         self.ui.set_window_resizable(self.view, resizable)
     }
