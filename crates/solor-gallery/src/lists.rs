@@ -1,7 +1,7 @@
 use crate::{INK, LINE, MUTED, Selection, label, tone_sheet};
 use solor::{
-    Context, Div, IntoElement, ListScrollHandle, ListScrollPosition, Signal, Styled, component,
-    div,
+    Context, Div, IntoElement, ListScrollHandle, ListScrollPosition, Pixels, Signal, Styled,
+    component, div,
     keyboard::{Key, KeyBinding},
     layout::{Origin, Size},
     pointer::PointerEvent,
@@ -12,13 +12,43 @@ const COLORS: usize = 1 << 24;
 
 const RGB_LIST: &str = "RgbList";
 
-struct SeekToPercent(f64);
+const ROW_HEIGHT: Pixels = px(40.0);
+
+enum ScrollList {
+    Start,
+    End,
+    Rows(i32),
+    Pages(i32),
+}
+
+impl ScrollList {
+    fn apply(&self, list: &ListScrollHandle, cx: &mut Context<'_>) -> anyhow::Result<()> {
+        let Some(position) = list.position() else {
+            return Ok(());
+        };
+        let delta = match *self {
+            Self::Start => -position.max_offset_px,
+            Self::End => position.max_offset_px,
+            Self::Rows(rows) => f64::from(rows) * f64::from(ROW_HEIGHT),
+            Self::Pages(pages) => f64::from(pages) * f64::from(position.viewport_height),
+        };
+        list.scroll_by_px(delta, cx)?;
+        Ok(())
+    }
+}
 
 pub(super) fn bind_keys(ui: &mut solor::Ui) {
-    ui.bind_keys([
-        KeyBinding::new(Key::Home, SeekToPercent(0.0)).in_context(RGB_LIST),
-        KeyBinding::new(Key::End, SeekToPercent(100.0)).in_context(RGB_LIST),
-    ]);
+    ui.bind_keys(
+        [
+            (Key::Home, ScrollList::Start),
+            (Key::End, ScrollList::End),
+            (Key::ArrowUp, ScrollList::Rows(-1)),
+            (Key::ArrowDown, ScrollList::Rows(1)),
+            (Key::PageUp, ScrollList::Pages(-1)),
+            (Key::PageDown, ScrollList::Pages(1)),
+        ]
+        .map(|(key, action)| KeyBinding::new(key, action).in_context(RGB_LIST)),
+    );
 }
 
 pub(super) fn palette() -> impl IntoElement {
@@ -58,7 +88,7 @@ fn rgb_list() -> impl IntoElement {
                     MUTED,
                 )
             })
-            .on_action(move |action: &SeekToPercent, _| seek.scroll_to_percent(action.0))
+            .on_action(move |action: &ScrollList, cx| action.apply(&seek, cx))
             .flex_1()
             .items_stretch()
             .child(
@@ -75,7 +105,7 @@ fn rgb_list() -> impl IntoElement {
                     .items_stretch()
                     .flex_1()
                     .child(
-                        uniform_list(COLORS, px(40.0), color_row)
+                        uniform_list(COLORS, ROW_HEIGHT, color_row)
                             .scroll_handle(&list)
                             .flex_1(),
                     )

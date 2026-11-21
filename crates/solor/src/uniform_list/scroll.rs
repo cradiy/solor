@@ -196,11 +196,44 @@ impl ListScrollHandle {
             .observe(cx, self.position().map(Into::into))
     }
 
-    pub(crate) fn scroll_by(&self, delta: f64, cx: &mut Context<'_>) -> Result<f64> {
-        let (Some(position), Some(offset)) = (self.position(), self.0.offset.get()) else {
+    /// Moves a visible viewport by a signed distance in logical pixels and returns the
+    /// distance consumed within the last layout's bounds. Positive distances move down.
+    /// Calls accumulate on the live offset between layouts. A nonzero command on a visible
+    /// viewport supersedes any queued positioning request, even at a scroll boundary.
+    pub fn scroll_by_px(&self, delta: impl Into<f64>, cx: &mut Context<'_>) -> Result<f64> {
+        let delta = delta.into();
+        ensure!(delta.is_finite(), "scroll delta must be finite");
+        let Some(position) = self.position() else {
             return Ok(0.0);
         };
-        apply_delta(cx, offset, position.max_offset_px, delta, Some(self))
+        let used = self.move_by(delta, position, cx)?;
+        if delta != 0.0 {
+            self.clear();
+        }
+        Ok(used)
+    }
+
+    pub(crate) fn scroll_by(&self, delta: f64, cx: &mut Context<'_>) -> Result<f64> {
+        let Some(position) = self.position() else {
+            return Ok(0.0);
+        };
+        let used = self.move_by(delta, position, cx)?;
+        if used != 0.0 {
+            self.clear();
+        }
+        Ok(used)
+    }
+
+    fn move_by(
+        &self,
+        delta: f64,
+        position: ListScrollPosition,
+        cx: &mut Context<'_>,
+    ) -> Result<f64> {
+        let Some(offset) = self.0.offset.get() else {
+            return Ok(0.0);
+        };
+        apply_delta(cx, offset, position.max_offset_px, delta, None)
     }
 
     fn enqueue(&self, request: Request) {

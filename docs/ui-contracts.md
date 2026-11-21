@@ -12,8 +12,8 @@ From the initial Typography page, Tab or Shift+Tab moves between page and specim
 choices. Enter or Space selects the focused choice and leaves focus on its button.
 The Lists tab shows the 24-bit RGB color space in a virtual list. Scroll to
 browse swatches, or click and drag the position indicator to seek across all
-16,777,216 colors. With focus in the RGB list, Home goes to the first swatch
-and End to the last. A slim thumb sits over the list’s right edge and widens on hover.
+16,777,216 colors. With focus in the RGB list, Up and Down scroll one row, Page Up
+and Page Down scroll one viewport, and Home and End jump to the first and last swatches. A slim thumb sits over the list’s right edge and widens on hover.
 Choose **Tone sheet** to browse nine color families down the rows and nine tones
 across the columns. Both scrollbars control the same viewport. Selecting a swatch
 shows its name and hex value above the sheet, where they stay visible while scrolling.
@@ -664,6 +664,11 @@ list.scroll_to_percent(75.0)?;
 
 To seek to a fractional pixel instead, for example during position restoration,
 call `list.scroll_to_offset_px(40_000_000.25)?`. Offsets use double precision.
+
+Use `list.scroll_by_px(distance, cx)?` in an input handler for relative
+movement. Its return value is the signed distance consumed. Repeated inputs
+accumulate before layout publishes the updated position. To page down, use the
+current position’s `viewport_height` as the distance.
 
 ```rust
 if let Some(position) = list.position() {

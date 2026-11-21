@@ -545,6 +545,48 @@ fn atlas_scrubs_across_the_color_space_and_returns_to_idle() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn atlas_scroll_keys_move_visible_rows_and_pages_between_frames() -> Result<()> {
+    let (mut ui, root) = gallery()?;
+    let view = ui.mount(root)?;
+    submit_labels(&mut ui, view)?;
+    click_label(&mut ui, view, "Lists")?;
+    submit_labels(&mut ui, view)?;
+    click_label(&mut ui, view, "#000000")?;
+    let press = |ui: &mut solor::Ui, key| -> Result<()> {
+        assert!(ui.dispatch_key(
+            view,
+            &KeyEvent {
+                state: KeyState::Down,
+                modifiers: Default::default(),
+                key,
+            }
+        )?);
+        Ok(())
+    };
+    for key in [Key::End, Key::Home, Key::ArrowDown, Key::ArrowDown] {
+        press(&mut ui, key)?;
+    }
+    submit_labels(&mut ui, view)?;
+    let frame = ui.record_frame(view)?;
+    assert!(label_target(&frame, "#008000").is_some());
+    assert!(label_target(&frame, "#800000").is_none());
+    press(&mut ui, Key::ArrowUp)?;
+    submit_labels(&mut ui, view)?;
+    let start = label_target(&ui.record_frame(view)?, "#800000").unwrap();
+
+    press(&mut ui, Key::PageDown)?;
+    submit_labels(&mut ui, view)?;
+    assert!(label_target(&ui.record_frame(view)?, "#800000").is_none());
+    press(&mut ui, Key::PageUp)?;
+    submit_labels(&mut ui, view)?;
+    assert_eq!(
+        label_target(&ui.record_frame(view)?, "#800000"),
+        Some(start)
+    );
+    Ok(())
+}
+
 fn market_view() -> Result<(solor::Ui, solor::ViewId)> {
     let (mut ui, root) = gallery()?;
     let view = ui.mount(root)?;

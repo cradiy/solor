@@ -460,6 +460,49 @@ fn a_position_subscriber_repaints_for_settled_changes_and_list_removal() -> Resu
 }
 
 #[test]
+fn relative_input_accumulates_between_layouts_and_returns_consumed_distance() -> Result<()> {
+    let mut ui = Ui::new();
+    let handle = ListScrollHandle::new();
+    let list = handle.clone();
+    let view = ui.mount(component(move |_| {
+        uniform_list(1_000_000usize, px(50.0), |_| div()).scroll_handle(&list)
+    }))?;
+    assert_eq!(handle.scroll_by_px(px(2.5), &mut ui.context())?, 0.0);
+    handle.scroll_to_offset_px(40_000_000.25)?;
+    submit(&mut ui, view, 100.0)?;
+    let position = handle.position().unwrap();
+    {
+        let mut cx = ui.context();
+        assert_eq!(
+            handle.scroll_by_px(position.viewport_height, &mut cx)?,
+            100.0
+        );
+        assert_eq!(handle.scroll_by_px(px(-0.5), &mut cx)?, -0.5);
+        assert!(handle.scroll_by_px(f64::NAN, &mut cx).is_err());
+    }
+    assert_eq!(handle.position(), Some(position));
+    submit(&mut ui, view, 100.0)?;
+    let offset = handle.position().unwrap().offset_px;
+    assert_eq!(offset, 40_000_099.75);
+    let remaining = position.max_offset_px - offset;
+    assert_eq!(
+        handle.scroll_by_px(remaining + 100.0, &mut ui.context())?,
+        remaining
+    );
+    handle.scroll_to_percent(0.0)?;
+    assert_eq!(handle.scroll_by_px(px(1.0), &mut ui.context())?, 0.0);
+    submit(&mut ui, view, 100.0)?;
+    assert_eq!(handle.position().unwrap().offset_px, position.max_offset_px);
+    assert_eq!(handle.scroll_by_px(px(-0.25), &mut ui.context())?, -0.25);
+    submit(&mut ui, view, 100.0)?;
+    assert_eq!(
+        handle.position().unwrap().offset_px,
+        position.max_offset_px - 0.25
+    );
+    Ok(())
+}
+
+#[test]
 fn percentage_and_pixel_positions_round_trip_through_layout_and_wheel_input() -> Result<()> {
     let mut ui = Ui::new();
     let (handle, position) = ListScrollHandle::with_position_signal(&mut ui.context());
