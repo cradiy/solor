@@ -15,6 +15,9 @@ pub enum ImageResource<'a> {
     Path(Cow<'a, Path>),
     /// Encoded bitmap data borrowed from the pack or produced for this lookup.
     Bytes(Cow<'a, [u8]>),
+    /// An HTTP or HTTPS image fetched when the element mounts.
+    #[cfg(feature = "network")]
+    Url(crate::Url),
     /// Application-owned image snapshot rendered by visible region.
     Custom(crate::CustomImage),
 }
@@ -27,7 +30,7 @@ pub trait AssetSource {
         Ok(None)
     }
 
-    /// Looks up a bitmap file or its encoded contents.
+    /// Looks up a named bitmap.
     fn image(&self, _name: &str) -> Result<Option<ImageResource<'_>>> {
         Ok(None)
     }

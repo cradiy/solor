@@ -84,22 +84,15 @@ impl IntoElement for Image {
                 }
                 #[cfg(feature = "network")]
                 ImageSource::Url(url) => {
-                    let subscription = assets.remote.subscribe(url, cx)?;
-                    let signal = subscription.signal;
-                    let content = cx
-                        .read(signal)?
-                        .clone()
-                        .map_or(ImageContent::Empty, ImageContent::Bitmap);
-                    let mut node = ImageBody::node(content, self.style, units);
-                    node.body.remote = Some(Box::new(subscription));
-                    node.watches.push(super::content_watch(
-                        signal,
-                        crate::ContentUpdate::RemoteImage(signal),
-                    ));
-                    return Ok(node);
+                    return ImageBody::from_url(url, self.style, cx, (units, assets));
                 }
                 ImageSource::Name(name) => {
                     let image = match assets.named.image(&name)? {
+                        #[cfg(feature = "network")]
+                        crate::ImageResource::Url(url) => {
+                            return ImageBody::from_url(url, self.style, cx, (units, assets))
+                                .with_context(|| format!("opening image {name}"));
+                        }
                         crate::ImageResource::Custom(image) => Ok(ImageContent::Custom(image)),
                         #[cfg(not(feature = "image"))]
                         crate::ImageResource::Path(_) | crate::ImageResource::Bytes(_) => {
@@ -179,6 +172,28 @@ pub(super) struct ImageBody {
     radii: Corners<Pixels>,
 }
 impl ImageBody {
+    #[cfg(feature = "network")]
+    fn from_url(
+        url: crate::Url,
+        style: StyleRefinement,
+        cx: &mut crate::Context<'_>,
+        (units, assets): super::MountResources<'_>,
+    ) -> Result<super::Node<Self>> {
+        let subscription = assets.remote.subscribe(url, cx)?;
+        let signal = subscription.signal;
+        let content = cx
+            .read(signal)?
+            .clone()
+            .map_or(ImageContent::Empty, ImageContent::Bitmap);
+        let mut node = Self::node(content, style, units);
+        node.body.remote = Some(Box::new(subscription));
+        node.watches.push(super::content_watch(
+            signal,
+            crate::ContentUpdate::RemoteImage(signal),
+        ));
+        Ok(node)
+    }
+
     pub(super) fn node(
         image: ImageContent,
         style: StyleRefinement,

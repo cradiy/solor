@@ -618,7 +618,7 @@ request leaves its element empty. Mounting another element with the same URL
 can retry the request.
 
 Implement `AssetSource::svg` to supply SVG bytes and `AssetSource::image` to
-supply `ImageResource::Path`, `ImageResource::Bytes`, or `ImageResource::Custom`. Register a pack for the
+supply a path, encoded bytes, a custom image, or a URL with the `network` feature. Register a pack for the
 application with `current_platform()?.with_assets((Theme, LibraryIcons))`.
 A tuple tries its sources from left to right. A missing name advances to the
 next source. A match or error ends the search. Tuples can include other tuples.

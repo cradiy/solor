@@ -4,7 +4,8 @@
 use anyhow::Result;
 use image::{ExtendedColorType, ImageEncoder, codecs::png::PngEncoder};
 use solor::{
-    Draw, Fill, ImageAsset, Styled, Ui, Url, ViewId, component, div, image, layout::Size, px,
+    AssetSource, Draw, Fill, ImageAsset, ImageResource, Styled, Ui, Url, ViewId, component, div,
+    image, layout::Size, px,
 };
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -91,13 +92,20 @@ fn mounted_consumers_share_the_request_and_release_it_after_the_last_unmount() -
         Ok(())
     });
 
-    let mut ui = Ui::new();
+    struct Icons(Url);
+    impl AssetSource for Icons {
+        fn image(&self, name: &str) -> Result<Option<ImageResource<'_>>> {
+            Ok((name == "preview").then(|| ImageResource::Url(self.0.clone())))
+        }
+    }
+
+    let mut alias = url.clone();
+    alias.set_fragment(Some("preview"));
+    let mut ui = Ui::new().with_assets(Icons(alias));
     let (notify, wakes) = mpsc::channel();
     let waker = Waker::from(Arc::new(Host(notify)));
     let first = mount(&mut ui, &url)?;
-    let mut alias = url.clone();
-    alias.set_fragment(Some("preview"));
-    let second = mount(&mut ui, &alias)?;
+    let second = ui.mount(component(|_| div().items_start().child(image("preview"))))?;
     assert_eq!(frame(&mut ui, second)?, (Size::default(), None));
     ui.poll_tasks(&waker)?;
     let stream = incoming.recv_timeout(WAIT)?;
