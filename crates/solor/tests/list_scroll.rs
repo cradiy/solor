@@ -232,6 +232,52 @@ fn remount_restores_the_reading_row_after_its_height_is_measured() -> Result<()>
 }
 
 #[test]
+fn a_saved_item_resolves_to_its_new_index_when_reopening_a_list() -> Result<()> {
+    let mut ui = Ui::new();
+    let rows = ui.context().signal_vec([px(20.0); 40]);
+    let list = ListScrollHandle::new();
+    let clicked = ui.context().signal(None);
+    let mount = |ui: &mut Ui| {
+        ui.mount(component(|_| {
+            variable_list(rows, px(20.0), move |item| {
+                div()
+                    .h(item)
+                    .on_click(move |cx| cx.set(clicked, Some(item)))
+            })
+            .scroll_handle(&list)
+        }))
+    };
+
+    let first = mount(&mut ui)?;
+    list.scroll_to_row_offset(7, px(4.25))?;
+    submit(&mut ui, first, 60.0)?;
+    let saved = list.position().unwrap();
+    let reading = rows.item(saved.first_visible_index, &ui.context())?;
+    ui.unmount(first)?;
+
+    rows.move_item(7, 23, &mut ui.context())?;
+    rows.splice(0..0, [px(20.0); 2], &mut ui.context())?;
+    let index = rows.index_of(reading, &ui.context())?.unwrap();
+    assert_eq!(index, 25);
+    list.scroll_to_row_offset(index, saved.offset_in_row_px)?;
+    let second = mount(&mut ui)?;
+    submit(&mut ui, second, 60.0)?;
+    let restored = list.position().unwrap();
+    assert_eq!(
+        (restored.first_visible_index, restored.offset_in_row_px),
+        (25, 4.25)
+    );
+    click(&mut ui, second, 1.0)?;
+    assert_eq!(*ui.context().read(clicked)?, Some(reading));
+
+    rows.splice(index..index + 1, [px(20.0)], &mut ui.context())?;
+    assert!(ui.context().read(reading).is_ok());
+    assert_eq!(rows.index_of(reading, &ui.context())?, None);
+    assert!(rows.index_of(reading, &Ui::new().context()).is_err());
+    Ok(())
+}
+
+#[test]
 fn variable_row_alignment_uses_measured_height_and_yields_to_wheel_input() -> Result<()> {
     let mut ui = Ui::new();
     let handle = ListScrollHandle::new();

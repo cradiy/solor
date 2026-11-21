@@ -629,9 +629,22 @@ if let Some(saved) = saved.filter(|p| p.visible_count > 0) {
 ```
 
 For data that can be reordered while the list is closed, save the item's key
-and look up its current index when restoring. A variable list refines the
-requested position after measuring that row. If the saved point is outside
-its new height, the list aligns the row's top within the scroll bounds.
+with its within-row offset. For a `SignalVec`, capture the visible item's handle
+from the same ordering that produced the snapshot, before editing the list.
+When reopening, resolve the handle against the current collection:
+
+```rust
+if let Some(index) = messages.index_of(saved_item, cx)? {
+    list.scroll_to_row_offset(index, saved_offset_px)?;
+}
+```
+
+The lookup scans the item handles and returns `None` for a removed or replaced
+item. The collection must outlive the view to reuse a signal handle across mounts.
+If the order changes again before the requested layout, resolve the item again.
+A variable list refines the requested position after measuring that row. If
+the saved point is outside its new height, the list aligns the row's top within
+the scroll bounds.
 
 ### Scroll progress
 

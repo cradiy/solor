@@ -102,6 +102,15 @@ impl<T: 'static> SignalVec<T> {
             .context("item index out of bounds")
     }
 
+    /// Finds the current index of an item by its signal identity in a linear scan.
+    /// Returns `None` if the item is absent, even if another binding still holds it.
+    pub fn index_of(self, item: Signal<T>, cx: &Context<'_>) -> Result<Option<usize>> {
+        Ok(self
+            .items(cx)?
+            .iter()
+            .position(|&candidate| candidate == item))
+    }
+
     /// Replaces a single value, notifying its subscribers only if it changes.
     pub fn set(self, index: usize, value: T, cx: &mut Context<'_>) -> Result<()>
     where
