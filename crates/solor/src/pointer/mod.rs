@@ -230,6 +230,12 @@ pub(crate) struct Handlers {
 }
 
 impl Handlers {
+    fn window_control(&self, fixed_size: bool) -> Option<crate::WindowControl> {
+        use crate::WindowControl::{Resize, ToggleMaximize};
+        self.control
+            .filter(|control| !fixed_size || !matches!(control, Resize(_) | ToggleMaximize))
+    }
+
     fn handles_pointer(&self) -> bool {
         self.down.is_some()
             || self.moved.is_some()

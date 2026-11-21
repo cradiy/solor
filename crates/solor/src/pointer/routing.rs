@@ -24,6 +24,7 @@ struct Press {
 
 #[derive(Default)]
 pub(crate) struct PointerRouter {
+    fixed_size: bool,
     pub(super) frame: Option<PointerFrame>,
     pub(crate) scroll_offsets: HashMap<NodeId, crate::layout::Origin>,
     pub(super) scroll_pending: bool,
@@ -98,9 +99,11 @@ fn context_and_handlers<'a>(
 impl Delivery<'_> {
     fn hover_changed(&mut self) -> Result<()> {
         let router = &mut self.instance.pointer;
-        let changes = router
-            .hover
-            .reconcile(router.frame.as_ref(), &self.instance.bodies);
+        let changes = router.hover.reconcile(
+            router.frame.as_ref(),
+            &self.instance.bodies,
+            router.fixed_size,
+        );
         router
             .tooltips
             .reconcile(&router.hover, self.tooltip_style, &self.instance.bodies);
@@ -201,6 +204,7 @@ impl Delivery<'_> {
             .get_mut(&owner)
             .expect("live recipient");
         let (handlers, context) = context_and_handlers(node, self.state, self.engine);
+        let control = handlers.window_control(self.instance.pointer.fixed_size);
         let mut cx = PointerDownContext {
             context,
             capture: false,
@@ -212,15 +216,14 @@ impl Delivery<'_> {
         if button == PointerButton::Primary
             && capture.is_none()
             && !captured
-            && let Some(control @ (WindowControl::Drag | WindowControl::Resize(_))) =
-                handlers.control
+            && let Some(control @ (WindowControl::Drag | WindowControl::Resize(_))) = control
         {
             return Ok(Some(control));
         }
         let eligible = button == PointerButton::Primary
             && capture.is_none()
             && !captured
-            && (handlers.click.is_some() || handlers.control.is_some());
+            && (handlers.click.is_some() || control.is_some());
         let presses = self.instance.pointer.presses.entry(sample.id).or_default();
         if captured {
             for press in presses.iter_mut() {
@@ -330,7 +333,7 @@ impl Delivery<'_> {
             if let Some(click) = &handlers.click {
                 click(&mut cx)?;
             }
-            return Ok(handlers.control);
+            return Ok(handlers.window_control(self.instance.pointer.fixed_size));
         }
         Ok(None)
     }
@@ -402,6 +405,18 @@ impl Ui {
             state: self.state.get_mut(),
             engine: &self.engine,
         })
+    }
+
+    /// Enables or disables native resize and maximize actions for a mounted window.
+    /// An explicit cursor style always applies, including on a fixed-size window.
+    pub fn set_window_resizable(&mut self, view: ViewId, resizable: bool) -> Result<()> {
+        let mut delivery = self.pointer_delivery(view)?;
+        let fixed = !resizable;
+        if delivery.instance.pointer.fixed_size != fixed {
+            delivery.instance.pointer.fixed_size = fixed;
+            delivery.hover_changed()?;
+        }
+        Ok(())
     }
 
     /// Returns the cursor for this mouse in the accepted view, or the default arrow outside it.

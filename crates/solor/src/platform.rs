@@ -189,6 +189,11 @@ pub struct EventResponse {
 
 /// Application side of a single window. All calls are serialized on its event thread.
 pub trait WindowHandler<T: Presentation> {
+    /// Informs the view whether native resize controls are available before the first frame.
+    fn set_window_resizable(&mut self, _resizable: bool) -> Result<()> {
+        Ok(())
+    }
+
     /// Handles an event and returns any requested redraw and native window operation.
     fn event(&mut self, event: WindowEvent) -> Result<EventResponse>;
 

@@ -58,6 +58,10 @@ impl CpuWindow {
 }
 
 impl WindowHandler<Rgba8> for CpuWindow {
+    fn set_window_resizable(&mut self, resizable: bool) -> Result<()> {
+        self.ui.set_window_resizable(self.view, resizable)
+    }
+
     fn event(&mut self, event: WindowEvent) -> Result<EventResponse> {
         let mut response = EventResponse::default();
         match event {

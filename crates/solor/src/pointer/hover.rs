@@ -93,6 +93,7 @@ impl Hover {
         &mut self,
         frame: Option<&PointerFrame>,
         bodies: &HashMap<NodeId, crate::element::MountedNode>,
+        fixed_size: bool,
     ) -> SmallVec<[(NodeId, HoverChange); 4]> {
         let mut next = Listeners::new();
         for mouse in self.mice.iter_mut().rev() {
@@ -102,7 +103,7 @@ impl Hover {
                 let target = frame.mouse_target(mouse.sample.position, |n| bodies.contains_key(&n));
                 mouse.cursor = target.cursor.or_else(|| {
                     let handlers = bodies.get(&target.pointer?)?.handlers.as_deref()?;
-                    match handlers.control {
+                    match handlers.window_control(fixed_size) {
                         Some(WindowControl::Resize(edge)) => Some(Cursor::Resize(edge)),
                         _ => None,
                     }

@@ -199,7 +199,7 @@ impl Wayland {
     fn run_surface(
         &self,
         request: Request<'_>,
-        view: Box<dyn WindowHandler<Rgba8>>,
+        mut view: Box<dyn WindowHandler<Rgba8>>,
     ) -> anyhow::Result<()> {
         let (background, handle) = match &request {
             Request::Layer(options) => (options.background, options.handle),
@@ -219,6 +219,13 @@ impl Wayland {
         let fractional = manager.get_fractional_scale(&surface, &qh, ());
         let (role, size) = request.create(&globals, &qh, &surface)?;
         buffer_size(120, size)?;
+        view.set_window_resizable(matches!(
+            &role,
+            Role::Toplevel {
+                resizable: true,
+                ..
+            }
+        ))?;
         let floating = match &role {
             Role::Layer(_, p) if p.movable => Some(floating::FloatingPanel::new(
                 &globals,

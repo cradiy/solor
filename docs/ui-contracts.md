@@ -94,8 +94,9 @@ Use `.size(px(480.0), px(320.0))` for a different preference and
 Use `.min_size(width, height)` and `.max_size(width, height)` to bound the
 preferred size. All three sizes use logical pixels. For example,
 `WindowOptions::new("Player").size(px(480.0), px(270.0)).resizable(false)`
-requests a fixed-size window. Its custom resize and maximize controls issue
-no size changes. On Wayland, minima round up and maxima round down to whole
+requests a fixed-size window. The standard arrow appears over its resize
+grips, and explicit cursor styles still apply. Its custom resize and maximize
+controls issue no size changes. On Wayland, minima round up and maxima round down to whole
 logical pixels. Opening fails when the range contains no usable size. The
 compositor can still assign a different size, for example when tiling.
 

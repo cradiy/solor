@@ -1109,6 +1109,48 @@ fn resize_cursor_tracks_the_effective_control_and_respects_an_explicit_style() -
 }
 
 #[test]
+fn fixed_window_keeps_element_cursor_styles_and_click_handlers() -> Result<()> {
+    use solor::{ResizeEdge, WindowControl, style::Cursor};
+    let mut ui = Ui::new();
+    let clicks = ui.context().signal(0);
+    let view = ui.mount(component(move |_| {
+        div().window_resize_region(ResizeEdge::Left).child(
+            div()
+                .size(px(10.0))
+                .window_maximize_button()
+                .cursor(Cursor::Resize(ResizeEdge::Right))
+                .on_click(move |cx| cx.update(clicks, |n| *n += 1)),
+        )
+    }))?;
+    accept(&mut ui, view, 80.0)?;
+    let border = sample(1, 50.0, 5.0);
+    let button = sample(2, 5.0, 5.0);
+    ui.dispatch_pointer(view, Move(border))?;
+    ui.dispatch_pointer(view, Move(button))?;
+    ui.set_window_resizable(view, false)?;
+    assert_eq!(ui.pointer_cursor(view, border.id), Cursor::Default);
+    assert_eq!(
+        ui.pointer_cursor(view, button.id),
+        Cursor::Resize(ResizeEdge::Right)
+    );
+    assert_eq!(ui.dispatch_pointer(view, Down(border, Primary))?, None);
+    ui.dispatch_pointer(view, Up(border, Primary))?;
+    ui.dispatch_pointer(view, Down(button, Primary))?;
+    assert_eq!(ui.dispatch_pointer(view, Up(button, Primary))?, None);
+    assert_eq!(*ui.context().read(clicks)?, 1);
+    ui.set_window_resizable(view, true)?;
+    assert_eq!(
+        ui.pointer_cursor(view, border.id),
+        Cursor::Resize(ResizeEdge::Left)
+    );
+    assert_eq!(
+        ui.dispatch_pointer(view, Down(border, Primary))?,
+        Some(WindowControl::Resize(ResizeEdge::Left))
+    );
+    Ok(())
+}
+
+#[test]
 fn tooltip_defaults_update_pending_and_visible_hints_and_preserve_local_overrides() -> Result<()> {
     use solor::{
         Draw, Edges, Fill, Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle, rgb,
