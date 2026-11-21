@@ -52,7 +52,8 @@ and can receive input or record custom drawing in its allocated bounds. The
 text leaf owns shaping and measurement. A row or column is a layout choice
 on the container. These capabilities can be used directly in application code.
 
-`children` consumes an iterator in order alongside individual children.
+`children` accepts an iterator of elements or a component’s `Children` slot.
+Both insert their contents in declaration order alongside individual children.
 `when` and `when_some` apply a closure while building the declaration and
 can use borrowed inputs. Use `child_when` for a branch that follows a signal
 after the component has mounted.
@@ -62,6 +63,32 @@ div().flex_col()
     .when(compact, |list| list.gap(px(2.0)))
     .when_some(heading, |list, title| list.child(text(title)))
     .children(devices.into_iter().map(|device| text(device.name)))
+```
+
+A component that accepts caller-supplied content can store a `Children` slot.
+Implement `ParentElement` to use the same child builders as `div()`. Move the
+slot into the desired container during render. Each declaration occupies its
+usual sibling position there, including branches that mount later.
+
+```rust
+use solor::{Children, Context, IntoElement, ParentElement, Render, div};
+
+struct Section {
+    title: &'static str,
+    content: Children,
+}
+
+impl ParentElement for Section {
+    fn children_mut(&mut self) -> &mut Children {
+        &mut self.content
+    }
+}
+
+impl Render for Section {
+    fn render(self, _: &mut Context<'_>) -> impl IntoElement {
+        div().child(self.title).children(self.content)
+    }
+}
 ```
 
 A stateful section can declare its mount boundary explicitly. In this sketch

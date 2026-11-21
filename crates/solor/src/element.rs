@@ -833,7 +833,7 @@ impl AnyElement {
                     node.paint_mode,
                     node.record,
                 ),
-                children: node.children,
+                children: node.children.0,
                 watches: node.watches,
             })
         }))
@@ -888,6 +888,59 @@ pub(super) enum Child {
     When(Signal<bool>, Factory),
 }
 
+/// Ordered child declarations owned by a component until it places them in a container.
+#[derive(Default)]
+pub struct Children(pub(super) Vec<Child>);
+
+impl<I: IntoIterator<Item: IntoElement>> From<I> for Children {
+    fn from(elements: I) -> Self {
+        Self(
+            elements
+                .into_iter()
+                .map(|element| Child::Fixed(element.into_element()))
+                .collect(),
+        )
+    }
+}
+
+/// A builder that accepts child declarations in order.
+pub trait ParentElement: Sized {
+    /// Returns the slot that receives this component's children.
+    fn children_mut(&mut self) -> &mut Children;
+
+    /// Appends a fixed child.
+    fn child(mut self, child: impl IntoElement) -> Self {
+        self.children_mut()
+            .0
+            .push(Child::Fixed(child.into_element()));
+        self
+    }
+
+    /// Appends elements from an iterator or a component's child slot in declaration order.
+    fn children(mut self, children: impl Into<Children>) -> Self {
+        let children = children.into();
+        let slot = self.children_mut();
+        if slot.0.is_empty() {
+            *slot = children;
+        } else {
+            slot.0.extend(children.0);
+        }
+        self
+    }
+
+    /// Mounts a fresh child each time the signal becomes true.
+    fn child_when<T: IntoElement>(
+        mut self,
+        open: Signal<bool>,
+        make: impl Fn() -> T + 'static,
+    ) -> Self {
+        self.children_mut()
+            .0
+            .push(Child::When(open, Box::new(move || make().into_element())));
+        self
+    }
+}
+
 /// A primitive and the children, handlers and styles to attach with it.
 pub struct Node<E> {
     focusable: bool,
@@ -898,7 +951,7 @@ pub struct Node<E> {
     style: StyleRefinement,
     pub(super) watches: Vec<Watch>,
     body: E,
-    pub(super) children: Vec<Child>,
+    pub(super) children: Children,
     pub(crate) handlers: Option<Box<Handlers>>,
 }
 
@@ -917,7 +970,7 @@ fn node<E>(body: E, record: Option<Record>) -> Node<E> {
         style: StyleRefinement::default(),
         watches: Vec::new(),
         body,
-        children: Vec::new(),
+        children: Children::default(),
         handlers: None,
     }
 }
@@ -931,6 +984,12 @@ impl<E> Styled for Node<E> {
 impl<E: Element> IntoElement for Node<E> {
     fn into_element(self) -> AnyElement {
         AnyElement::new(false, move |_| Ok(self))
+    }
+}
+
+impl<E: Element> ParentElement for Node<E> {
+    fn children_mut(&mut self) -> &mut Children {
+        &mut self.children
     }
 }
 
@@ -956,19 +1015,13 @@ impl<E: Element> Node<E> {
     }
 
     /// Appends a child in declaration order.
-    pub fn child(mut self, child: impl IntoElement) -> Self {
-        self.children.push(Child::Fixed(child.into_element()));
-        self
+    pub fn child(self, child: impl IntoElement) -> Self {
+        ParentElement::child(self, child)
     }
 
-    /// Appends fixed children in iterator order at this point in the declaration.
-    pub fn children<T: IntoElement>(mut self, children: impl IntoIterator<Item = T>) -> Self {
-        self.children.extend(
-            children
-                .into_iter()
-                .map(|child| Child::Fixed(child.into_element())),
-        );
-        self
+    /// Appends elements from an iterator or a component's child slot in declaration order.
+    pub fn children(self, children: impl Into<Children>) -> Self {
+        ParentElement::children(self, children)
     }
 
     /// Registers the handler invoked on a direct click.
@@ -1012,13 +1065,11 @@ impl<E: Element> Node<E> {
 
     /// Mounts the generated child while its boolean signal is true.
     pub fn child_when<T: IntoElement>(
-        mut self,
+        self,
         open: Signal<bool>,
         make: impl Fn() -> T + 'static,
     ) -> Self {
-        self.children
-            .push(Child::When(open, Box::new(move || make().into_element())));
-        self
+        ParentElement::child_when(self, open, make)
     }
 }
 

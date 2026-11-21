@@ -392,7 +392,7 @@ where
                 range: 0..0,
                 rows: MountedRows::default(),
             };
-            node.children.push(Child::List(UpdateList {
+            node.children.0.push(Child::List(UpdateList {
                 scroll,
                 range_listener: self.range_listener,
                 dirty,

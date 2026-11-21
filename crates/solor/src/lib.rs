@@ -63,8 +63,8 @@ pub use crate::{
     tree::NodeId,
 };
 pub use element::{
-    AnyElement, Div, Draw, Element, IntoElement, Node, PaintContext, RefreshMode, RefreshPolicy,
-    Render, TextContent, div, element, text,
+    AnyElement, Children, Div, Draw, Element, IntoElement, Node, PaintContext, ParentElement,
+    RefreshMode, RefreshPolicy, Render, TextContent, div, element, text,
 };
 pub use fill::{
     ColorSpace, ColorStop, Fill, Gradient, GradientError, GradientKind, Rgba, color_stop,

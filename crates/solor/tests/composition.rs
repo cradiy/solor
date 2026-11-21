@@ -1,7 +1,7 @@
 //! Children and local drawing within a retained container.
 use anyhow::Result;
 use solor::{
-    Div, Draw, Styled, Ui, component, div,
+    Children, Context, Div, Draw, IntoElement, ParentElement, Render, Styled, Ui, component, div,
     layout::{Origin, Size},
     px, rgb,
 };
@@ -182,4 +182,68 @@ fn text_children_keep_borrowed_content_and_update_bound_content_in_place() -> Re
     check(&mut ui, "Headphones")?;
     ui.context().set(value, "Speakers".into())?;
     check(&mut ui, "Speakers")
+}
+
+#[test]
+fn a_component_places_conditional_content_between_its_own_children() -> Result<()> {
+    #[derive(Default)]
+    struct Section(Children);
+
+    impl ParentElement for Section {
+        fn children_mut(&mut self) -> &mut Children {
+            &mut self.0
+        }
+    }
+
+    impl Render for Section {
+        fn render(self, _: &mut Context<'_>) -> impl IntoElement {
+            div().child("Audio").children(self.0).child("Done")
+        }
+    }
+
+    let mut ui = Ui::with_font(
+        include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf").to_vec(),
+    )?;
+    let expanded = ui.context().signal(false);
+    let section = Section::default()
+        .child("Output")
+        .child_when(expanded, || "Details")
+        .children(["Volume", "Balance"]);
+    let view = ui.mount(section)?;
+    let root = ui.root(view)?;
+    let record = |ui: &mut Ui, expected: &[&str]| -> Result<Vec<_>> {
+        ui.flush()?;
+        ui.layout(
+            view,
+            Size {
+                width: px(200.0),
+                height: px(200.0),
+            },
+        )?;
+        let frame = ui.record_frame(view)?;
+        let labels: Vec<_> = frame
+            .draws()
+            .iter()
+            .map(|draw| match draw {
+                Draw::Text { paragraph, .. } => paragraph.text.as_str(),
+                _ => panic!("expected section text"),
+            })
+            .collect();
+        assert_eq!(labels, expected);
+        let children: Vec<_> = ui.children(view, root)?.collect();
+        assert_eq!(children.len(), expected.len());
+        Ok(children)
+    };
+    let collapsed = ["Audio", "Output", "Volume", "Balance", "Done"];
+    let fixed = record(&mut ui, &collapsed)?;
+    ui.context().set(expanded, true)?;
+    let visible = record(
+        &mut ui,
+        &["Audio", "Output", "Details", "Volume", "Balance", "Done"],
+    )?;
+    assert_eq!(visible[..2], fixed[..2]);
+    assert_eq!(visible[3..], fixed[2..]);
+    ui.context().set(expanded, false)?;
+    assert_eq!(record(&mut ui, &collapsed)?, fixed);
+    Ok(())
 }
