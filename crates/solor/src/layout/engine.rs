@@ -153,7 +153,7 @@ pub struct ContainingBlock {
 }
 
 impl Size {
-    fn validate(self) -> Result<()> {
+    pub(crate) fn validate(self) -> Result<()> {
         if self.width.is_extent() && self.height.is_extent() {
             Ok(())
         } else {

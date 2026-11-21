@@ -1,5 +1,6 @@
 //! Composition, conversion at attachment, and retained element behavior.
 mod style_binding;
+pub(crate) mod svg;
 
 use crate::{
     ContentClip,
@@ -169,6 +170,19 @@ pub enum Draw {
         width: Pixels,
         /// Stroke color.
         color: Rgba,
+    },
+    /// Draws a fitted SVG viewport.
+    Svg {
+        /// Content box intersected with the ancestor clip.
+        clip: Option<Arc<ContentClip>>,
+        /// Upper-left corner of the fitted viewport.
+        origin: Origin,
+        /// Fitted viewport in logical pixels.
+        size: Size,
+        /// Parsed artwork retained through submission.
+        asset: crate::SvgAsset,
+        /// Foreground applied to the alpha mask, or source colors when absent.
+        tint: Option<Rgba>,
     },
     /// Draws a shaped paragraph.
     Text {
@@ -780,10 +794,10 @@ pub struct AnyElement(Install);
 impl AnyElement {
     fn new<E: Element>(
         fixed_label: bool,
-        make: impl FnOnce(&mut Context<'_>) -> Result<Node<E>> + 'static,
+        make: impl FnOnce(&mut Context<'_>, UnitResolver) -> Result<Node<E>> + 'static,
     ) -> Self {
         Self(Box::new(move |target, cx, units| {
-            let mut node = make(cx)?;
+            let mut node = make(cx, units)?;
             if let Some(source) = node.on_frame.as_ref().and_then(|handler| handler.enabled) {
                 node.watches.push(Box::new(move |cx, target, _, _, _| {
                     // Wake an idle host. Frame scheduling reads the live gate directly.
@@ -983,7 +997,7 @@ impl<E> Styled for Node<E> {
 
 impl<E: Element> IntoElement for Node<E> {
     fn into_element(self) -> AnyElement {
-        AnyElement::new(false, move |_| Ok(self))
+        AnyElement::new(false, move |_, _| Ok(self))
     }
 }
 
@@ -1137,7 +1151,7 @@ text_elements!(
 impl IntoElement for Label {
     fn into_element(self) -> AnyElement {
         let fixed = matches!(self.content, TextContent::Fixed(_));
-        AnyElement::new(fixed, move |cx| {
+        AnyElement::new(fixed, move |cx, _| {
             let (initial, source) = match self.content {
                 TextContent::Fixed(value) => (value, None),
                 TextContent::Bound(signal) => (cx.read(signal)?.clone(), Some(signal)),

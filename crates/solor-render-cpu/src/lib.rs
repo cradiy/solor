@@ -10,6 +10,7 @@ mod path;
 pub mod pixels;
 mod polygon;
 mod polyline;
+mod svg;
 mod view;
 mod window;
 pub use window::CpuWindow;

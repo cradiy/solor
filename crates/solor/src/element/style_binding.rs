@@ -246,7 +246,8 @@ impl crate::Instance {
         let item = item_style(&style)?;
         // Custom content can use any declared property to determine its metrics.
         let builtin = std::any::TypeId::of::<E>() == std::any::TypeId::of::<FlexLayout>()
-            || std::any::TypeId::of::<E>() == std::any::TypeId::of::<Text>();
+            || std::any::TypeId::of::<E>() == std::any::TypeId::of::<Text>()
+            || std::any::TypeId::of::<E>() == std::any::TypeId::of::<super::svg::SvgBody>();
         let node = self.bodies.get_mut(&id).expect("mounted style target");
         let clip = item.overflow_clip;
         if layout || !builtin || clip != node.overflow_clip {

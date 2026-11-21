@@ -65,6 +65,7 @@ exact!(
     Display,
     Position,
     BoxSizing,
+    ObjectFit,
     Overflow,
     f32,
     i32,

@@ -12,6 +12,20 @@ use solor::{
     style::Corners,
 };
 
+pub(super) struct ViewCaches {
+    glyphs: GlyphMasks,
+    svgs: crate::svg::SvgCache,
+}
+
+impl Default for ViewCaches {
+    fn default() -> Self {
+        Self {
+            glyphs: GlyphMasks::new(64, 32 * 1024),
+            svgs: Default::default(),
+        }
+    }
+}
+
 enum Brush<'a, F> {
     Solid(solor::Rgba),
     Gradient(F, Option<OpaqueLinearGradient<'a>>),
@@ -20,7 +34,7 @@ enum Brush<'a, F> {
 impl Surface {
     /// Replays a complete mounted view in paint order onto an opaque white surface.
     pub fn draw_view(frame: &ViewFrame, size: DeviceSize, scale: RasterScale) -> Result<Self> {
-        Self::raster_view(frame, size, scale, 255, None)
+        Self::raster_view(frame, size, scale, 255, &mut ViewCaches::default())
     }
 
     pub(super) fn raster_view(
@@ -28,10 +42,10 @@ impl Surface {
         size: DeviceSize,
         scale: RasterScale,
         clear_byte: u8,
-        masks: Option<&mut GlyphMasks>,
+        caches: &mut ViewCaches,
     ) -> Result<Self> {
         let mut surface = Self::cleared(size, scale, clear_byte)?;
-        surface.replay(frame.draws(), scale, Clip::canvas(size), masks)?;
+        surface.replay(frame.draws(), scale, Clip::canvas(size), caches)?;
         Ok(surface)
     }
 
@@ -41,7 +55,7 @@ impl Surface {
         scale: RasterScale,
         clip: Clip,
         clear_byte: u8,
-        masks: &mut GlyphMasks,
+        caches: &mut ViewCaches,
     ) -> Result<()> {
         let mut draws = frame.draws();
         let mut background = [clear_byte; 4];
@@ -85,7 +99,7 @@ impl Surface {
         for y in 1..(clip.bottom - clip.top) as usize {
             self.rgba.copy_within(row.clone(), start + y * stride);
         }
-        self.replay(draws, scale, clip, Some(masks))
+        self.replay(draws, scale, clip, caches)
     }
 
     fn replay(
@@ -93,11 +107,13 @@ impl Surface {
         draws: &[Draw],
         scale: RasterScale,
         clip: Clip,
-        mut masks: Option<&mut GlyphMasks>,
+        caches: &mut ViewCaches,
     ) -> Result<()> {
+        let mut masks = Some(&mut caches.glyphs);
         let mut text = None;
         for draw in draws {
-            let bounds = device_bounds(draw, scale)?.intersect(clip);
+            let visible = device_bounds(draw, scale)?;
+            let bounds = visible.intersect(clip);
             if bounds.empty() {
                 continue;
             }
@@ -127,6 +143,19 @@ impl Surface {
                     ..
                 } => {
                     self.stroke_polyline(*origin, points, *width, *color, scale, bounds);
+                }
+                Draw::Svg {
+                    origin,
+                    size,
+                    asset,
+                    tint,
+                    ..
+                } => {
+                    let viewport = scale.bounds(*origin, *size);
+                    let visible = visible.intersect(Clip::canvas(self.size));
+                    caches
+                        .svgs
+                        .draw(self, asset, *tint, viewport, visible, bounds)?;
                 }
                 Draw::Text {
                     origin,
@@ -256,6 +285,7 @@ fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     let (Draw::Fill { clip, .. }
     | Draw::Polygon { clip, .. }
     | Draw::Polyline { clip, .. }
+    | Draw::Svg { clip, .. }
     | Draw::Text { clip, .. }) = draw;
     if let Some(clip) = clip {
         if let Some(x) = &clip.x {
@@ -281,7 +311,9 @@ fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
             width,
             ..
         } => crate::polyline::bounds(*origin, points, *width, scale),
-        Draw::Text { origin, size, .. } => Ok(scale.bounds(*origin, *size)),
+        Draw::Svg { origin, size, .. } | Draw::Text { origin, size, .. } => {
+            Ok(scale.bounds(*origin, *size))
+        }
         Draw::Fill {
             origin,
             size,

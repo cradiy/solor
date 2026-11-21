@@ -8,7 +8,7 @@ use solor::{
     raster::{Clip, Damage, RasterFrame, RasterScale, Rgba8},
 };
 
-use crate::{glyph_masks::GlyphMasks, pixels::Surface};
+use crate::{pixels::Surface, view::ViewCaches};
 
 /// A CPU-rendered window that owns its UI and a single mounted root.
 pub struct CpuWindow {
@@ -18,8 +18,7 @@ pub struct CpuWindow {
     animate: bool,
     clear_byte: u8,
     retained: Option<RetainedView>,
-    // Masks retain their face identity across submissions.
-    glyph_masks: GlyphMasks,
+    caches: ViewCaches,
 }
 
 struct RetainedView {
@@ -52,7 +51,7 @@ impl CpuWindow {
                 WindowBackground::Transparent => 0,
             },
             retained: None,
-            glyph_masks: GlyphMasks::new(64, 32 * 1024),
+            caches: ViewCaches::default(),
         })
     }
 }
@@ -106,24 +105,13 @@ impl WindowHandler<Rgba8> for CpuWindow {
             Some(mut old) if old.logical == size && old.scale == scale => {
                 let damage = crate::view::damage(&old.draws, frame.draws(), scale, canvas)?;
                 for &area in damage.rects() {
-                    old.surface.repair(
-                        &frame,
-                        scale,
-                        area,
-                        self.clear_byte,
-                        &mut self.glyph_masks,
-                    )?;
+                    old.surface
+                        .repair(&frame, scale, area, self.clear_byte, &mut self.caches)?;
                 }
                 (old.surface, damage)
             }
             _ => (
-                Surface::raster_view(
-                    &frame,
-                    physical,
-                    scale,
-                    self.clear_byte,
-                    Some(&mut self.glyph_masks),
-                )?,
+                Surface::raster_view(&frame, physical, scale, self.clear_byte, &mut self.caches)?,
                 Damage::from_rect(canvas),
             ),
         };

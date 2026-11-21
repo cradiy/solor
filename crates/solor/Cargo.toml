@@ -9,6 +9,7 @@ description = "Platform-independent Solor GUI framework"
 layout-audit = []
 
 [dependencies]
+usvg = { version = "=0.48.1", default-features = false }
 keyboard-types = "0.8"
 pastey = "0.2"
 slotmap.workspace = true

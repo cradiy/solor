@@ -150,6 +150,7 @@ impl MountedNode {
                 Draw::Fill { origin, .. }
                 | Draw::Polygon { origin, .. }
                 | Draw::Polyline { origin, .. }
+                | Draw::Svg { origin, .. }
                 | Draw::Text { origin, .. } => origin,
             };
             *origin = offset

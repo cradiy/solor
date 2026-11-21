@@ -62,6 +62,7 @@ pub use crate::{
     state::{Signal, SignalVec},
     tree::NodeId,
 };
+pub use element::svg::{Svg, SvgAsset, svg};
 pub use element::{
     AnyElement, Children, Div, Draw, Element, IntoElement, Node, PaintContext, ParentElement,
     RefreshMode, RefreshPolicy, Render, TextContent, div, element, text,

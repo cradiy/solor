@@ -6,7 +6,7 @@ use solor::{
     Edges, Element, Fill, Length, Style, StyleRefinement, Styled, Ui, component, div, element,
     layout::{self, Column},
     percent, px, rem, rgb,
-    style::{BorderStyle, GridTrack, Overflow, Position, TrackSize},
+    style::{BorderStyle, GridTrack, ObjectFit, Overflow, Position, TrackSize},
 };
 
 #[test]
@@ -149,5 +149,42 @@ fn conditional_custom_element_receives_cascaded_text_and_local_box_declarations(
     );
     assert_eq!(font.font_weight, Some(650));
     assert_eq!(font.line_clamp, Some(None));
+    Ok(())
+}
+
+#[test]
+fn object_fit_reaches_fixed_and_signal_bound_elements() -> Result<()> {
+    let mut ui = Ui::new();
+    let fit = ui.context().signal(ObjectFit::Contain);
+    let captured = || {
+        let style = Rc::new(RefCell::new(None));
+        let node = element(Capture {
+            column: Column::new(px(0.0), px(0.0)),
+            received: Rc::clone(&style),
+        });
+        (node, style)
+    };
+    let (fixed, fixed_style) = captured();
+    let (bound, bound_style) = captured();
+    ui.mount(component(move |_| {
+        div()
+            .child(fixed.object_fit(ObjectFit::Fill))
+            .child(bound.object_fit(fit))
+    }))?;
+    let read_fit = |style: &RefCell<Option<Style>>| {
+        style
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .appearance
+            .as_ref()
+            .unwrap()
+            .object_fit
+    };
+    assert_eq!(read_fit(&bound_style), Some(ObjectFit::Contain));
+    ui.context().set(fit, ObjectFit::Cover)?;
+    ui.flush()?;
+    assert_eq!(read_fit(&bound_style), Some(ObjectFit::Cover));
+    assert_eq!(read_fit(&fixed_style), Some(ObjectFit::Fill));
     Ok(())
 }

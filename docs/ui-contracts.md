@@ -572,7 +572,7 @@ belong in adapters. Vector paths, custom shaders and 3D
 need concrete workloads before their public signatures are chosen.
 
 
-## Image fills and image elements
+## Image fills, image elements and SVG
 
 A background image should paint within the element's assigned box. Loading a
 new frame or replacing a background should invalidate paint. A standalone
@@ -591,6 +591,31 @@ source aspect ratio and clip to the rounded destination. The image element
 must remeasure when its intrinsic dimensions arrive. A previously recorded
 frame must remain valid after either use changes its source. Image fills,
 image elements and image loading are future work.
+
+Parse self-contained vector artwork once and clone the asset to share it between
+elements. By default, `svg(asset)` uses the inherited foreground. The
+`.text_color(...)` style accepts a fixed color or a signal. Use
+`.preserve_colors()` to draw the original fills, strokes and gradients.
+
+```rust
+let mark = SvgAsset::from_bytes(include_bytes!("mark.svg"))?;
+let row = div().flex_row()
+    .child(svg(mark.clone()).size(px(20.0)).text_color(ink))
+    .child(svg(mark).h(px(48.0)).preserve_colors());
+```
+
+The SVG viewport supplies the intrinsic size and aspect ratio. By default the
+artwork is centered and contained within the padded content box. Use
+`.object_fit(...)` to change the fit and `.object_position_x(...)` or
+`.object_position_y(...)` to change alignment. Position percentages apply to
+the space remaining after fitting, including negative space when cropping.
+
+The CPU renderer rasterizes at the device size. Each window caches up to
+128 rasters within an 8 MiB pixel budget. Single-color entries store one alpha
+byte per pixel and can be reused after a foreground change. Color entries
+store premultiplied RGBA. A cache miss uses a temporary RGBA surface in both
+modes. Use vector outlines for lettering. SVG text, embedded bitmap images,
+and external image files are outside the supported asset subset.
 
 ## Uniform lists
 
