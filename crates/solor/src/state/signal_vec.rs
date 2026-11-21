@@ -24,7 +24,32 @@ impl Context<'_> {
     /// Creates a sequence in the current scope, with one signal per value.
     pub fn signal_vec<T: 'static>(&mut self, values: impl IntoIterator<Item = T>) -> SignalVec<T> {
         let values = values.into_iter();
-        let order = self.signal(Vec::<Signal<T>>::with_capacity(values.size_hint().0));
+        let order = Vec::with_capacity(values.size_hint().0);
+        self.build_signal_vec(values, order)
+    }
+
+    /// Creates a sequence with room for at least `capacity` total item handles.
+    ///
+    /// Use an expected total when loading pages into a large collection. Only
+    /// initial values get item signals. The sequence grows beyond the estimate
+    /// as needed. Returns an error if the initial allocation cannot be made.
+    pub fn signal_vec_with_capacity<T: 'static>(
+        &mut self,
+        values: impl IntoIterator<Item = T>,
+        capacity: usize,
+    ) -> Result<SignalVec<T>> {
+        let values = values.into_iter();
+        let mut order = Vec::new();
+        order.try_reserve_exact(capacity.max(values.size_hint().0))?;
+        Ok(self.build_signal_vec(values, order))
+    }
+
+    fn build_signal_vec<T: 'static>(
+        &mut self,
+        values: impl Iterator<Item = T>,
+        order: Vec<Signal<T>>,
+    ) -> SignalVec<T> {
+        let order = self.signal(order);
         self.state
             .vector_disposers
             .insert(order.id.key, |value, state| {

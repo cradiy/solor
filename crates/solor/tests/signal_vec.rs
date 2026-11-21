@@ -24,6 +24,27 @@ fn submit(ui: &mut Ui, view: ViewId) -> Result<Vec<NodeId>> {
 }
 
 #[test]
+fn capacity_reserves_handle_space_without_creating_rows_or_limiting_growth() -> Result<()> {
+    let mut ui = Ui::new();
+    let cx = &mut ui.context();
+    let rows = cx.signal_vec_with_capacity([3, 4], 4)?;
+    let original = rows.item(0, cx)?;
+    let storage = rows.items(cx)?.as_ptr();
+    assert_eq!(rows.items(cx)?.len(), 2);
+    rows.splice(0..0, [1, 2], cx)?;
+    assert_eq!(rows.items(cx)?.as_ptr(), storage);
+    rows.push(5, cx)?;
+    assert_eq!(rows.item(2, cx)?, original);
+    assert_eq!(cx.read(original)?, &3);
+
+    let short_estimate = cx.signal_vec_with_capacity([1, 2, 3], 1)?;
+    assert_eq!(cx.read(short_estimate.item(2, cx)?)?, &3);
+    let unread = std::iter::from_fn(|| -> Option<u32> { panic!("polled before reserving") });
+    assert!(cx.signal_vec_with_capacity(unread, usize::MAX).is_err());
+    Ok(())
+}
+
+#[test]
 fn edits_notify_one_mounted_item_and_moves_preserve_its_identity() -> Result<()> {
     #[derive(PartialEq)]
     struct Row(usize);

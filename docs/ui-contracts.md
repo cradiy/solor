@@ -526,6 +526,12 @@ mounted window. Removing an item releases its value after its last binding
 detaches. The collection and later insertions belong to the scope that
 created the collection.
 
+When loading pages into a list with a known maximum size, use
+`cx.signal_vec_with_capacity(initial_rows, expected_total)?` to allocate
+space for the item handles at construction. The capacity includes the initial
+rows. Each later row gets its signal when inserted. The list grows normally
+when it exceeds the estimate, and prepending still shifts the existing handles.
+
 ## Variable-height lists
 
 Use `variable_list(items, estimated_height, build_row)` for rows whose height
@@ -553,6 +559,16 @@ key when it survives. For a single splice above the top row, the list locates
 its key directly from the change in item count. Reordering keys or replacing
 the top row may require searching the sequence. Inserting or deleting entries
 in a `SignalVec` can also shift item handles after the edited range.
+
+Run `cargo bench -p solor --bench list_splice --offline` to measure edits at
+the front and near the end of a variable-height list. The history workload
+records the first 128-row prepend separately, then prepends 100 more pages
+while checking that the visible nodes and reading position stay stable.
+It compares default and preallocated handle storage and reports collection
+construction separately from the first edit.
+Timings separate collection edits from flushing bindings, laying out the
+viewport and recording the offscreen frame. Rasterization and presentation
+are outside the measured interval.
 
 ### Positioning a row
 
