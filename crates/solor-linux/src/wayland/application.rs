@@ -125,6 +125,28 @@ impl WindowLife {
                 parent.cancel_pointer.set(true);
             }
             children.push(Rc::downgrade(self));
+            if let Some(source) = &parent.activation {
+                let modal = self.modal_activation_window();
+                if let Some(target) = &modal.as_deref().unwrap_or(self).activation {
+                    source.redirect_pending(target);
+                }
+            }
+        }
+    }
+
+    /// Follow the newest open modal at each level to a window that accepts input.
+    fn modal_activation_window(&self) -> Option<Rc<Self>> {
+        let mut window = self.modal_children.borrow().last()?.upgrade()?;
+        loop {
+            let next = window
+                .modal_children
+                .borrow()
+                .last()
+                .and_then(Weak::upgrade);
+            match next {
+                Some(child) => window = child,
+                None => return Some(window),
+            }
         }
     }
 
@@ -143,7 +165,8 @@ impl PlatformWindow for WindowLife {
     }
 
     fn activate(&self) {
-        if let Some(target) = &self.activation {
+        let modal = self.modal_activation_window();
+        if let Some(target) = &modal.as_deref().unwrap_or(self).activation {
             target.request();
         }
     }

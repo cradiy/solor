@@ -120,6 +120,9 @@ the compositor a modal hint when `xdg-dialog-v1` is available. In the
 **Open settings** blocks the workspace until the settings dialog closes.
 
 Call `window.activate()` when the user selects an already open window.
+For a blocked window, activation follows the most recently opened modal child
+at each level. If that dialog closes, subsequent requests follow the remaining
+open dialogs. When the last one closes, activation targets the window itself.
 On Wayland the host requests activation through `xdg_activation_v1` when
 available. Requests from pointer button and keyboard callbacks identify the
 input event and the requesting surface. The compositor decides whether to

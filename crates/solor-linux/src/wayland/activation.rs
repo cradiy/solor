@@ -105,6 +105,15 @@ impl ActivationTarget {
         self.activation.request(&self.id, self.app_id.as_deref());
     }
 
+    /// Keep the originating input serial and token if the target becomes blocked.
+    pub(super) fn redirect_pending(&self, target: &Self) {
+        if let Some((id, _)) = self.activation.pending.borrow_mut().as_mut()
+            && *id == self.id
+        {
+            *id = target.id.clone();
+        }
+    }
+
     pub(super) fn cancel(&self) {
         let mut pending = self.activation.pending.borrow_mut();
         if pending.as_ref().is_some_and(|(id, _)| *id == self.id) {

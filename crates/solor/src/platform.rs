@@ -30,6 +30,7 @@ impl WindowHandle {
     }
 
     /// Asks the window system to bring this window to the user's attention.
+    /// If a modal dialog blocks this window, activation targets the dialog that accepts input.
     /// The window system decides whether to raise it or transfer keyboard focus.
     /// Closed windows and hosts without activation support ignore the request.
     pub fn activate(&self) {
