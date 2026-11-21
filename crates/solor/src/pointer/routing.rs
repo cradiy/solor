@@ -399,7 +399,10 @@ impl Ui {
     /// A host rechecks this after input and after accepting a frame.
     pub fn next_redraw(&self, view: ViewId) -> Option<std::time::Instant> {
         let instance = self.instances.get(&view)?;
-        if self.has_pending_bindings() || instance.pointer.scroll_pending {
+        if self.has_pending_bindings()
+            || instance.pointer.scroll_pending
+            || instance.lists.values().any(|list| list.dirty.get())
+        {
             return Some(std::time::Instant::now());
         }
         instance.pointer.tooltips.deadline()

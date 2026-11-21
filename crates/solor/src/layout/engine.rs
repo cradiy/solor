@@ -1294,6 +1294,27 @@ impl Scene {
         Ok(self.store.children(parent).map_err(AccessError::from)?)
     }
 
+    pub(crate) fn sort_children_by_key(
+        &mut self,
+        parent: NodeId,
+        key: impl Fn(NodeId) -> usize,
+    ) -> Result<()> {
+        #[cfg(feature = "layout-audit")]
+        let revision = self
+            .topology_revision
+            .checked_add(1)
+            .ok_or(LayoutError::RevisionExhausted)?;
+        self.invalidate(parent)?;
+        self.store
+            .sort_children_by_key(parent, key)
+            .map_err(AccessError::from)?;
+        #[cfg(feature = "layout-audit")]
+        {
+            self.topology_revision = revision;
+        }
+        Ok(())
+    }
+
     /// Append during construction, before the first successful root layout.
     pub fn append(&mut self, parent: NodeId, body: impl LayoutNode) -> Result<NodeId> {
         if self.request.is_some() {

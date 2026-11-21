@@ -122,6 +122,16 @@ impl<T: ?Sized> NodeStore<T> {
         self.tree.children(node)
     }
 
+    /// Reorders the direct children by ascending key while retaining their handles.
+    /// Children with equal keys may change relative order.
+    pub fn sort_children_by_key<K: Ord>(
+        &mut self,
+        parent: NodeId,
+        key: impl Fn(NodeId) -> K,
+    ) -> Result<(), TreeError> {
+        self.tree.sort_children_by_key(parent, key)
+    }
+
     /// Returns the number of direct children of a live node.
     pub fn child_count(&self, node: NodeId) -> Result<usize, TreeError> {
         Ok(self.tree.children(node)?.len())

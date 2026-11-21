@@ -28,6 +28,8 @@ mod styled_body;
 /// Shared font shaping and retained text measurement.
 pub mod text;
 pub mod tree;
+mod uniform_list;
+pub use uniform_list::{ListItems, uniform_list};
 
 pub use crate::layout::Edges;
 pub use crate::{state::Signal, tree::NodeId};
@@ -195,6 +197,7 @@ struct Instance {
     visible_nodes: usize,
     nodes: BTreeMap<Path, NodeId>,
     branches: BTreeMap<Path, Branch>,
+    lists: BTreeMap<Path, uniform_list::UpdateList>,
 }
 
 struct Attachment<'a> {
@@ -208,6 +211,22 @@ struct Attachment<'a> {
 }
 
 impl Instance {
+    fn layout_pass(&mut self, size: layout::Size) -> Result<(usize, bool)> {
+        let layout_pending = self.scene.is_pending();
+        let changed = self.scene.run_assigned(size, false)?;
+        if changed != 0 {
+            self.pointer.scroll_offsets.retain(|id, offset| {
+                let geometry = self.scene.geometry(*id).expect("mounted scroll container");
+                self.bodies[id].scroll_axes.clamp_offset(offset, geometry)
+            });
+            self.invalidate_geometry();
+        } else if layout_pending {
+            // Custom layout can change internal paint data at the same published size.
+            self.repaints.borrow_mut().commands.clear();
+        }
+        Ok((changed, layout_pending || changed != 0))
+    }
+
     fn observe_paint(&self, node: NodeId, runtime: &mut Runtime<()>) -> Result<()> {
         let reads = self.paint_reads.borrow();
         let mut observers = self.observers.borrow_mut();
@@ -297,6 +316,9 @@ impl Instance {
             }
         }
         if changed {
+            for list in self.lists.values() {
+                list.dirty.set(true);
+            }
             self.pointer.invalidate_geometry();
             self.fixed_labels = Default::default();
         }
@@ -359,6 +381,9 @@ impl Instance {
             let mut position = path.to_vec();
             position.push(offset);
             match child {
+                Child::List(update) => {
+                    self.lists.insert(path.to_vec(), update);
+                }
                 Child::Fixed(element) => {
                     self.insert(parent, index, &position, element, cx)?;
                     index += 1;
@@ -432,6 +457,9 @@ impl Instance {
         };
         self.scene.unmount_subtree(*node)?;
         self.invalidate_geometry();
+        for key in subtree_keys(&self.lists, path) {
+            self.lists.remove(&key);
+        }
         // Keep this slot's subscription so a later opening can mount fresh content.
         for key in subtree_keys(&self.branches, path)
             .into_iter()
@@ -608,6 +636,7 @@ impl Ui {
             bodies: HashMap::from([(root, root_node)]),
             nodes: BTreeMap::from([(Vec::new(), root)]),
             branches: BTreeMap::new(),
+            lists: BTreeMap::new(),
         };
         let mut cx = Attachment {
             scope,
@@ -781,31 +810,38 @@ impl Ui {
             .ok_or_else(|| crate::tree::TreeError::InvalidNode(view.0).into())
     }
 
-    /// Applies the viewport allocation and returns the number of changed geometry entries.
+    /// Applies the viewport allocation, materializes visible list rows and returns the total
+    /// number of geometry changes across the required layout passes.
     /// Call flush first to apply queued structural changes.
     pub fn layout(&mut self, view: ViewId, size: layout::Size) -> Result<usize> {
-        let instance = self
-            .instances
-            .get_mut(&view)
-            .ok_or(crate::tree::TreeError::InvalidNode(view.0))?;
-        let layout_pending = instance.scene.is_pending();
-        let changed = instance.scene.run_assigned(size, false)?;
-        if changed != 0 {
-            instance.pointer.scroll_offsets.retain(|id, offset| {
-                let geometry = instance
-                    .scene
-                    .geometry(*id)
-                    .expect("mounted scroll container");
-                instance.bodies[id]
-                    .scroll_axes
-                    .clamp_offset(offset, geometry)
-            });
-            instance.invalidate_geometry();
-        } else if layout_pending {
-            // Custom layout can change internal paint data at the same published size.
-            instance.repaints.borrow_mut().commands.clear();
+        let mut total = 0;
+        loop {
+            let instance = self
+                .instances
+                .get_mut(&view)
+                .ok_or(crate::tree::TreeError::InvalidNode(view.0))?;
+            let (changed, layout_changed) = instance.layout_pass(size)?;
+            total += changed;
+            if instance.lists.is_empty() {
+                break;
+            }
+            let mut cx = Attachment {
+                scope: view.0,
+                state: self.state.get_mut(),
+                pending: &self.pending,
+                styles: &self.styles,
+                labels: &self.labels,
+                visibility: &self.visibility,
+                engine: &self.engine,
+            };
+            instance.update_lists(&mut cx, layout_changed)?;
+            if !instance.scene.is_pending() {
+                break;
+            }
+            // Newly mounted rows may declare bindings or contain another list.
+            self.flush()?;
         }
-        Ok(changed)
+        Ok(total)
     }
 
     /// Published geometry in parent-local coordinates after a completed layout.

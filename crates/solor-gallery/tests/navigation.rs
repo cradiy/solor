@@ -575,23 +575,19 @@ fn compact_market_scrolls_the_watchlist_below_its_header() -> Result<()> {
         ui.layout(view, viewport)?;
         let frame = ui.record_frame(view)?;
         let label = |name| {
-            frame
-                .draws()
-                .iter()
-                .find_map(|draw| match draw {
-                    solor::Draw::Text {
-                        origin, paragraph, ..
-                    } if paragraph.text.as_str() == name => Some(*origin),
-                    _ => None,
-                })
-                .expect("watchlist label")
+            frame.draws().iter().find_map(|draw| match draw {
+                solor::Draw::Text {
+                    origin, paragraph, ..
+                } if paragraph.text.as_str() == name => Some(*origin),
+                _ => None,
+            })
         };
-        let positions = (label("Watchlist"), label("QBFG"));
+        let positions = (label("Watchlist").expect("fixed header"), label("QBFG"));
         ui.accept_pointer_frame(frame.into_pointer_frame())?;
         Ok(positions)
     };
     let (header, last) = submit(&mut ui)?;
-    assert!(last.y >= viewport.height);
+    assert!(last.is_none());
     ui.dispatch_pointer(
         view,
         PointerInput::Scroll(
@@ -603,6 +599,7 @@ fn compact_market_scrolls_the_watchlist_below_its_header() -> Result<()> {
         ),
     )?;
     let (scrolled_header, scrolled_last) = submit(&mut ui)?;
+    let scrolled_last = scrolled_last.expect("last quote enters the viewport");
     assert_eq!(scrolled_header, header);
     assert!(scrolled_last.y < viewport.height && scrolled_last.y > header.y);
     let target = mouse_at(scrolled_last.x.get() + 2.0, scrolled_last.y.get() + 4.0);

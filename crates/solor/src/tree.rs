@@ -54,7 +54,7 @@ struct Node<T> {
 
 /// Owns one root and its descendants. Topology is independent of payloads.
 ///
-/// Children retain insertion order. Payload edits do not schedule UI updates.
+/// Children are ordered. Payload edits do not schedule UI updates.
 /// Storage retains capacity after removal. Dropping the tree does not recurse
 /// through its topology.
 pub struct Tree<T> {
@@ -116,6 +116,19 @@ impl<T> Tree<T> {
         id: NodeId,
     ) -> Result<impl DoubleEndedIterator<Item = NodeId> + ExactSizeIterator + '_, TreeError> {
         Ok(self.node(id)?.children.iter().map(|&key| self.handle(key)))
+    }
+
+    pub(crate) fn sort_children_by_key<K: Ord>(
+        &mut self,
+        parent: NodeId,
+        key: impl Fn(NodeId) -> K,
+    ) -> Result<(), TreeError> {
+        self.node(parent)?;
+        let tree = self.id;
+        self.nodes[parent.key]
+            .children
+            .sort_unstable_by_key(|&child| key(NodeId { tree, key: child }));
+        Ok(())
     }
 
     /// Appends a child. An invalid parent is rejected before allocating a node.

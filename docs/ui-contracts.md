@@ -434,3 +434,23 @@ source aspect ratio and clip to the rounded destination. The image element
 must remeasure when its intrinsic dimensions arrive. A previously recorded
 frame must remain valid after either use changes its source. Image fills,
 image elements and image loading are future work.
+
+## Uniform lists
+
+Give a vertical list a viewport with a fixed height or a flex allocation. The list assigns
+each row its content width and the declared row height. The list's preferred size is zero.
+A fixed or signal-bound item count supplies index keys without allocating a collection.
+
+```rust
+uniform_list(100_000usize, px(28.0), |index| {
+    text(format!("Row {index}"))
+})
+.flex_1()
+```
+
+Pass a vector of unique keys or a `Signal<Vec<K>>` when items have their own identity.
+The builder receives the key. A row stays mounted while its key is visible or within the
+one-row buffer on either side. Reordering those keys preserves their local state.
+Leaving the buffer retires the row and its subscriptions. Keep selection and edits that
+outlive the row in application state. Signal changes to the key sequence preserve the
+logical scroll distance, clamped to the new extent.

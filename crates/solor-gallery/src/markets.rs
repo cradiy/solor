@@ -7,7 +7,7 @@ use std::{cell::Cell, time::Duration};
 use anyhow::Result;
 use solor::{
     Context, Div, Fill, IntoElement, SharedString, Signal, Styled, component, div,
-    pointer::ScrollDelta, px, rgb, text,
+    pointer::ScrollDelta, px, rgb, text, uniform_list,
 };
 
 use crate::label;
@@ -154,53 +154,50 @@ fn watchlist(quotes: Quotes, feed: Feed) -> Div {
             .child(label("Watchlist", 15.0, 22.0))
             .child(label("6 symbols", 11.0, 18.0).text_color(DIM)),
     );
-    let mut rows = div().flex_1().items_stretch().overflow_y_scroll();
-    for (i, &(symbol, name, _)) in SYMBOLS.iter().enumerate() {
+    let rows = uniform_list(SYMBOLS.len(), px(51.0), move |i| {
+        let (symbol, name, _) = SYMBOLS[i];
         let tape = feed[i];
-        rows = rows.child(
-            div()
-                .px(px(14.0))
-                .h(px(51.0))
-                .justify_center()
-                .items_stretch()
-                .bg(quotes.highlight[i])
-                .child(
-                    div()
-                        .flex_row()
-                        .justify_between()
-                        .child(label(symbol, 14.0, 20.0))
-                        .child(
-                            text(quotes.rows[i])
-                                .text_size(px(14.0))
-                                .line_height(px(20.0)),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex_row()
-                        .justify_between()
-                        .child(label(name, 11.0, 17.0).text_color(DIM))
-                        .child(
-                            text(quotes.row_change[i])
-                                .text_size(px(11.0))
-                                .line_height(px(17.0))
-                                .text_color(quotes.row_ink[i]),
-                        ),
-                )
-                .cursor_pointer()
-                .on_click(move |cx| {
-                    let previous = *cx.read(quotes.selected)?;
-                    cx.set(quotes.highlight[previous], PANEL.into())?;
-                    cx.set(quotes.highlight[i], ACTIVE.into())?;
-                    cx.set(quotes.selected, i)?;
-                    cx.set(quotes.symbol, symbol.into())?;
-                    cx.set(quotes.name, name.into())?;
-                    cx.set(quotes.reference, price(SYMBOLS[i].2))?;
-                    quotes.detail(cx, i, tape)
-                }),
-        );
-    }
-    list.child(rows)
+        div()
+            .px(px(14.0))
+            .justify_center()
+            .items_stretch()
+            .bg(quotes.highlight[i])
+            .child(
+                div()
+                    .flex_row()
+                    .justify_between()
+                    .child(label(symbol, 14.0, 20.0))
+                    .child(
+                        text(quotes.rows[i])
+                            .text_size(px(14.0))
+                            .line_height(px(20.0)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_row()
+                    .justify_between()
+                    .child(label(name, 11.0, 17.0).text_color(DIM))
+                    .child(
+                        text(quotes.row_change[i])
+                            .text_size(px(11.0))
+                            .line_height(px(17.0))
+                            .text_color(quotes.row_ink[i]),
+                    ),
+            )
+            .cursor_pointer()
+            .on_click(move |cx| {
+                let previous = *cx.read(quotes.selected)?;
+                cx.set(quotes.highlight[previous], PANEL.into())?;
+                cx.set(quotes.highlight[i], ACTIVE.into())?;
+                cx.set(quotes.selected, i)?;
+                cx.set(quotes.symbol, symbol.into())?;
+                cx.set(quotes.name, name.into())?;
+                cx.set(quotes.reference, price(SYMBOLS[i].2))?;
+                quotes.detail(cx, i, tape)
+            })
+    });
+    list.child(rows.flex_1())
 }
 
 fn live_updates(

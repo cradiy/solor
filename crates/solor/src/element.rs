@@ -806,6 +806,7 @@ impl IntoElement for AnyElement {
 pub(super) type Factory = Box<dyn Fn() -> AnyElement>;
 
 pub(super) enum Child {
+    List(crate::uniform_list::UpdateList),
     Fixed(AnyElement),
     When(Signal<bool>, Factory),
 }
@@ -816,9 +817,9 @@ pub struct Node<E> {
     on_frame: Option<FrameHandler>,
     paint_mode: RefreshPolicy,
     style: StyleRefinement,
-    watches: Vec<Watch>,
+    pub(super) watches: Vec<Watch>,
     body: E,
-    children: Vec<Child>,
+    pub(super) children: Vec<Child>,
     pub(crate) handlers: Option<Box<Handlers>>,
 }
 
