@@ -21,11 +21,11 @@ pub(super) fn select() -> Result<Host> {
 
 pub(super) type Windows = Host;
 
-pub(super) fn open_window(
+pub(super) fn open_window<R: Render>(
     app: &Windows,
     _: WindowOptions<'_>,
     _: Ui,
-    _: impl Render,
+    _: impl FnOnce(WindowHandle) -> R,
 ) -> Result<WindowHandle> {
     match *app {}
 }

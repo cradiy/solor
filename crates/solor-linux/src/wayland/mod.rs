@@ -6,6 +6,7 @@ mod decorations;
 mod floating;
 mod input_region;
 mod keyboard;
+mod parent;
 mod pointer;
 mod presentation;
 mod role;
@@ -52,6 +53,7 @@ pub struct Wayland {
 }
 
 struct Window {
+    registration: Option<parent::Registration>,
     role: Role,
     floating: Option<floating::FloatingPanel>,
     maximized: bool,
@@ -414,6 +416,10 @@ impl Window {
         self.surface.commit();
         if self.mapping != Mapping::Mapped {
             self.mapping = Mapping::Mapped;
+            if let Some(registration) = &self.registration {
+                registration.mapped();
+                self.life.revisit.set(true);
+            }
             if let Some(target) = &self.life.activation {
                 target.activation.apply(&self.surface);
             }

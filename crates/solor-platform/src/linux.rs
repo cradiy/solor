@@ -16,14 +16,14 @@ pub(super) fn select() -> Result<Host> {
 
 pub(super) type Windows = solor_linux::WaylandApplication;
 
-pub(super) fn open_window(
+pub(super) fn open_window<R: Render>(
     app: &Windows,
     options: WindowOptions<'_>,
     ui: Ui,
-    root: impl Render,
+    root: impl FnOnce(WindowHandle) -> R,
 ) -> Result<WindowHandle> {
-    app.open_window_with(options, || {
-        Ok(Box::new(mount(ui, root, options.background)?))
+    app.build_window(options, |handle| {
+        Ok(Box::new(mount(ui, root(handle), options.background)?))
     })
 }
 

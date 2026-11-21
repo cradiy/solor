@@ -33,6 +33,16 @@ impl Application {
         ui: Ui,
         root: impl Render,
     ) -> Result<WindowHandle> {
+        self.open_window_with(options, ui, |_| root)
+    }
+
+    /// Builds the root with a handle to its own window, for use in UI callbacks.
+    pub fn open_window_with<R: Render>(
+        &self,
+        options: WindowOptions<'_>,
+        ui: Ui,
+        root: impl FnOnce(WindowHandle) -> R,
+    ) -> Result<WindowHandle> {
         system::open_window(&self.0, options, ui, root)
     }
 }

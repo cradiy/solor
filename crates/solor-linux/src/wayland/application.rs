@@ -2,7 +2,9 @@ use super::{
     DamageAudit, Mapping, Wayland, Window,
     activation::{Activation, ActivationTarget},
     buffer::PixelOrder,
-    buffer_size, floating, pointer,
+    buffer_size, floating,
+    parent::Toplevels,
+    pointer,
     role::{Request, Role},
 };
 use crate::layer_shell::{Binding, LayerShellOptions};
@@ -70,12 +72,21 @@ impl WaylandApplication {
         options: WindowOptions<'_>,
         build: impl FnOnce() -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
     ) -> anyhow::Result<WindowHandle> {
+        self.build_window(options, |_| build())
+    }
+
+    /// Builds the window's handler with a weak handle to its newly created toplevel.
+    pub fn build_window(
+        &self,
+        options: WindowOptions<'_>,
+        build: impl FnOnce(WindowHandle) -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
+    ) -> anyhow::Result<WindowHandle> {
         let windows = self
             .0
             .upgrade()
             .ok_or_else(|| anyhow::anyhow!("application has exited"))?;
         windows
-            .open(Request::Toplevel(options), build()?)
+            .open(Request::Toplevel(options), build)
             .map(|(_, handle)| handle)
     }
 }
@@ -83,8 +94,7 @@ impl WaylandApplication {
 pub(super) struct WindowLife {
     pub(super) activation: Option<ActivationTarget>,
     open: Cell<bool>,
-    // A callback can close a window the event loop has already visited this turn.
-    revisit: Rc<Cell<bool>>,
+    pub(super) revisit: Rc<Cell<bool>>,
 }
 
 impl PlatformWindow for WindowLife {
@@ -109,6 +119,12 @@ impl PlatformWindow for WindowLife {
     }
 }
 
+impl Drop for WindowLife {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 struct EventLoop {
     windows: Rc<WindowFactory>,
     connection: Connection,
@@ -117,10 +133,11 @@ struct EventLoop {
 }
 
 struct WindowFactory {
+    toplevels: Toplevels,
     activation: Option<Rc<Activation>>,
     qh: QueueHandle<Desktop>,
     pending: RefCell<Vec<Window>>,
-    close_requested: Rc<Cell<bool>>,
+    revisit: Rc<Cell<bool>>,
     globals: GlobalList,
     compositor: wl_compositor::WlCompositor,
     shm: wl_shm::WlShm,
@@ -150,7 +167,7 @@ impl Wayland {
     ) -> anyhow::Result<()> {
         let control = options.handle.map(|h| h.claim()).transpose()?;
         let mut events = EventLoop::connect(self)?;
-        let (id, _) = events.windows.open(Request::Layer(options), view)?;
+        let (id, _) = events.windows.open(Request::Layer(options), |_| Ok(view))?;
         events.dispatch(control.map(|control| (id, control)))
     }
 }
@@ -171,6 +188,7 @@ impl EventLoop {
             }
         }
         let windows = WindowFactory {
+            toplevels: Toplevels::default(),
             activation: desktop.activation.clone(),
             compositor: globals.bind(&qh, 4..=4, ())?,
             shm: globals.bind(&qh, 1..=1, ())?,
@@ -186,7 +204,7 @@ impl EventLoop {
             qh,
             globals,
             pending: RefCell::default(),
-            close_requested: Rc::default(),
+            revisit: Rc::default(),
         };
         Ok(Self {
             windows: Rc::new(windows),
@@ -201,14 +219,17 @@ impl WindowFactory {
     fn open(
         &self,
         request: Request<'_>,
-        view: Box<dyn WindowHandler<Rgba8>>,
+        build: impl FnOnce(WindowHandle) -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
     ) -> anyhow::Result<(ObjectId, WindowHandle)> {
+        if let Request::Toplevel(options) = &request
+            && let Some(parent) = options.parent
+        {
+            self.toplevels.check_parent(parent)?;
+        }
         let surface = self.compositor.create_surface(&self.qh, ());
         let id = surface.id();
-        match self.create_window(&surface, request, view) {
-            Ok(window) => {
-                let target = Rc::downgrade(&window.life);
-                let handle = WindowHandle::new(target);
+        match self.create_window(&surface, request, build) {
+            Ok((window, handle)) => {
                 self.pending.borrow_mut().push(window);
                 Ok((id, handle))
             }
@@ -223,12 +244,16 @@ impl WindowFactory {
         &self,
         surface: &wl_surface::WlSurface,
         request: Request<'_>,
-        mut view: Box<dyn WindowHandler<Rgba8>>,
-    ) -> anyhow::Result<Window> {
+        build: impl FnOnce(WindowHandle) -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
+    ) -> anyhow::Result<(Window, WindowHandle)> {
         let qh = &self.qh;
         let background = match &request {
             Request::Layer(options) => options.background,
             Request::Toplevel(options) => options.background,
+        };
+        let parent = match &request {
+            Request::Toplevel(options) => options.parent,
+            Request::Layer(_) => None,
         };
         let activation = match (&request, &self.activation) {
             (Request::Toplevel(options), Some(activation)) => Some(ActivationTarget {
@@ -240,6 +265,20 @@ impl WindowFactory {
         };
         let (role, size) = request.create(&self.globals, qh, surface)?;
         buffer_size(120, size)?;
+        let life = Rc::new(WindowLife {
+            activation,
+            open: Cell::new(true),
+            revisit: self.revisit.clone(),
+        });
+        let target = Rc::downgrade(&life);
+        let handle = WindowHandle::new(target);
+        let registration = match &role {
+            Role::Toplevel { top, .. } => {
+                Some(self.toplevels.register(handle.clone(), top, parent))
+            }
+            Role::Layer(..) => None,
+        };
+        let mut view = build(handle.clone())?;
         view.set_window_resizable(matches!(
             &role,
             Role::Toplevel {
@@ -262,7 +301,7 @@ impl WindowFactory {
         let content = floating.as_ref().map_or(surface, |p| &p.content);
         let viewport = self.viewporter.get_viewport(content, qh, ());
 
-        Ok(Window {
+        let window = Window {
             role,
             floating,
             maximized: false,
@@ -289,15 +328,13 @@ impl WindowFactory {
             input_region: Default::default(),
             dirty: true,
             waiting: None,
-            life: Rc::new(WindowLife {
-                activation,
-                open: Cell::new(true),
-                revisit: self.close_requested.clone(),
-            }),
+            life,
+            registration,
             commits: 0,
             audit: self.verify_shm.then(DamageAudit::default),
             start: Instant::now(),
-        })
+        };
+        Ok((window, handle))
     }
 }
 
@@ -305,7 +342,7 @@ impl EventLoop {
     fn dispatch(&mut self, control: Option<(ObjectId, Binding<'_>)>) -> anyhow::Result<()> {
         let qh = self.queue.handle();
         loop {
-            self.windows.close_requested.set(false);
+            self.windows.revisit.set(false);
             for mut window in self.windows.pending.take() {
                 window.pixel_order = self.desktop.order(window.background);
                 self.desktop.windows.insert(window.surface.id(), window);
@@ -336,6 +373,12 @@ impl EventLoop {
                 if !visible && window.mapping == Mapping::Mapped {
                     pointer::cancel_focus(&mut self.desktop.seats, id, window);
                 }
+                if window.mapping == Mapping::Hidden
+                    && let Some(registration) = &mut window.registration
+                    && !registration.prepare_map()
+                {
+                    continue;
+                }
                 window.set_visible(visible, &self.connection, &qh);
                 if visible {
                     let mut next = window.deadline();
@@ -358,8 +401,8 @@ impl EventLoop {
                 }
             }
             self.desktop.sync_cursors();
-            // Frame and disposal callbacks can also open a window before the loop sleeps.
-            if self.windows.close_requested.get() || !self.windows.pending.borrow().is_empty() {
+            // A newly mapped parent or a callback can make another window ready.
+            if self.windows.revisit.get() || !self.windows.pending.borrow().is_empty() {
                 continue;
             }
             if self.desktop.windows.is_empty() {

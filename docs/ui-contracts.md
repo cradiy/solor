@@ -103,6 +103,14 @@ immediately changes the status observed by every clone. Reopening creates a
 distinct handle. Dropping a handle leaves its window open. See the
 [settings window example](../crates/solor-platform/examples/settings_window.rs).
 
+Pass `WindowOptions::new("Settings").parent(&main)` to associate a settings
+window with its main window. The parent must be an open ordinary window in the
+same application run. To capture the main window's own handle in a button
+callback, build its root with `app.open_window_with(options, ui, |main| ...)`.
+Both windows can also open during setup. On Wayland, the child waits for its
+parent's first buffer before requesting the native relationship. Each window
+continues to accept input and can close independently.
+
 Call `window.activate()` when the user selects an already open window.
 On Wayland the host requests activation through `xdg_activation_v1` when
 available. Requests from pointer button and keyboard callbacks identify the

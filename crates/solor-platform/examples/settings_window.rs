@@ -29,7 +29,7 @@ fn settings() -> impl Render {
 
 struct OpenSettings;
 
-fn main_view(app: Application) -> impl Render {
+fn main_view(app: Application, parent: WindowHandle) -> impl Render {
     component(move |cx| {
         let settings_window = cx.signal(None::<WindowHandle>);
         let open = move |cx: &mut Context<'_>| {
@@ -38,6 +38,7 @@ fn main_view(app: Application) -> impl Render {
                 return Ok(());
             }
             let options = WindowOptions::new("Settings")
+                .parent(&parent)
                 .app_id("org.solor.SettingsExample")
                 .size(px(280.0), px(160.0));
             let window = app.open_window(options, Ui::new(), settings())?;
@@ -69,7 +70,7 @@ fn main() -> anyhow::Result<()> {
             .size(px(280.0), px(160.0));
         let mut ui = Ui::new();
         ui.bind_keys([KeyBinding::new(Key::Enter, OpenSettings)]);
-        app.open_window(options, ui, main_view(app.clone()))?;
+        app.open_window_with(options, ui, |parent| main_view(app.clone(), parent))?;
         Ok(())
     })
 }
