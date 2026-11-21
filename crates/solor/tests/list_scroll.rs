@@ -70,6 +70,7 @@ fn tail_following_yields_to_navigation_and_resumes_at_the_bottom() -> Result<()>
                     .into_element()
             } else {
                 uniform_list(rows, px(20.0), row)
+                    .anchor_to_item()
                     .follow_tail()
                     .scroll_handle(&handle)
                     .into_element()
@@ -401,6 +402,46 @@ fn percentage_and_pixel_positions_round_trip_through_layout_and_wheel_input() ->
     assert!(ui.context().read(position)?.is_none());
     ui.unmount(view)?;
     assert!(handle.position().is_none());
+    Ok(())
+}
+
+#[test]
+fn fixed_height_lists_can_anchor_by_item_through_splices_and_reorders() -> Result<()> {
+    let mut ui = Ui::new();
+    let rows = ui.context().signal_vec(0..64);
+    let anchored = ListScrollHandle::new();
+    let plain = ListScrollHandle::new();
+    let list =
+        |handle: &ListScrollHandle| uniform_list(rows, px(20.0), |_| div()).scroll_handle(handle);
+    let view = ui.mount(component(|_| list(&anchored).anchor_to_item()))?;
+    let other = ui.mount(component(|_| list(&plain)))?;
+    anchored.scroll_to_offset_px(105.25)?;
+    plain.scroll_to_offset_px(105.25)?;
+    submit(&mut ui, view, 60.0)?;
+    submit(&mut ui, other, 60.0)?;
+    let reading = ui.children(view, ui.root(view)?)?.nth(1).unwrap();
+
+    rows.splice(0..0, [100, 101, 102], &mut ui.context())?;
+    submit(&mut ui, view, 60.0)?;
+    submit(&mut ui, other, 60.0)?;
+    assert_eq!(plain.position().unwrap().offset_px, 105.25);
+    assert_eq!(anchored.position().unwrap().offset_px, 165.25);
+    assert_eq!(ui.geometry(view, reading).unwrap().origin.y, px(-5.25));
+
+    rows.move_item(8, 24, &mut ui.context())?;
+    rows.push(103, &mut ui.context())?;
+    submit(&mut ui, view, 60.0)?;
+    assert_eq!(anchored.position().unwrap().offset_px, 485.25);
+    assert_eq!(ui.geometry(view, reading).unwrap().origin.y, px(-5.25));
+
+    rows.remove(24, &mut ui.context())?;
+    submit(&mut ui, view, 60.0)?;
+    assert!(ui.geometry(view, reading).is_none());
+    assert_eq!(anchored.position().unwrap().offset_px, 480.0);
+    rows.splice(0..0, [104], &mut ui.context())?;
+    anchored.scroll_to(1, Top);
+    submit(&mut ui, view, 60.0)?;
+    assert_eq!(anchored.position().unwrap().offset_px, 20.0);
     Ok(())
 }
 

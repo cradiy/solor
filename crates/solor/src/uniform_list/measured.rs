@@ -1,6 +1,6 @@
 //! Estimated document coordinates around a contiguous window of measured rows.
-use super::{Source, Viewport};
-use crate::{Attachment, Instance, NodeId, Pixels, Result, layout::Size};
+use super::Viewport;
+use crate::{Instance, NodeId, Pixels, Result, layout::Size};
 use anyhow::{Context as _, ensure};
 use std::{cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
 
@@ -99,10 +99,8 @@ impl HeightIndex {
     }
 }
 
-pub(super) struct MeasuredWindow<K> {
+pub(super) struct MeasuredWindow {
     pub(super) index: Rc<RefCell<HeightIndex>>,
-    pub(super) keys: Vec<K>,
-    pub(super) count: usize,
     pub(super) height: Pixels,
 }
 
@@ -112,46 +110,25 @@ impl<K: Eq + Hash + Clone + 'static> Viewport<K> {
         instance: &Instance,
         id: NodeId,
         size: Size,
-        cx: &Attachment<'_>,
+        edit: Option<(&[K], &[K])>,
         count: usize,
         distance: f64,
     ) -> Result<(f64, HeightIndex)> {
         let previous = self.measured.as_ref().expect("measured list");
         let old = previous.index.borrow();
         let estimate = f64::from(self.height);
-        let old_limit = (old.top(previous.count, estimate) - f64::from(previous.height)).max(0.0);
-        let old_row = old.row_at(distance, previous.count, estimate);
+        let old_limit =
+            (old.top(self.previous_count, estimate) - f64::from(previous.height)).max(0.0);
+        let old_row = old.row_at(distance, self.previous_count, estimate);
         let mut within = distance - old.top(old_row, estimate);
         let changed = self.keys_changed.get();
         let mut row = old_row.min(count.saturating_sub(1));
         let mut next = HeightIndex::read(instance, id, self.range.start, changed, estimate)?;
-        if changed
-            && let Source::Keys(keys) = &self.items.0
-            && !previous.keys.is_empty()
-        {
-            let keys = keys.read(cx.state)?;
-            if let Some(key) = old_row
-                .checked_sub(self.range.start)
-                .and_then(|i| previous.keys.get(i))
-                && keys.get(old_row) != Some(key)
-            {
-                // A splice above the reading row preserves its distance from the end.
-                // Check the key because several edits can arrive in one layout pass.
-                let from_end = previous.count - old_row;
-                let shifted = count
-                    .checked_sub(from_end)
-                    .filter(|&i| keys.get(i) == Some(key));
-                if let Some(index) =
-                    shifted.or_else(|| keys.iter().position(|candidate| candidate == key))
-                {
-                    row = index;
-                } else {
-                    within = 0.0;
-                }
-            }
+        if let Some((previous_keys, keys)) = edit {
+            (row, within) = self.relocated_row(old_row, within, previous_keys, keys);
             // Retain measured heights by key around the anchor, including a tall
             // anchor whose within-row distance exceeds the estimate.
-            next = next.remap(&previous.keys, keys, row, estimate);
+            next = next.remap(previous_keys, keys, row, estimate);
         }
         let limit = (next.top(count, estimate) - f64::from(size.height)).max(0.0);
         let offset = if !changed && old_limit > 0.0 && distance >= old_limit {

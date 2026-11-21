@@ -491,8 +491,15 @@ Pass a vector of unique keys or a `Signal<Vec<K>>` when items have their own ide
 The builder receives the key. A row stays mounted while its key is visible or within the
 one-row buffer on either side. Reordering those keys preserves their local state.
 Leaving the buffer retires the row and its subscriptions. Keep selection and edits that
-outlive the row in application state. Signal changes to the key sequence preserve the
+outlive the row in application state. By default a uniform list preserves the
 logical scroll distance, clamped to the new extent.
+
+Use `.anchor_to_item()` on a keyed uniform list to keep the first visible item
+at its current within-row offset during prepends, removals or reordering.
+This suits a fixed-height log that loads earlier entries above the reader.
+If the key disappears, the row at its former index moves to the top, within
+the scroll bounds. Explicit scroll requests take precedence. Variable-height
+lists already anchor by item.
 
 ### Editing individual items
 

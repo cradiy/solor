@@ -188,6 +188,7 @@ where
         scroll: None,
         range_listener: None,
         follow_tail: false,
+        anchor_to_item: false,
         measured: false,
         items: items.into(),
         height,
@@ -214,6 +215,7 @@ where
         scroll: None,
         range_listener: None,
         follow_tail: false,
+        anchor_to_item: true,
         items: items.into(),
         height: estimated_height,
         row,
@@ -228,6 +230,7 @@ pub struct VirtualList<K, F> {
     scroll: Option<ListScrollHandle>,
     range_listener: Option<RangeListener>,
     follow_tail: bool,
+    anchor_to_item: bool,
     measured: bool,
     items: ListItems<K>,
     height: Pixels,
@@ -236,6 +239,14 @@ pub struct VirtualList<K, F> {
 }
 
 impl<K, F> VirtualList<K, F> {
+    /// Keeps the first visible keyed row at its within-row offset when items change.
+    /// Variable-height lists already use this behavior. If the key disappears, the
+    /// row at its former index is aligned to the top, subject to the scroll bounds.
+    pub fn anchor_to_item(mut self) -> Self {
+        self.anchor_to_item = true;
+        self
+    }
+
     /// Calls the handler with the visible row indices after layout settles.
     ///
     /// Fires on first display (including an empty list), when the range changes,
@@ -291,7 +302,9 @@ struct Viewport<K> {
     scroll: Option<ListScrollHandle>,
     // When tail following is enabled, compare user input with the previous scroll limit.
     previous_limit: Option<f64>,
-    measured: Option<MeasuredWindow<K>>,
+    measured: Option<MeasuredWindow>,
+    previous_count: usize,
+    anchor_keys: Option<Vec<K>>,
     items: Rc<ListItems<K>>,
     height: Pixels,
     offset: Signal<f64>,
@@ -364,10 +377,12 @@ where
             let mut viewport = Viewport {
                 scroll: scroll.clone(),
                 previous_limit: self.follow_tail.then_some(0.0),
+                previous_count: 0,
+                anchor_keys: (self.anchor_to_item
+                    && matches!(&items.0, Source::Keys(Input::Bound(_))))
+                .then(Vec::new),
                 measured: index.map(|index| MeasuredWindow {
                     index,
-                    keys: Vec::new(),
-                    count: 0,
                     height: px(0.0),
                 }),
                 items,
@@ -475,6 +490,34 @@ impl Window {
 }
 
 impl<K: Clone + Eq + Hash + 'static> Viewport<K> {
+    fn relocated_row(
+        &self,
+        old_row: usize,
+        within: f64,
+        previous: &[K],
+        keys: &[K],
+    ) -> (usize, f64) {
+        let fallback = old_row.min(keys.len().saturating_sub(1));
+        let Some(key) = old_row
+            .checked_sub(self.range.start)
+            .and_then(|i| previous.get(i))
+        else {
+            return (fallback, within);
+        };
+        if keys.get(old_row) == Some(key) {
+            return (old_row, within);
+        }
+        // A splice above the reading row preserves its distance from the end.
+        let shifted = keys
+            .len()
+            .checked_sub(self.previous_count - old_row)
+            .filter(|&index| keys.get(index) == Some(key));
+        match shifted.or_else(|| keys.iter().position(|candidate| candidate == key)) {
+            Some(index) => (index, within),
+            None => (fallback, 0.0),
+        }
+    }
+
     fn update<E: IntoElement>(
         &mut self,
         instance: &mut Instance,
@@ -495,10 +538,26 @@ impl<K: Clone + Eq + Hash + 'static> Viewport<K> {
         let count = self.items.len(cx.state)?;
         let distance = *cx.state.read(self.offset)?;
         let at_tail = self.previous_limit.is_some_and(|limit| distance >= limit);
+        let edit = match (&self.anchor_keys, &self.items.0) {
+            (Some(previous), Source::Keys(keys))
+                if self.keys_changed.get() && !previous.is_empty() =>
+            {
+                Some((previous.as_slice(), keys.read(cx.state)?.as_slice()))
+            }
+            _ => None,
+        };
         let (distance, index) = if self.measured.is_some() {
             let (anchored, index) =
-                self.measured_offset(instance, id, size, cx, count, distance)?;
+                self.measured_offset(instance, id, size, edit, count, distance)?;
             (anchored, Some(index))
+        } else if let Some((previous, keys)) = edit
+            && !at_tail
+        {
+            let height = f64::from(self.height);
+            let old_row = (distance / height).floor() as usize;
+            let (row, within) =
+                self.relocated_row(old_row, distance - old_row as f64 * height, previous, keys);
+            (row as f64 * height + within, None)
         } else {
             (distance, None)
         };
@@ -522,17 +581,17 @@ impl<K: Clone + Eq + Hash + 'static> Viewport<K> {
         if range != self.range || self.keys_changed.get() {
             let keys = self.items.keys(cx.state, range.clone())?;
             self.rows.reconcile(instance, path, cx, &keys, build)?;
-            if let Some(measured) = &mut self.measured {
-                measured.keys = keys;
+            if let Some(previous) = &mut self.anchor_keys {
+                *previous = keys;
             }
             self.keys_changed.set(false);
             self.range = range;
         }
         if let (Some(measured), Some(index)) = (&mut self.measured, index) {
             *measured.index.borrow_mut() = index;
-            measured.count = count;
             measured.height = size.height;
         }
+        self.previous_count = count;
         cx.state.set(self.offset, offset)?;
         if let Some(previous) = &mut self.previous_limit {
             *previous = limit;
