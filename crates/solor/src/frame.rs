@@ -96,6 +96,17 @@ impl ViewFrame {
     }
 }
 
+impl Instance {
+    fn replay_commands(&self, id: crate::NodeId, draws: &mut Vec<Draw>) -> bool {
+        if let Some(saved) = self.repaints.borrow().commands.get(&id) {
+            draws.extend_from_slice(saved);
+            true
+        } else {
+            false
+        }
+    }
+}
+
 impl MountedNode {
     #[inline]
     fn paint_at(
@@ -106,12 +117,20 @@ impl MountedNode {
         state: &mut Runtime<()>,
         draws: &mut Vec<Draw>,
     ) -> Result<bool> {
-        if !self.fixed_label
-            && let Some(saved) = instance.repaints.borrow().commands.get(&self.id)
-        {
-            draws.extend_from_slice(saved);
+        if !self.fixed_label && instance.replay_commands(self.id, draws) {
             return Ok(false);
         }
+        self.record_at(offset, clips, instance, state, draws)
+    }
+
+    fn record_at(
+        &self,
+        offset: Origin,
+        clips: &NodeClips,
+        instance: &Instance,
+        state: &mut Runtime<()>,
+        draws: &mut Vec<Draw>,
+    ) -> Result<bool> {
         let start = draws.len();
         let next_frame = self.paint(
             &instance.scene,
@@ -196,9 +215,9 @@ impl Ui {
             for (index, (id, offset, clips)) in pointer.paint_order().enumerate() {
                 if let Some(label) = labels.next_if(|label| label.index == index) {
                     draws.push(label.draw());
-                } else {
+                } else if !instance.replay_commands(id, &mut draws) {
                     next_frame |= instance.bodies[&id]
-                        .paint_at(offset, clips, instance, &mut state, &mut draws)?;
+                        .record_at(offset, clips, instance, &mut state, &mut draws)?;
                 }
             }
         } else if cache.recorded.get() {

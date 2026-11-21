@@ -15,6 +15,12 @@ Choose **Tone sheet** to browse nine color families down the rows and nine tones
 across the columns. Both scrollbars control the same viewport. Selecting a swatch
 shows its name and hex value above the sheet, where they stay visible while scrolling.
 
+Run `cargo test --release -p solor-gallery --test navigation tone_sheet_recording_cost -- --ignored --nocapture`
+to measure frame recording during two-axis scrolling and repeated stationary
+recordings. It reports text commands per frame, median recording time, and
+median time from the start of each iteration through pointer-frame acceptance.
+Rasterization and presentation are outside the measurement.
+
 The Markets tab runs a deterministic feed of six instruments. In a short window,
 the watchlist rows scroll beneath their fixed header. Each host frame
 advances 32 ticks per instrument and appends the latest price to a 96-sample
@@ -392,7 +398,10 @@ background and the container's own drawing stay fixed in the viewport. Each view
 On a clipped axis, the child's border edge bounds its contribution to the parent's
 content extent, including when the child is relatively positioned. On a visible
 axis, descendant overflow can extend the parent's content. Nested clips intersect
-independently on each axis. The element's own background inherits its ancestor clip. View recordings attach the effective clip to each draw command. Local
+independently on each axis. The element's own background inherits its ancestor clip.
+View recordings omit plain, fixed text leaves whose border and text boxes are
+both completely outside an ancestor clip. Partially visible labels retain their
+full text geometry and effective clip. Local
 recordings from `Ui::paint` use the element's own coordinate system and apply
 its own overflow setting. The CPU backend rounds clip edges to device pixels.
 

@@ -34,6 +34,19 @@ impl ContentClip {
         self.x.as_ref().is_none_or(|x| x.contains(&point.x))
             && self.y.as_ref().is_none_or(|y| y.contains(&point.y))
     }
+
+    pub(crate) fn intersects(&self, origin: Origin, size: Size) -> bool {
+        fn overlaps(range: Option<&Range<Pixels>>, start: Pixels, length: Pixels) -> bool {
+            length.get() > 0.0
+                && range.is_none_or(|r| {
+                    r.start < r.end
+                        && start < r.end
+                        && f64::from(start) + f64::from(length) > f64::from(r.start)
+                })
+        }
+        overlaps(self.x.as_ref(), origin.x, size.width)
+            && overlaps(self.y.as_ref(), origin.y, size.height)
+    }
 }
 
 impl OverflowClip {

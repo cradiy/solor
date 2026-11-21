@@ -795,3 +795,73 @@ fn tone_sheet_selects_the_last_swatch_after_scrolling_both_axes() -> Result<()> 
     assert!(ui.next_redraw(view).is_none());
     Ok(())
 }
+
+#[test]
+#[ignore = "release frame recording measurement"]
+fn tone_sheet_recording_cost() -> Result<()> {
+    use solor::{Draw, pointer::ScrollDelta};
+    use std::{hint::black_box, time::Instant};
+
+    let (mut ui, root) = gallery()?;
+    let view = ui.mount(root)?;
+    submit_labels(&mut ui, view)?;
+    click_label(&mut ui, view, "Lists")?;
+    submit_labels(&mut ui, view)?;
+    click_label(&mut ui, view, "Tone sheet")?;
+    submit_labels(&mut ui, view)?;
+    for (width, height, scrolling) in [
+        (800.0, 560.0, true),
+        (800.0, 560.0, false),
+        (1440.0, 900.0, false),
+    ] {
+        let size = Size {
+            width: px(width),
+            height: px(height),
+        };
+        let mut recording = Vec::new();
+        let mut total = Vec::new();
+        let mut text_commands = 0;
+        for i in 0..832 {
+            let start = Instant::now();
+            if scrolling {
+                let sign = if i % 128 < 64 { 1.0 } else { -1.0 };
+                ui.dispatch_pointer(
+                    view,
+                    PointerInput::Scroll(
+                        mouse_at(320.0, 280.0),
+                        ScrollDelta {
+                            x: px(3.25 * sign),
+                            y: px(2.75 * sign),
+                        },
+                    ),
+                )?;
+            }
+            ui.flush()?;
+            ui.layout(view, size)?;
+            let record = Instant::now();
+            let frame = black_box(ui.record_frame(view)?);
+            let elapsed = record.elapsed();
+            let (draws, pointer) = frame.into_parts();
+            ui.accept_pointer_frame(pointer)?;
+            let through_accept = start.elapsed();
+            if i >= 64 {
+                total.push(through_accept);
+                recording.push(elapsed);
+                text_commands += draws
+                    .iter()
+                    .filter(|d| matches!(d, Draw::Text { .. }))
+                    .count();
+            }
+        }
+        recording.sort_unstable();
+        total.sort_unstable();
+        let mid = recording.len() / 2;
+        eprintln!(
+            "{width}x{height} scrolling={scrolling} text/frame={:.1} record_p50_ns={} input_to_accept_p50_ns={}",
+            text_commands as f64 / recording.len() as f64,
+            recording[mid].as_nanos(),
+            total[mid].as_nanos()
+        );
+    }
+    Ok(())
+}

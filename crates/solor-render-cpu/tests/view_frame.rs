@@ -1035,3 +1035,77 @@ fn scrollport_pixels_and_clicks_follow_each_accepted_overflow_axis() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn fixed_text_at_fractional_scroll_clip_edges_matches_the_unclipped_pixels() -> Result<()> {
+    use solor::{Draw, style::Overflow};
+    let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
+    let mut ui = Ui::with_font(font.to_vec())?;
+    let left = ui.context().signal(px(0.0));
+    let scene = |clipped| {
+        component(move |_| {
+            div().pl(px(10.5)).items_start().child(
+                div()
+                    .w(px(20.5))
+                    .items_start()
+                    .when(clipped, |d| d.overflow_x(Overflow::Hidden))
+                    .child(
+                        div()
+                            .relative()
+                            .left(left)
+                            .items_start()
+                            .child(text("AB").w(px(20.5)).pl(px(1.0)).whitespace_nowrap()),
+                    ),
+            )
+        })
+    };
+    let clipped = ui.mount(scene(true))?;
+    let plain = ui.mount(scene(false))?;
+    let size = DeviceSize {
+        width: 64,
+        height: 32,
+    }
+    .at_unit_scale();
+    for (offset, retained) in [
+        (20.5, false),
+        (20.25, true),
+        (0.0, true),
+        (-20.25, true),
+        (-20.5, false),
+    ] {
+        ui.context().set(left, px(offset))?;
+        ui.flush()?;
+        ui.layout(clipped, size)?;
+        ui.layout(plain, size)?;
+        let reference = ui.record_frame(plain)?;
+        for _ in 0..3 {
+            let frame = ui.record_frame(clipped)?;
+            assert_eq!(
+                frame.draws().iter().any(|d| matches!(d, Draw::Text { .. })),
+                retained,
+                "offset {offset}"
+            );
+            for scale in [RasterScale::ONE, RasterScale(1.5)] {
+                let physical = scale.buffer_size(size)?;
+                let original = Surface::draw_view(&reference, physical, scale)?;
+                let actual = Surface::draw_view(&frame, physical, scale)?;
+                let inside = scale.edge(10.5)..scale.edge(31.0);
+                for y in 0..physical.height as usize {
+                    for x in 0..physical.width as usize {
+                        let expected = if inside.contains(&(x as i64)) {
+                            pixel(&original, x, y)
+                        } else {
+                            &[255; 4]
+                        };
+                        assert_eq!(
+                            pixel(&actual, x, y),
+                            expected,
+                            "offset {offset}, pixel ({x},{y})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}

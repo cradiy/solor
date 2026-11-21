@@ -6,8 +6,10 @@ use anyhow::{Context as _, ensure};
 use super::{PointerButton, PointerEvent, PointerSample};
 use crate::clip::NodeClips;
 use crate::{
-    Instance, NodeId, Result, Ui, ViewId,
+    ContentClip, Instance, NodeId, Result, Ui, ViewId,
     layout::{Origin, Size},
+    styled_body::StyledBody,
+    text::Text,
 };
 
 #[derive(Clone, Copy)]
@@ -188,7 +190,12 @@ impl HitGeometry {
         if !root.visible {
             return Ok(frame);
         }
-        let mut pending = vec![(root, Origin::default(), Recipients::default(), None)];
+        let mut pending = vec![(
+            root,
+            Origin::default(),
+            Recipients::default(),
+            None::<Arc<ContentClip>>,
+        )];
         while let Some((body, offset, inherited, inherited_clip)) = pending.pop() {
             let id = body.id;
             if instance.frame_handlers.contains_key(&id) {
@@ -212,6 +219,20 @@ impl HitGeometry {
                 origin,
                 size: geometry.metrics.size,
             };
+            // A fixed label is a leaf. Omit it only when neither its border hit box
+            // nor its padded text command can intersect the inherited clip.
+            if body.fixed_label
+                && let Some(clip) = &inherited_clip
+                && !clip.intersects(origin, area.size)
+            {
+                let label = instance.scene.body::<StyledBody<Text>>(id)?;
+                let text_origin = origin
+                    .checked_add(label.origin())
+                    .context("paint origin outside layout range")?;
+                if !clip.intersects(text_origin, label.content_size(area.size)) {
+                    continue;
+                }
+            }
             let mut recipients = inherited;
             if body.hit_testable && body.cursor.is_some() {
                 recipients.cursor = body.cursor;
