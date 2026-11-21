@@ -173,7 +173,7 @@ impl DamageAudit {
     }
 }
 
-fn buffer_size(scale_120: u32, logical: Size) -> io::Result<DeviceSize> {
+pub(crate) fn buffer_size(scale_120: u32, logical: Size) -> io::Result<DeviceSize> {
     let size = RasterScale(f64::from(scale_120) / 120.0).buffer_size(logical)?;
     if scale_120 == 0 || u64::from(size.width) * u64::from(size.height) > 4 * 1024 * 1024 {
         return Err(io::Error::other(
@@ -200,16 +200,16 @@ impl Window {
         &mut self,
         compositor: &wl_compositor::WlCompositor,
         qh: &QueueHandle<Desktop>,
-    ) {
+    ) -> bool {
         let (bounds, moved) = match &mut self.floating {
             Some(panel) if matches!(self.mapping, Mapping::Mapped | Mapping::Ready) => {
                 (Some(panel.geometry.bounds()), panel.apply_placement())
             }
-            Some(_) => return,
+            Some(_) => return false,
             None => (None, false),
         };
         self.input_region
-            .apply(self.mapping, compositor, &self.surface, qh, bounds, moved);
+            .apply(self.mapping, compositor, &self.surface, qh, bounds, moved)
     }
 
     fn event(&mut self, event: WindowEvent) {
@@ -304,6 +304,12 @@ impl Window {
 
     fn set_visible(&mut self, visible: bool, connection: &Connection, qh: &QueueHandle<Desktop>) {
         match (visible, self.mapping) {
+            (true, Mapping::Hidden) if matches!(self.role, Role::Popup { .. }) => {
+                self.mapping = Mapping::Ready;
+            }
+            (false, Mapping::Ready) if matches!(self.role, Role::Popup { .. }) => {
+                self.mapping = Mapping::Hidden;
+            }
             (true, Mapping::Hidden) => {
                 if let Role::Layer(layer, placement) = &self.role {
                     placement.apply(layer, self.commits != 0);
@@ -315,8 +321,12 @@ impl Window {
                 self.surface.attach(None, 0, 0);
                 self.surface.commit();
                 // Drain events issued before unmap before accepting a new configure.
-                connection.display().sync(qh, Unmapped(self.surface.id()));
-                self.mapping = Mapping::Unmapping;
+                if matches!(self.role, Role::Popup { .. }) {
+                    self.mapping = Mapping::Hidden;
+                } else {
+                    connection.display().sync(qh, Unmapped(self.surface.id()));
+                    self.mapping = Mapping::Unmapping;
+                }
                 self.waiting = None;
                 self.full_damage = true;
                 self.dirty = true;
@@ -325,7 +335,11 @@ impl Window {
         }
     }
 
-    fn present(&mut self, qh: &QueueHandle<Desktop>) -> anyhow::Result<()> {
+    fn present(
+        &mut self,
+        compositor: &wl_compositor::WlCompositor,
+        qh: &QueueHandle<Desktop>,
+    ) -> anyhow::Result<()> {
         if !matches!(self.mapping, Mapping::Ready | Mapping::Mapped)
             || !self.dirty
             || self.waiting.is_some()
@@ -341,6 +355,8 @@ impl Window {
             }
             return Ok(());
         };
+        let region_changed =
+            matches!(self.role, Role::Popup { .. }) && self.apply_input_region(compositor, qh);
         let size = buffer_size(self.scale_120, self.size)?;
         let scale = RasterScale(f64::from(self.scale_120) / 120.0);
         let mut frame = self.view.frame(self.size, scale)?;
@@ -356,6 +372,8 @@ impl Window {
             if callback {
                 // A frame request takes effect at commit, even with no new buffer.
                 self.waiting = Some(self.surface.frame(qh, (self.surface.id(), None)));
+            }
+            if callback || region_changed {
                 self.surface.commit();
             }
             self.dirty = false;

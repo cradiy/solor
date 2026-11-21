@@ -47,3 +47,21 @@ fn mount(mut ui: Ui, root: impl Render, background: WindowBackground) -> Result<
     ui.set_system_font_provider(solor_linux::system_ui_font);
     CpuWindow::mount_with_background(ui, root, background)
 }
+
+impl Host {
+    pub(super) fn run_popup<R: 'static>(
+        &self,
+        connection: solor_linux::popup::Connection,
+        control: &solor_linux::popup::PopupHandle,
+        assign: impl FnOnce(&solor_linux::popup::WlSurface) -> Result<R>,
+        ui: Ui,
+        root: impl Render,
+    ) -> Result<()> {
+        self.0.run_popup(
+            connection,
+            control,
+            assign,
+            Box::new(mount(ui, root, WindowBackground::Transparent)?),
+        )
+    }
+}

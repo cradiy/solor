@@ -8,7 +8,7 @@ mod system;
 
 pub use solor::platform::{WindowBackground, WindowHandle, WindowOptions};
 #[cfg(target_os = "linux")]
-pub use solor_linux::layer_shell;
+pub use solor_linux::{layer_shell, popup};
 
 /// Hosts application windows with the window system and renderer selected for this target.
 pub struct SystemPlatform {
@@ -90,6 +90,27 @@ impl SystemPlatform {
     /// On Linux this runs the event loop until the window closes.
     pub fn run_window(&self, options: WindowOptions<'_>, ui: Ui, root: impl Render) -> Result<()> {
         self.run(|app| app.open_window(options, ui, root).map(drop))
+    }
+
+    /// Runs a client-sized popup on the panel thread while the host dispatches its
+    /// existing Wayland connection. The factory assigns the surface role before
+    /// the first commit. Its return value releases the role on drop.
+    #[cfg(target_os = "linux")]
+    pub fn run_wayland_popup<R: 'static>(
+        &self,
+        connection: popup::Connection,
+        control: &popup::PopupHandle,
+        assign: impl FnOnce(&popup::WlSurface) -> Result<R>,
+        ui: Ui,
+        root: impl Render,
+    ) -> Result<()> {
+        self.host.run_popup(
+            connection,
+            control,
+            assign,
+            configured_ui(ui, &self.assets),
+            root,
+        )
     }
 
     /// Mounts a Wayland desktop panel or overlay on the compositor-selected output.

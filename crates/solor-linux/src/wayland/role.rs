@@ -23,12 +23,18 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 use super::{Desktop, decorations::Decorations, stacking::Topmost};
 use crate::layer_shell::{Anchor, ExclusiveZone, KeyboardInteractivity, Layer, LayerShellOptions};
 
+type AssignPopup<'a> = Box<dyn FnOnce(&WlSurface) -> Result<Box<dyn std::any::Any>> + 'a>;
+
 pub(super) enum Request<'a> {
+    Popup(AssignPopup<'a>),
     Toplevel(WindowOptions<'a>),
     Layer(LayerShellOptions<'a>),
 }
 
 pub(super) enum Role {
+    Popup {
+        _owner: Box<dyn std::any::Any>,
+    },
     Toplevel {
         resizable: bool,
         shell: XdgWmBase,
@@ -78,6 +84,15 @@ impl Request<'_> {
         surface: &WlSurface,
     ) -> Result<(Role, Size)> {
         match self {
+            Self::Popup(assign) => Ok((
+                Role::Popup {
+                    _owner: assign(surface)?,
+                },
+                Size {
+                    width: px(1.),
+                    height: px(1.),
+                },
+            )),
             Self::Toplevel(options) => {
                 ensure!(
                     !options.title.contains('\0'),
@@ -326,6 +341,7 @@ impl Drop for Role {
                 shell.destroy();
             }
             Self::Layer(surface, _) => surface.destroy(),
+            Self::Popup { .. } => {}
         }
     }
 }

@@ -2,11 +2,8 @@
 use solor::{Edges, Pixels, platform::WindowBackground};
 
 mod handle;
-mod input_region;
-pub(crate) use handle::Binding;
+pub use crate::surface_control::InputRect;
 pub use handle::LayerSurfaceHandle;
-pub use input_region::InputRect;
-pub(crate) use input_region::InputRegion;
 
 pub use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::Layer,

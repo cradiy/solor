@@ -78,6 +78,16 @@ pub(super) struct Seat {
     scroll: Option<(PointerSample, ScrollDelta)>,
 }
 
+impl Drop for Seat {
+    fn drop(&mut self) {
+        self.release_pointer();
+        self.keyboard.take();
+        if self.seat.version() >= 5 {
+            self.seat.release();
+        }
+    }
+}
+
 impl Seat {
     fn modifiers(&self) -> Modifiers {
         self.keyboard
@@ -210,18 +220,13 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Desktop {
             } if interface == "wl_seat" => state.add_seat(registry, name, version, qh),
             wl_registry::Event::GlobalRemove { name } => {
                 if let Some(index) = state.seats.iter().position(|s| s.name == name) {
-                    let mut seat = state.seats.swap_remove(index);
+                    let seat = state.seats.swap_remove(index);
                     if let Some(window) =
                         seat.focus.as_ref().and_then(|id| state.windows.get_mut(id))
                     {
                         window.event(WindowEvent::Pointer(PointerInput::Cancel(PointerId(
                             name.into(),
                         ))));
-                    }
-                    seat.release_pointer();
-                    seat.keyboard = None;
-                    if seat.seat.version() >= 5 {
-                        seat.seat.release();
                     }
                 }
             }
@@ -246,7 +251,7 @@ impl Dispatch<wl_seat::WlSeat, u32> for Desktop {
             capabilities: WEnum::Value(caps),
         } = event
         {
-            if caps.contains(wl_seat::Capability::Keyboard) {
+            if !state.popup_only && caps.contains(wl_seat::Capability::Keyboard) {
                 input
                     .keyboard
                     .get_or_insert_with(|| Keyboard::new(seat.get_keyboard(qh, *name)));

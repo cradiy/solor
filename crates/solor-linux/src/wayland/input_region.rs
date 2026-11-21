@@ -4,7 +4,7 @@ use wayland_client::{
 };
 
 use super::{Desktop, Mapping};
-use crate::layer_shell::InputRegion;
+use crate::surface_control::InputRegion;
 
 delegate_noop!(Desktop: ignore WlRegion);
 
@@ -15,6 +15,10 @@ pub(super) struct SurfaceInputRegion {
 }
 
 impl SurfaceInputRegion {
+    pub(super) fn changed(&self) -> bool {
+        self.changed
+    }
+
     pub(super) fn update(&mut self, region: Option<InputRegion>) {
         if let Some(region) = region
             && region != self.current
@@ -32,12 +36,12 @@ impl SurfaceInputRegion {
         qh: &QueueHandle<Desktop>,
         panel: Option<[i32; 4]>,
         placement_changed: bool,
-    ) {
+    ) -> bool {
         let mapping_with_region = mapping == Mapping::Hidden && self.current != InputRegion::Full;
         if mapping == Mapping::Unmapping
             || !(self.changed || mapping_with_region || placement_changed)
         {
-            return;
+            return false;
         }
         if self.current == InputRegion::Full && panel.is_none() {
             surface.set_input_region(None);
@@ -60,12 +64,8 @@ impl SurfaceInputRegion {
             surface.set_input_region(Some(&region));
             region.destroy();
         }
-        // An idle mapped surface may never submit another buffer. During the
-        // initial handshake the mapping or first buffer commit applies this state.
-        if mapping == Mapping::Mapped {
-            surface.commit();
-        }
         self.changed = false;
+        true
     }
 }
 

@@ -64,7 +64,7 @@ fn axis(origin: Pixels, extent: Pixels) -> io::Result<(i32, i32)> {
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "invalid layer input rectangle",
+            "invalid surface input rectangle",
         ));
     }
     Ok((start as i32, length as i32))

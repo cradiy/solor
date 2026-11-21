@@ -7,7 +7,7 @@ use super::{
     pointer,
     role::{Request, Role},
 };
-use crate::layer_shell::{Binding, LayerShellOptions};
+use crate::{layer_shell::LayerShellOptions, popup::PopupHandle, surface_control::Binding};
 use solor::{
     platform::{PlatformWindow, WindowBackground, WindowHandle, WindowHandler, WindowOptions},
     raster::Rgba8,
@@ -16,6 +16,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     io,
+    os::fd::{AsFd, BorrowedFd},
     rc::{Rc, Weak},
     time::Instant,
 };
@@ -34,6 +35,7 @@ use wayland_protocols::wp::{
 #[derive(Default)]
 pub(super) struct Desktop {
     pub(super) activation: Option<Rc<Activation>>,
+    pub(super) popup_only: bool,
     pub(super) windows: HashMap<ObjectId, Window>,
     pub(super) seats: Vec<pointer::Seat>,
     pub(super) cursor_shapes: Option<WpCursorShapeManagerV1>,
@@ -211,7 +213,7 @@ struct WindowFactory {
     qh: QueueHandle<Desktop>,
     pending: RefCell<Vec<Window>>,
     revisit: Rc<Cell<bool>>,
-    globals: GlobalList,
+    globals: Option<GlobalList>,
     compositor: wl_compositor::WlCompositor,
     shm: wl_shm::WlShm,
     viewporter: wp_viewporter::WpViewporter,
@@ -227,7 +229,7 @@ impl Wayland {
         &self,
         setup: impl FnOnce(WaylandApplication) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
-        let mut events = EventLoop::connect(self)?;
+        let mut events = EventLoop::new(self, Connection::connect_to_env()?, false)?;
         setup(WaylandApplication(Rc::downgrade(&events.windows)))?;
         events.dispatch(None)
     }
@@ -239,19 +241,41 @@ impl Wayland {
         view: Box<dyn WindowHandler<Rgba8>>,
     ) -> anyhow::Result<()> {
         let control = options.handle.map(|h| h.claim()).transpose()?;
-        let mut events = EventLoop::connect(self)?;
+        let mut events = EventLoop::new(self, Connection::connect_to_env()?, false)?;
         let (id, _) = events.windows.open(Request::Layer(options), |_| Ok(view))?;
         events.dispatch(control.map(|control| (id, control)))
+    }
+
+    /// Runs a transparent, client-sized popup on the supplied connection. The
+    /// host keeps reading the connection on its own thread. The factory assigns
+    /// a role that can present without a configure handshake; its return value
+    /// owns that role and must destroy it on drop.
+    pub fn run_popup<R: 'static>(
+        &self,
+        connection: Connection,
+        handle: &PopupHandle,
+        assign: impl FnOnce(&wl_surface::WlSurface) -> anyhow::Result<R>,
+        view: Box<dyn WindowHandler<Rgba8>>,
+    ) -> anyhow::Result<()> {
+        let control = handle.0.claim()?;
+        let mut events = EventLoop::new(self, connection, true)?;
+        let request = Request::Popup(Box::new(move |surface| Ok(Box::new(assign(surface)?))));
+        let (id, _) = events.windows.open(request, |_| Ok(view))?;
+        events.dispatch(Some((id, control)))
     }
 }
 
 impl EventLoop {
-    fn connect(host: &Wayland) -> anyhow::Result<Self> {
-        let connection = Connection::connect_to_env()?;
+    fn new(host: &Wayland, connection: Connection, guest: bool) -> anyhow::Result<Self> {
         let (globals, queue) = registry_queue_init::<Desktop>(&connection)?;
         let qh = queue.handle();
         let mut desktop = Desktop {
-            activation: Activation::bind(&globals, &qh),
+            popup_only: guest,
+            activation: if guest {
+                None
+            } else {
+                Activation::bind(&globals, &qh)
+            },
             cursor_shapes: globals.bind(&qh, 1..=1, ()).ok(),
             ..Desktop::default()
         };
@@ -275,7 +299,7 @@ impl EventLoop {
             trace_submissions: host.trace_submissions,
             verify_shm: host.verify_shm,
             qh,
-            globals,
+            globals: Some(globals),
             pending: RefCell::default(),
             revisit: Rc::default(),
         };
@@ -306,7 +330,7 @@ impl WindowFactory {
                     .transpose()?
                     .filter(|_| options.modal)
             }
-            Request::Layer(_) => None,
+            Request::Layer(_) | Request::Popup(_) => None,
         };
         let surface = self.compositor.create_surface(&self.qh, ());
         let id = surface.id();
@@ -339,12 +363,13 @@ impl WindowFactory {
     ) -> anyhow::Result<(Window, WindowHandle)> {
         let qh = &self.qh;
         let background = match &request {
+            Request::Popup(_) => WindowBackground::Transparent,
             Request::Layer(options) => options.background,
             Request::Toplevel(options) => options.background,
         };
         let parent = match &request {
             Request::Toplevel(options) => options.parent,
-            Request::Layer(_) => None,
+            Request::Layer(_) | Request::Popup(_) => None,
         };
         let activation = match (&request, &self.activation) {
             (Request::Toplevel(options), Some(activation)) => Some(ActivationTarget {
@@ -354,7 +379,8 @@ impl WindowFactory {
             }),
             _ => None,
         };
-        let (role, size) = request.create(&self.globals, qh, surface)?;
+        let globals = self.globals.as_ref().expect("live window factory");
+        let (role, size) = request.create(globals, qh, surface)?;
         buffer_size(120, size)?;
         let life = WindowLife::new(activation, self.revisit.clone(), modal_parent);
         let target = Rc::downgrade(&life);
@@ -363,7 +389,7 @@ impl WindowFactory {
             Role::Toplevel { top, .. } => {
                 Some(self.toplevels.register(handle.clone(), &life, top, parent))
             }
-            Role::Layer(..) => None,
+            Role::Layer(..) | Role::Popup { .. } => None,
         };
         let mut view = build(handle.clone())?;
         view.set_window_resizable(matches!(
@@ -375,7 +401,7 @@ impl WindowFactory {
         ))?;
         let floating = match &role {
             Role::Layer(_, p) if p.movable => Some(floating::FloatingPanel::new(
-                &self.globals,
+                globals,
                 &self.compositor,
                 &self.shm,
                 &self.viewporter,
@@ -436,6 +462,14 @@ impl EventLoop {
                 window.pixel_order = self.desktop.order(window.background);
                 self.desktop.windows.insert(window.surface.id(), window);
             }
+            if self.desktop.popup_only {
+                let mut cx = std::task::Context::from_waker(&waker);
+                if let std::task::Poll::Ready(result) =
+                    self.queue.poll_dispatch_pending(&mut cx, &mut self.desktop)
+                {
+                    match result? {}
+                }
+            }
             let mut deadline = None;
             let mut closed = Vec::new();
             for (id, window) in &mut self.desktop.windows {
@@ -446,20 +480,32 @@ impl EventLoop {
                     .as_ref()
                     .filter(|(target, _)| target == id)
                     .map(|(_, h)| h);
-                let Some(visible) = handle
-                    .map_or(Some(true), Binding::visibility)
+                if window.life.is_open() {
+                    window.view.poll_tasks(&waker)?;
+                }
+                let update = handle.map(Binding::take);
+                let Some(visible) = update
+                    .as_ref()
+                    .map_or(Some(true), |u| u.visible)
                     .filter(|_| window.life.is_open())
                 else {
                     closed.push(id.clone());
                     continue;
                 };
-                window.view.poll_tasks(&waker)?;
                 pointer::cancel_modal_gestures(&mut self.desktop.seats, id, window);
-                if let Some(handle) = handle {
-                    window.input_region.update(handle.take_input_region());
+                if let Some(update) = update {
+                    if let Some(size) = update.size {
+                        window.resize(size);
+                    }
+                    window.input_region.update(update.region);
                 }
-                if visible && (handle.is_some() || window.floating.is_some()) {
-                    window.apply_input_region(&self.windows.compositor, &qh);
+                if visible
+                    && !self.desktop.popup_only
+                    && (handle.is_some() || window.floating.is_some())
+                    && window.apply_input_region(&self.windows.compositor, &qh)
+                    && window.mapping == Mapping::Mapped
+                {
+                    window.surface.commit();
                 }
                 if !visible && window.mapping == Mapping::Mapped {
                     pointer::cancel_focus(&mut self.desktop.seats, id, window);
@@ -476,8 +522,11 @@ impl EventLoop {
                     if next.is_some_and(|time| time <= Instant::now()) {
                         window.dirty = true;
                     }
+                    if self.desktop.popup_only && window.input_region.changed() {
+                        window.dirty = true;
+                    }
                     if window.dirty {
-                        window.present(&qh)?;
+                        window.present(&self.windows.compositor, &qh)?;
                         next = window.deadline();
                     }
                     if let Some(next) = next {
@@ -500,6 +549,20 @@ impl EventLoop {
                 self.connection.flush()?;
                 return Ok(());
             }
+            if self.desktop.popup_only {
+                use rustix::event::PollFlags;
+                use wayland_client::backend::WaylandError;
+                let interest = match self.connection.flush() {
+                    Ok(()) => PollFlags::empty(),
+                    Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
+                        PollFlags::OUT
+                    }
+                    Err(error) => return Err(error.into()),
+                };
+                let wait = control.as_ref().map(|(_, h)| h);
+                wait_for_events(self.connection.as_fd(), interest, deadline, &wake, wait)?;
+                continue;
+            }
             dispatch_until(
                 &mut self.queue,
                 &mut self.desktop,
@@ -507,6 +570,44 @@ impl EventLoop {
                 &wake,
                 control.as_ref().map(|(_, h)| h),
             )?;
+        }
+    }
+}
+
+impl Drop for WindowFactory {
+    fn drop(&mut self) {
+        self.scale_manager.destroy();
+        self.viewporter.destroy();
+        if let Some(presentation) = self.presentation.take() {
+            presentation.destroy();
+        }
+        let registry = self.globals.take().expect("live window factory");
+        let proxy = registry.registry().clone();
+        registry.destroy();
+        if let Some(backend) = proxy.backend().upgrade() {
+            // These bound protocol versions have no destructor request.
+            for id in [self.compositor.id(), self.shm.id()] {
+                let _ = backend.destroy_object(&id);
+            }
+            if proxy.is_alive() {
+                let _ = backend.destroy_object(&proxy.id());
+            }
+            let _ = backend.flush();
+        }
+    }
+}
+
+impl Drop for EventLoop {
+    fn drop(&mut self) {
+        for (_, window) in self.desktop.windows.drain() {
+            window.destroy();
+        }
+        for window in self.windows.pending.take() {
+            window.destroy();
+        }
+        self.desktop.seats.clear();
+        if let Some(manager) = self.desktop.cursor_shapes.take() {
+            manager.destroy();
         }
     }
 }
@@ -540,50 +641,70 @@ fn dispatch_until(
     wake: &super::wake::EventWake,
     control: Option<&Binding<'_>>,
 ) -> anyhow::Result<()> {
-    use rustix::event::{PollFd, PollFlags, Timespec, poll};
     use wayland_client::backend::WaylandError;
 
     if queue.dispatch_pending(desktop)? != 0 {
         return Ok(());
     }
     queue.flush()?;
-    if let Some(guard) = queue.prepare_read() {
-        let fd = guard.connection_fd();
-        let mut fds: smallvec::SmallVec<[_; 3]> = smallvec::smallvec![
-            PollFd::new(&fd, PollFlags::IN),
-            PollFd::new(&wake.0, PollFlags::IN)
-        ];
-        if let Some(control) = control {
-            fds.push(PollFd::new(control.fd(), PollFlags::IN));
-        }
-        let timeout = deadline
-            .map(|t| Timespec::try_from(t.saturating_duration_since(Instant::now())))
-            .transpose()?;
-        match poll(&mut fds, timeout.as_ref()) {
-            Ok(0) | Err(rustix::io::Errno::INTR) => return Ok(()),
-            Err(error) => return Err(error.into()),
+    if let Some(guard) = queue.prepare_read()
+        && wait_for_events(
+            guard.connection_fd(),
+            rustix::event::PollFlags::IN,
+            deadline,
+            wake,
+            control,
+        )?
+    {
+        match guard.read() {
             Ok(_) => {}
-        }
-        if !fds[1].revents().is_empty() {
-            wake.drain()?;
-        }
-        if let Some(control) = control
-            && !fds[2].revents().is_empty()
-        {
-            control.drain()?;
-        }
-        let readable = !fds[0].revents().is_empty();
-        drop(fds);
-        if readable {
-            match guard.read() {
-                Ok(_) => {}
-                Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {}
-                Err(error) => return Err(error.into()),
-            }
+            Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {}
+            Err(error) => return Err(error.into()),
         }
     }
     queue.dispatch_pending(desktop)?;
     Ok(())
+}
+
+fn wait_for_events(
+    fd: BorrowedFd<'_>,
+    interest: rustix::event::PollFlags,
+    deadline: Option<Instant>,
+    wake: &super::wake::EventWake,
+    control: Option<&Binding<'_>>,
+) -> anyhow::Result<bool> {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    let mut fds: smallvec::SmallVec<[_; 3]> = smallvec::smallvec![
+        PollFd::new(&fd, interest),
+        PollFd::new(&wake.0, PollFlags::IN)
+    ];
+    if let Some(control) = control {
+        fds.push(PollFd::new(control.fd(), PollFlags::IN));
+    }
+    let timeout = deadline
+        .map(|t| Timespec::try_from(t.saturating_duration_since(Instant::now())))
+        .transpose()?;
+    match poll(&mut fds, timeout.as_ref()) {
+        Ok(0) | Err(rustix::io::Errno::INTR) => return Ok(false),
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
+    }
+    if !fds[1].revents().is_empty() {
+        wake.drain()?;
+    }
+    if let Some(control) = control
+        && !fds[2].revents().is_empty()
+    {
+        control.drain()?;
+    }
+
+    anyhow::ensure!(
+        !fds[0]
+            .revents()
+            .intersects(PollFlags::HUP | PollFlags::ERR | PollFlags::NVAL),
+        "Wayland connection closed"
+    );
+    Ok(fds[0].revents().contains(PollFlags::IN))
 }
 
 #[cfg(test)]

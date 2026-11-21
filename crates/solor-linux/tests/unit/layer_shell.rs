@@ -51,16 +51,16 @@ fn a_single_surface_consumes_the_latest_visibility_and_close_is_final() -> std::
     let handle = LayerSurfaceHandle::new(false)?;
     let receiver = handle.claim()?;
     assert!(handle.clone().claim().is_err());
-    assert_eq!(receiver.visibility(), Some(false));
+    assert_eq!(receiver.take().visible, Some(false));
 
     handle.set_visible(true)?;
     handle.set_visible(false)?;
     receiver.drain()?;
-    assert_eq!(receiver.visibility(), Some(false));
+    assert_eq!(receiver.take().visible, Some(false));
     assert_eq!(receiver.drain().unwrap_err().kind(), ErrorKind::WouldBlock);
 
     handle.close()?;
-    assert_eq!(receiver.visibility(), None);
+    assert_eq!(receiver.take().visible, None);
     assert_eq!(
         handle.set_visible(true).unwrap_err().kind(),
         ErrorKind::BrokenPipe
@@ -70,7 +70,7 @@ fn a_single_surface_consumes_the_latest_visibility_and_close_is_final() -> std::
 
 #[test]
 fn input_region_rounds_logical_edges_outward_and_ignores_empty_rectangles() -> std::io::Result<()> {
-    use crate::layer_shell::{InputRect, InputRegion};
+    use crate::surface_control::{InputRect, InputRegion};
     let region = InputRegion::from_rects(Some(&[
         InputRect::new(px(-0.25), px(1.75), px(2.5), px(1.25)),
         InputRect::new(px(2.25), px(3.25), px(0.0), px(1.0)),
@@ -85,7 +85,10 @@ fn input_region_rounds_logical_edges_outward_and_ignores_empty_rectangles() -> s
 
 #[test]
 fn invalid_region_updates_preserve_the_last_complete_request() -> std::io::Result<()> {
-    use crate::layer_shell::{InputRect, InputRegion, LayerSurfaceHandle};
+    use crate::{
+        layer_shell::LayerSurfaceHandle,
+        surface_control::{InputRect, InputRegion},
+    };
     use std::io::ErrorKind;
 
     let panel = LayerSurfaceHandle::new(false)?;
@@ -106,7 +109,7 @@ fn invalid_region_updates_preserve_the_last_complete_request() -> std::io::Resul
         );
     }
     assert_eq!(
-        receiver.take_input_region(),
+        receiver.take().region,
         Some(InputRegion::Rects(vec![[0, 0, 10, 8]]))
     );
     panel.close()?;
