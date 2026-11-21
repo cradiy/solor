@@ -6,7 +6,7 @@ mod pointer;
 mod presentation;
 mod role;
 
-use crate::layer_shell::LayerShellOptions;
+use crate::layer_shell::{Binding, LayerShellOptions};
 use role::{Request, Role};
 
 use std::{io, time::Instant};
@@ -61,13 +61,46 @@ struct Window {
     trace: bool,
     size: Size,
     pending_size: Option<Size>,
-    configured: bool,
+    mapping: Mapping,
     dirty: bool,
-    waiting: bool,
+    waiting: Option<wl_callback::WlCallback>,
     closed: bool,
     commits: usize,
     audit: Option<DamageAudit>,
     start: Instant,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mapping {
+    Hidden,
+    AwaitingConfigure,
+    Ready,
+    Mapped,
+    Unmapping,
+}
+
+impl Mapping {
+    fn configure(&mut self) -> bool {
+        if *self == Self::AwaitingConfigure {
+            *self = Self::Ready;
+        }
+        matches!(self, Self::Ready | Self::Mapped)
+    }
+}
+
+struct Unmapped;
+
+impl Dispatch<wl_callback::WlCallback, Unmapped> for Window {
+    fn event(
+        state: &mut Self,
+        _: &wl_callback::WlCallback,
+        _: wl_callback::Event,
+        _: &Unmapped,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        state.mapping = Mapping::Hidden;
+    }
 }
 
 /// The compositor may keep any pixel outside the reported buffer damage.
@@ -159,6 +192,10 @@ impl Wayland {
         request: Request<'_>,
         view: Box<dyn WindowHandler<Rgba8>>,
     ) -> anyhow::Result<()> {
+        let control = match &request {
+            Request::Layer(options) => options.handle.map(|handle| handle.claim()).transpose()?,
+            Request::Toplevel(_) => None,
+        };
         let start = Instant::now();
         let connection = Connection::connect_to_env()?;
         let (globals, mut queue) = registry_queue_init::<Window>(&connection)?;
@@ -173,8 +210,6 @@ impl Wayland {
         let fractional = manager.get_fractional_scale(&surface, &qh, ());
         let (role, size) = request.create(&globals, &qh, &surface)?;
         buffer_size(120, size)?;
-        surface.commit();
-
         let presentation = if self.trace_submissions {
             globals.bind(&qh, 1..=1, ()).ok()
         } else {
@@ -200,9 +235,9 @@ impl Wayland {
             trace: self.trace_submissions,
             size,
             pending_size: None,
-            configured: false,
+            mapping: Mapping::Hidden,
             dirty: true,
-            waiting: false,
+            waiting: None,
             closed: false,
             commits: 0,
             audit: self.verify_shm.then(DamageAudit::default),
@@ -214,26 +249,40 @@ impl Wayland {
             }
         }
         loop {
-            if !window.dirty
-                && !window.waiting
-                && window.configured
-                && let Some(deadline) = window.view.next_redraw()
-            {
-                dispatch_until(&mut queue, &mut window, deadline)?;
-                window.dirty |= window
-                    .view
-                    .next_redraw()
-                    .is_some_and(|time| time <= Instant::now());
-            } else {
-                queue.blocking_dispatch(&mut window)?;
-            }
             if let Some(error) = window.failure.take() {
                 return Err(error);
             }
+            let Some(visible) = control.as_ref().map_or(Some(true), Binding::visibility) else {
+                break;
+            };
             if window.closed {
                 break;
             }
-            window.present(&qh)?;
+            window.set_visible(visible, &connection, &qh);
+            if visible {
+                window.present(&qh)?;
+            }
+
+            let deadline = if visible
+                && window.mapping == Mapping::Mapped
+                && !window.dirty
+                && window.waiting.is_none()
+            {
+                window.view.next_redraw()
+            } else {
+                None
+            };
+            if deadline.is_some() || control.is_some() {
+                dispatch_until(&mut queue, &mut window, deadline, control.as_ref())?;
+                if deadline.is_some() {
+                    window.dirty |= window
+                        .view
+                        .next_redraw()
+                        .is_some_and(|time| time <= Instant::now());
+                }
+            } else {
+                queue.blocking_dispatch(&mut window)?;
+            }
         }
         drop(window.role);
         fractional.destroy();
@@ -252,7 +301,8 @@ impl Wayland {
 fn dispatch_until(
     queue: &mut EventQueue<Window>,
     window: &mut Window,
-    deadline: Instant,
+    deadline: Option<Instant>,
+    control: Option<&Binding<'_>>,
 ) -> anyhow::Result<()> {
     use rustix::event::{PollFd, PollFlags, Timespec, poll};
     use wayland_client::backend::WaylandError;
@@ -263,16 +313,32 @@ fn dispatch_until(
     queue.flush()?;
     if let Some(guard) = queue.prepare_read() {
         let fd = guard.connection_fd();
-        let mut fds = [PollFd::new(&fd, PollFlags::IN)];
-        let timeout = Timespec::try_from(deadline.saturating_duration_since(Instant::now()))?;
-        match poll(&mut fds, Some(&timeout)) {
+        let mut fds: smallvec::SmallVec<[_; 2]> =
+            smallvec::smallvec![PollFd::new(&fd, PollFlags::IN)];
+        if let Some(control) = control {
+            fds.push(PollFd::new(control.fd(), PollFlags::IN));
+        }
+        let timeout = deadline
+            .map(|t| Timespec::try_from(t.saturating_duration_since(Instant::now())))
+            .transpose()?;
+        match poll(&mut fds, timeout.as_ref()) {
             Ok(0) | Err(rustix::io::Errno::INTR) => return Ok(()),
             Err(error) => return Err(error.into()),
-            Ok(_) => match guard.read() {
+            Ok(_) => {}
+        }
+        if let Some(control) = control
+            && !fds[1].revents().is_empty()
+        {
+            control.drain()?;
+        }
+        let readable = !fds[0].revents().is_empty();
+        drop(fds);
+        if readable {
+            match guard.read() {
                 Ok(_) => {}
                 Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {}
                 Err(error) => return Err(error.into()),
-            },
+            }
         }
     }
     queue.dispatch_pending(window)?;
@@ -349,8 +415,35 @@ impl Window {
         }
     }
 
+    fn set_visible(&mut self, visible: bool, connection: &Connection, qh: &QueueHandle<Self>) {
+        match (visible, self.mapping) {
+            (true, Mapping::Hidden) => {
+                if let Role::Layer(layer, placement) = &self.role {
+                    placement.apply(layer, self.commits != 0);
+                }
+                self.surface.commit();
+                self.mapping = Mapping::AwaitingConfigure;
+            }
+            (false, Mapping::Mapped) => {
+                self.surface.attach(None, 0, 0);
+                self.surface.commit();
+                // Drain events issued before unmap before accepting a new configure.
+                connection.display().sync(qh, Unmapped);
+                self.mapping = Mapping::Unmapping;
+                self.waiting = None;
+                self.full_damage = true;
+                self.dirty = true;
+                self.cancel_pointers();
+            }
+            _ => {}
+        }
+    }
+
     fn present(&mut self, qh: &QueueHandle<Self>) -> anyhow::Result<()> {
-        if !self.configured || !self.dirty || self.waiting {
+        if !matches!(self.mapping, Mapping::Ready | Mapping::Mapped)
+            || !self.dirty
+            || self.waiting.is_some()
+        {
             return Ok(());
         }
         let Some(index) = [self.next_slot, 1 - self.next_slot]
@@ -376,9 +469,8 @@ impl Window {
         if frame.damage.is_empty() {
             if callback {
                 // A frame request takes effect at commit, even with no new buffer.
-                self.surface.frame(qh, None);
+                self.waiting = Some(self.surface.frame(qh, None));
                 self.surface.commit();
-                self.waiting = true;
             }
             self.dirty = false;
             self.view.frame_submitted()?;
@@ -417,13 +509,13 @@ impl Window {
             );
         }
         if callback {
-            self.surface.frame(qh, Some(self.commits + 1));
-            self.waiting = true;
+            self.waiting = Some(self.surface.frame(qh, Some(self.commits + 1)));
         }
         if let Some(presentation) = &self.presentation {
             presentation.feedback(&self.surface, qh, self.commits + 1);
         }
         self.surface.commit();
+        self.mapping = Mapping::Mapped;
         let queued_ns = self.trace.then(presentation::monotonic_ns);
         slot.busy = true;
         self.next_slot = 1 - index;
@@ -500,12 +592,15 @@ delegate_noop!(Window: ignore wl_shm_pool::WlShmPool);
 impl Dispatch<wl_callback::WlCallback, Option<usize>> for Window {
     fn event(
         state: &mut Self,
-        _: &wl_callback::WlCallback,
+        callback: &wl_callback::WlCallback,
         _: wl_callback::Event,
         buffer_commit: &Option<usize>,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if state.waiting.as_ref() != Some(callback) {
+            return;
+        }
         if state.trace {
             let dispatched_ns = presentation::monotonic_ns();
             match buffer_commit {
@@ -513,7 +608,7 @@ impl Dispatch<wl_callback::WlCallback, Option<usize>> for Window {
                 None => eprintln!("frame_done=callback_only dispatched_ns={dispatched_ns}"),
             }
         }
-        state.waiting = false;
+        state.waiting = None;
         state.event(WindowEvent::FrameReady(state.start.elapsed()));
     }
 }
@@ -600,7 +695,7 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for Window {
     ) {
         if let xdg_surface::Event::Configure { serial } = event {
             surface.ack_configure(serial);
-            state.configured = true;
+            state.mapping.configure();
             state.maximized = state.pending_maximized;
             let Role::Toplevel { decorations, .. } = &mut state.role else {
                 return;

@@ -13,7 +13,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 use super::{Window, decorations::Decorations};
-use crate::layer_shell::{Anchor, ExclusiveZone, KeyboardInteractivity, LayerShellOptions};
+use crate::layer_shell::{Anchor, ExclusiveZone, KeyboardInteractivity, Layer, LayerShellOptions};
 
 pub(super) enum Request<'a> {
     Toplevel(WindowOptions<'a>),
@@ -27,7 +27,30 @@ pub(super) enum Role {
         top: XdgToplevel,
         decorations: Option<Decorations>,
     },
-    Layer(ZwlrLayerSurfaceV1),
+    Layer(ZwlrLayerSurfaceV1, LayerPlacement),
+}
+
+pub(super) struct LayerPlacement {
+    layer: Layer,
+    anchor: Anchor,
+    size: (u32, u32),
+    margin: [i32; 4],
+    zone: i32,
+    keyboard: KeyboardInteractivity,
+}
+
+impl LayerPlacement {
+    pub(super) fn apply(&self, surface: &ZwlrLayerSurfaceV1, remapping: bool) {
+        if remapping && surface.version() >= 2 {
+            surface.set_layer(self.layer);
+        }
+        surface.set_anchor(self.anchor);
+        surface.set_size(self.size.0, self.size.1);
+        let [top, right, bottom, left] = self.margin;
+        surface.set_margin(top, right, bottom, left);
+        surface.set_exclusive_zone(self.zone);
+        surface.set_keyboard_interactivity(self.keyboard);
+    }
 }
 
 impl Request<'_> {
@@ -113,17 +136,20 @@ impl Request<'_> {
                 if shell.version() >= zwlr_layer_shell_v1::REQ_DESTROY_SINCE {
                     shell.destroy();
                 }
-                layer.set_anchor(options.anchor);
-                layer.set_size(width, height);
-                layer.set_margin(top, right, bottom, left);
-                layer.set_exclusive_zone(zone);
-                layer.set_keyboard_interactivity(options.keyboard_interactivity);
+                let placement = LayerPlacement {
+                    layer: options.layer,
+                    anchor: options.anchor,
+                    size: (width, height),
+                    margin: [top, right, bottom, left],
+                    zone,
+                    keyboard: options.keyboard_interactivity,
+                };
                 // A zero configure dimension lets the client choose its size for that axis.
                 let size = Size {
                     width: px(width.max(1) as f32),
                     height: px(height.max(1) as f32),
                 };
-                Ok((Role::Layer(layer), size))
+                Ok((Role::Layer(layer, placement), size))
             }
         }
     }
@@ -182,7 +208,7 @@ impl Drop for Role {
                 surface.destroy();
                 shell.destroy();
             }
-            Self::Layer(surface) => surface.destroy(),
+            Self::Layer(surface, _) => surface.destroy(),
         }
     }
 }
@@ -204,8 +230,10 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for Window {
                 width,
                 height,
             } => {
+                if !state.mapping.configure() {
+                    return;
+                }
                 surface.ack_configure(serial);
-                state.configured = true;
                 let mut size = state.size;
                 if width > 0 {
                     size.width = px(width as f32);

@@ -137,6 +137,14 @@ height for its fixed height and its reserved space. A corner overlay can set
 both dimensions and leave the exclusive zone at its default. Layer surfaces
 require `zwlr_layer_shell_v1`; on-demand keyboard focus requires version 4.
 
+To start hidden, create a `LayerSurfaceHandle::new(false)?` and pass
+`handle: Some(&handle)` in the layer options. A worker can keep a clone and
+call `set_visible(has_candidates)?` as candidates change. The event loop
+wakes and applies the latest request. Hiding releases the occupied desktop
+space and suspends frame requests. Showing restores the placement and renders
+the mounted view after the compositor configures it. Use `close()?` to end
+the run even while the surface is hidden.
+
 Pointer positions and scroll distances arrive in logical pixels. The Linux
 adapter currently delivers mouse buttons, motion, cancellation and two-axis
 scroll input. Key presses and releases use the seat’s XKB layout. Key and

@@ -159,7 +159,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Window {
                 key,
                 state: WEnum::Value(state),
                 ..
-            } if keyboard.entered => {
+            } if keyboard.entered && window.mapping == super::Mapping::Mapped => {
                 let state = match state {
                     wl_keyboard::KeyState::Pressed => KeyState::Down,
                     wl_keyboard::KeyState::Released => KeyState::Up,

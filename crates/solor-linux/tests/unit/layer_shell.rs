@@ -27,3 +27,28 @@ fn fixed_extents_cannot_turn_into_automatic_sizes_or_overflow_coordinates() {
     }
     assert_eq!(units(px(-3.75)).unwrap(), -4);
 }
+
+#[test]
+fn a_single_surface_consumes_the_latest_visibility_and_close_is_final() -> std::io::Result<()> {
+    use crate::layer_shell::LayerSurfaceHandle;
+    use std::io::ErrorKind;
+
+    let handle = LayerSurfaceHandle::new(false)?;
+    let receiver = handle.claim()?;
+    assert!(handle.clone().claim().is_err());
+    assert_eq!(receiver.visibility(), Some(false));
+
+    handle.set_visible(true)?;
+    handle.set_visible(false)?;
+    receiver.drain()?;
+    assert_eq!(receiver.visibility(), Some(false));
+    assert_eq!(receiver.drain().unwrap_err().kind(), ErrorKind::WouldBlock);
+
+    handle.close()?;
+    assert_eq!(receiver.visibility(), None);
+    assert_eq!(
+        handle.set_visible(true).unwrap_err().kind(),
+        ErrorKind::BrokenPipe
+    );
+    Ok(())
+}

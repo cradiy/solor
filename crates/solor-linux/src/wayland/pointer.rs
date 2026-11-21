@@ -106,6 +106,19 @@ impl Seat {
 }
 
 impl Window {
+    pub(super) fn cancel_pointers(&mut self) {
+        for i in 0..self.seats.len() {
+            let seat = &mut self.seats[i];
+            seat.enter_serial = None;
+            seat.applied_cursor = None;
+            seat.scroll = None;
+            if seat.position.take().is_some() {
+                let id = PointerId(seat.name.into());
+                self.event(WindowEvent::Pointer(PointerInput::Cancel(id)));
+            }
+        }
+    }
+
     pub(super) fn sync_cursors(&mut self) {
         for seat in &mut self.seats {
             let (Some(device), Some(pointer), Some(serial)) =
@@ -247,7 +260,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Window {
                 surface_x,
                 surface_y,
                 ..
-            } if surface == state.surface => {
+            } if surface == state.surface && state.mapping == super::Mapping::Mapped => {
                 let p = sample(*name, surface_x, surface_y, seat.modifiers());
                 seat.enter_serial = Some(serial);
                 seat.applied_cursor = None;

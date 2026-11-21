@@ -1,6 +1,10 @@
 //! Wayland layer surfaces for panels, wallpapers and overlays.
 use solor::{Edges, Pixels};
 
+mod handle;
+pub(crate) use handle::Binding;
+pub use handle::LayerSurfaceHandle;
+
 pub use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::Layer,
     zwlr_layer_surface_v1::{Anchor, KeyboardInteractivity},
@@ -21,6 +25,8 @@ pub enum ExclusiveZone {
 /// Initial placement and input policy on a compositor-selected output.
 #[derive(Clone, Copy, Debug)]
 pub struct LayerShellOptions<'a> {
+    /// Optional handle for controlling visibility and closing this surface from any thread.
+    pub handle: Option<&'a LayerSurfaceHandle>,
     /// Stable name used by compositor rules to identify the surface.
     pub namespace: &'a str,
     /// Stacking layer relative to other desktop surfaces.
@@ -43,6 +49,7 @@ impl<'a> LayerShellOptions<'a> {
     /// Creates a surface spanning all four edges with no keyboard focus or reserved space.
     pub fn new(namespace: &'a str, layer: Layer) -> Self {
         Self {
+            handle: None,
             namespace,
             layer,
             anchor: Anchor::Top | Anchor::Right | Anchor::Bottom | Anchor::Left,
