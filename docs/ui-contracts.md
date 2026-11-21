@@ -652,7 +652,8 @@ remeasures when the source dimensions change. Recorded frames retain their
 own image, and the CPU renderer filters premultiplied pixels before compositing.
 
 Parse self-contained vector artwork once and clone the asset to share it between
-elements. By default, `svg(asset)` uses the inherited foreground. The
+elements. Pass a `Signal<SvgAsset>` to `svg` to switch artwork on the mounted
+element. A change in intrinsic size also updates layout. By default, `svg(asset)` uses the inherited foreground. The
 `.text_color(...)` style accepts a fixed color or a signal. Use
 `.preserve_colors()` to draw the original fills, strokes and gradients.
 

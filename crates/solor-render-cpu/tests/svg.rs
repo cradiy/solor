@@ -192,3 +192,53 @@ fn a_window_repairs_only_the_tinted_icon_on_a_transparent_background() -> Result
     );
     Ok(())
 }
+
+#[test]
+fn bound_artwork_updates_pixels_and_only_remeasures_for_a_new_viewport() -> Result<()> {
+    let artwork = |width: u32, x: u32, color: &str| {
+        SvgAsset::from_bytes(format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="8"><rect x="{x}" width="4" height="8" fill="{color}"/></svg>"#
+        ).as_bytes())
+    };
+    let mut ui = Ui::new();
+    let pose = ui.context().signal(artwork(8, 0, "red")?);
+    let view = ui.mount(component(|_| {
+        div()
+            .items_start()
+            .text_color(rgb(0x00ff00))
+            .child(svg(pose))
+            .child(svg(pose).preserve_colors())
+    }))?;
+    let viewport = Size {
+        width: px(32.),
+        height: px(32.),
+    };
+    ui.layout(view, viewport)?;
+    let root = ui.root(view)?;
+    let nodes = ui.children(view, root)?.collect::<Vec<_>>();
+    let original = ui.record_frame(view)?;
+
+    ui.context().set(pose, artwork(8, 4, "blue")?)?;
+    ui.flush()?;
+    assert_eq!(ui.layout(view, viewport)?, 0);
+    let updated = ui.record_frame(view)?;
+    for (frame, inside, outside, color) in [
+        (&original, 2, 6, [255, 0, 0, 255]),
+        (&updated, 6, 2, [0, 0, 255, 255]),
+    ] {
+        let scale = RasterScale::ONE;
+        let surface = Surface::draw_view(frame, scale.buffer_size(viewport)?, scale)?;
+        assert_eq!(pixel(&surface, inside, 3), [0, 255, 0, 255]);
+        assert_eq!(pixel(&surface, inside, 11), color);
+        assert_eq!(pixel(&surface, outside, 3), [255; 4]);
+    }
+
+    ui.context().set(pose, artwork(16, 8, "red")?)?;
+    ui.flush()?;
+    assert!(ui.layout(view, viewport)? > 0);
+    assert_eq!(ui.children(view, root)?.collect::<Vec<_>>(), nodes);
+    for id in nodes {
+        assert_eq!(ui.geometry(view, id).unwrap().metrics.size.width, px(16.));
+    }
+    Ok(())
+}

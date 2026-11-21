@@ -54,10 +54,12 @@ impl PartialEq for SvgAsset {
     }
 }
 
-/// A parsed document or a self-contained SVG on the filesystem.
+/// Vector artwork supplied by a parsed asset, signal, resource name, bytes or file.
 pub enum SvgSource {
     /// Reuse this parsed SVG.
     Asset(SvgAsset),
+    /// Follow the current parsed artwork throughout the attachment.
+    Bound(crate::Signal<SvgAsset>),
     /// Look up a registered SVG by name.
     Name(crate::SharedString),
     /// Parse encoded SVG content at attachment.
@@ -69,6 +71,12 @@ pub enum SvgSource {
 impl From<SvgAsset> for SvgSource {
     fn from(asset: SvgAsset) -> Self {
         Self::Asset(asset)
+    }
+}
+
+impl From<crate::Signal<SvgAsset>> for SvgSource {
+    fn from(signal: crate::Signal<SvgAsset>) -> Self {
+        Self::Bound(signal)
     }
 }
 
@@ -107,18 +115,30 @@ impl Styled for Svg {
 
 impl IntoElement for Svg {
     fn into_element(self) -> AnyElement {
-        AnyElement::new(false, move |_, (units, assets)| {
+        AnyElement::new(false, move |cx, (units, assets)| {
+            let mut watch = None;
             let asset = match self.asset {
                 SvgSource::Asset(asset) => asset,
+                SvgSource::Bound(signal) => {
+                    watch = Some(super::content_watch(
+                        signal,
+                        crate::ContentUpdate::Svg(signal, self.preserve_colors),
+                    ));
+                    cx.read(signal)?.clone()
+                }
                 SvgSource::Name(name) => assets.svg(&name)?,
                 SvgSource::Bytes(bytes) => SvgAsset::from_bytes(&bytes)?,
                 SvgSource::Path(path) => SvgAsset::from_path(path)?,
             };
-            Ok(ImageBody::node(
+            let mut node = ImageBody::node(
                 ImageContent::Svg(asset, self.preserve_colors),
                 self.style,
                 units,
-            ))
+            );
+            if let Some(watch) = watch {
+                node.watches.push(watch);
+            }
+            Ok(node)
         })
     }
 }

@@ -225,6 +225,7 @@ type StyleUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), (Restyle, bool)>>>;
 enum ContentUpdate {
     Text(Signal<SharedString>),
     Image(Signal<ImageAsset>),
+    Svg(Signal<SvgAsset>, bool),
     CustomImage(Signal<CustomImage>),
 }
 type ContentUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), ContentUpdate>>>;
@@ -870,6 +871,10 @@ impl Ui {
                     .read(source)
                     .ok()
                     .map(|value| instance.update_custom_image(id, value)),
+                ContentUpdate::Svg(source, preserve_colors) => state
+                    .read(source)
+                    .ok()
+                    .map(|value| instance.update_svg(id, value, preserve_colors)),
                 ContentUpdate::Image(source) => state
                     .read(source)
                     .ok()

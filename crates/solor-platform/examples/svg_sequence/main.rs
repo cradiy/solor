@@ -41,21 +41,19 @@ fn sequence(assets: Vec<SvgAsset>) -> impl Render {
         let playing = cx.signal(true);
         let label = cx.signal(SharedString::from("Pause"));
         let fps = cx.signal(SharedString::from("— fps"));
-        let visible = std::array::from_fn::<_, POSES, _>(|i| cx.signal(i == 0));
-        let mut stage = div()
+        let pose = cx.signal(assets[0].clone());
+        let stage = div()
             .flex_1()
             .items_center()
             .justify_center()
             .rounded_xl()
-            .bg(rgb(0x1c3738));
-        for (asset, flag) in assets.into_iter().zip(visible) {
-            stage = stage.child_when(flag, move || {
-                svg(asset.clone())
+            .bg(rgb(0x1c3738))
+            .child(
+                svg(pose)
                     .preserve_colors()
                     .w(px(288.))
-                    .max_w(percent(100.0))
-            });
-        }
+                    .max_w(percent(100.0)),
+            );
 
         let last = Rc::new(Cell::new(None));
         let clock = Rc::clone(&last);
@@ -102,8 +100,7 @@ fn sequence(assets: Vec<SvgAsset>) -> impl Render {
                 elapsed += delta;
                 let index = ((elapsed.as_nanos() * RATE / 1_000_000_000) % POSES as u128) as usize;
                 if current != index {
-                    cx.set(visible[current], false)?;
-                    cx.set(visible[index], true)?;
+                    cx.set(pose, assets[index].clone())?;
                     current = index;
                 }
                 sample += delta;

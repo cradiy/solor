@@ -168,6 +168,15 @@ impl crate::Instance {
         self.replace_image_content(id, ImageContent::Bitmap(asset.clone()))
     }
 
+    pub(crate) fn update_svg(
+        &mut self,
+        id: crate::NodeId,
+        asset: &SvgAsset,
+        preserve_colors: bool,
+    ) -> Result<()> {
+        self.replace_image_content(id, ImageContent::Svg(asset.clone(), preserve_colors))
+    }
+
     pub(crate) fn update_custom_image(
         &mut self,
         id: crate::NodeId,
