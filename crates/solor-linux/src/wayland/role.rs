@@ -12,7 +12,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_surface_v1::{Event, ZwlrLayerSurfaceV1},
 };
 
-use super::{Window, decorations::Decorations};
+use super::{Window, decorations::Decorations, stacking::Topmost};
 use crate::layer_shell::{Anchor, ExclusiveZone, KeyboardInteractivity, Layer, LayerShellOptions};
 
 pub(super) enum Request<'a> {
@@ -22,19 +22,22 @@ pub(super) enum Request<'a> {
 
 pub(super) enum Role {
     Toplevel {
+        resizable: bool,
         shell: XdgWmBase,
         surface: XdgSurface,
         top: XdgToplevel,
         decorations: Option<Decorations>,
+        topmost: Option<Topmost>,
     },
     Layer(ZwlrLayerSurfaceV1, LayerPlacement),
 }
 
 pub(super) struct LayerPlacement {
+    pub(super) movable: bool,
     layer: Layer,
-    anchor: Anchor,
+    pub(super) anchor: Anchor,
     size: (u32, u32),
-    margin: [i32; 4],
+    pub(super) margin: [i32; 4],
     zone: i32,
     keyboard: KeyboardInteractivity,
 }
@@ -44,10 +47,15 @@ impl LayerPlacement {
         if remapping && surface.version() >= 2 {
             surface.set_layer(self.layer);
         }
-        surface.set_anchor(self.anchor);
-        surface.set_size(self.size.0, self.size.1);
-        let [top, right, bottom, left] = self.margin;
-        surface.set_margin(top, right, bottom, left);
+        if self.movable {
+            surface.set_anchor(Anchor::all());
+            surface.set_size(0, 0);
+        } else {
+            surface.set_anchor(self.anchor);
+            surface.set_size(self.size.0, self.size.1);
+            let [top, right, bottom, left] = self.margin;
+            surface.set_margin(top, right, bottom, left);
+        }
         surface.set_exclusive_zone(self.zone);
         surface.set_keyboard_interactivity(self.keyboard);
     }
@@ -62,21 +70,16 @@ impl Request<'_> {
     ) -> Result<(Role, Size)> {
         match self {
             Self::Toplevel(options) => {
-                let size = options.size;
-                ensure!(
-                    size.width.is_extent()
-                        && size.height.is_extent()
-                        && size.width.get() >= 1.0
-                        && size.height.get() >= 1.0,
-                    "invalid initial window size"
-                );
-                let size = Size {
-                    width: px(size.width.get().round()),
-                    height: px(size.height.get().round()),
-                };
+                let sizing = ToplevelSizing::new(&options)?;
                 let shell: XdgWmBase = globals.bind(qh, 1..=1, ())?;
+                let topmost = if options.always_on_top {
+                    Topmost::request(globals, qh, surface)
+                } else {
+                    None
+                };
                 let xdg_surface = shell.get_xdg_surface(surface, qh, ());
                 let top = xdg_surface.get_toplevel(qh, ());
+                sizing.apply(&top);
                 let decorations = Decorations::bind(globals, qh, &top, options.native_decorations)?;
                 top.set_title(options.title.into());
                 if let Some(app_id) = options.app_id {
@@ -84,12 +87,14 @@ impl Request<'_> {
                 }
                 Ok((
                     Role::Toplevel {
+                        resizable: sizing.resizable,
                         shell,
                         surface: xdg_surface,
                         top,
                         decorations,
+                        topmost,
                     },
-                    size,
+                    sizing.initial,
                 ))
             }
             Self::Layer(options) => {
@@ -137,6 +142,7 @@ impl Request<'_> {
                     shell.destroy();
                 }
                 let placement = LayerPlacement {
+                    movable: options.movable,
                     layer: options.layer,
                     anchor: options.anchor,
                     size: (width, height),
@@ -155,6 +161,70 @@ impl Request<'_> {
     }
 }
 
+struct ToplevelSizing {
+    resizable: bool,
+    initial: Size,
+    min: Option<(i32, i32)>,
+    max: Option<(i32, i32)>,
+}
+
+impl ToplevelSizing {
+    fn new(options: &WindowOptions<'_>) -> Result<Self> {
+        let convert = |size: Size, round: fn(f64) -> f64| -> Result<(i32, i32)> {
+            let axis = |p: Pixels| {
+                let value = round(f64::from(p));
+                ensure!(
+                    p.is_extent() && value <= f64::from(i32::MAX),
+                    "window size outside the Wayland coordinate range"
+                );
+                Ok(value as i32)
+            };
+            Ok((axis(size.width)?, axis(size.height)?))
+        };
+        ensure!(
+            options.size.width.get() >= 1.0 && options.size.height.get() >= 1.0,
+            "invalid initial window size"
+        );
+        let (width, height) = convert(options.size, f64::round)?;
+        let min = options
+            .min_size
+            .map(|s| convert(s, f64::ceil))
+            .transpose()?;
+        let max = options
+            .max_size
+            .map(|s| convert(s, f64::floor))
+            .transpose()?;
+        let (min_w, min_h) = min.unwrap_or((1, 1));
+        let (max_w, max_h) = max.unwrap_or((i32::MAX, i32::MAX));
+        let (min_w, min_h) = (min_w.max(1), min_h.max(1));
+        ensure!(
+            min_w <= max_w && min_h <= max_h,
+            "no whole logical window size fits the requested bounds"
+        );
+        let width = width.clamp(min_w, max_w);
+        let height = height.clamp(min_h, max_h);
+        let fixed = Some((width, height));
+        Ok(Self {
+            resizable: options.resizable && (min_w, min_h) != (max_w, max_h),
+            initial: Size {
+                width: px(width as f32),
+                height: px(height as f32),
+            },
+            min: if options.resizable { min } else { fixed },
+            max: if options.resizable { max } else { fixed },
+        })
+    }
+
+    fn apply(&self, top: &XdgToplevel) {
+        if let Some((width, height)) = self.min {
+            top.set_min_size(width, height);
+        }
+        if let Some((width, height)) = self.max {
+            top.set_max_size(width, height);
+        }
+    }
+}
+
 fn units(pixels: Pixels) -> Result<i32> {
     let rounded = f64::from(pixels).round();
     ensure!(
@@ -169,6 +239,14 @@ fn requested_size(options: &LayerShellOptions<'_>) -> Result<(u32, u32)> {
         Anchor::all().contains(options.anchor),
         "unknown layer surface anchor"
     );
+    if options.movable {
+        ensure!(
+            options.width.is_some()
+                && options.height.is_some()
+                && !matches!(options.exclusive_zone, ExclusiveZone::Reserve(_)),
+            "a movable panel needs fixed dimensions and cannot reserve desktop space"
+        );
+    }
     let axis = |length, edges| -> Result<u32> {
         match length {
             Some(value) => {
@@ -199,10 +277,13 @@ impl Drop for Role {
         match self {
             Self::Toplevel {
                 decorations,
+                topmost,
                 top,
                 surface,
                 shell,
+                ..
             } => {
+                drop(topmost.take());
                 drop(decorations.take());
                 top.destroy();
                 surface.destroy();
@@ -234,6 +315,11 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for Window {
                     return;
                 }
                 surface.ack_configure(serial);
+                if let Some(panel) = &mut state.floating {
+                    let size = panel.configure(width, height);
+                    state.resize(size);
+                    return;
+                }
                 let mut size = state.size;
                 if width > 0 {
                     size.width = px(width as f32);
@@ -252,3 +338,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for Window {
 #[cfg(test)]
 #[path = "../../tests/unit/layer_shell.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/toplevel.rs"]
+mod toplevel_tests;

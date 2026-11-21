@@ -1,11 +1,13 @@
 use solor::px;
 mod buffer;
 mod decorations;
+mod floating;
 mod input_region;
 mod keyboard;
 mod pointer;
 mod presentation;
 mod role;
+mod stacking;
 
 use crate::layer_shell::{Binding, LayerShellOptions};
 use role::{Request, Role};
@@ -32,6 +34,7 @@ use solor::{
     platform::{
         Platform, WindowBackground, WindowControl, WindowEvent, WindowHandler, WindowOptions,
     },
+    pointer::{PointerButton, PointerInput},
     raster::{Clip, Damage, DeviceSize, RasterFrame, RasterScale, Rgba8},
 };
 
@@ -46,6 +49,7 @@ pub struct Wayland {
 
 struct Window {
     role: Role,
+    floating: Option<floating::FloatingPanel>,
     maximized: bool,
     pending_maximized: bool,
     presentation: Option<wp_presentation::WpPresentation>,
@@ -212,10 +216,23 @@ impl Wayland {
         let viewporter: wp_viewporter::WpViewporter = globals.bind(&qh, 1..=1, ())?;
         let manager: wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1 =
             globals.bind(&qh, 1..=1, ())?;
-        let viewport = viewporter.get_viewport(&surface, &qh, ());
         let fractional = manager.get_fractional_scale(&surface, &qh, ());
         let (role, size) = request.create(&globals, &qh, &surface)?;
         buffer_size(120, size)?;
+        let floating = match &role {
+            Role::Layer(_, p) if p.movable => Some(floating::FloatingPanel::new(
+                &globals,
+                &compositor,
+                &shm,
+                &viewporter,
+                &surface,
+                floating::Geometry::new(size, p.anchor, p.margin),
+                &qh,
+            )?),
+            _ => None,
+        };
+        let content = floating.as_ref().map_or(&surface, |p| &p.content);
+        let viewport = viewporter.get_viewport(content, &qh, ());
         let presentation = if self.trace_submissions {
             globals.bind(&qh, 1..=1, ()).ok()
         } else {
@@ -223,6 +240,7 @@ impl Wayland {
         };
         let mut window = Window {
             role,
+            floating,
             maximized: false,
             pending_maximized: false,
             presentation,
@@ -266,13 +284,14 @@ impl Wayland {
             if window.closed {
                 break;
             }
-            if visible && let Some(control) = &control {
-                if window.mapping == Mapping::Hidden {
-                    window.input_region.update(control.take_input_region());
-                }
-                window
-                    .input_region
-                    .apply(window.mapping, &compositor, &window.surface, &qh);
+            if visible
+                && window.mapping == Mapping::Hidden
+                && let Some(control) = &control
+            {
+                window.input_region.update(control.take_input_region());
+            }
+            if visible && (control.is_some() || window.floating.is_some()) {
+                window.apply_input_region(&compositor, &qh);
             }
             window.set_visible(visible, &connection, &qh);
             if visible {
@@ -303,6 +322,7 @@ impl Wayland {
         drop(window.role);
         fractional.destroy();
         window.viewport.destroy();
+        drop(window.floating);
         window.surface.destroy();
         connection.flush()?;
         if self.trace_submissions {
@@ -363,19 +383,48 @@ fn dispatch_until(
 }
 
 impl Window {
+    fn apply_input_region(
+        &mut self,
+        compositor: &wl_compositor::WlCompositor,
+        qh: &QueueHandle<Self>,
+    ) {
+        let (bounds, moved) = match &mut self.floating {
+            Some(panel) if matches!(self.mapping, Mapping::Mapped | Mapping::Ready) => {
+                (Some(panel.geometry.bounds()), panel.apply_placement())
+            }
+            Some(_) => return,
+            None => (None, false),
+        };
+        self.input_region
+            .apply(self.mapping, compositor, &self.surface, qh, bounds, moved);
+    }
+
     fn event(&mut self, event: WindowEvent) {
         self.dispatch(event, None);
     }
 
-    fn dispatch(&mut self, event: WindowEvent, press: Option<(wl_seat::WlSeat, u32)>) {
+    fn dispatch(&mut self, mut event: WindowEvent, press: Option<(wl_seat::WlSeat, u32)>) {
         if self.failure.is_some() || self.closed {
             return;
+        }
+        let mut panel_press = None;
+        if let (Some(panel), WindowEvent::Pointer(input)) = (&mut self.floating, &mut event) {
+            panel.pointer(input);
+            if let PointerInput::Down(p, PointerButton::Primary) = input {
+                panel_press = Some((p.id, p.position));
+            }
         }
         match self.view.event(event) {
             Ok(response) => {
                 self.dirty |= response.redraw;
                 if let Some(control) = response.window_control {
-                    self.window_control(control, press);
+                    if control == WindowControl::Drag
+                        && let (Some(panel), Some((id, local))) = (&mut self.floating, panel_press)
+                    {
+                        panel.geometry.begin(id, local);
+                    } else {
+                        self.window_control(control, press);
+                    }
                 }
             }
             Err(error) => self.failure = Some(error),
@@ -384,13 +433,17 @@ impl Window {
 
     fn window_control(&mut self, control: WindowControl, press: Option<(wl_seat::WlSeat, u32)>) {
         let Role::Toplevel {
-            top, decorations, ..
+            top,
+            decorations,
+            resizable,
+            ..
         } = &mut self.role
         else {
             self.closed |= control == WindowControl::Close;
             return;
         };
         match control {
+            WindowControl::Resize(_) | WindowControl::ToggleMaximize if !*resizable => {}
             WindowControl::Drag => {
                 if let Some((seat, serial)) = press {
                     top._move(&seat, serial);
@@ -523,9 +576,10 @@ impl Window {
         }
         self.viewport
             .set_destination(self.size.width.get() as i32, self.size.height.get() as i32);
-        self.surface.attach(Some(&slot.handle), 0, 0);
+        let content = self.floating.as_ref().map_or(&self.surface, |p| &p.content);
+        content.attach(Some(&slot.handle), 0, 0);
         for &area in frame.damage.rects() {
-            self.surface.damage_buffer(
+            content.damage_buffer(
                 area.left as i32,
                 area.top as i32,
                 (area.right - area.left) as i32,
@@ -537,6 +591,12 @@ impl Window {
         }
         if let Some(presentation) = &self.presentation {
             presentation.feedback(&self.surface, qh, self.commits + 1);
+        }
+        if let Some(panel) = &self.floating {
+            content.commit();
+            if self.mapping == Mapping::Ready {
+                panel.map(&self.surface);
+            }
         }
         self.surface.commit();
         self.mapping = Mapping::Mapped;

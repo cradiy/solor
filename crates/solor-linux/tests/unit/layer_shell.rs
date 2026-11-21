@@ -19,6 +19,21 @@ fn stretch_requires_opposite_anchors_only_along_the_automatic_axis() {
 }
 
 #[test]
+fn movable_panel_requires_explicit_dimensions_and_unreserved_space() {
+    use crate::layer_shell::ExclusiveZone;
+    let mut options = LayerShellOptions {
+        movable: true,
+        ..LayerShellOptions::new("panel", Layer::Top)
+    };
+    assert!(requested_size(&options).is_err());
+    options.width = Some(px(320.0));
+    options.height = Some(px(80.0));
+    assert_eq!(requested_size(&options).unwrap(), (320, 80));
+    options.exclusive_zone = ExclusiveZone::Reserve(px(80.0));
+    assert!(requested_size(&options).is_err());
+}
+
+#[test]
 fn fixed_extents_cannot_turn_into_automatic_sizes_or_overflow_coordinates() {
     let mut options = LayerShellOptions::new("panel", Layer::Top);
     for value in [0.25, -1.0, f32::NAN, f32::INFINITY, i32::MAX as f32] {

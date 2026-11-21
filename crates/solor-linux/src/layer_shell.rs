@@ -28,6 +28,9 @@ pub enum ExclusiveZone {
 /// Initial placement and input policy on a compositor-selected output.
 #[derive(Clone, Copy, Debug)]
 pub struct LayerShellOptions<'a> {
+    /// Allows drag regions to move a fixed-size panel within the selected output.
+    /// Movable panels cannot reserve desktop space. Anchors and margins select the initial position.
+    pub movable: bool,
     /// Composition of the panel background with the desktop.
     pub background: WindowBackground,
     /// Optional handle for controlling visibility and closing this surface from any thread.
@@ -54,6 +57,7 @@ impl<'a> LayerShellOptions<'a> {
     /// Creates a surface spanning all four edges with no keyboard focus or reserved space.
     pub fn new(namespace: &'a str, layer: Layer) -> Self {
         Self {
+            movable: false,
             background: WindowBackground::Opaque,
             handle: None,
             namespace,

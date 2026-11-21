@@ -30,21 +30,35 @@ impl SurfaceInputRegion {
         compositor: &WlCompositor,
         surface: &WlSurface,
         qh: &QueueHandle<Window>,
+        panel: Option<[i32; 4]>,
+        placement_changed: bool,
     ) {
         let mapping_with_region = mapping == Mapping::Hidden && self.current != InputRegion::Full;
-        if mapping == Mapping::Unmapping || !(self.changed || mapping_with_region) {
+        if mapping == Mapping::Unmapping
+            || !(self.changed || mapping_with_region || placement_changed)
+        {
             return;
         }
-        match &self.current {
-            InputRegion::Full => surface.set_input_region(None),
-            InputRegion::Rects(rects) => {
-                let region = compositor.create_region(qh, ());
-                for &[x, y, width, height] in rects {
-                    region.add(x, y, width, height);
+        if self.current == InputRegion::Full && panel.is_none() {
+            surface.set_input_region(None);
+        } else {
+            let region = compositor.create_region(qh, ());
+            match &self.current {
+                InputRegion::Full => {
+                    if let Some([x, y, w, h]) = panel {
+                        region.add(x, y, w, h);
+                    }
                 }
-                surface.set_input_region(Some(&region));
-                region.destroy();
+                InputRegion::Rects(rects) => {
+                    for &rect in rects {
+                        if let Some([x, y, w, h]) = translate_rect(rect, panel) {
+                            region.add(x, y, w, h);
+                        }
+                    }
+                }
             }
+            surface.set_input_region(Some(&region));
+            region.destroy();
         }
         // An idle mapped surface may never submit another buffer. During the
         // initial handshake the mapping or first buffer commit applies this state.
@@ -53,4 +67,16 @@ impl SurfaceInputRegion {
         }
         self.changed = false;
     }
+}
+
+fn translate_rect(rect: [i32; 4], panel: Option<[i32; 4]>) -> Option<[i32; 4]> {
+    let Some([ox, oy, pw, ph]) = panel else {
+        return Some(rect);
+    };
+    let [x, y, w, h] = rect;
+    let left = x.max(0);
+    let top = y.max(0);
+    let right = (x + w).min(pw);
+    let bottom = (y + h).min(ph);
+    (left < right && top < bottom).then(|| [ox + left, oy + top, right - left, bottom - top])
 }

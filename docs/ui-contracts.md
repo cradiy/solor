@@ -91,6 +91,22 @@ an unsupported-platform error where a host is unavailable.
 Use `.size(px(480.0), px(320.0))` for a different preference and
 `.app_id("org.example.settings")` to identify the application to the window system.
 
+Use `.min_size(width, height)` and `.max_size(width, height)` to bound the
+preferred size. All three sizes use logical pixels. For example,
+`WindowOptions::new("Player").size(px(480.0), px(270.0)).resizable(false)`
+requests a fixed-size window. Its custom resize and maximize controls issue
+no size changes. On Wayland, minima round up and maxima round down to whole
+logical pixels. Opening fails when the range contains no usable size. The
+compositor can still assign a different size, for example when tiling.
+
+Use `WindowOptions::new("Player").always_on_top()` to request that an ordinary
+window stay above other ordinary windows. Decorations, application identity
+and interactive movement use the usual toplevel options. The Wayland host
+sends this request when the compositor advertises version 2 of
+`treeland_dde_shell_manager_v2`. Other compositors open the ordinary window at its
+usual level. The compositor and the user retain control of the effective
+stacking order.
+
 Windows request the native frame and title bar by default. Pass a boolean to
 `WindowOptions::new("Settings").decorations(enabled)` or use
 `.without_decorations()` to start with a frameless window. A title bar can be composed from ordinary elements.
@@ -138,6 +154,14 @@ For instance, a top bar can stretch horizontally and use the same logical
 height for its fixed height and its reserved space. A corner overlay can set
 both dimensions and leave the exclusive zone at its default. Layer surfaces
 require `zwlr_layer_shell_v1`; on-demand keyboard focus requires version 4.
+
+To open a draggable panel above ordinary windows, select `Layer::Top`, set
+`movable: true` and supply a fixed width and height. Mark the draggable
+element with `.window_drag_region()`. Anchors and margins set its starting
+position. The panel moves within the available area on one output and
+cannot reserve desktop space. Input regions remain panel-local after a move.
+Try `cargo run -p solor-platform --example floating_panel` and drag the
+label or the space beside it. The Close button handles its own clicks.
 
 For a translucent window or layer panel, call `.transparent()` on its creation
 options. Unpainted areas reveal the desktop, and fills, glyphs and antialiased

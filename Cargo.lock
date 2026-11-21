@@ -527,6 +527,7 @@ name = "solor-linux"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags",
  "dbus",
  "rustix",
  "smallvec",
@@ -534,6 +535,7 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
+ "wayland-scanner",
  "xkbcommon",
 ]
 

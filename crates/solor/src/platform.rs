@@ -54,6 +54,8 @@ pub enum WindowBackground {
 #[derive(Clone, Copy, Debug)]
 #[must_use]
 pub struct WindowOptions<'a> {
+    /// Whether to request stacking above other ordinary windows.
+    pub always_on_top: bool,
     /// Composition of the window background with the desktop.
     pub background: WindowBackground,
     /// Whether to request the native window frame and title bar. Defaults to true.
@@ -62,6 +64,12 @@ pub struct WindowOptions<'a> {
     pub title: &'a str,
     /// Optional application identifier used by the window system to group windows.
     pub app_id: Option<&'a str>,
+    /// Whether the user can resize this window. Defaults to true.
+    pub resizable: bool,
+    /// Optional lower bound on the requested content size in logical pixels.
+    pub min_size: Option<Size>,
+    /// Optional upper bound on the requested content size in logical pixels.
+    pub max_size: Option<Size>,
     /// Preferred content size before the host supplies an allocation.
     pub size: Size,
 }
@@ -70,15 +78,26 @@ impl<'a> WindowOptions<'a> {
     /// Creates a titled window configuration with an 800 × 600 logical-pixel preference.
     pub const fn new(title: &'a str) -> Self {
         Self {
+            always_on_top: false,
             native_decorations: true,
             background: WindowBackground::Opaque,
             title,
             app_id: None,
+            resizable: true,
+            min_size: None,
+            max_size: None,
             size: Size {
                 width: px(800.0),
                 height: px(600.0),
             },
         }
+    }
+
+    /// Requests that this window stay above other ordinary windows.
+    /// Window systems without this capability open the window at its usual level.
+    pub const fn always_on_top(mut self) -> Self {
+        self.always_on_top = true;
+        self
     }
 
     /// Enables per-pixel transparency for the window content.
@@ -101,6 +120,24 @@ impl<'a> WindowOptions<'a> {
     /// Associates the window with an application identifier.
     pub const fn app_id(mut self, id: &'a str) -> Self {
         self.app_id = Some(id);
+        self
+    }
+
+    /// Allows user resizing when enabled. A fixed window requests its bounded initial size.
+    pub const fn resizable(mut self, enabled: bool) -> Self {
+        self.resizable = enabled;
+        self
+    }
+
+    /// Sets the minimum content width and height in logical pixels.
+    pub const fn min_size(mut self, width: Pixels, height: Pixels) -> Self {
+        self.min_size = Some(Size { width, height });
+        self
+    }
+
+    /// Sets the maximum content width and height in logical pixels.
+    pub const fn max_size(mut self, width: Pixels, height: Pixels) -> Self {
+        self.max_size = Some(Size { width, height });
         self
     }
 
