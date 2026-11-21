@@ -6,6 +6,18 @@ signals through their event context. Platform adapters deliver normalized
 input with `Ui::dispatch_pointer`. A host can also activate a known node
 directly with `Ui::click(view, target)`.
 
+Each view starts with no focused element. Mark a control with `.focusable()`
+to give it logical focus on a primary press. The nearest focusable element in
+the hit path wins, so a label can forward focus to its control and a nested
+focusable control can take focus itself. Click handlers are selected independently.
+A primary press on the background clears focus. Secondary presses and presses
+redirected by pointer capture preserve it.
+
+Hosts can call `Ui::focus(view, node)`, `Ui::focused(view)` and `Ui::blur(view)`.
+Only a visible, mounted, focusable element in the same view can receive focus.
+Hiding its subtree or removing its mount clears focus during reconciliation.
+Showing it again starts it unfocused.
+
 ## Authoring
 
 Buttons use the context-only click callback. Controls that need coordinates use `on_pointer_down`, `on_pointer_move`, `on_pointer_up`

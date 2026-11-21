@@ -531,6 +531,7 @@ pub(super) struct MountedNode {
     pub(super) frame_paint: FramePaint,
     pub(super) visible: bool,
     pub(super) local_visible: bool,
+    pub(super) focusable: bool,
     paint_mode: RefreshPolicy,
     pub(super) text_style: InheritedText,
     text_color: Foreground,
@@ -550,6 +551,7 @@ impl MountedNode {
     fn new(
         id: NodeId,
         handlers: Option<Box<Handlers>>,
+        focusable: bool,
         mounted: style_binding::PreparedStyle,
         fixed_label: bool,
         paint_mode: RefreshPolicy,
@@ -583,6 +585,7 @@ impl MountedNode {
             id,
             offset: 0,
             local_visible: mounted.visible,
+            focusable,
             visible: mounted.visible,
             frame_paint,
             paint_mode,
@@ -800,6 +803,7 @@ impl AnyElement {
                 node: MountedNode::new(
                     id,
                     node.handlers,
+                    node.focusable,
                     mounted,
                     fixed_label,
                     node.paint_mode,
@@ -862,6 +866,7 @@ pub(super) enum Child {
 
 /// A primitive and the children, handlers and styles to attach with it.
 pub struct Node<E> {
+    focusable: bool,
     scroll_handle: Option<crate::ScrollHandle>,
     record: Option<Record>,
     on_frame: Option<FrameHandler>,
@@ -880,6 +885,7 @@ pub fn element<E: Element>(body: E) -> Node<E> {
 
 fn node<E>(body: E, record: Option<Record>) -> Node<E> {
     Node {
+        focusable: false,
         scroll_handle: None,
         record,
         on_frame: None,
@@ -905,6 +911,12 @@ impl<E: Element> IntoElement for Node<E> {
 }
 
 impl<E: Element> Node<E> {
+    /// Allows this element to receive view-local focus by primary press or through `Ui::focus`.
+    pub fn focusable(mut self) -> Self {
+        self.focusable = true;
+        self
+    }
+
     /// Appends a child in declaration order.
     pub fn child(mut self, child: impl IntoElement) -> Self {
         self.children.push(Child::Fixed(child.into_element()));

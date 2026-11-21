@@ -161,6 +161,22 @@ impl Delivery<'_> {
         Ok(event)
     }
 
+    fn press_target(&mut self, sample: PointerSample, button: PointerButton) -> Option<NodeId> {
+        let frame = self.instance.pointer.frame.as_ref()?;
+        let Some((leaf, recipients)) = frame.hit(sample.position) else {
+            if button == PointerButton::Primary {
+                self.instance.focused = None;
+            }
+            return None;
+        };
+        let body = self.instance.bodies.get(&leaf)?;
+        if button == PointerButton::Primary && body.visible {
+            // A live visible leaf retains its mounted ancestors, all of which are visible.
+            self.instance.focused = recipients.focus;
+        }
+        recipients.pointer
+    }
+
     fn down(
         &mut self,
         sample: PointerSample,
@@ -175,7 +191,7 @@ impl Delivery<'_> {
             return Ok(None);
         }
         let capture = router.capture(sample.id);
-        let Some(owner) = capture.or_else(|| self.hit(sample, |r| r.pointer)) else {
+        let Some(owner) = capture.or_else(|| self.press_target(sample, button)) else {
             return Ok(None);
         };
         let event = self.event(owner, sample, Some(button))?;

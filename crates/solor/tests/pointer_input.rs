@@ -37,6 +37,91 @@ fn accept(ui: &mut Ui, view: ViewId, width: f32) -> Result<()> {
 }
 
 #[test]
+fn primary_press_focuses_the_nearest_focusable_ancestor_independently_of_clicks() -> Result<()> {
+    let mut ui = Ui::new();
+    let clicked = ui.context().signal(false);
+    let view = ui.mount(component(|_| {
+        div().child(
+            div()
+                .focusable()
+                .size(px(30.0))
+                .on_click(move |cx| cx.set(clicked, true))
+                .child(div().focusable().size(px(10.0)).child(div().size(px(5.0)))),
+        )
+    }))?;
+    accept(&mut ui, view, 60.0)?;
+    let outer = ui.children(view, ui.root(view)?)?.next().unwrap();
+    let inner = ui.children(view, outer)?.next().unwrap();
+    let inside = sample(1, 2.0, 2.0);
+    let edge = sample(1, 20.0, 20.0);
+    let background = sample(1, 40.0, 2.0);
+    assert_eq!(ui.focused(view)?, None);
+    ui.dispatch_pointer(view, Down(inside, Primary))?;
+    assert_eq!(ui.focused(view)?, Some(inner));
+    ui.dispatch_pointer(view, Up(inside, Primary))?;
+    assert!(*ui.context().read(clicked)?);
+    ui.dispatch_pointer(view, Down(edge, Secondary))?;
+    assert_eq!(ui.focused(view)?, Some(inner));
+    ui.dispatch_pointer(view, Up(edge, Secondary))?;
+    ui.dispatch_pointer(view, Down(edge, Primary))?;
+    assert_eq!(ui.focused(view)?, Some(outer));
+    ui.dispatch_pointer(view, Up(edge, Primary))?;
+    ui.dispatch_pointer(view, Down(background, Primary))?;
+    assert_eq!(ui.focused(view)?, None);
+    Ok(())
+}
+
+#[test]
+fn focus_is_local_to_a_live_visible_mount() -> Result<()> {
+    let mut ui = Ui::new();
+    let shown = ui.context().signal(true);
+    let mounted = ui.context().signal(true);
+    let view = ui.mount(component(|_| {
+        div()
+            .visible_when(shown)
+            .child_when(mounted, || div().focusable().size(px(20.0)))
+    }))?;
+    let other = ui.mount(component(|_| div().focusable()))?;
+    let other_root = ui.root(other)?;
+    let root = ui.root(view)?;
+    let inside = sample(1, 2.0, 2.0);
+    accept(&mut ui, view, 60.0)?;
+    let child = ui.children(view, root)?.next().unwrap();
+    ui.focus(other, other_root)?;
+    ui.dispatch_pointer(view, Down(inside, Primary))?;
+    assert_eq!(ui.focused(view)?, Some(child));
+    assert!(ui.focus(view, root).is_err());
+    assert!(ui.focus(view, other_root).is_err());
+    assert_eq!(ui.focused(view)?, Some(child));
+
+    ui.context().set(shown, false)?;
+    ui.flush()?;
+    assert_eq!(ui.focused(view)?, None);
+    assert!(ui.focus(view, child).is_err());
+    ui.dispatch_pointer(view, Down(inside, Primary))?;
+    assert_eq!(ui.focused(view)?, None);
+    ui.context().set(shown, true)?;
+    ui.flush()?;
+    assert_eq!(ui.focused(view)?, None);
+    ui.focus(view, child)?;
+    ui.context().set(mounted, false)?;
+    ui.flush()?;
+    assert_eq!(ui.focused(view)?, None);
+    ui.context().set(mounted, true)?;
+    ui.flush()?;
+    let replacement = ui.children(view, root)?.next().unwrap();
+    assert_ne!(replacement, child);
+    ui.dispatch_pointer(view, Down(inside, Primary))?;
+    assert_eq!(ui.focused(view)?, None);
+    assert!(ui.focus(view, child).is_err());
+    ui.focus(view, replacement)?;
+    ui.blur(view)?;
+    assert_eq!(ui.focused(view)?, None);
+    assert_eq!(ui.focused(other)?, Some(other_root));
+    Ok(())
+}
+
+#[test]
 fn label_hits_button_up_precedes_click_and_bindings_wait_for_flush() -> Result<()> {
     let mut ui = Ui::with_font(
         include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf").to_vec(),

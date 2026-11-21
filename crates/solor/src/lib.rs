@@ -197,6 +197,7 @@ type StyleUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), (Restyle, bool)>>>;
 type LabelUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), Signal<SharedString>>>>;
 
 struct Instance {
+    focused: Option<NodeId>,
     frame_handlers: HashMap<NodeId, element::FrameHandler>,
     scope: NodeId,
     paint_reads: RefCell<Vec<SignalId>>,
@@ -322,6 +323,9 @@ impl Instance {
                     self.visible_nodes += 1;
                 } else {
                     self.visible_nodes -= 1;
+                    if self.focused == Some(id) {
+                        self.focused = None;
+                    }
                     self.unobserve_paint(id, state);
                 }
                 changed = true;
@@ -504,6 +508,9 @@ impl Instance {
                 tracked.detach(cx.state);
             }
             self.pointer.retire(node.id);
+            if self.focused == Some(node.id) {
+                self.focused = None;
+            }
             self.frame_handlers.remove(&node.id);
             self.unobserve_paint(node.id, cx.state);
             self.repaints.borrow_mut().dirty.remove(&node.id);
@@ -652,6 +659,7 @@ impl Ui {
         drop(mount);
         let root = scene.root();
         let mut instance = Instance {
+            focused: None,
             frame_handlers: on_frame
                 .into_iter()
                 .map(|handler| (root, handler))
@@ -830,6 +838,32 @@ impl Ui {
         Ok(self.instance(view)?.scene.root())
     }
 
+    /// Returns the element holding logical focus in this view.
+    pub fn focused(&self, view: ViewId) -> Result<Option<NodeId>> {
+        Ok(self.instance(view)?.focused)
+    }
+
+    /// Gives focus to a visible, focusable element. An invalid request preserves existing focus.
+    pub fn focus(&mut self, view: ViewId, target: NodeId) -> Result<()> {
+        let instance = self.instance_mut(view)?;
+        let body = instance
+            .bodies
+            .get(&target)
+            .ok_or(tree::TreeError::InvalidNode(target))?;
+        anyhow::ensure!(
+            body.visible && body.focusable,
+            "focus requires a visible, focusable element"
+        );
+        instance.focused = Some(target);
+        Ok(())
+    }
+
+    /// Clears logical focus in this view.
+    pub fn blur(&mut self, view: ViewId) -> Result<()> {
+        self.instance_mut(view)?.focused = None;
+        Ok(())
+    }
+
     /// Iterates over mounted direct children in layout order.
     pub fn children(
         &self,
@@ -843,6 +877,12 @@ impl Ui {
         self.instances
             .get(&view)
             .ok_or_else(|| crate::tree::TreeError::InvalidNode(view.0).into())
+    }
+
+    fn instance_mut(&mut self, view: ViewId) -> Result<&mut Instance> {
+        self.instances
+            .get_mut(&view)
+            .ok_or_else(|| tree::TreeError::InvalidNode(view.0).into())
     }
 
     /// Applies the viewport allocation, materializes visible list rows and returns the total

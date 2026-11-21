@@ -28,6 +28,7 @@ impl HitBox {
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Recipients {
+    pub focus: Option<NodeId>,
     pub pointer: Option<NodeId>,
     pub scroll: Option<NodeId>,
     pub(super) hover: Option<NodeId>,
@@ -239,6 +240,9 @@ impl HitGeometry {
                 }
             }
             let mut recipients = inherited;
+            if body.hit_testable && body.focusable {
+                recipients.focus = Some(id);
+            }
             if body.hit_testable && body.cursor.is_some() {
                 recipients.cursor = body.cursor;
                 frame.has_cursor = true;
