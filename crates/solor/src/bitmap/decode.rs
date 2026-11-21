@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 
-const FILE_LIMIT: u64 = 64 * 1024 * 1024;
+pub(super) const ENCODED_LIMIT: u64 = 64 * 1024 * 1024;
 const DECODE_BUDGET: u64 = 128 * 1024 * 1024;
 
 /// A filesystem path shared by bitmap elements and backgrounds. Construction performs no I/O.
@@ -33,7 +33,7 @@ impl ImageFile {
         let file = File::open(&self.path)?;
         let meta = file.metadata()?;
         ensure!(meta.is_file(), "expected a regular image file");
-        ensure!(meta.len() <= FILE_LIMIT, "encoded image exceeds 64 MiB");
+        ensure!(meta.len() <= ENCODED_LIMIT, "encoded image exceeds 64 MiB");
         let mut reader = ImageReader::new(BufReader::new(file)).with_guessed_format()?;
         let mut limits = image::Limits::default();
         limits.max_alloc = Some(DECODE_BUDGET);
@@ -108,6 +108,15 @@ impl From<ImageFile> for Fill {
 }
 
 impl ImageAsset {
+    #[cfg(feature = "network")]
+    pub(super) fn from_download(bytes: &[u8]) -> Result<Self> {
+        let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+        let mut limits = image::Limits::default();
+        limits.max_alloc = Some(DECODE_BUDGET);
+        reader.limits(limits);
+        Self::decode(reader.into_decoder()?, DECODE_BUDGET)
+    }
+
     /// Decodes caller-supplied bytes immediately and applies the encoded orientation.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let decoder = ImageReader::new(Cursor::new(bytes))

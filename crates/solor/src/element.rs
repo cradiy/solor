@@ -818,7 +818,7 @@ impl Drop for PaintSubscription {
 
 pub(super) type Watch =
     Box<dyn FnOnce(&mut Attachment<'_>, NodeId, NodeId, &[usize], Option<&Repaints>) -> Result<()>>;
-type MountResources<'a> = (UnitResolver, &'a crate::Assets);
+type MountResources<'a> = (UnitResolver, &'a crate::assets::Resources);
 type Install =
     Box<dyn FnOnce(Target<'_>, &mut Context<'_>, MountResources<'_>) -> Result<Installation>>;
 

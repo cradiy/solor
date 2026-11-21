@@ -105,10 +105,17 @@ impl Assets {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct Resources {
+    pub(crate) named: Assets,
+    #[cfg(feature = "network")]
+    pub(crate) remote: crate::bitmap::remote::RemoteImages,
+}
+
 impl Ui {
     /// Registers a resource pack for this UI. Its contents are requested on first use.
     pub fn with_assets(mut self, source: impl Into<Assets>) -> Self {
-        self.assets = source.into();
+        self.assets.named = source.into();
         self
     }
 }

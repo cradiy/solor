@@ -597,6 +597,26 @@ For `svg` and `image`, a string is a resource name, including strings with
 a leading slash. Pass an absolute `&Path` or `PathBuf` for a filesystem
 lookup. Both elements also accept encoded byte slices and owned byte vectors.
 
+With the optional `network` feature, `image` also accepts a `solor::Url`.
+For example, an application can reserve a square for a cover supplied by its server.
+
+```rust
+let cover = Url::parse("https://example.org/covers/album.jpg")?;
+let artwork = image(cover).size(px(96.0));
+```
+
+Attaching the element starts an HTTP or HTTPS request. Download and decode run
+on the shared blocking workers using the enabled image codecs. The intrinsic
+size starts at zero. When pixels arrive the element remeasures and repaints.
+Mounted consumers of the same URL in one UI share the request and decoded
+pixels. Removing the last consumer releases the cache entry and cancels
+pending work. A worker checks for cancellation between body reads and before
+decoding. A read already in progress can last until the request timeout (30 s).
+
+The encoded size limit is 64 MiB and the decode budget is 128 MiB. A failed
+request leaves its element empty and logs the error. A subsequent attachment
+can retry the URL.
+
 Implement `AssetSource::svg` to supply SVG bytes and `AssetSource::image` to
 supply `ImageResource::Path`, `ImageResource::Bytes`, or `ImageResource::Custom`. Register a pack for the
 application with `current_platform()?.with_assets((Theme, LibraryIcons))`.

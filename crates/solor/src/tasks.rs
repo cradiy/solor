@@ -218,14 +218,23 @@ impl Context<'_> {
         &mut self,
         start: impl FnOnce(AsyncContext) -> F + 'static,
     ) {
-        let driver = self
-            .tasks
-            .driver
-            .get_or_init(|| Box::new(Driver::new(self.tasks.host.clone())));
         let scope = self
             .owned
             .as_deref()
             .map_or(&self.tasks.app, |owner| &owner.tasks);
+        self.tasks.spawn_in(scope, start);
+    }
+}
+
+impl Tasks {
+    pub(super) fn spawn_in<F: Future<Output = Result<()>> + 'static>(
+        &self,
+        scope: &TaskScope,
+        start: impl FnOnce(AsyncContext) -> F + 'static,
+    ) {
+        let driver = self
+            .driver
+            .get_or_init(|| Box::new(Driver::new(self.host.clone())));
         let handles = scope.0.get_or_init(Default::default);
         driver.spawn(handles, start);
     }

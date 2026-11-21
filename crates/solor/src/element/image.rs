@@ -25,6 +25,9 @@ pub enum ImageSource {
     Fixed(ImageAsset),
     /// Render visible pixels using the application source.
     Custom(crate::CustomImage),
+    /// Download an HTTP or HTTPS image when the element mounts.
+    #[cfg(feature = "network")]
+    Url(crate::Url),
     /// Look up a bitmap by name in the registered resource pack.
     Name(crate::SharedString),
     /// Decode these bytes at attachment.
@@ -39,6 +42,13 @@ pub enum ImageSource {
     BoundCustom(crate::Signal<crate::CustomImage>),
 }
 crate::assets::name_inputs!(ImageSource);
+
+#[cfg(feature = "network")]
+impl From<crate::Url> for ImageSource {
+    fn from(url: crate::Url) -> Self {
+        Self::Url(url)
+    }
+}
 
 impl From<ImageAsset> for ImageSource {
     fn from(value: ImageAsset) -> Self {
@@ -72,8 +82,24 @@ impl IntoElement for Image {
                 ImageSource::Bytes(bytes) => {
                     (ImageContent::Bitmap(ImageAsset::from_bytes(&bytes)?), None)
                 }
+                #[cfg(feature = "network")]
+                ImageSource::Url(url) => {
+                    let subscription = assets.remote.subscribe(url, cx)?;
+                    let signal = subscription.signal;
+                    let content = cx
+                        .read(signal)?
+                        .clone()
+                        .map_or(ImageContent::Empty, ImageContent::Bitmap);
+                    let mut node = ImageBody::node(content, self.style, units);
+                    node.body.remote = Some(Box::new(subscription));
+                    node.watches.push(super::content_watch(
+                        signal,
+                        crate::ContentUpdate::RemoteImage(signal),
+                    ));
+                    return Ok(node);
+                }
                 ImageSource::Name(name) => {
-                    let image = match assets.image(&name)? {
+                    let image = match assets.named.image(&name)? {
                         crate::ImageResource::Custom(image) => Ok(ImageContent::Custom(image)),
                         #[cfg(not(feature = "image"))]
                         crate::ImageResource::Path(_) | crate::ImageResource::Bytes(_) => {
@@ -117,6 +143,8 @@ impl IntoElement for Image {
 
 #[derive(PartialEq)]
 pub(super) enum ImageContent {
+    #[cfg(feature = "network")]
+    Empty,
     Bitmap(ImageAsset),
     Custom(crate::CustomImage),
     Svg(SvgAsset, bool),
@@ -132,6 +160,8 @@ impl ImageContent {
 
     fn size(&self) -> Size {
         match self {
+            #[cfg(feature = "network")]
+            Self::Empty => Size::default(),
             Self::Custom(image) => image.dimensions().at_unit_scale(),
             Self::Bitmap(asset) => asset.dimensions().at_unit_scale(),
             Self::Svg(asset, _) => asset.size(),
@@ -141,6 +171,8 @@ impl ImageContent {
     }
 }
 pub(super) struct ImageBody {
+    #[cfg(feature = "network")]
+    remote: Option<Box<crate::bitmap::remote::Subscription>>,
     image: ImageContent,
     units: UnitResolver,
     placement: Placement,
@@ -153,6 +185,8 @@ impl ImageBody {
         units: UnitResolver,
     ) -> super::Node<Self> {
         let mut node = element(Self {
+            #[cfg(feature = "network")]
+            remote: None,
             image,
             units,
             placement: Placement::centered(ObjectFit::Contain),
@@ -211,6 +245,16 @@ impl LayoutNode for ImageBody {
         query: Query,
     ) -> layout::Result<Metrics> {
         let intrinsic = self.image.size();
+        #[cfg(feature = "network")]
+        if matches!(self.image, ImageContent::Empty) {
+            return Ok(Metrics {
+                size: Size {
+                    width: query.resolve(px(0.)),
+                    height: px(0.),
+                },
+                baseline: None,
+            });
+        }
         let ratio = f64::from(intrinsic.width) / f64::from(intrinsic.height);
         let preferred = cx
             .definite_content_height()
@@ -250,6 +294,8 @@ impl Element for ImageBody {
             return Ok(());
         }
         match &self.image {
+            #[cfg(feature = "network")]
+            ImageContent::Empty => Ok(()),
             ImageContent::Custom(image) => {
                 let mut image = image.clone();
                 image.placement = self.placement;

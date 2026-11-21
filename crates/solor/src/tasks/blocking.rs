@@ -13,6 +13,9 @@ use std::{
     time::Duration,
 };
 
+#[cfg(feature = "network")]
+static CAPACITY: event_listener::Event = event_listener::Event::new();
+
 const MAX_WORKERS: usize = 2;
 const MAX_QUEUED: usize = 64;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -79,15 +82,12 @@ static POOL: Pool = Pool {
 };
 
 impl Pool {
-    fn submit(&'static self, job: Weak<dyn Job>) -> io::Result<()> {
+    fn try_submit(&'static self, job: Weak<dyn Job>) -> io::Result<bool> {
         let mut state = self.state.lock().expect("blocking queue lock");
         if state.queue.len() == MAX_QUEUED {
             state.queue.retain(|job| job.strong_count() != 0);
             if state.queue.len() == MAX_QUEUED {
-                return Err(io::Error::new(
-                    io::ErrorKind::WouldBlock,
-                    "blocking queue is full",
-                ));
+                return Ok(false);
             }
         }
         if state.queue.len() >= state.workers - state.busy && state.workers < MAX_WORKERS {
@@ -98,20 +98,25 @@ impl Pool {
         }
         state.queue.push_back(job);
         self.available.notify_one();
-        Ok(())
+        Ok(true)
     }
 
     fn worker(&self) {
         let mut state = self.state.lock().expect("blocking queue lock");
         loop {
             if let Some(next) = state.queue.pop_front() {
-                if let Some(job) = next.upgrade() {
-                    state.busy += 1;
-                    drop(state);
-                    job.run();
-                    state = self.state.lock().expect("blocking queue lock");
-                    state.busy -= 1;
+                state.busy += 1;
+                drop(state);
+                #[cfg(feature = "network")]
+                {
+                    use event_listener::IntoNotification;
+                    CAPACITY.notify(1.additional());
                 }
+                if let Some(job) = next.upgrade() {
+                    job.run();
+                }
+                state = self.state.lock().expect("blocking queue lock");
+                state.busy -= 1;
             } else {
                 let (next, timeout) = self
                     .available
@@ -136,12 +141,43 @@ impl AsyncContext {
         &self,
         function: impl FnOnce() -> Result<T> + Send + 'static,
     ) -> Result<T> {
-        let work = Arc::new(Mutex::new(Work {
+        let work = Work::new(function);
+        if !POOL.try_submit(Arc::downgrade(&work) as Weak<dyn Job>)? {
+            return Err(io::Error::new(io::ErrorKind::WouldBlock, "blocking queue is full").into());
+        }
+        Work::receive(work).await
+    }
+
+    #[cfg(feature = "network")]
+    pub(crate) async fn blocking_when_ready<T: Send + 'static>(
+        &self,
+        function: impl FnOnce() -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let work = Work::new(function);
+        let job = Arc::downgrade(&work) as Weak<dyn Job>;
+        if !POOL.try_submit(job.clone())? {
+            loop {
+                let slot = CAPACITY.listen();
+                if POOL.try_submit(job.clone())? {
+                    break;
+                }
+                slot.await;
+            }
+        }
+        Work::receive(work).await
+    }
+}
+
+impl<F, T> Work<F, T> {
+    fn new(function: F) -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self {
             function: Some(function),
             result: None,
             waiter: None,
-        }));
-        POOL.submit(Arc::downgrade(&work) as Weak<dyn Job>)?;
+        }))
+    }
+
+    async fn receive(work: Arc<Mutex<Self>>) -> Result<T> {
         poll_fn(|cx| {
             let mut work = work.lock().expect("blocking task lock");
             match work.result.take() {

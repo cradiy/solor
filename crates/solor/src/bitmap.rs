@@ -1,5 +1,7 @@
 //! Shared bitmap pixels and placement within a painted box.
 mod custom;
+#[cfg(feature = "network")]
+pub(crate) mod remote;
 pub use custom::{CustomImage, ImageRegion, ImageRenderer};
 
 use crate::{

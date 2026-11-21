@@ -126,7 +126,7 @@ impl IntoElement for Svg {
                     ));
                     cx.read(signal)?.clone()
                 }
-                SvgSource::Name(name) => assets.svg(&name)?,
+                SvgSource::Name(name) => assets.named.svg(&name)?,
                 SvgSource::Bytes(bytes) => SvgAsset::from_bytes(&bytes)?,
                 SvgSource::Path(path) => SvgAsset::from_path(path)?,
             };

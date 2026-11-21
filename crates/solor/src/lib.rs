@@ -28,6 +28,8 @@ macro_rules! impl_event_context {
 mod tasks;
 pub use tasks::AsyncContext;
 use tasks::{TaskScope, Tasks};
+#[cfg(feature = "url")]
+pub use url::Url;
 mod assets;
 pub use assets::{AssetSource, Assets, ImageResource};
 mod clip;
@@ -236,6 +238,8 @@ type StyleUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), (Restyle, bool)>>>;
 enum ContentUpdate {
     Text(Signal<SharedString>),
     Image(Signal<ImageAsset>),
+    #[cfg(feature = "network")]
+    RemoteImage(Signal<Option<ImageAsset>>),
     Svg(Signal<SvgAsset>, bool),
     CustomImage(Signal<CustomImage>),
 }
@@ -263,7 +267,7 @@ struct Instance {
 
 struct Attachment<'a> {
     tasks: &'a Tasks,
-    assets: &'a Assets,
+    assets: &'a assets::Resources,
     scope: NodeId,
     state: &'a mut Runtime<()>,
     pending: &'a Pending,
@@ -632,7 +636,7 @@ pub struct ViewId(NodeId);
 #[derive(Default)]
 pub struct Ui {
     tasks: Tasks,
-    assets: Assets,
+    assets: assets::Resources,
     keymap: HashMap<keyboard::Shortcut, Vec<keyboard::BoundAction>>,
     tooltip_style: TooltipStyle,
     state: tasks::UiState,
@@ -876,6 +880,12 @@ impl Ui {
                     .read(source)
                     .ok()
                     .map(|value| instance.update_svg(id, value, preserve_colors)),
+                #[cfg(feature = "network")]
+                ContentUpdate::RemoteImage(source) => state
+                    .read(source)
+                    .ok()
+                    .and_then(Option::as_ref)
+                    .map(|value| instance.update_image(id, value)),
                 ContentUpdate::Image(source) => state
                     .read(source)
                     .ok()
