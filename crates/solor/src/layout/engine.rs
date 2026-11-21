@@ -1290,7 +1290,10 @@ impl Scene {
     }
 
     /// Returns the live children in layout order.
-    pub fn children(&self, parent: NodeId) -> Result<impl ExactSizeIterator<Item = NodeId> + '_> {
+    pub fn children(
+        &self,
+        parent: NodeId,
+    ) -> Result<impl DoubleEndedIterator<Item = NodeId> + ExactSizeIterator + '_> {
         Ok(self.store.children(parent).map_err(AccessError::from)?)
     }
 

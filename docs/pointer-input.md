@@ -18,12 +18,21 @@ Only a visible, mounted, focusable element in the same view can receive focus.
 Hiding its subtree or removing its mount clears focus during reconciliation.
 Showing it again starts it unfocused.
 
+Tab moves forward and Shift+Tab moves backward among visible, mounted
+`.focusable()` elements. Traversal visits a parent before its children and
+siblings in their current tree order. It wraps within the view. With no current
+focus, Tab starts at the first stop and Shift+Tab at the last. Virtual lists
+participate through their currently mounted rows, including overscan.
+Hosts can use `ui.focus_next(view)` and `ui.focus_previous(view)` directly.
+
 Use `.focusable().on_key_down(...).on_key_up(...)` to handle key transitions.
 Each transition goes directly to the element focused at delivery time. Callbacks
 can read and update signals through their context. Wayland resolves character
 keys through the active layout and reports named keys such as Enter and Tab.
-The adapter delivers individual presses and releases. Text composition, key
-repeat and automatic Tab navigation are outside this input path.
+On key-down the focused control receives the event first. A control that uses
+Tab itself can call `cx.prevent_default()` during that press. Tab with Control,
+Alt or Meta follows normal key delivery. Releasing Tab goes to the element
+focused at release time. The adapter delivers individual presses and releases.
 
 ```rust
 div().focusable().on_key_down(move |event, cx| {

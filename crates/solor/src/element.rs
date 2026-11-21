@@ -911,7 +911,7 @@ impl<E: Element> IntoElement for Node<E> {
 }
 
 impl<E: Element> Node<E> {
-    /// Allows this element to receive view-local focus by primary press or through `Ui::focus`.
+    /// Includes this element in Tab navigation and allows focus by primary press or through `Ui::focus`.
     pub fn focusable(mut self) -> Self {
         self.focusable = true;
         self

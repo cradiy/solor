@@ -8,8 +8,6 @@ pub use scroll::{ScrollHandle, ScrollMetrics};
 mod tooltip;
 pub use tooltip::{Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle};
 
-use std::ops::{Deref, DerefMut};
-
 use crate::{
     Context, Result,
     layout::{Origin, Size},
@@ -199,24 +197,6 @@ impl ScrollContext<'_> {
     }
 }
 
-macro_rules! impl_event_context {
-    ($name:ident) => {
-        impl<'a> Deref for $name<'a> {
-            type Target = Context<'a>;
-
-            fn deref(&self) -> &Self::Target {
-                &self.context
-            }
-        }
-
-        impl DerefMut for $name<'_> {
-            fn deref_mut(&mut self) -> &mut Self::Target {
-                &mut self.context
-            }
-        }
-    };
-}
-
 impl_event_context!(PointerDownContext);
 impl_event_context!(ScrollContext);
 
@@ -241,7 +221,7 @@ pub(crate) struct Handlers {
     scroll: Option<ScrollHandler>,
     up: Option<PositionHandler>,
     cancel: Option<CancelHandler>,
-    pub(crate) key_down: Option<crate::keyboard::KeyHandler>,
+    pub(crate) key_down: Option<crate::keyboard::KeyDownHandler>,
     pub(crate) key_up: Option<crate::keyboard::KeyHandler>,
     pub(crate) click: Option<crate::element::Click>,
 }
@@ -311,7 +291,7 @@ impl<E: crate::Element> crate::Node<E> {
 
     event_handlers! {
         /// Handles a key press while this element holds focus.
-        on_key_down => key_down (&crate::keyboard::KeyEvent, &mut Context<'_>);
+        on_key_down => key_down (&crate::keyboard::KeyEvent, &mut crate::keyboard::KeyDownContext<'_>);
         /// Handles a key release while this element holds focus.
         on_key_up => key_up (&crate::keyboard::KeyEvent, &mut Context<'_>);
         /// Notifies when the first mouse enters this subtree or the last mouse leaves it.

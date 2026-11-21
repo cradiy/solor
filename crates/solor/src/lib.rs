@@ -7,6 +7,24 @@ use crate::layout::Scene;
 use crate::state::{BindingId, Runtime, SignalId};
 use anyhow::Result;
 
+macro_rules! impl_event_context {
+    ($name:ident) => {
+        impl<'a> std::ops::Deref for $name<'a> {
+            type Target = crate::Context<'a>;
+
+            fn deref(&self) -> &Self::Target {
+                &self.context
+            }
+        }
+
+        impl std::ops::DerefMut for $name<'_> {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.context
+            }
+        }
+    };
+}
+
 mod clip;
 pub use clip::ContentClip;
 mod column;
@@ -199,6 +217,7 @@ type LabelUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), Signal<SharedString>>>>
 
 struct Instance {
     focused: Option<NodeId>,
+    tab_order: Option<keyboard::TabOrder>,
     frame_handlers: HashMap<NodeId, element::FrameHandler>,
     scope: NodeId,
     paint_reads: RefCell<Vec<SignalId>>,
@@ -335,6 +354,7 @@ impl Instance {
             }
         }
         if changed {
+            self.tab_order = None;
             for list in self.lists.values() {
                 list.dirty.set(true);
             }
@@ -477,6 +497,7 @@ impl Instance {
             self.frame_handlers.insert(id, handler);
         }
         self.nodes.insert(path.to_vec(), id);
+        self.tab_order = None;
         self.invalidate_geometry();
         self.finish_attachment(id, path, watches, children, scroll_handle, cx)?;
         Ok(())
@@ -487,6 +508,7 @@ impl Instance {
             return Ok(());
         };
         self.scene.unmount_subtree(*node)?;
+        self.tab_order = None;
         self.invalidate_geometry();
         for key in subtree_keys(&self.lists, path) {
             if let Some(handle) = self.lists.remove(&key).and_then(|list| list.scroll) {
@@ -661,6 +683,7 @@ impl Ui {
         let root = scene.root();
         let mut instance = Instance {
             focused: None,
+            tab_order: None,
             frame_handlers: on_frame
                 .into_iter()
                 .map(|handler| (root, handler))

@@ -682,6 +682,7 @@ impl<K: Eq + Hash + Clone> MountedRows<K> {
         let rank = |id: NodeId| order[&instance.bodies[&id].offset];
         if !instance.scene.children(parent)?.is_sorted_by_key(rank) {
             instance.scene.sort_children_by_key(parent, rank)?;
+            instance.tab_order = None;
         }
         Ok(())
     }

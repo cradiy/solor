@@ -118,7 +118,7 @@ impl<T: ?Sized> NodeStore<T> {
     pub fn children(
         &self,
         node: NodeId,
-    ) -> Result<impl ExactSizeIterator<Item = NodeId> + '_, TreeError> {
+    ) -> Result<impl DoubleEndedIterator<Item = NodeId> + ExactSizeIterator + '_, TreeError> {
         self.tree.children(node)
     }
 

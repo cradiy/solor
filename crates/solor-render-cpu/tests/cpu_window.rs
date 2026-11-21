@@ -282,7 +282,11 @@ fn window_keys_follow_focus_and_retire_with_their_controls() -> Result<()> {
     submit(&mut window)?;
     assert!(!key(&mut window, KeyState::Up)?);
     assert_eq!(transitions.get(), 1);
-    press(&mut window, 2.)?;
+    window.event(WindowEvent::Key(KeyEvent {
+        key: NamedKey::Tab.into(),
+        state: KeyState::Down,
+        modifiers: Modifiers::default(),
+    }))?;
     assert!(key(&mut window, KeyState::Down)?);
     submit(&mut window)?;
     assert!(!key(&mut window, KeyState::Down)?);
