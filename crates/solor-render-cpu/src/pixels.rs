@@ -97,6 +97,13 @@ impl Surface {
     }
 
     pub(super) fn cleared(size: DeviceSize, scale: RasterScale, clear_byte: u8) -> Result<Self> {
+        Ok(Self {
+            size,
+            rgba: vec![clear_byte; Self::byte_len(size, scale)?],
+        })
+    }
+
+    fn byte_len(size: DeviceSize, scale: RasterScale) -> Result<usize> {
         if !scale.0.is_finite() || scale.0 <= 0.0 {
             return Err(Error::other("invalid raster scale"));
         }
@@ -104,10 +111,26 @@ impl Surface {
         if pixels == 0 || pixels > 4 * 1024 * 1024 {
             return Err(Error::other("surface requires 1 to 4194304 pixels"));
         }
-        Ok(Self {
-            size,
-            rgba: vec![clear_byte; pixels as usize * 4],
-        })
+        Ok(pixels as usize * 4)
+    }
+
+    pub(super) fn reset(
+        &mut self,
+        size: DeviceSize,
+        scale: RasterScale,
+        clear_byte: u8,
+    ) -> Result<()> {
+        let bytes = Self::byte_len(size, scale)?;
+        // Every pixel will be repainted. Resize the allocation without preserving old rows.
+        self.rgba.clear();
+        if bytes < self.rgba.capacity() {
+            self.rgba.shrink_to(bytes);
+        } else {
+            self.rgba.try_reserve_exact(bytes).map_err(Error::other)?;
+        }
+        self.rgba.resize(bytes, clear_byte);
+        self.size = size;
+        Ok(())
     }
 
     fn composite(&mut self, mask: &Image, x: i64, y: i64, clip: Clip, color: solor::Rgba) {

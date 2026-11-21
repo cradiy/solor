@@ -446,6 +446,7 @@ pub trait Styled: Sized {
         self
     }
     /// Sets the inherited font size.
+    /// The default line height is the resolved font size times the golden ratio.
     fn text_size(mut self, size: impl Into<Property<AbsoluteLength>>) -> Self {
         declare!(self.style(), size.into(), text.size);
         self

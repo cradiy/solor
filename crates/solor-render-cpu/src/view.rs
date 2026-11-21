@@ -91,7 +91,7 @@ impl Surface {
         self.replay(draws, scale, clip, caches)
     }
 
-    fn replay(
+    pub(super) fn replay(
         &mut self,
         draws: &[Draw],
         scale: RasterScale,

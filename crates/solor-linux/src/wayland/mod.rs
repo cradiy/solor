@@ -361,9 +361,14 @@ impl Window {
             self.view.frame_submitted()?;
             return Ok(());
         }
-        for slot in self.slots.iter_mut().flatten().filter(|s| s.size == size) {
-            for &area in frame.damage.rects() {
-                slot.invalidate(area);
+        for entry in &mut self.slots {
+            let Some(slot) = entry else { continue };
+            if slot.size == size {
+                for &area in frame.damage.rects() {
+                    slot.invalidate(area);
+                }
+            } else if !slot.busy {
+                *entry = None;
             }
         }
         let reuse = self.slots[index]
@@ -552,7 +557,11 @@ impl Dispatch<wl_buffer::WlBuffer, (ObjectId, usize)> for Desktop {
         if let wl_buffer::Event::Release = event
             && let Some(slot) = &mut state.slots[*index]
         {
-            slot.busy = false;
+            if buffer_size(state.scale_120, state.size).is_ok_and(|size| size != slot.size) {
+                state.slots[*index] = None;
+            } else {
+                slot.busy = false;
+            }
         }
     }
 }

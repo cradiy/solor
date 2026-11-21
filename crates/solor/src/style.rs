@@ -129,14 +129,6 @@ impl TextStyleRefinement {
             color: higher.color.or(self.color),
         }
     }
-    fn apply_metrics(&self, text: &mut Typography, units: UnitResolver) {
-        text.size = self.size.map_or(text.size, |size| units.absolute(size));
-        text.line_height = self.line_height.map_or_else(
-            || px(text.line_height.get().max(text.size.get())),
-            |height| units.absolute(height),
-        );
-        text.color = self.color.unwrap_or(text.color);
-    }
 }
 
 /// Local box properties after cascading. An automatic dimension follows the content.
@@ -222,9 +214,19 @@ impl Style {
         }
         self.width = later.width.unwrap_or(self.width);
         self.height = later.height.unwrap_or(self.height);
-        inherited.apply_metrics(&mut self.text, units);
-        later.text.apply_metrics(&mut self.text, units);
         let text = inherited.overlay(&later.text);
+        if let Some(size) = text.size {
+            self.text.size = units.absolute(size);
+        }
+        self.text.line_height = match (later.text.line_height, inherited.line_height) {
+            (Some(height), _) => units.absolute(height),
+            (None, Some(height)) => units.absolute(height).max(self.text.size),
+            (None, None) if text.size.is_some() => {
+                crate::text::TextStyle::default_line_height(self.text.size)
+            }
+            (None, None) => self.text.line_height,
+        };
+        self.text.color = text.color.unwrap_or(self.text.color);
         overlay_group(&mut self.text.attributes, &text.attributes);
         if let Some(spacing) = self
             .text

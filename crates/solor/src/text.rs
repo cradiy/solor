@@ -42,14 +42,19 @@ pub struct TextStyle {
 
 impl Default for TextStyle {
     fn default() -> Self {
+        let size = px(16.0);
         Self {
-            size: px(16.0),
-            line_height: px(24.0),
+            size,
+            line_height: Self::default_line_height(size),
         }
     }
 }
 
 impl TextStyle {
+    pub(crate) fn default_line_height(size: Pixels) -> Pixels {
+        size * std::f32::consts::GOLDEN_RATIO
+    }
+
     pub(crate) fn validate(self) -> Result<()> {
         if !self.size.is_extent() || !self.line_height.is_extent() {
             return Err(LayoutError::InvalidSize);

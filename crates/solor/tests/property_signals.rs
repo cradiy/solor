@@ -35,6 +35,7 @@ fn a_font_signal_restyles_only_the_labels_that_inherit_it() -> Result<()> {
                     .text_size(px(12.0))
                     .line_height(px(24.0)),
             )
+            .child(text("Small").text_size(px(12.0)).font_family("Local"))
             .child_when(open, || text("C"))
     }))?;
     let viewport = Size {
@@ -65,9 +66,15 @@ fn a_font_signal_restyles_only_the_labels_that_inherit_it() -> Result<()> {
     ui.context().set(size, px(26.0))?;
     ui.context().set(open, true)?;
     let next = record(&mut ui)?;
-    assert_eq!(ui.children(view, root)?.take(2).collect::<Vec<_>>(), ids);
+    assert_eq!(
+        ui.children(view, root)?.take(ids.len()).collect::<Vec<_>>(),
+        ids
+    );
     assert_eq!(next[0].style.size, px(26.0));
-    assert_eq!(next[2].style.size, px(26.0));
+    assert_eq!(next[3].style, next[0].style);
+    assert!(next[2].style.line_height < original[0].style.line_height);
+    assert!(original[0].style.line_height < next[0].style.line_height);
+    assert!(Rc::ptr_eq(&original[2], &next[2]));
     assert!(Rc::ptr_eq(&original[1], &next[1]));
     ui.unmount(view)?;
     ui.context().notify(family)?;

@@ -147,14 +147,6 @@ impl Bindings {
         self.entries().iter().any(|b| b.field.key == key)
     }
 
-    pub(crate) fn include_parent_size(&mut self, parent: &Self) {
-        if !self.contains("text.size")
-            && let Some(size) = parent.entries().iter().find(|b| b.field.key == "text.size")
-        {
-            Rc::make_mut(self.0.get_or_insert_with(Default::default)).push(size.clone());
-        }
-    }
-
     pub(crate) fn without_fixed_overrides(&self, style: &StyleRefinement) -> Self {
         let mut active = self.clone();
         active.retain(|b| !(b.field.specified)(style));

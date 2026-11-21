@@ -18,18 +18,10 @@ pub(super) fn prepare<E: Element>(
 ) -> Result<PreparedStyle> {
     let base = node.body.base_style();
     node.style.bindings = node.style.bindings.without_fixed_overrides(&node.style);
-    let mut inherited_bindings = inherited.bindings.unshadowed(&node.style);
+    let inherited_bindings = inherited.bindings.unshadowed(&node.style);
     let mut child_bindings = inherited_bindings.clone();
     child_bindings.extend(&node.style.bindings.inherited());
 
-    // An implicit line height also depends on the parent size, even with a local size.
-    if inherited.fixed.line_height.is_none()
-        && node.style.text.line_height.is_none()
-        && !inherited.bindings.contains("text.line_height")
-        && !node.style.bindings.contains("text.line_height")
-    {
-        inherited_bindings.include_parent_size(&inherited.bindings);
-    }
     let mut sources: Vec<_> = inherited_bindings
         .sources()
         .chain(node.style.bindings.sources())

@@ -604,6 +604,7 @@ fn inherited_line_clamp_sizes_and_paints_only_visible_lines() -> Result<()> {
     let value = ui.context().signal(SharedString::from("A"));
     let view = ui.mount(component(|_| {
         div()
+            .line_height(px(24.0))
             .line_clamp(NonZeroUsize::new(2).unwrap())
             .child(text(value).w(percent(100.0)))
             .child(div().w(percent(100.0)).h(px(2.0)).bg(rgb(0xff0000)))
@@ -663,6 +664,7 @@ fn single_line_ellipsis_keeps_source_ranges_across_resize_and_edits() -> Result<
     let source = ui.context().signal(SharedString::default());
     let view = ui.mount(component(|_| {
         div()
+            .line_height(px(24.0))
             .truncate()
             .child(text(source).w(percent(100.0)))
             .child(text(source).w(percent(100.0)).text_ellipsis_start())
@@ -726,6 +728,7 @@ fn multiline_ellipsis_marks_only_the_last_visible_line() -> Result<()> {
     let value = ui.context().signal(SharedString::default());
     let view = ui.mount(component(|_| {
         div()
+            .line_height(px(24.0))
             .child(
                 text(value)
                     .w(percent(100.0))
@@ -1116,6 +1119,49 @@ fn fixed_text_at_fractional_scroll_clip_edges_matches_the_unclipped_pixels() -> 
                 }
             }
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn automatic_heading_height_preserves_descenders() -> Result<()> {
+    let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
+    let mut ui = Ui::with_font(font.to_vec())?;
+    let mut heading = |height: Option<solor::Pixels>| {
+        ui.mount(component(move |_| {
+            let label = text("Kingfisher").text_size(px(30.0));
+            div().child(match height {
+                Some(height) => label.h(height),
+                None => label,
+            })
+        }))
+    };
+    let automatic = heading(None)?;
+    let expanded = heading(Some(px(64.0)))?;
+    let cropped = heading(Some(px(20.0)))?;
+    let viewport = DeviceSize {
+        width: 256,
+        height: 80,
+    }
+    .at_unit_scale();
+    for view in [automatic, expanded, cropped] {
+        ui.layout(view, viewport)?;
+    }
+    for scale in [RasterScale::ONE, RasterScale(1.5), RasterScale(2.0)] {
+        let size = scale.buffer_size(viewport)?;
+        let render = |view| -> Result<Surface> {
+            Ok(Surface::draw_view(&ui.record_frame(view)?, size, scale)?)
+        };
+        let actual = render(automatic)?;
+        let reference = render(expanded)?;
+        let clipped = render(cropped)?;
+        assert!(
+            actual.rgba == reference.rgba,
+            "heading lost ink at {scale:?}"
+        );
+        let cut = scale.edge(20.0) as usize * size.width as usize * 4;
+        assert_eq!(clipped.rgba[..cut], reference.rgba[..cut]);
+        assert!(clipped.rgba[cut..] != reference.rgba[cut..]);
     }
     Ok(())
 }

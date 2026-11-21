@@ -110,7 +110,13 @@ impl WindowHandler<Rgba8> for CpuWindow {
                 }
                 (old.surface, damage)
             }
-            _ => (
+            Some(mut old) => {
+                old.surface.reset(physical, scale, self.clear_byte)?;
+                old.surface
+                    .replay(frame.draws(), scale, canvas, &mut self.caches)?;
+                (old.surface, Damage::from_rect(canvas))
+            }
+            None => (
                 Surface::raster_view(&frame, physical, scale, self.clear_byte, &mut self.caches)?,
                 Damage::from_rect(canvas),
             ),
