@@ -1,6 +1,7 @@
 use solor::px;
 mod buffer;
 mod decorations;
+mod input_region;
 mod keyboard;
 mod pointer;
 mod presentation;
@@ -62,6 +63,7 @@ struct Window {
     size: Size,
     pending_size: Option<Size>,
     mapping: Mapping,
+    input_region: input_region::SurfaceInputRegion,
     dirty: bool,
     waiting: Option<wl_callback::WlCallback>,
     closed: bool,
@@ -236,6 +238,7 @@ impl Wayland {
             size,
             pending_size: None,
             mapping: Mapping::Hidden,
+            input_region: Default::default(),
             dirty: true,
             waiting: None,
             closed: false,
@@ -257,6 +260,14 @@ impl Wayland {
             };
             if window.closed {
                 break;
+            }
+            if visible && let Some(control) = &control {
+                if window.mapping == Mapping::Hidden {
+                    window.input_region.update(control.take_input_region());
+                }
+                window
+                    .input_region
+                    .apply(window.mapping, &compositor, &window.surface, &qh);
             }
             window.set_visible(visible, &connection, &qh);
             if visible {
@@ -330,6 +341,7 @@ fn dispatch_until(
             && !fds[1].revents().is_empty()
         {
             control.drain()?;
+            window.input_region.update(control.take_input_region());
         }
         let readable = !fds[0].revents().is_empty();
         drop(fds);

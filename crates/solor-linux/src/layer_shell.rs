@@ -2,8 +2,11 @@
 use solor::{Edges, Pixels};
 
 mod handle;
+mod input_region;
 pub(crate) use handle::Binding;
 pub use handle::LayerSurfaceHandle;
+pub use input_region::InputRect;
+pub(crate) use input_region::InputRegion;
 
 pub use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::Layer,

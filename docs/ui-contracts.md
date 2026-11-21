@@ -145,6 +145,25 @@ space and suspends frame requests. Showing restores the placement and renders
 the mounted view after the compositor configures it. Use `close()?` to end
 the run even while the surface is hidden.
 
+Use the same handle to set the input region before showing the panel or while
+it is visible. Candidate lists with a separate picker can provide both bounds
+in surface-local logical pixels. The compositor passes pointer and touch input
+outside those rectangles to the surface underneath.
+
+```rust
+use solor::px;
+use solor_platform::layer_shell::InputRect;
+
+handle.set_input_region(Some(&[
+    InputRect::new(px(8.0), px(4.0), px(240.0), px(32.0)),
+    InputRect::new(px(8.0), px(40.0), px(144.0), px(24.0)),
+]))?;
+```
+
+An empty slice makes the whole panel click-through. Passing `None` restores
+the default full-surface region. Region changes on an idle panel take effect
+without requesting a redraw. They are independent of the keyboard focus policy.
+
 Pointer positions and scroll distances arrive in logical pixels. The Linux
 adapter currently delivers mouse buttons, motion, cancellation and two-axis
 scroll input. Key presses and releases use the seat’s XKB layout. Key and

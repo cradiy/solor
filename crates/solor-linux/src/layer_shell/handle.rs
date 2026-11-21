@@ -2,10 +2,12 @@ use std::{
     io,
     os::fd::OwnedFd,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU8, Ordering},
     },
 };
+
+use super::{InputRect, InputRegion};
 
 use rustix::{
     event::{EventfdFlags, eventfd},
@@ -21,6 +23,7 @@ struct Shared {
     wake: OwnedFd,
     claimed: AtomicBool,
     desired: AtomicU8,
+    pending_region: Mutex<Option<InputRegion>>,
 }
 
 const HIDDEN: u8 = 0;
@@ -34,12 +37,33 @@ impl LayerSurfaceHandle {
             wake: eventfd(0, EventfdFlags::NONBLOCK | EventfdFlags::CLOEXEC)?,
             claimed: AtomicBool::new(false),
             desired: AtomicU8::new(u8::from(visible)),
+            pending_region: Mutex::default(),
         })))
     }
 
     /// Requests the latest visibility. A hidden surface keeps its mounted component and signals.
     pub fn set_visible(&self, visible: bool) -> io::Result<()> {
         self.request(u8::from(visible))
+    }
+
+    /// Sets the surface-local pointer and touch input region. Use `None` for the whole surface
+    /// or `Some(&[])` to pass all input through. Keyboard focus is controlled separately.
+    /// Nonempty rectangles round outward to whole logical pixels. Invalid coordinates or
+    /// extents return an error and preserve the previous request.
+    pub fn set_input_region(&self, rects: Option<&[InputRect]>) -> io::Result<()> {
+        let region = InputRegion::from_rects(rects)?;
+        if self.0.desired.load(Ordering::Acquire) == CLOSED {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "layer surface closed",
+            ));
+        }
+        *self
+            .0
+            .pending_region
+            .lock()
+            .unwrap_or_else(|err| err.into_inner()) = Some(region);
+        self.wake()
     }
 
     /// Requests termination, including while hidden. Closing the surface is final.
@@ -65,6 +89,10 @@ impl LayerSurfaceHandle {
             Ok(old) if old == desired => return Ok(()),
             _ => {}
         }
+        self.wake()
+    }
+
+    fn wake(&self) -> io::Result<()> {
         match retry_on_intr(|| rustix::io::write(&self.0.wake, &1_u64.to_ne_bytes())) {
             Ok(_) | Err(Errno::AGAIN) => Ok(()),
             Err(error) => Err(error.into()),
@@ -91,6 +119,14 @@ impl Binding<'_> {
             VISIBLE => Some(true),
             _ => None,
         }
+    }
+
+    pub(crate) fn take_input_region(&self) -> Option<InputRegion> {
+        self.0
+            .pending_region
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .take()
     }
 
     pub(crate) fn fd(&self) -> &OwnedFd {
