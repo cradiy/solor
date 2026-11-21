@@ -637,6 +637,13 @@ navigation, resizes and data changes. A visible list that fits reports zero
 scrollable distance and zero percent. Before layout, after unmount, and for a
 hidden or zero-sized viewport, the handle returns `None`.
 
+`position.visible_range()` returns the zero-based row indices intersecting the
+list's own viewport. For example, `4..9` includes rows 4 through 8. A partially
+visible row counts, while a row touching only the viewport edge is excluded.
+The range is `0..0` for an empty list. Use its start index to decide when to
+load earlier messages. The position signal also publishes range changes caused
+by remeasuring rows at the same scroll offset.
+
 For a progress indicator, create the handle and its position signal together.
 Reading the signal in a paint closure subscribes that element to changes.
 

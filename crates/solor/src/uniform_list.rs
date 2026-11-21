@@ -388,6 +388,8 @@ impl Window {
         if count == 0 || !active {
             if let Some(handle) = handle {
                 handle.stage(active.then_some(ListScrollPosition {
+                    first_visible_index: 0,
+                    visible_count: 0,
                     offset_px: offset,
                     max_offset_px: limit,
                     viewport_height: size.height,
@@ -415,10 +417,14 @@ impl Window {
         let first = row_at(offset);
         let bottom = offset + viewport;
         let last = row_at(bottom);
-        let end = last.saturating_add(usize::from(top(last) < bottom));
+        let end = last
+            .saturating_add(usize::from(top(last) < bottom))
+            .min(count);
         let range = first.saturating_sub(1)..end.saturating_add(1).min(count);
         if let Some(handle) = handle {
             handle.stage(Some(ListScrollPosition {
+                first_visible_index: first,
+                visible_count: end - first,
                 offset_px: offset,
                 max_offset_px: limit,
                 viewport_height: size.height,

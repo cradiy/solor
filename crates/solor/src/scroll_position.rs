@@ -69,6 +69,10 @@ impl From<ListScrollPosition> for ScrollPosition {
 /// Vertical position and extent of a laid-out scrollable viewport.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ListScrollPosition {
+    /// Index of the first row intersecting the list viewport, or zero for an empty list.
+    pub first_visible_index: usize,
+    /// Number of rows intersecting the list viewport, including partially visible rows.
+    pub visible_count: usize,
     /// Distance from the top in logical pixels.
     pub offset_px: f64,
     /// Maximum scroll distance in logical pixels, excluding the viewport height.
@@ -80,6 +84,11 @@ pub struct ListScrollPosition {
 }
 
 impl ListScrollPosition {
+    /// Half-open range of visible row indices. Excludes rows mounted only for overscan.
+    pub fn visible_range(self) -> std::ops::Range<usize> {
+        self.first_visible_index..self.first_visible_index.saturating_add(self.visible_count)
+    }
+
     /// Percentage of scrollable travel, from 0 to 100. Content that fits returns 0.
     pub fn percent(self) -> f64 {
         scroll_percent(self.offset_px, self.max_offset_px)

@@ -361,6 +361,7 @@ fn percentage_and_pixel_positions_round_trip_through_layout_and_wheel_input() ->
     assert_eq!(initial.max_offset_px, 49_999_900.0);
     assert_eq!(initial.offset_px, initial.max_offset_px * 0.75);
     assert_eq!(initial.percent(), 75.0);
+    assert_eq!(initial.visible_range(), 749_998..750_001);
     assert!(!initial.is_estimated);
     handle.scroll_to_offset_px(40_000_000.25)?;
     assert!(handle.scroll_to_percent(f64::NAN).is_err());
@@ -368,6 +369,7 @@ fn percentage_and_pixel_positions_round_trip_through_layout_and_wheel_input() ->
     assert_eq!(handle.position(), Some(initial));
     submit(&mut ui, view, 100.0)?;
     assert_eq!(handle.position().unwrap().offset_px, 40_000_000.25);
+    assert_eq!(handle.position().unwrap().visible_range(), 800_000..800_003);
     let visible = ui.children(view, ui.root(view)?)?.nth(1).unwrap();
     assert_eq!(ui.geometry(view, visible).unwrap().origin.y, px(-0.25));
     ui.dispatch_pointer(
@@ -390,11 +392,38 @@ fn percentage_and_pixel_positions_round_trip_through_layout_and_wheel_input() ->
     handle.scroll_to_offset_px(px(-4.0))?;
     submit(&mut ui, view, 200.0)?;
     assert_eq!(handle.position().unwrap().percent(), 0.0);
+    assert_eq!(handle.position().unwrap().visible_range(), 0..4);
     submit(&mut ui, view, 0.0)?;
     assert!(handle.position().is_none());
     assert!(ui.context().read(position)?.is_none());
     ui.unmount(view)?;
     assert!(handle.position().is_none());
+    Ok(())
+}
+
+#[test]
+fn remeasuring_rows_publishes_a_new_visible_range_at_the_same_scroll_offset() -> Result<()> {
+    let mut ui = Ui::new();
+    let rows = ui.context().signal_vec([px(20.0); 3]);
+    let (list, position) = ListScrollHandle::with_position_signal(&mut ui.context());
+    let view = ui.mount(component(|_| {
+        variable_list(rows, px(20.0), |height| div().h(height)).scroll_handle(&list)
+    }))?;
+    submit(&mut ui, view, 40.0)?;
+    let before = ui.context().read(position)?.unwrap();
+    assert_eq!(before.visible_range(), 0..2);
+    assert_eq!(ui.children(view, ui.root(view)?)?.len(), 3);
+
+    rows.set(1, px(19.75), &mut ui.context())?;
+    rows.set(2, px(20.25), &mut ui.context())?;
+    submit(&mut ui, view, 40.0)?;
+    let after = ui.context().read(position)?.unwrap();
+    assert_eq!(after.visible_range(), 0..3);
+    assert_eq!(after.offset_px, before.offset_px);
+    assert_eq!(after.max_offset_px, before.max_offset_px);
+    assert_eq!(list.position(), Some(after));
+    submit(&mut ui, view, 120.0)?;
+    assert_eq!(list.position().unwrap().visible_range(), 0..3);
     Ok(())
 }
 
@@ -413,6 +442,7 @@ fn variable_progress_tracks_measurements_and_handles_empty_content() -> Result<(
     handle.scroll_to_percent(50.0)?;
     submit(&mut ui, view, 100.0)?;
     let empty = handle.position().unwrap();
+    assert_eq!(empty.visible_range(), 0..0);
     assert_eq!(
         (empty.offset_px, empty.max_offset_px, empty.percent()),
         (0.0, 0.0, 0.0)
@@ -431,6 +461,7 @@ fn variable_progress_tracks_measurements_and_handles_empty_content() -> Result<(
     submit(&mut ui, view, 100.0)?;
     let end = handle.position().unwrap();
     assert!(end.is_estimated);
+    assert_eq!(end.visible_range(), 999_997..1_000_000);
     assert_eq!(end.offset_px, end.max_offset_px);
     let last = ui.children(view, ui.root(view)?)?.last().unwrap();
     let g = ui.geometry(view, last).unwrap();
