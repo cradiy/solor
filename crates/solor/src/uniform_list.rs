@@ -1,6 +1,8 @@
 //! Retained rows in a bounded vertical viewport.
+mod measured;
+use measured::{HeightIndex, MeasuredWindow};
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     hash::Hash,
     ops::Range,
@@ -98,6 +100,7 @@ impl<K: Clone + 'static> ListItems<K> {
 }
 
 struct RowLayout {
+    measured: bool,
     height: Pixels,
     first_y: Pixels,
 }
@@ -128,19 +131,28 @@ impl LayoutNode for RowLayout {
         cx: &mut LayoutContext<'_, '_>,
         size: Size,
     ) -> layout::Result<LayoutOutput> {
-        let row = Size {
-            width: size.width,
-            height: self.height,
-        };
+        let mut y = f64::from(self.first_y);
         for i in 0..cx.child_count() {
-            cx.layout_child(i, row)?;
+            let height = if self.measured {
+                cx.measure_child(i, Query::Exact(size.width))?.size.height
+            } else {
+                self.height
+            };
+            cx.layout_child(
+                i,
+                Size {
+                    width: size.width,
+                    height,
+                },
+            )?;
             cx.place_child(
                 i,
                 Origin {
                     x: px(0.0),
-                    y: self.first_y + self.height * i as f32,
+                    y: px(y as f32),
                 },
             )?;
+            y += f64::from(height);
         }
         Ok(LayoutOutput {
             content: size,
@@ -163,7 +175,8 @@ where
     K: Clone + Eq + Hash + 'static,
     E: IntoElement + 'static,
 {
-    UniformList {
+    VirtualList {
+        measured: false,
         items: items.into(),
         height,
         row,
@@ -172,14 +185,38 @@ where
     .overflow_hidden()
 }
 
-struct UniformList<K, F> {
+/// Creates a vertical virtual list whose rows measure their own positive heights at the
+/// available width. Supply a typical height for locating rows outside the mounted window.
+/// Reflow preserves the top row and its within-row distance, subject to the scroll bounds.
+/// Keyed edits retain the top visible key when it is still present.
+pub fn variable_list<K, E>(
+    items: impl Into<ListItems<K>>,
+    estimated_height: Pixels,
+    row: impl Fn(K) -> E + 'static,
+) -> impl IntoElement + Styled
+where
+    K: Clone + Eq + Hash + 'static,
+    E: IntoElement + 'static,
+{
+    VirtualList {
+        items: items.into(),
+        height: estimated_height,
+        row,
+        measured: true,
+        style: StyleRefinement::default(),
+    }
+    .overflow_hidden()
+}
+
+struct VirtualList<K, F> {
+    measured: bool,
     items: ListItems<K>,
     height: Pixels,
     row: F,
     style: StyleRefinement,
 }
 
-impl<K, F> Styled for UniformList<K, F> {
+impl<K, F> Styled for VirtualList<K, F> {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style
     }
@@ -193,6 +230,7 @@ pub(super) struct UpdateList {
 }
 
 struct Viewport<K> {
+    measured: Option<MeasuredWindow<K>>,
     items: Rc<ListItems<K>>,
     height: Pixels,
     offset: Signal<f64>,
@@ -201,7 +239,7 @@ struct Viewport<K> {
     rows: MountedRows<K>,
 }
 
-impl<K, F, E> IntoElement for UniformList<K, F>
+impl<K, F, E> IntoElement for VirtualList<K, F>
 where
     K: Clone + Eq + Hash + 'static,
     F: Fn(K) -> E + 'static,
@@ -213,16 +251,22 @@ where
             let offset = cx.signal(0_f64);
             let items = Rc::new(self.items);
             let scroll_items = items.clone();
+            let index = self
+                .measured
+                .then(|| Rc::new(RefCell::new(HeightIndex::default())));
+            let scroll_index = index.clone();
             let mut node = element(RowLayout {
+                measured: self.measured,
                 height,
                 first_y: px(0.0),
             })
             .on_scroll(move |event, cx| {
-                let limit = max_offset(
-                    scroll_items.len(cx.state)?,
-                    height,
-                    event.pointer.content_size().height,
+                let count = scroll_items.len(cx.state)?;
+                let extent = scroll_index.as_ref().map_or_else(
+                    || count as f64 * f64::from(height),
+                    |index| index.borrow().top(count, f64::from(height)),
                 );
+                let limit = (extent - f64::from(event.pointer.content_size().height)).max(0.0);
                 let previous = cx.read(offset)?.min(limit);
                 let delta = f64::from(event.delta.y);
                 let used = delta.clamp(-previous, limit - previous);
@@ -251,6 +295,12 @@ where
                 Ok(())
             }));
             let mut viewport = Viewport {
+                measured: index.map(|index| MeasuredWindow {
+                    index,
+                    keys: Vec::new(),
+                    count: 0,
+                    height: px(0.0),
+                }),
                 items,
                 height,
                 offset,
@@ -270,8 +320,36 @@ where
     }
 }
 
-fn max_offset(count: usize, height: Pixels, viewport: Pixels) -> f64 {
-    (count as f64 * f64::from(height) - f64::from(viewport)).max(0.0)
+struct Window {
+    offset: f64,
+    range: Range<usize>,
+    first_y: Pixels,
+}
+
+impl Window {
+    fn new(
+        offset: f64,
+        range: Range<usize>,
+        top: impl FnOnce(usize) -> f64,
+        size: Size,
+        visible: bool,
+    ) -> Self {
+        let range = if visible && size.width.get() > 0.0 && size.height.get() > 0.0 {
+            range
+        } else {
+            0..0
+        };
+        let first_y = if range.is_empty() {
+            px(0.0)
+        } else {
+            px((top(range.start) - offset) as f32)
+        };
+        Self {
+            offset,
+            range,
+            first_y,
+        }
+    }
 }
 
 impl<K: Clone + Eq + Hash + 'static> Viewport<K> {
@@ -293,34 +371,49 @@ impl<K: Clone + Eq + Hash + 'static> Viewport<K> {
                 .size,
         );
         let count = self.items.len(cx.state)?;
-        let offset = cx
-            .state
-            .read(self.offset)?
-            .min(max_offset(count, self.height, size.height));
-        cx.state.set(self.offset, offset)?;
-        let h = f64::from(self.height);
-        let range =
-            if size.height.get() > 0.0 && size.width.get() > 0.0 && instance.bodies[&id].visible {
-                let first = (offset / h).floor() as usize;
-                let end = ((offset + f64::from(size.height)) / h).ceil() as usize;
-                first.saturating_sub(1).min(count)..end.saturating_add(1).min(count)
-            } else {
-                0..0
-            };
-        // Subtract in logical document coordinates before converting to local layout pixels.
-        let first_y = if range.is_empty() {
-            px(0.0)
+        let distance = *cx.state.read(self.offset)?;
+        let (window, index) = if self.measured.is_some() {
+            let (window, index) = self.measured_window(instance, id, size, cx, count, distance)?;
+            (window, Some(index))
         } else {
-            px((range.start as f64 * h - offset) as f32)
+            let h = f64::from(self.height);
+            let offset = distance.min((count as f64 * h - f64::from(size.height)).max(0.0));
+            let first = (offset / h).floor() as usize;
+            let end = ((offset + f64::from(size.height)) / h).ceil() as usize;
+            (
+                Window::new(
+                    offset,
+                    first.saturating_sub(1).min(count)..end.saturating_add(1).min(count),
+                    |i| i as f64 * h,
+                    size,
+                    instance.bodies[&id].visible,
+                ),
+                None,
+            )
         };
+        let Window {
+            offset,
+            range,
+            first_y,
+        } = window;
+        let refresh_measurements = self.measured.is_some() && self.keys_changed.get();
         let moved = body.content.first_y != first_y;
         if range != self.range || self.keys_changed.get() {
             let keys = self.items.keys(cx.state, range.clone())?;
-            self.rows.reconcile(instance, path, cx, keys, build)?;
+            self.rows.reconcile(instance, path, cx, &keys, build)?;
+            if let Some(measured) = &mut self.measured {
+                measured.keys = keys;
+            }
             self.keys_changed.set(false);
             self.range = range;
         }
-        if moved {
+        if let (Some(measured), Some(index)) = (&mut self.measured, index) {
+            *measured.index.borrow_mut() = index;
+            measured.count = count;
+            measured.height = size.height;
+        }
+        cx.state.set(self.offset, offset)?;
+        if moved || refresh_measurements {
             instance
                 .scene
                 .edit_layout::<StyledBody<RowLayout>>(id, |body| body.content.first_y = first_y)?;
@@ -349,7 +442,7 @@ impl<K: Eq + Hash + Clone> MountedRows<K> {
         instance: &mut Instance,
         path: &Path,
         cx: &mut Attachment<'_>,
-        keys: Vec<K>,
+        keys: &[K],
         build: &impl Fn(K) -> E,
     ) -> Result<()> {
         let wanted: HashSet<_> = keys.iter().collect();
@@ -362,7 +455,7 @@ impl<K: Eq + Hash + Clone> MountedRows<K> {
         self.next
             .checked_add(keys.len())
             .context("list row identity exhausted")?;
-        for key in &keys {
+        for key in keys {
             if !self.slots.contains_key(key) {
                 child[depth] = self.next;
                 self.next += 1;

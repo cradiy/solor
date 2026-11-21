@@ -454,3 +454,28 @@ one-row buffer on either side. Reordering those keys preserves their local state
 Leaving the buffer retires the row and its subscriptions. Keep selection and edits that
 outlive the row in application state. Signal changes to the key sequence preserve the
 logical scroll distance, clamped to the new extent.
+
+## Variable-height lists
+
+Use `variable_list(items, estimated_height, build_row)` for rows whose height
+depends on their content. Each mounted row is measured at the viewport's
+content width and must have a positive preferred height. For example, a text
+row can grow when the window narrows or the text changes.
+
+```rust
+variable_list(messages, px(48.0), move |id| {
+    text(message_body(id)).line_height(px(20.0)).py(px(4.0))
+})
+.flex_1()
+```
+
+The item sources and keyed row lifetime match `uniform_list`. The estimate
+locates distant rows without building them. Choose a typical row height to
+reduce the number of mounts needed to fill the viewport. The list retains
+measurements for the mounted window. A distant jump can therefore use an
+approximate pixel distance until the destination is measured.
+
+On reflow, the list keeps the top row and its within-row offset where the new
+bounds allow. When already at the bottom, remeasurement keeps the last row
+aligned with the viewport. Editing a vector of keys preserves the top visible
+key when it survives. Finding a moved key may scan the vector once per edit.

@@ -29,7 +29,7 @@ mod styled_body;
 pub mod text;
 pub mod tree;
 mod uniform_list;
-pub use uniform_list::{ListItems, uniform_list};
+pub use uniform_list::{ListItems, uniform_list, variable_list};
 
 pub use crate::layout::Edges;
 pub use crate::{state::Signal, tree::NodeId};

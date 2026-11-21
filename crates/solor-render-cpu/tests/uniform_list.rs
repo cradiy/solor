@@ -3,13 +3,13 @@ use std::{cell::Cell, rc::Rc, time::Instant};
 
 use anyhow::Result;
 use solor::{
-    Styled, Ui, ViewId, component, div,
+    IntoElement, Styled, Ui, ViewId, component, div,
     layout::{Origin, Size},
     platform::{WindowEvent, WindowHandler},
     pointer::{PointerButton, PointerId, PointerInput, PointerKind, PointerSample, ScrollDelta},
     px,
     raster::RasterScale,
-    rgb, text, uniform_list,
+    rgb, text, uniform_list, variable_list,
 };
 use solor_render_cpu::CpuWindow;
 
@@ -154,6 +154,16 @@ fn a_failed_row_mount_releases_partial_rows_and_can_be_retried() -> Result<()> {
 #[test]
 #[ignore = "release-profile offscreen CPU frame measurement"]
 fn compare_uniform_list_scroll_frames() -> Result<()> {
+    scroll_frames(false)
+}
+
+#[test]
+#[ignore = "release-profile offscreen CPU frame measurement"]
+fn compare_variable_list_scroll_frames() -> Result<()> {
+    scroll_frames(true)
+}
+
+fn scroll_frames(variable: bool) -> Result<()> {
     let size = Size {
         width: px(320.0),
         height: px(480.0),
@@ -163,7 +173,7 @@ fn compare_uniform_list_scroll_frames() -> Result<()> {
         let mut window = CpuWindow::mount(
             Ui::with_font(font.to_vec())?,
             component(move |_| {
-                uniform_list(count, px(24.0), |key: usize| {
+                let row = |key: usize| {
                     div()
                         .flex_row()
                         .justify_between()
@@ -174,7 +184,15 @@ fn compare_uniform_list_scroll_frames() -> Result<()> {
                         }))
                         .child(text(format!("Item {key:07}")))
                         .child(text("24.00"))
-                })
+                };
+                if variable {
+                    variable_list(count, px(32.0), move |key| {
+                        row(key).py(px(if key.is_multiple_of(2) { 2.0 } else { 12.0 }))
+                    })
+                    .into_element()
+                } else {
+                    uniform_list(count, px(24.0), row).into_element()
+                }
             }),
         )?;
         let frame = |window: &mut CpuWindow| -> Result<()> {
