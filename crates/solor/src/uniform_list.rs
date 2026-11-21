@@ -1,8 +1,9 @@
 //! Retained rows in a bounded vertical viewport.
 mod measured;
 mod scroll;
+use crate::ListScrollPosition;
 use measured::{HeightIndex, MeasuredWindow};
-pub use scroll::{ListScrollHandle, ListScrollPosition, ScrollAlignment};
+pub use scroll::{ListScrollHandle, ScrollAlignment};
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},

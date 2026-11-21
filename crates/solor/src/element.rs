@@ -664,6 +664,7 @@ impl FrameHandler {
 }
 
 pub(super) struct Installation {
+    pub scroll_handle: Option<crate::ScrollHandle>,
     pub on_frame: Option<FrameHandler>,
     pub node: MountedNode,
     pub children: Vec<Child>,
@@ -764,6 +765,7 @@ impl AnyElement {
                 } => scene.mount_entry(parent, Some(index), body, item, item_sizing)?,
             };
             Ok(Installation {
+                scroll_handle: node.scroll_handle,
                 on_frame: node.on_frame,
                 node: MountedNode::new(
                     id,
@@ -830,6 +832,7 @@ pub(super) enum Child {
 
 /// A primitive and the children, handlers and styles to attach with it.
 pub struct Node<E> {
+    scroll_handle: Option<crate::ScrollHandle>,
     record: Record,
     on_frame: Option<FrameHandler>,
     paint_mode: RefreshPolicy,
@@ -843,6 +846,7 @@ pub struct Node<E> {
 /// Wraps a custom layout body in the common element builder.
 pub fn element<E: Element>(body: E) -> Node<E> {
     Node {
+        scroll_handle: None,
         record: Box::new(record_content::<E>),
         on_frame: None,
         paint_mode: RefreshMode::OnDemand.into(),
@@ -1011,6 +1015,13 @@ impl IntoElement for Label {
 pub type Div = Node<FlexLayout>;
 
 impl Div {
+    /// Tracks this container's overflow and connects it to a scrollbar.
+    /// Enable scrolling with an overflow style such as `.overflow_y_scroll()`.
+    pub fn track_scroll(mut self, handle: &crate::ScrollHandle) -> Self {
+        self.scroll_handle = Some(handle.clone());
+        self
+    }
+
     /// Sets the drawing callback for this container's content box.
     /// It runs after the background and before the children. Signal reads track repaint.
     pub fn paint(mut self, draw: impl Fn(&mut PaintContext) -> Result<()> + 'static) -> Self {

@@ -1,5 +1,9 @@
 //! One-shot positioning for retained list viewports.
-use crate::{Context, Signal, state::Runtime};
+use crate::{
+    Context, ListScrollPosition, Signal,
+    scroll_position::{PositionObservers, PositionSignal},
+    state::Runtime,
+};
 use anyhow::{Result, ensure};
 use std::{
     cell::{Cell, RefCell},
@@ -17,30 +21,6 @@ pub enum ScrollAlignment {
     Bottom,
     /// Move the minimum distance to show the row, or fill the viewport with an oversized row.
     Nearest,
-}
-
-/// Vertical position in the last successfully laid-out list viewport.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ListScrollPosition {
-    /// Distance from the top in logical pixels.
-    pub offset_px: f64,
-    /// Maximum scroll distance in logical pixels, excluding the viewport height.
-    pub max_offset_px: f64,
-    /// Height of the visible content area in logical pixels.
-    pub viewport_height: crate::Pixels,
-    /// Whether the document extent includes any unmeasured row heights.
-    pub is_estimated: bool,
-}
-
-impl ListScrollPosition {
-    /// Percentage of scrollable travel, from 0 to 100. A list that fits returns 0.
-    pub fn percent(self) -> f64 {
-        if self.max_offset_px > 0.0 {
-            self.offset_px / self.max_offset_px * 100.0
-        } else {
-            0.0
-        }
-    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -106,15 +86,13 @@ impl Request {
     }
 }
 
-type PositionSignal = Signal<Option<ListScrollPosition>>;
-
 #[derive(Default)]
 struct State {
     pending: Cell<Option<Request>>,
     staged: Cell<Option<ListScrollPosition>>,
     published: Cell<Option<ListScrollPosition>>,
     position_signal: Option<Signal<Option<ListScrollPosition>>>,
-    observers: RefCell<Vec<Weak<PositionSignal>>>,
+    observers: PositionObservers,
     offset: Cell<Option<Signal<f64>>>,
     viewport: RefCell<Weak<Cell<bool>>>,
 }
@@ -186,11 +164,7 @@ impl ListScrollHandle {
     }
 
     pub(crate) fn observe(&self, cx: &mut Context<'_>) -> Rc<PositionSignal> {
-        let signal = Rc::new(cx.signal(self.position()));
-        let mut observers = self.0.observers.borrow_mut();
-        observers.retain(|observer| observer.strong_count() > 0);
-        observers.push(Rc::downgrade(&signal));
-        signal
+        self.0.observers.observe(cx, self.position())
     }
 
     pub(crate) fn scroll_by(&self, delta: f64, cx: &mut Context<'_>) -> Result<f64> {
@@ -289,11 +263,7 @@ impl ListScrollHandle {
             // The scope owning the signal may have unmounted while the list was still live.
             let _ = state.publish_layout_value(signal, position);
         }
-        self.0.observers.borrow_mut().retain(|observer| {
-            observer
-                .upgrade()
-                .is_some_and(|signal| state.publish_layout_value(*signal, position).is_ok())
-        });
+        self.0.observers.publish(state, position);
     }
 
     pub(super) fn pending(&self) -> Option<Request> {

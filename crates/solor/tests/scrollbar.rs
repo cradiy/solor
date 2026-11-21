@@ -313,3 +313,183 @@ fn custom_painter_uses_application_visibility_and_the_interactive_thumb_interval
     assert_eq!(dot(&ui)?, (px(54.0), px(8.0)));
     Ok(())
 }
+
+#[test]
+fn overflow_container_and_bar_share_one_offset_and_presented_hits() -> Result<()> {
+    use solor::{ScrollHandle, style::Overflow};
+    let mut ui = Ui::new();
+    let handle = ScrollHandle::new();
+    let tracked = handle.clone();
+    let extra = ui.context().signal(false);
+    let selected = ui.context().signal(None);
+    let view = ui.mount(component(move |_| {
+        let row = move |id| {
+            div()
+                .min_w(px(180.0))
+                .min_h(px(50.0))
+                .on_click(move |cx| cx.set(selected, Some(id)))
+        };
+        div()
+            .flex_row()
+            .items_stretch()
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_x(Overflow::Auto)
+                    .overflow_y_scroll()
+                    .track_scroll(&tracked)
+                    .children((0..4).map(row))
+                    .child_when(extra, move || row(4)),
+            )
+            .child(
+                scrollbar(&tracked)
+                    .w(px(12.0))
+                    .p(px(0.0))
+                    .paint_with(|cx, bar| {
+                        cx.fill_rect(
+                            Origin {
+                                x: px(0.0),
+                                y: bar.thumb_top,
+                            },
+                            Size {
+                                width: cx.size.width,
+                                height: bar.thumb_length,
+                            },
+                            rgb(0x102030),
+                        )
+                    }),
+            )
+    }))?;
+    submit(&mut ui, view, 100.0)?;
+    let container = ui.children(view, ui.root(view)?)?.next().unwrap();
+    let send_wheel = |ui: &mut Ui, x, dx, dy| -> Result<()> {
+        ui.dispatch_pointer(
+            view,
+            PointerInput::Scroll(
+                point(x, 16.0),
+                ScrollDelta {
+                    x: px(dx),
+                    y: px(dy),
+                },
+            ),
+        )?;
+        Ok(())
+    };
+    send_wheel(&mut ui, 115.0, 0.0, 10.5)?;
+    send_wheel(&mut ui, 10.0, 3.5, 5.25)?;
+    send_wheel(&mut ui, 115.0, 0.0, 2.25)?;
+    submit(&mut ui, view, 100.0)?;
+    let metrics = handle.metrics().unwrap();
+    assert_eq!(
+        metrics.offset,
+        Origin {
+            x: px(3.5),
+            y: px(18.0)
+        }
+    );
+    assert_eq!(ui.scroll_metrics(view, container), Some(metrics));
+    let thumb = |ui: &Ui| -> Result<_> {
+        Ok(ui
+            .record_frame(view)?
+            .draws()
+            .iter()
+            .find_map(|d| match d {
+                Draw::Fill {
+                    origin, size, fill, ..
+                } if *fill == rgb(0x102030).into() => Some((origin.y, size.height)),
+                _ => None,
+            })
+            .unwrap())
+    };
+    assert_eq!(thumb(&ui)?, (px(9.0), px(50.0)));
+    let grab = point(115.0, 12.0);
+    ui.dispatch_pointer(view, PointerInput::Down(grab, PointerButton::Primary))?;
+    let end = point(70.0, 160.0);
+    ui.dispatch_pointer(view, PointerInput::Move(end))?;
+    ui.dispatch_pointer(view, PointerInput::Up(end, PointerButton::Primary))?;
+    ui.flush()?;
+    ui.layout(
+        view,
+        Size {
+            width: px(120.0),
+            height: px(100.0),
+        },
+    )?;
+    let frame = ui.record_frame(view)?;
+    let click_row = |ui: &mut Ui| -> Result<()> {
+        for input in [
+            PointerInput::Down(point(4.0, 2.0), PointerButton::Primary),
+            PointerInput::Up(point(4.0, 2.0), PointerButton::Primary),
+        ] {
+            ui.dispatch_pointer(view, input)?;
+        }
+        Ok(())
+    };
+    click_row(&mut ui)?;
+    assert_eq!(*ui.context().read(selected)?, Some(0));
+    ui.accept_pointer_frame(frame.into_pointer_frame())?;
+    click_row(&mut ui)?;
+    assert_eq!(*ui.context().read(selected)?, Some(2));
+    assert_eq!(
+        handle.metrics().unwrap().offset,
+        Origin {
+            x: px(3.5),
+            y: px(100.0)
+        }
+    );
+    ui.context().set(extra, true)?;
+    submit(&mut ui, view, 100.0)?;
+    assert_eq!(thumb(&ui)?, (px(40.0), px(40.0)));
+    assert!(ui.next_redraw(view).is_none());
+    send_wheel(&mut ui, 115.0, 0.0, 10.0)?;
+    let target = Origin {
+        x: px(2.0),
+        y: px(25.0),
+    };
+    assert!(ui.set_scroll_offset(view, container, target)?);
+    submit(&mut ui, view, 100.0)?;
+    assert_eq!(handle.metrics().unwrap().offset, target);
+    assert_eq!(thumb(&ui)?, (px(10.0), px(40.0)));
+    Ok(())
+}
+
+#[test]
+fn container_handle_follows_conditional_mounts_and_rejects_two_live_owners() -> Result<()> {
+    use solor::ScrollHandle;
+    let mut ui = Ui::new();
+    let handle = ScrollHandle::new();
+    let visible = ui.context().signal(true);
+    let handle_for_bar = handle.clone();
+    let tracked = handle.clone();
+    let view = ui.mount(component(move |_| {
+        div()
+            .flex_row()
+            .items_stretch()
+            .child_when(visible, move || {
+                div()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .track_scroll(&tracked)
+                    .child(div().min_h(px(200.0)))
+            })
+            .child(scrollbar(&handle_for_bar))
+    }))?;
+    submit(&mut ui, view, 60.0)?;
+    assert_eq!(handle.metrics().unwrap().max_offset.height, px(140.0));
+    let duplicate = handle.clone();
+    assert!(
+        ui.mount(component(move |_| div().track_scroll(&duplicate)))
+            .is_err()
+    );
+    assert!(handle.metrics().is_some());
+    ui.context().set(visible, false)?;
+    submit(&mut ui, view, 60.0)?;
+    assert!(handle.metrics().is_none());
+    assert!(ui.record_frame(view)?.draws().is_empty());
+    ui.context().set(visible, true)?;
+    submit(&mut ui, view, 80.0)?;
+    assert_eq!(handle.metrics().unwrap().max_offset.height, px(120.0));
+    ui.unmount(view)?;
+    assert!(handle.metrics().is_none());
+    Ok(())
+}

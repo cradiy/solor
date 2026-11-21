@@ -21,6 +21,7 @@ mod pixels;
 pub mod platform;
 pub mod pointer;
 pub mod raster;
+mod scroll_position;
 mod scrollbar;
 pub use scrollbar::{Scrollbar, ScrollbarPaintState, ScrollbarThumbStyle, scrollbar};
 mod shared_string;
@@ -32,8 +33,7 @@ pub mod text;
 pub mod tree;
 mod uniform_list;
 pub use uniform_list::{
-    ListItems, ListScrollHandle, ListScrollPosition, ScrollAlignment, VirtualList, uniform_list,
-    variable_list,
+    ListItems, ListScrollHandle, ScrollAlignment, VirtualList, uniform_list, variable_list,
 };
 
 pub use crate::layout::Edges;
@@ -51,7 +51,10 @@ use length::UnitResolver;
 pub use length::{AbsoluteLength, Length, percent, rem};
 pub use pixels::{Pixels, px};
 pub use platform::{ResizeEdge, WindowControl};
-pub use pointer::{ScrollMetrics, Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle};
+pub use pointer::{
+    ScrollHandle, ScrollMetrics, Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle,
+};
+pub use scroll_position::ListScrollPosition;
 pub use shared_string::SharedString;
 pub use style::{Style, StyleRefinement, Styled};
 
@@ -203,6 +206,7 @@ struct Instance {
     nodes: BTreeMap<Path, NodeId>,
     branches: BTreeMap<Path, Branch>,
     lists: BTreeMap<Path, uniform_list::UpdateList>,
+    tracked_scroll: HashMap<NodeId, pointer::TrackedScroll>,
 }
 
 struct Attachment<'a> {
@@ -344,6 +348,9 @@ impl Instance {
     }
 
     fn dispose(self, state: &mut Runtime<()>) -> Result<()> {
+        for tracked in self.tracked_scroll.values() {
+            tracked.detach(state);
+        }
         for handle in self.lists.values().filter_map(|list| list.scroll.as_ref()) {
             handle.detach(state);
         }
@@ -361,8 +368,13 @@ impl Instance {
         path: &[usize],
         watches: Vec<Watch>,
         children: Vec<Child>,
+        scroll_handle: Option<ScrollHandle>,
         cx: &mut Attachment<'_>,
     ) -> Result<()> {
+        if let Some(handle) = scroll_handle {
+            self.tracked_scroll
+                .insert(parent, pointer::TrackedScroll::attach(handle)?);
+        }
         if !watches.is_empty() {
             let target = cx.state.append(cx.scope, ())?;
             self.bodies
@@ -432,6 +444,7 @@ impl Instance {
         };
         let Installation {
             mut node,
+            scroll_handle,
             on_frame,
             children,
             watches,
@@ -455,7 +468,7 @@ impl Instance {
         }
         self.nodes.insert(path.to_vec(), id);
         self.invalidate_geometry();
-        self.finish_attachment(id, path, watches, children, cx)?;
+        self.finish_attachment(id, path, watches, children, scroll_handle, cx)?;
         Ok(())
     }
 
@@ -482,6 +495,9 @@ impl Instance {
             let node = self.nodes.remove(&key).expect("mounted node");
             let node = self.bodies.remove(&node).expect("mounted body");
             self.visible_nodes -= usize::from(node.visible);
+            if let Some(tracked) = self.tracked_scroll.remove(&node.id) {
+                tracked.detach(cx.state);
+            }
             self.pointer.retire(node.id);
             self.frame_handlers.remove(&node.id);
             self.unobserve_paint(node.id, cx.state);
@@ -620,6 +636,7 @@ impl Ui {
             scene,
             Installation {
                 node: mut root_node,
+                scroll_handle,
                 on_frame,
                 children,
                 watches,
@@ -647,6 +664,7 @@ impl Ui {
             nodes: BTreeMap::from([(Vec::new(), root)]),
             branches: BTreeMap::new(),
             lists: BTreeMap::new(),
+            tracked_scroll: HashMap::new(),
         };
         let mut cx = Attachment {
             scope,
@@ -657,7 +675,9 @@ impl Ui {
             visibility: &self.visibility,
             engine: &self.engine,
         };
-        if let Err(error) = instance.finish_attachment(root, &[], watches, children, &mut cx) {
+        if let Err(error) =
+            instance.finish_attachment(root, &[], watches, children, scroll_handle, &mut cx)
+        {
             self.state.get_mut().remove_subtree(scope)?;
             instance.dispose(self.state.get_mut())?;
             return Err(error);
@@ -825,7 +845,7 @@ impl Ui {
     /// Call flush first to apply queued structural changes.
     pub fn layout(&mut self, view: ViewId, size: layout::Size) -> Result<usize> {
         let mut total = 0;
-        loop {
+        let instance = loop {
             let instance = self
                 .instances
                 .get_mut(&view)
@@ -833,7 +853,7 @@ impl Ui {
             let (changed, layout_changed) = instance.layout_pass(size)?;
             total += changed;
             if instance.lists.is_empty() {
-                break;
+                break instance;
             }
             let mut cx = Attachment {
                 scope: view.0,
@@ -851,10 +871,13 @@ impl Ui {
                         handle.publish(cx.state);
                     }
                 }
-                break;
+                break instance;
             }
             // Newly mounted rows may declare bindings or contain another list.
             self.flush()?;
+        };
+        if !instance.tracked_scroll.is_empty() {
+            instance.update_tracked_scroll(self.state.get_mut())?;
         }
         Ok(total)
     }

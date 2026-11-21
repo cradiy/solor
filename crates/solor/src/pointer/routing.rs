@@ -233,7 +233,9 @@ impl Delivery<'_> {
                 .expect("accepted scroll hit");
             let parent = frame.scroll_parent(owner);
             if let Some(limit) = frame.scroll_limit(owner) {
-                delta = self.instance.scroll_children(owner, limit, delta)?;
+                delta = self
+                    .instance
+                    .scroll_children(owner, limit, delta, self.state)?;
             } else {
                 let pointer = self.event(owner, sample, None)?;
                 let node = self
@@ -401,6 +403,10 @@ impl Ui {
         let instance = self.instances.get(&view)?;
         if self.has_pending_bindings()
             || !instance.repaints.borrow().dirty.is_empty()
+            || instance
+                .tracked_scroll
+                .values()
+                .any(super::TrackedScroll::has_request)
             || instance.pointer.scroll_pending
             || instance.lists.values().any(|list| list.dirty.get())
         {

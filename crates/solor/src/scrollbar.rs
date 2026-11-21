@@ -1,11 +1,12 @@
-//! A retained vertical scrollbar for list viewports.
+//! A retained vertical scrollbar for scrollable viewports.
 use crate::{
     Context, Div, Fill, IntoElement, ListScrollHandle, ListScrollPosition, PaintContext, Pixels,
-    Render, StyleRefinement, Styled, div,
+    Render, ScrollHandle, StyleRefinement, Styled, div,
     layout::{Origin, Size},
     pointer::{PointerEvent, ScrollDelta},
     px, rgb, rgba,
 };
+use std::rc::Rc;
 
 /// Appearance and minimum target length of the draggable thumb.
 #[derive(Clone, Debug, PartialEq)]
@@ -40,7 +41,7 @@ impl Default for ScrollbarThumbStyle {
 /// Scroll position, pointer state and content-local geometry for custom scrollbar drawing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScrollbarPaintState {
-    /// Position and viewport extent from the list's last completed layout.
+    /// Vertical scroll position and viewport extent of the bound content.
     pub position: ListScrollPosition,
     /// Top of the draggable interval, relative to the track's content origin.
     pub thumb_top: Pixels,
@@ -54,9 +55,48 @@ pub struct ScrollbarPaintState {
 
 type Painter = Box<dyn Fn(&mut PaintContext<'_>, ScrollbarPaintState) -> anyhow::Result<()>>;
 
-/// A vertical list scrollbar. Use the shared style builders for its track.
+#[derive(Clone)]
+enum ScrollSource {
+    List(ListScrollHandle),
+    Container(ScrollHandle),
+}
+
+impl ScrollSource {
+    fn position(&self) -> Option<ListScrollPosition> {
+        match self {
+            Self::List(handle) => handle.position(),
+            Self::Container(handle) => handle.vertical_position(),
+        }
+    }
+
+    fn observe(&self, cx: &mut Context<'_>) -> Rc<crate::scroll_position::PositionSignal> {
+        match self {
+            Self::List(handle) => handle.observe(cx),
+            Self::Container(handle) => handle.observe(cx),
+        }
+    }
+
+    fn scroll_to_percent(&self, percent: f64) -> anyhow::Result<()> {
+        match self {
+            Self::List(handle) => handle.scroll_to_percent(percent),
+            Self::Container(handle) => {
+                handle.seek_percent(percent);
+                Ok(())
+            }
+        }
+    }
+
+    fn scroll_by(&self, delta: f64, cx: &mut Context<'_>) -> anyhow::Result<f64> {
+        match self {
+            Self::List(handle) => handle.scroll_by(delta, cx),
+            Self::Container(handle) => Ok(handle.scroll_by(delta)),
+        }
+    }
+}
+
+/// A vertical scrollbar. Use the shared style builders for its track.
 pub struct Scrollbar {
-    list: ListScrollHandle,
+    source: ScrollSource,
     track: Div,
     thumb: ScrollbarThumbStyle,
     auto_hide: bool,
@@ -64,20 +104,36 @@ pub struct Scrollbar {
     painter: Option<Painter>,
 }
 
-/// Creates a scrollbar for a list in the same UI. Place it beside the list in a
-/// stretched flex row. Its track reserves space even when the content fits.
-pub fn scrollbar(list: &ListScrollHandle) -> Scrollbar {
-    Scrollbar {
-        list: list.clone(),
-        track: div().w(px(12.0)).p(px(2.0)).flex_shrink(0.0),
-        thumb: ScrollbarThumbStyle::default(),
-        auto_hide: false,
-        painter: None,
-        hover_track: rgba(0x80808026).into(),
+/// Creates a vertical scrollbar for a virtual list or an overflow container in the same UI.
+/// Place it beside the viewport in a stretched flex row.
+pub fn scrollbar(handle: impl Into<Scrollbar>) -> Scrollbar {
+    handle.into()
+}
+
+impl From<&ListScrollHandle> for Scrollbar {
+    fn from(handle: &ListScrollHandle) -> Self {
+        Self::new(ScrollSource::List(handle.clone()))
+    }
+}
+
+impl From<&ScrollHandle> for Scrollbar {
+    fn from(handle: &ScrollHandle) -> Self {
+        Self::new(ScrollSource::Container(handle.clone()))
     }
 }
 
 impl Scrollbar {
+    fn new(source: ScrollSource) -> Self {
+        Self {
+            source,
+            track: div().w(px(12.0)).p(px(2.0)).flex_shrink(0.0),
+            thumb: ScrollbarThumbStyle::default(),
+            auto_hide: false,
+            painter: None,
+            hover_track: rgba(0x80808026).into(),
+        }
+    }
+
     /// Hides the resting thumb until the pointer enters the track or starts a drag.
     /// Defaults to false. The pointer target keeps its full size in either mode.
     pub fn auto_hide(mut self, enabled: bool) -> Self {
@@ -141,21 +197,21 @@ impl Thumb {
 
 impl Render for Scrollbar {
     fn render(self, cx: &mut Context<'_>) -> impl IntoElement {
-        let position = self.list.observe(cx);
+        let position = self.source.observe(cx);
         let hover = cx.signal(false);
         let drag = cx.signal(None);
         let minimum = self.thumb.min_length;
-        let press = self.list.clone();
-        let wheel = self.list.clone();
+        let press = self.source.clone();
+        let wheel = self.source.clone();
         let seek = move |event: &PointerEvent, fraction: f64| -> anyhow::Result<()> {
             if let Some(thumb) = self
-                .list
+                .source
                 .position()
                 .and_then(|p| Thumb::resolve(p, event.content_size().height, minimum))
                 && thumb.travel > 0.0
             {
                 let top = f64::from(event.content_position().y) - fraction * thumb.length;
-                self.list.scroll_to_percent(100.0 * top / thumb.travel)?;
+                self.source.scroll_to_percent(100.0 * top / thumb.travel)?;
             }
             Ok(())
         };

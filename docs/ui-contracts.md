@@ -578,10 +578,24 @@ extent, the viewport preserves the destination row and within-row distance.
 The reported offset and percentage can consequently change. Zero and 100
 percent seek to the document edges.
 
-### List scrollbars
+### Scrollbars
 
-Place a scrollbar beside a uniform or variable list and bind both to the same
-handle. A stretched flex row gives the track the height of the list.
+Bind an ordinary overflow container and its vertical scrollbar to a shared
+`ScrollHandle`. A stretched flex row gives the track the height of the viewport.
+
+```rust
+let scroll = ScrollHandle::new();
+div().flex_row().items_stretch().h(px(240.0))
+    .child(div().flex_1().overflow_y_scroll().track_scroll(&scroll).children(rows))
+    .child(scrollbar(&scroll))
+```
+
+`scroll.metrics()` reports the container's offset, limits and viewport in logical
+pixels after layout. The bar moves the vertical offset and preserves the horizontal
+offset. Each handle tracks one mounted container at a time and can be reused
+after unmount.
+
+Uniform and variable lists use their own `ListScrollHandle` with the same scrollbar.
 
 ```rust
 let list = ListScrollHandle::new();
@@ -592,7 +606,7 @@ div().flex_row().items_stretch().h(px(320.0))
 
 The thumb represents the visible fraction of the content. Dragging preserves the
 grab point, including outside the track. Pressing the track above or below the
-thumb scrolls one viewport. Wheel input over the track scrolls the same list
+thumb scrolls one viewport. Wheel input over the track scrolls the bound content
 and passes unused distance to its parent. When the content fits, the track keeps
 its width and the thumb disappears.
 

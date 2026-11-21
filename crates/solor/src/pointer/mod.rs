@@ -3,8 +3,8 @@ mod frame;
 mod hover;
 mod routing;
 mod scroll;
-pub(crate) use scroll::ScrollAxes;
-pub use scroll::ScrollMetrics;
+pub(crate) use scroll::{ScrollAxes, TrackedScroll};
+pub use scroll::{ScrollHandle, ScrollMetrics};
 mod tooltip;
 pub use tooltip::{Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle};
 
