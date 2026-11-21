@@ -190,8 +190,8 @@ impl Surface {
             let pixels = row.as_chunks_mut::<4>().0;
             let local_y = ((dy + 0.5) / scale.0) as f32;
             let local_x = |x: i64| ((x as f64 - left + 0.5) / scale.0) as f32;
-            // Only the fractional edges and corner regions need per-pixel coverage.
-            let (from, to) = if row_height == 1.0 {
+            // Between the corners a solid row has uniform coverage, even on a fractional edge.
+            let (from, to) = if row_height == 1.0 || matches!(brush, Brush::Solid(_)) {
                 let inset = if row_has_arcs {
                     top_radius.max(bottom_radius)
                 } else {
@@ -206,7 +206,10 @@ impl Surface {
             let (leading, rest) = pixels.split_at_mut((from - clip.left) as usize);
             let (middle, trailing) = rest.split_at_mut((to - from) as usize);
             match &mut brush {
-                Brush::Solid(c) => blend_solid_span(middle, *c, 255),
+                Brush::Solid(c) => {
+                    let coverage = (row_height * 255.0).round() as u8;
+                    blend_solid_span(middle, *c, coverage);
+                }
                 Brush::Gradient(_, Some(linear)) => linear
                     .write_span(from as u32, y as u32, middle)
                     .map_err(Error::other)?,

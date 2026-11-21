@@ -376,7 +376,7 @@ fn label_target(frame: &solor::ViewFrame, name: &str) -> Option<PointerSample> {
     })
 }
 
-fn click_label(ui: &mut solor::Ui, view: solor::ViewId, name: &str) -> Result<()> {
+fn click_label(ui: &mut solor::Ui, view: solor::ViewId, name: &str) -> Result<PointerSample> {
     let target = label_target(&ui.record_frame(view)?, name)
         .ok_or_else(|| anyhow::anyhow!("missing visible label {name}"))?;
     for input in [
@@ -385,7 +385,7 @@ fn click_label(ui: &mut solor::Ui, view: solor::ViewId, name: &str) -> Result<()
     ] {
         ui.dispatch_pointer(view, input)?;
     }
-    Ok(())
+    Ok(target)
 }
 
 #[test]
@@ -729,16 +729,21 @@ fn compact_market_scrolls_the_watchlist_below_its_header() -> Result<()> {
     Ok(())
 }
 
+fn open_tone_sheet(ui: &mut solor::Ui, view: solor::ViewId) -> Result<[PointerSample; 2]> {
+    submit_labels(ui, view)?;
+    let lists = click_label(ui, view, "Lists")?;
+    submit_labels(ui, view)?;
+    let sheet = click_label(ui, view, "Tone sheet")?;
+    Ok([lists, sheet])
+}
+
 #[test]
 fn tone_sheet_selects_the_last_swatch_after_scrolling_both_axes() -> Result<()> {
     use solor::{Draw, pointer::ScrollDelta};
     use solor_render_cpu::pixels::{DeviceSize, Surface};
     let (mut ui, root) = gallery()?;
     let view = ui.mount(root)?;
-    submit_labels(&mut ui, view)?;
-    click_label(&mut ui, view, "Lists")?;
-    submit_labels(&mut ui, view)?;
-    click_label(&mut ui, view, "Tone sheet")?;
+    open_tone_sheet(&mut ui, view)?;
     let labels = submit_labels(&mut ui, view)?;
     assert!(labels.iter().any(|s| s.as_str() == "Clay 100"));
     assert!(label_target(&ui.record_frame(view)?, "Rose 900").is_none());
@@ -799,15 +804,12 @@ fn tone_sheet_selects_the_last_swatch_after_scrolling_both_axes() -> Result<()> 
 #[test]
 #[ignore = "release frame recording measurement"]
 fn tone_sheet_recording_cost() -> Result<()> {
-    use solor::{Draw, pointer::ScrollDelta};
+    use solor::Draw;
     use std::{hint::black_box, time::Instant};
 
     let (mut ui, root) = gallery()?;
     let view = ui.mount(root)?;
-    submit_labels(&mut ui, view)?;
-    click_label(&mut ui, view, "Lists")?;
-    submit_labels(&mut ui, view)?;
-    click_label(&mut ui, view, "Tone sheet")?;
+    open_tone_sheet(&mut ui, view)?;
     submit_labels(&mut ui, view)?;
     for (width, height, scrolling) in [
         (800.0, 560.0, true),
@@ -826,17 +828,7 @@ fn tone_sheet_recording_cost() -> Result<()> {
         for i in 0..832 {
             let start = Instant::now();
             if scrolling {
-                let sign = if i % 128 < 64 { 1.0 } else { -1.0 };
-                ui.dispatch_pointer(
-                    view,
-                    PointerInput::Scroll(
-                        mouse_at(320.0, 280.0),
-                        ScrollDelta {
-                            x: px(3.25 * sign),
-                            y: px(2.75 * sign),
-                        },
-                    ),
-                )?;
+                ui.dispatch_pointer(view, tone_sheet_pan(i))?;
             }
             ui.flush()?;
             ui.layout(view, size)?;
@@ -871,6 +863,73 @@ fn tone_sheet_recording_cost() -> Result<()> {
             painting[mid].as_nanos(),
             recording[mid].as_nanos(),
             total[mid].as_nanos()
+        );
+    }
+    Ok(())
+}
+
+fn tone_sheet_pan(frame: usize) -> PointerInput {
+    let sign = if frame % 128 < 64 { 1.0 } else { -1.0 };
+    PointerInput::Scroll(
+        mouse_at(320.0, 280.0),
+        solor::pointer::ScrollDelta {
+            x: px(3.25 * sign),
+            y: px(2.75 * sign),
+        },
+    )
+}
+
+#[test]
+#[ignore = "release CPU scroll measurement"]
+fn tone_sheet_cpu_frame_cost() -> Result<()> {
+    use std::{hint::black_box, time::Instant};
+
+    let size = Size {
+        width: px(800.0),
+        height: px(560.0),
+    };
+    let navigation = {
+        let (mut ui, root) = gallery()?;
+        let view = ui.mount(root)?;
+        open_tone_sheet(&mut ui, view)?
+    };
+    for scale in [RasterScale::ONE, RasterScale(1.5)] {
+        let (ui, root) = gallery()?;
+        let mut window = CpuWindow::mount(ui, root)?;
+        window.frame(size, scale)?;
+        window.frame_submitted()?;
+        for target in navigation {
+            click(
+                &mut window,
+                target.position.x.get(),
+                target.position.y.get(),
+            )?;
+            window.frame(size, scale)?;
+            window.frame_submitted()?;
+        }
+        let mut times = Vec::with_capacity(256);
+        for i in 0..320 {
+            let start = Instant::now();
+            window.event(WindowEvent::Pointer(tone_sheet_pan(i)))?;
+            let frame = window.frame(size, scale)?;
+            assert!(!frame.damage.is_empty());
+            black_box(frame.rgba);
+            window.frame_submitted()?;
+            if i >= 64 {
+                times.push(start.elapsed());
+            }
+        }
+        times.sort_unstable();
+        let over_budget = times
+            .iter()
+            .filter(|t| **t > Duration::from_secs_f64(1.0 / 120.0))
+            .count();
+        eprintln!(
+            "800x560 scale={} scroll CPU frame p50_us={} p95_us={} over_budget={over_budget}/{}",
+            scale.0,
+            times[127].as_micros(),
+            times[243].as_micros(),
+            times.len(),
         );
     }
     Ok(())

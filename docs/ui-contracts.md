@@ -23,6 +23,13 @@ and the two stages together. A separate median covers the whole iteration
 through pointer-frame acceptance.
 Rasterization and presentation are outside the measurement.
 
+Run `cargo test --release -p solor-gallery --test navigation tone_sheet_cpu_frame_cost -- --ignored --nocapture`
+to time the same two-axis motion through the CPU window at 1× and 1.5× scale.
+Each sample covers input dispatch, layout, recording, damaged-pixel repair
+and local submission acknowledgement. After 64 warm-up frames, the workload
+reports the median, 95th percentile and count exceeding the 120 Hz budget
+over 256 frames. Window-system upload and display timing are outside this measurement.
+
 A plain on-demand `div()` with fixed styles, no background and no drawing
 callback participates in layout, clipping and input without recording commands
 of its own. Its children still paint in order, and its frame listeners can

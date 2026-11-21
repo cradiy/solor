@@ -403,9 +403,16 @@ fn fractional_rounded_edges_preserve_sample_coverage_at_each_corner() -> Result<
     ui.layout(view, size.at_unit_scale())?;
     let image = Surface::draw_view(&ui.record_frame(view)?, size, RasterScale::ONE)?;
 
-    // The arc meets a half-pixel horizontal edge. These pixels cover
-    // respectively 0, 3, 15, 16 and 8 of the sixteen sample positions.
-    for (x, y, shade) in [(0, 0, 255), (1, 1, 207), (2, 1, 16), (2, 2, 0), (4, 0, 127)] {
+    // The arc meets a half-pixel horizontal edge. Check both the arc samples
+    // and the coverage at the center of the straight edge.
+    for (x, y, shade) in [
+        (0, 0, 255),
+        (1, 1, 207),
+        (2, 1, 16),
+        (2, 2, 0),
+        (4, 0, 127),
+        (7, 0, 127),
+    ] {
         for row in [y, 12 - y] {
             for column in [x, 14 - x] {
                 assert_eq!(pixel(&image, column, row), [shade, shade, shade, 255]);
