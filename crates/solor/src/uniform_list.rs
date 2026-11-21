@@ -307,7 +307,7 @@ where
             let handle = self.scroll.clone();
             node.watches.push(Box::new(move |cx, target, _, _, _| {
                 if let Some(handle) = handle {
-                    handle.attach(&viewport_dirty)?;
+                    handle.attach(&viewport_dirty, cx.state)?;
                 }
                 let scrolled = viewport_dirty.clone();
                 cx.state

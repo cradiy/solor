@@ -536,6 +536,28 @@ navigation, resizes and data changes. A visible list that fits reports zero
 scrollable distance and zero percent. Before layout, after unmount, and for a
 hidden or zero-sized viewport, the handle returns `None`.
 
+For a progress indicator, create the handle and its position signal together.
+Reading the signal in a paint closure subscribes that element to changes.
+
+```rust
+let (list, position) = ListScrollHandle::with_position_signal(cx);
+let indicator = div().h(px(3.0)).paint(move |cx| {
+    if let Some(position) = *cx.read(position)? {
+        let mut bar = cx.size;
+        bar.width = bar.width * (position.percent() / 100.0) as f32;
+        cx.fill(bar, rgb(0x3888dd));
+    }
+    Ok(())
+});
+div().flex_col()
+    .child(indicator)
+    .child(uniform_list(items, px(32.0), build_row).scroll_handle(&list).flex_1())
+```
+
+Layout publishes the final position once it settles. Subscribers run on the
+next binding flush when the position changes. Unmounting the list clears the
+signal. Create it in a parent or application context to observe it across mounts.
+
 A uniform list knows the full document height. A variable list sets
 `is_estimated` while any rows are unmeasured. A seek uses the available height
 information to locate the destination. When measuring those rows changes the

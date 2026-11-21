@@ -181,7 +181,7 @@ fn deferred_requests_survive_empty_viewports_and_handles_can_be_reattached() -> 
 #[test]
 fn a_failed_destination_can_be_retried_without_reissuing_the_request() -> Result<()> {
     let mut ui = Ui::new();
-    let handle = ListScrollHandle::new();
+    let (handle, position) = ListScrollHandle::with_position_signal(&mut ui.context());
     let list = handle.clone();
     let selected = ui.context().signal(None);
     let height = ui.context().signal(px(0.0));
@@ -201,8 +201,10 @@ fn a_failed_destination_can_be_retried_without_reissuing_the_request() -> Result
     handle.scroll_to(100, Bottom);
     assert!(submit(&mut ui, view, 100.0).is_err());
     assert_eq!(handle.position(), Some(before));
+    assert_eq!(*ui.context().read(position)?, Some(before));
     ui.context().set(height, px(54.0))?;
     submit(&mut ui, view, 100.0)?;
+    assert_eq!(*ui.context().read(position)?, handle.position());
     for (y, key) in [(45.75, 99), (46.0, 100), (99.75, 100)] {
         click(&mut ui, view, y)?;
         assert_eq!(*ui.context().read(selected)?, Some(key));
@@ -211,9 +213,61 @@ fn a_failed_destination_can_be_retried_without_reissuing_the_request() -> Result
 }
 
 #[test]
+fn a_position_subscriber_repaints_for_settled_changes_and_list_removal() -> Result<()> {
+    let mut ui = Ui::new();
+    let (handle, position) = ListScrollHandle::with_position_signal(&mut ui.context());
+    let visible = ui.context().signal(true);
+    let list = handle.clone();
+    let view = ui.mount(component(move |_| {
+        div().child_when(visible, move || {
+            uniform_list(100usize, px(20.0), |_| div())
+                .scroll_handle(&list)
+                .w(px(120.0))
+                .h(px(100.0))
+        })
+    }))?;
+    let paints = Rc::new(Cell::new(0));
+    let observed = Rc::new(Cell::new(None));
+    let count = paints.clone();
+    let last = observed.clone();
+    let indicator = ui.mount(component(move |_| {
+        div().paint(move |cx| {
+            last.set(*cx.read(position)?);
+            count.set(count.get() + 1);
+            Ok(())
+        })
+    }))?;
+    submit(&mut ui, indicator, 10.0)?;
+    assert_eq!((paints.get(), observed.get()), (1, None));
+    handle.scroll_to_percent(10.0)?;
+    handle.scroll_to_percent(75.0)?;
+    submit(&mut ui, view, 100.0)?;
+    submit(&mut ui, indicator, 10.0)?;
+    assert_eq!(paints.get(), 2);
+    assert_eq!(observed.get().unwrap().percent(), 75.0);
+    handle.scroll_to_percent(75.0)?;
+    submit(&mut ui, view, 100.0)?;
+    submit(&mut ui, indicator, 10.0)?;
+    assert_eq!(paints.get(), 2);
+    assert!(ui.next_redraw(indicator).is_none());
+    ui.context().set(visible, false)?;
+    submit(&mut ui, view, 100.0)?;
+    submit(&mut ui, indicator, 10.0)?;
+    assert_eq!((paints.get(), observed.get()), (3, None));
+    ui.context().set(visible, true)?;
+    submit(&mut ui, view, 100.0)?;
+    submit(&mut ui, indicator, 10.0)?;
+    assert_eq!(observed.get().unwrap().percent(), 0.0);
+    ui.unmount(view)?;
+    submit(&mut ui, indicator, 10.0)?;
+    assert_eq!((paints.get(), observed.get()), (5, None));
+    Ok(())
+}
+
+#[test]
 fn percentage_and_pixel_positions_round_trip_through_layout_and_wheel_input() -> Result<()> {
     let mut ui = Ui::new();
-    let handle = ListScrollHandle::new();
+    let (handle, position) = ListScrollHandle::with_position_signal(&mut ui.context());
     let list = handle.clone();
     let view = ui.mount(component(move |_| {
         uniform_list(1_000_000usize, px(50.0), |_| div()).scroll_handle(&list)
@@ -247,6 +301,7 @@ fn percentage_and_pixel_positions_round_trip_through_layout_and_wheel_input() ->
     submit(&mut ui, view, 200.0)?;
     assert_eq!(handle.position().unwrap().offset_px, 40_000_002.75);
     assert_eq!(handle.position().unwrap().max_offset_px, 49_999_800.0);
+    assert_eq!(*ui.context().read(position)?, handle.position());
     handle.scroll_to_percent(150.0)?;
     submit(&mut ui, view, 200.0)?;
     assert_eq!(handle.position().unwrap().percent(), 100.0);
@@ -255,6 +310,7 @@ fn percentage_and_pixel_positions_round_trip_through_layout_and_wheel_input() ->
     assert_eq!(handle.position().unwrap().percent(), 0.0);
     submit(&mut ui, view, 0.0)?;
     assert!(handle.position().is_none());
+    assert!(ui.context().read(position)?.is_none());
     ui.unmount(view)?;
     assert!(handle.position().is_none());
     Ok(())

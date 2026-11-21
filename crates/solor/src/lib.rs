@@ -342,6 +342,9 @@ impl Instance {
     }
 
     fn dispose(self, state: &mut Runtime<()>) -> Result<()> {
+        for handle in self.lists.values().filter_map(|list| list.scroll.as_ref()) {
+            handle.detach(state);
+        }
         for node in self.bodies.into_values() {
             for signal in node.owned {
                 state.remove_signal_by_id(signal)?;
@@ -461,7 +464,9 @@ impl Instance {
         self.scene.unmount_subtree(*node)?;
         self.invalidate_geometry();
         for key in subtree_keys(&self.lists, path) {
-            self.lists.remove(&key);
+            if let Some(handle) = self.lists.remove(&key).and_then(|list| list.scroll) {
+                handle.detach(cx.state);
+            }
         }
         // Keep this slot's subscription so a later opening can mount fresh content.
         for key in subtree_keys(&self.branches, path)
@@ -841,7 +846,7 @@ impl Ui {
             if !instance.scene.is_pending() {
                 for list in instance.lists.values() {
                     if let Some(handle) = &list.scroll {
-                        handle.publish();
+                        handle.publish(cx.state);
                     }
                 }
                 break;

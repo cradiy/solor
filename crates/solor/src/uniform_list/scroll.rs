@@ -1,4 +1,5 @@
 //! One-shot positioning for retained list viewports.
+use crate::{Context, Signal, state::Runtime};
 use anyhow::{Result, ensure};
 use std::{
     cell::{Cell, RefCell},
@@ -108,6 +109,7 @@ struct State {
     pending: Cell<Option<Request>>,
     staged: Cell<Option<ListScrollPosition>>,
     published: Cell<Option<ListScrollPosition>>,
+    position_signal: Option<Signal<Option<ListScrollPosition>>>,
     viewport: RefCell<Weak<Cell<bool>>>,
 }
 
@@ -120,6 +122,20 @@ impl ListScrollHandle {
     /// Creates a handle that can receive a request before its list is mounted.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates a handle and a signal for observing its last completed layout.
+    /// The signal belongs to the creating context. It contains `None` before layout,
+    /// when the viewport is hidden or zero-sized, and after the list unmounts.
+    pub fn with_position_signal(
+        cx: &mut Context<'_>,
+    ) -> (Self, Signal<Option<ListScrollPosition>>) {
+        let position = cx.signal(None);
+        let handle = Self(Rc::new(State {
+            position_signal: Some(position),
+            ..State::default()
+        }));
+        (handle, position)
     }
 
     /// Requests alignment of a zero-based row in the next layout. The latest request wins.
@@ -170,12 +186,15 @@ impl ListScrollHandle {
         }
     }
 
-    pub(super) fn attach(&self, dirty: &Rc<Cell<bool>>) -> Result<()> {
+    pub(super) fn attach(&self, dirty: &Rc<Cell<bool>>, state: &Runtime<()>) -> Result<()> {
         let mut viewport = self.0.viewport.borrow_mut();
         ensure!(
             viewport.upgrade().is_none(),
             "list scroll handle already attached"
         );
+        if let Some(signal) = self.0.position_signal {
+            state.read(signal)?;
+        }
         // A deferred command may outlive a previous mount. Resolve it against this document.
         if let Some(mut request) = self.pending() {
             match &mut request {
@@ -226,8 +245,21 @@ impl ListScrollHandle {
         self.0.staged.set(position);
     }
 
-    pub(crate) fn publish(&self) {
-        self.0.published.set(self.0.staged.get());
+    pub(crate) fn publish(&self, state: &mut Runtime<()>) {
+        self.publish_position(self.0.staged.get(), state);
+    }
+
+    pub(crate) fn detach(&self, state: &mut Runtime<()>) {
+        self.publish_position(None, state);
+    }
+
+    fn publish_position(&self, position: Option<ListScrollPosition>, state: &mut Runtime<()>) {
+        if self.0.published.replace(position) != position
+            && let Some(signal) = self.0.position_signal
+        {
+            // The scope owning the signal may have unmounted while the list was still live.
+            let _ = state.set(signal, position);
+        }
     }
 
     pub(super) fn pending(&self) -> Option<Request> {
