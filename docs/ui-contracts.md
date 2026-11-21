@@ -513,6 +513,14 @@ subscription covers the whole item. Updates that affect row height can still
 reflow the viewport. `insert`, `push`, `remove` and `move_item` publish the
 order. Use `rows.item(index, cx)?` to keep addressing an item after it moves.
 
+`rows.splice(start..end, values, cx)?` replaces a contiguous range and
+publishes the order once. Use `i..i` to insert a batch at index `i`, or pass
+an empty iterator to delete the range. Splicing an empty iterator into an
+empty range leaves subscribers idle. Each replacement gets a fresh signal,
+even when its value equals the previous value. Items outside the range keep
+their identity. Use `set` or `update_in_place` to edit an existing row and
+preserve its local state.
+
 Each stored item occupies one runtime signal, including items outside the
 mounted window. Removing an item releases its value after its last binding
 detaches. The collection and later insertions belong to the scope that
@@ -541,7 +549,10 @@ approximate pixel distance until the destination is measured.
 On reflow, the list keeps the top row and its within-row offset where the new
 bounds allow. When already at the bottom, remeasurement keeps the last row
 aligned with the viewport. Editing a vector of keys preserves the top visible
-key when it survives. Finding a moved key may scan the vector once per edit.
+key when it survives. For a single splice above the top row, the list locates
+its key directly from the change in item count. Reordering keys or replacing
+the top row may require searching the sequence. Inserting or deleting entries
+in a `SignalVec` can also shift item handles after the edited range.
 
 ### Positioning a row
 

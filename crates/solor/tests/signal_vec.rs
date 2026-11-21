@@ -145,3 +145,95 @@ fn inserted_items_follow_the_collection_scope_and_last_binding() -> Result<()> {
     assert!(ui.context().read(item).is_err());
     Ok(())
 }
+
+#[test]
+fn splice_reuses_mounted_rows_outside_the_replacement() -> Result<()> {
+    let mut ui = Ui::new();
+    let a = solor::rgb(0x123456);
+    let b = solor::rgb(0x654321);
+    let rows = ui.context().signal_vec([a, b, b, a]);
+    let view = ui.mount(component(|_| {
+        uniform_list(rows, px(20.0), |color| div().bg(color))
+    }))?;
+    let before = submit(&mut ui, view)?;
+    let handles = rows.items(&ui.context())?.to_vec();
+    rows.splice(1..3, [b], &mut ui.context())?;
+    let new = rows.item(1, &ui.context())?;
+    assert!(!handles.contains(&new));
+    assert_eq!(rows.items(&ui.context())?, &[handles[0], new, handles[3]]);
+    assert_eq!(ui.context().read(handles[1])?, &b);
+    let after = submit(&mut ui, view)?;
+    assert_eq!([after[0], after[2]], [before[0], before[3]]);
+    assert!(!before.contains(&after[1]));
+    for old in &handles[1..3] {
+        assert!(ui.context().read(*old).is_err());
+    }
+
+    rows.splice(3..3, [a, b], &mut ui.context())?;
+    assert_eq!(&submit(&mut ui, view)?[..3], &after);
+    let all = rows.items(&ui.context())?.to_vec();
+    rows.splice(0..all.len(), [], &mut ui.context())?;
+    assert!(submit(&mut ui, view)?.is_empty());
+    assert!(all.iter().all(|item| ui.context().read(*item).is_err()));
+    Ok(())
+}
+
+#[test]
+fn empty_invalid_and_interrupted_splices_publish_nothing() -> Result<()> {
+    let mut ui = Ui::new();
+    let rows = ui.context().signal_vec([7]);
+    let view = ui.mount(component(|_| uniform_list(rows, px(20.0), |_| div())))?;
+    submit(&mut ui, view)?;
+    let original = rows.item(0, &ui.context())?;
+    rows.splice(1..1, [], &mut ui.context())?;
+    let unread = || std::iter::from_fn(|| panic!("invalid splice polled its input"));
+    let start = 1;
+    assert!(rows.splice(start..0, unread(), &mut ui.context()).is_err());
+    assert!(rows.splice(1..2, unread(), &mut ui.context()).is_err());
+    assert!(
+        rows.splice(0..1, unread(), &mut Ui::new().context())
+            .is_err()
+    );
+
+    let failing = std::iter::once(8).chain(std::iter::from_fn(|| panic!("interrupted input")));
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rows.splice(0..1, failing, &mut ui.context())
+        }))
+        .is_err()
+    );
+    assert_eq!(rows.items(&ui.context())?, &[original]);
+    assert_eq!(*ui.context().read(original)?, 7);
+    assert!(!ui.has_pending_bindings());
+    Ok(())
+}
+
+#[test]
+fn a_panicking_item_destructor_leaves_the_new_order_usable() -> Result<()> {
+    struct Row(bool);
+    impl Drop for Row {
+        fn drop(&mut self) {
+            if self.0 {
+                panic!("interrupted disposal");
+            }
+        }
+    }
+    let mut ui = Ui::new();
+    let rows = ui.context().signal_vec([Row(false), Row(true), Row(false)]);
+    let old = rows.items(&ui.context())?.to_vec();
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rows.splice(1..3, [Row(false)], &mut ui.context())
+        }))
+        .is_err()
+    );
+    assert_eq!(rows.items(&ui.context())?.len(), 2);
+    assert_eq!(rows.item(0, &ui.context())?, old[0]);
+    assert!(
+        old[1..]
+            .iter()
+            .all(|item| ui.context().read(*item).is_err())
+    );
+    rows.remove(1, &mut ui.context())?;
+    Ok(())
+}

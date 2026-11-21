@@ -158,3 +158,36 @@ fn replacing_a_zero_height_row_recovers_the_view() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn a_reading_row_follows_its_key_through_splices_and_coalesced_moves() -> Result<()> {
+    let mut ui = Ui::new();
+    let rows = ui
+        .context()
+        .signal_vec((0..256).map(|i| px(if i % 2 == 0 { 18.0 } else { 22.0 })));
+    let scroll = solor::ListScrollHandle::new();
+    let view = ui.mount(component(|_| {
+        variable_list(rows, px(20.0), |height| div().h(height)).scroll_handle(&scroll)
+    }))?;
+    scroll.scroll_to(150, solor::ScrollAlignment::Top);
+    let visible = submit(&mut ui, view, 100.0, 80.0)?;
+    let reading = visible
+        .into_iter()
+        .find(|&id| ui.geometry(view, id).unwrap().origin.y == px(0.0))
+        .unwrap();
+    wheel(&mut ui, view, 6.25)?;
+    let check_position = |ui: &mut Ui| -> Result<()> {
+        submit(ui, view, 100.0, 80.0)?;
+        assert_eq!(ui.geometry(view, reading).unwrap().origin.y, px(-6.25));
+        Ok(())
+    };
+    check_position(&mut ui)?;
+    rows.splice(5..5, [px(25.0); 7], &mut ui.context())?;
+    check_position(&mut ui)?;
+    rows.splice(5..12, [], &mut ui.context())?;
+    check_position(&mut ui)?;
+    rows.move_item(150, 30, &mut ui.context())?;
+    rows.push(px(24.0), &mut ui.context())?;
+    check_position(&mut ui)?;
+    Ok(())
+}

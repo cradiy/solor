@@ -135,7 +135,15 @@ impl<K: Eq + Hash + Clone + 'static> Viewport<K> {
                 .and_then(|i| previous.keys.get(i))
                 && keys.get(old_row) != Some(key)
             {
-                if let Some(index) = keys.iter().position(|candidate| candidate == key) {
+                // A splice above the reading row preserves its distance from the end.
+                // Check the key because several edits can arrive in one layout pass.
+                let from_end = previous.count - old_row;
+                let shifted = count
+                    .checked_sub(from_end)
+                    .filter(|&i| keys.get(i) == Some(key));
+                if let Some(index) =
+                    shifted.or_else(|| keys.iter().position(|candidate| candidate == key))
+                {
                     row = index;
                 } else {
                     within = 0.0;

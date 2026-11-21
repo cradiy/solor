@@ -2,6 +2,7 @@
 use super::{Runtime, Signal};
 use crate::Context;
 use anyhow::{Context as _, Result, ensure};
+use std::{any::Any, ops::Range};
 
 /// A context-owned sequence of independently observable items.
 ///
@@ -30,9 +31,7 @@ impl Context<'_> {
                 let order = value
                     .downcast::<Vec<Signal<T>>>()
                     .expect("typed signal vector");
-                for item in *order {
-                    state.retire_item(item);
-                }
+                state.retire_items(*order);
             });
         let rows = SignalVec { order };
         for value in values {
@@ -43,14 +42,24 @@ impl Context<'_> {
 }
 
 impl<N> Runtime<N> {
-    fn retire_item<T>(&mut self, item: Signal<T>) {
+    fn retire_item<T>(&mut self, item: Signal<T>) -> Option<Box<dyn Any>> {
         let entry = &mut self.signals[item.id.key];
         if entry.bindings.is_empty() {
-            self.signals.remove(item.id.key);
+            self.signals.remove(item.id.key).map(|entry| entry.value)
         } else {
             // A mounted row can still read the value before list reconciliation.
             entry.retire_after_unbind = true;
+            None
         }
+    }
+
+    fn retire_items<T>(&mut self, items: Vec<Signal<T>>) {
+        // Retire every handle before a user-defined destructor can unwind.
+        let values: Vec<_> = items
+            .into_iter()
+            .filter_map(|item| self.retire_item(item))
+            .collect();
+        drop(values);
     }
 }
 
@@ -106,7 +115,38 @@ impl<T: 'static> SignalVec<T> {
     pub fn remove(self, index: usize, cx: &mut Context<'_>) -> Result<()> {
         self.item(index, cx)?;
         let removed = cx.update_in_place(self.order, |items| items.remove(index))?;
-        cx.state.retire_item(removed);
+        drop(cx.state.retire_item(removed));
+        Ok(())
+    }
+
+    /// Replaces a half-open range with new items and publishes the order once.
+    ///
+    /// An empty range inserts at its start. An empty iterator removes the range.
+    /// Items outside the range keep their signals. An invalid range returns an
+    /// error before consuming the iterator.
+    pub fn splice(
+        self,
+        range: Range<usize>,
+        values: impl IntoIterator<Item = T>,
+        cx: &mut Context<'_>,
+    ) -> Result<()> {
+        let len = self.items(cx)?.len();
+        ensure!(
+            range.start <= range.end && range.end <= len,
+            "invalid item range"
+        );
+        // Finish running caller code before registering any new item signals.
+        let values: Vec<_> = values.into_iter().collect();
+        if range.is_empty() && values.is_empty() {
+            return Ok(());
+        }
+        let inserted: Vec<_> = values
+            .into_iter()
+            .map(|value| cx.state.create_signal(value))
+            .collect();
+        let removed =
+            cx.update_in_place(self.order, |items| items.splice(range, inserted).collect())?;
+        cx.state.retire_items(removed);
         Ok(())
     }
 

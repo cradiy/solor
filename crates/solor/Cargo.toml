@@ -48,3 +48,7 @@ path = "examples/layout_cost/three.rs"
 [[bench]]
 name = "refresh"
 harness = false
+
+[[bench]]
+name = "list_splice"
+harness = false
