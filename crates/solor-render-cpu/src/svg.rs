@@ -1,4 +1,4 @@
-use crate::pixels::{Surface, blend};
+use crate::pixels::{Surface, blend, blend_solid_span};
 use resvg::tiny_skia::{Pixmap, Transform};
 use solor::{Rgba, SvgAsset, raster::Clip};
 use std::{
@@ -6,6 +6,30 @@ use std::{
     io::{Error, Result},
     rc::{Rc, Weak},
 };
+
+fn tint_row(row: &mut [[u8; 4]], mask: &[u8], ink: Rgba) {
+    // Solid interiors and empty margins cover many consecutive pixels.
+    let (blocks, tail) = row.as_chunks_mut::<8>();
+    let (masks, tail_mask) = mask.as_chunks::<8>();
+    for (pixels, coverage) in blocks.iter_mut().zip(masks) {
+        match u64::from_ne_bytes(*coverage) {
+            0 => {}
+            u64::MAX => blend_solid_span(pixels, ink, 255),
+            _ => tint_pixels(pixels, coverage, ink),
+        }
+    }
+    tint_pixels(tail, tail_mask, ink);
+}
+
+fn tint_pixels(row: &mut [[u8; 4]], mask: &[u8], ink: Rgba) {
+    for (dst, &coverage) in row.iter_mut().zip(mask) {
+        match coverage {
+            0 => {}
+            255 if ink.alpha == 255 => *dst = [ink.red, ink.green, ink.blue, 255],
+            _ => blend(dst, ink, coverage),
+        }
+    }
+}
 
 #[derive(PartialEq)]
 struct Region {
@@ -117,11 +141,7 @@ impl SvgCache {
             let row = surface.rgba[dest..dest + width * 4].as_chunks_mut::<4>().0;
             let start = (y - visible.top) as usize * stride + (damage.left - visible.left) as usize;
             if let Some(ink) = tint {
-                for (dst, &coverage) in row.iter_mut().zip(&pixels[start..start + width]) {
-                    if coverage != 0 {
-                        blend(dst, ink, coverage);
-                    }
-                }
+                tint_row(row, &pixels[start..start + width], ink);
             } else {
                 let src = pixels[start * 4..(start + width) * 4].as_chunks::<4>().0;
                 for (dst, src) in row.iter_mut().zip(src) {

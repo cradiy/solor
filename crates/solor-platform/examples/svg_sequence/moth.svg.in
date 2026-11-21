@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="288" height="180" viewBox="-144 -90 288 180">
+  <defs>
+    <linearGradient id="silk" x1=".1" y1="1" x2=".85" y2="0">
+      <stop stop-color="#367c70"/><stop offset=".28" stop-color="#88caaa"/>
+      <stop offset=".64" stop-color="#d4e6a3"/><stop offset=".88" stop-color="#f5df94"/><stop offset="1" stop-color="#b67d63"/>
+    </linearGradient>
+    <linearGradient id="tail" x1="0" y1="0" x2="1" y2=".9">
+      <stop stop-color="#b6cf80"/><stop offset=".55" stop-color="#7cb49c"/><stop offset="1" stop-color="#e8d5a4"/>
+    </linearGradient>
+    <radialGradient id="eye" cx=".45" cy=".4" r=".65">
+      <stop stop-color="#fff1bd"/><stop offset=".31" stop-color="#e9ac75"/><stop offset=".49" stop-color="#644951"/>
+      <stop offset=".63" stop-color="#85545b"/><stop offset=".82" stop-color="#e9be80"/><stop offset="1" stop-color="#738e74"/>
+    </radialGradient>
+    <path id="fore" d="M2-8C22-33 72-51 129-55c-8 13-19 25-34 37C77-3 66 16 45 18 25 20 14 6 2-8Z"/>
+    <clipPath id="edge"><use xlink:href="#fore"/></clipPath>
+    <g id="fan">
+      <use xlink:href="#fore" fill="url(#silk)"/>
+      <g clip-path="url(#edge)">
+        <path d="M0-10Q66-62 138-55l-9 6Q66-48 2-5Z" fill="#a56872"/>
+        <path d="M29 24q38-26 59-51t43-32" fill="none" stroke="#fdf5c5" stroke-width="4" opacity=".65"/>
+        <g fill="none" stroke="#365e5c" stroke-width=".7" opacity=".6">
+          <path d="M5-9Q60-33 124-52M6-8q49-10 103-31M6-8q42 2 85-18M7-6q37 12 73-8M8-5q26 16 57 13"/>
+          <path d="M34-20q24-10 38-23m-9 14q11-3 23-16m-42 29q18-3 29-15m-33 21q19-1 28-8m-25 13q8 2 17-3"/>
+        </g>
+        <g fill="#fbf1c0" opacity=".82">
+          <circle cx="87" cy="-39" r="1.25"/><circle cx="94" cy="-42" r=".8"/><circle cx="99" cy="-44" r="1.1"/>
+          <circle cx="105" cy="-45" r=".8"/><circle cx="109" cy="-46" r=".6"/>
+        </g>
+      </g>
+      <path d="M45-15q9-10 20-8-2 11-15 15-4-1-5-7Z" fill="url(#eye)"/>
+      <path d="M50-15q4-4 8-4" fill="none" stroke="#fff0ce" stroke-width="1.5"/>
+    </g>
+    <g id="train">
+      <path d="M3 0q36-18 62 9c10 11 6 24-5 27-8 2-14-1-17 1-5 4 5 16 6 27 1 8-2 13-6 16 4-11-6-21-15-30C12 36 5 19 3 0Z" fill="url(#tail)"/>
+      <path d="M9 6q20 22 44 27M12 6q22 12 50 13M11 10q12 21 25 27" fill="none" stroke="#536e6c" stroke-width=".9" opacity=".6"/>
+      <ellipse cx="41" cy="18" rx="8" ry="6.5" fill="url(#eye)"/>
+      <path d="M34 44q14 15 13 28" fill="none" stroke="#e8c298" stroke-width="2"/>
+    </g>
+    <g id="side">
+      <use xlink:href="#train" transform="scale({hind:.5} 1) rotate({trail:.4})"/>
+      <use xlink:href="#fan" transform="scale({span:.5} 1) rotate({sweep:.4})"/>
+    </g>
+  </defs>
+  <g transform="translate(0 {lift:.4})">
+    <use xlink:href="#side"/><use xlink:href="#side" transform="scale(-1 1)"/>
+    <path d="M-3-14q-3-11-17-20 13 2 19 16m4 4q3-11 17-20-13 2-19 16" fill="#dfa981"/>
+    <path d="M-3-8c-3 10-2 31 3 39C5 23 6 2 3-8Z" fill="#b29e79"/>
+    <ellipse cy="-6" rx="6" ry="12" fill="#dfcfa5"/>
+    <ellipse cy="-16" rx="4" ry="4.5" fill="#896c65"/>
+    <path d="M-2-10q-2 7 1 13" fill="none" stroke="#fff0c3" stroke-width="1.5"/>
+  </g>
+</svg>
