@@ -29,7 +29,10 @@ mod styled_body;
 pub mod text;
 pub mod tree;
 mod uniform_list;
-pub use uniform_list::{ListItems, uniform_list, variable_list};
+pub use uniform_list::{
+    ListItems, ListScrollHandle, ListScrollPosition, ScrollAlignment, VirtualList, uniform_list,
+    variable_list,
+};
 
 pub use crate::layout::Edges;
 pub use crate::{state::Signal, tree::NodeId};
@@ -836,6 +839,11 @@ impl Ui {
             };
             instance.update_lists(&mut cx, layout_changed)?;
             if !instance.scene.is_pending() {
+                for list in instance.lists.values() {
+                    if let Some(handle) = &list.scroll {
+                        handle.publish();
+                    }
+                }
                 break;
             }
             // Newly mounted rows may declare bindings or contain another list.

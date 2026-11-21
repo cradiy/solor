@@ -1,5 +1,5 @@
 //! Estimated document coordinates around a contiguous window of measured rows.
-use super::{Source, Viewport, Window};
+use super::{Source, Viewport};
 use crate::{Attachment, Instance, NodeId, Pixels, Result, layout::Size};
 use anyhow::{Context as _, ensure};
 use std::{cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
@@ -13,6 +13,10 @@ pub(super) struct HeightIndex {
 }
 
 impl HeightIndex {
+    pub(super) fn covers(&self, count: usize) -> bool {
+        count == 0 || (self.first == 0 && self.edges.len().saturating_sub(1) >= count)
+    }
+
     pub(super) fn top(&self, index: usize, estimate: f64) -> f64 {
         let measured = index
             .saturating_sub(self.first)
@@ -20,7 +24,7 @@ impl HeightIndex {
         (index - measured) as f64 * estimate + self.edges.get(measured).copied().unwrap_or_default()
     }
 
-    fn row_at(&self, y: f64, count: usize, estimate: f64) -> usize {
+    pub(super) fn row_at(&self, y: f64, count: usize, estimate: f64) -> usize {
         let mut lo = 0;
         let mut hi = count;
         while lo < hi {
@@ -103,7 +107,7 @@ pub(super) struct MeasuredWindow<K> {
 }
 
 impl<K: Eq + Hash + Clone + 'static> Viewport<K> {
-    pub(super) fn measured_window(
+    pub(super) fn measured_offset(
         &self,
         instance: &Instance,
         id: NodeId,
@@ -111,7 +115,7 @@ impl<K: Eq + Hash + Clone + 'static> Viewport<K> {
         cx: &Attachment<'_>,
         count: usize,
         distance: f64,
-    ) -> Result<(Window, HeightIndex)> {
+    ) -> Result<(f64, HeightIndex)> {
         let previous = self.measured.as_ref().expect("measured list");
         let old = previous.index.borrow();
         let estimate = f64::from(self.height);
@@ -148,19 +152,6 @@ impl<K: Eq + Hash + Clone + 'static> Viewport<K> {
             let top = next.top(row, estimate);
             (top + within.clamp(0.0, next.top(row.saturating_add(1), estimate) - top)).min(limit)
         };
-        let first = next.row_at(offset, count, estimate);
-        let bottom = offset + f64::from(size.height);
-        let last = next.row_at(bottom, count, estimate);
-        let end = last.saturating_add(usize::from(next.top(last, estimate) < bottom));
-        Ok((
-            Window::new(
-                offset,
-                first.saturating_sub(1)..end.saturating_add(1).min(count),
-                |i| next.top(i, estimate),
-                size,
-                instance.bodies[&id].visible,
-            ),
-            next,
-        ))
+        Ok((offset, next))
     }
 }

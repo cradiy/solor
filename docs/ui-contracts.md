@@ -479,3 +479,66 @@ On reflow, the list keeps the top row and its within-row offset where the new
 bounds allow. When already at the bottom, remeasurement keeps the last row
 aligned with the viewport. Editing a vector of keys preserves the top visible
 key when it survives. Finding a moved key may scan the vector once per edit.
+
+### Positioning a row
+
+Both list builders accept a `ListScrollHandle`. Keep the handle with the view
+that issues navigation commands. For example, a search result can reveal its
+zero-based row with the minimum amount of scrolling.
+
+```rust
+let list = ListScrollHandle::new();
+let results = variable_list(messages, px(48.0), build_message)
+    .scroll_handle(&list)
+    .flex_1();
+div()
+    .child(div().child(text("Show match")).on_click(move |_| {
+        list.scroll_to(match_index, ScrollAlignment::Nearest);
+        Ok(())
+    }))
+    .child(results)
+```
+
+`Top`, `Center` and `Bottom` align the row within the content viewport, clamped
+to the document bounds. `Nearest` leaves a fully visible row in place. For a
+row taller than the viewport it moves only far enough to fill the viewport.
+A variable list refines the destination using the mounted row's actual height.
+
+The most recent request is applied once the list is visible, has items and has
+a nonzero content area. The index addresses the order at layout time and an
+index past the end selects the last row. Scroll input that moves the list
+supersedes a queued request. A handle can be attached to one live list at a time.
+
+### Scroll progress
+
+Use `scroll_to_percent` for a position along the scrollable distance and
+`scroll_to_offset_px` for a distance from the top in logical pixels. They share
+the deferred request and wheel behavior of `scroll_to`. Finite inputs are clamped
+to the scroll bounds. Nonfinite inputs return an error and preserve a pending request.
+
+```rust
+list.scroll_to_percent(75.0)?;
+```
+
+To seek to a fractional pixel instead, for example during position restoration,
+call `list.scroll_to_offset_px(40_000_000.25)?`. Offsets use double precision.
+
+```rust
+if let Some(position) = list.position() {
+    let percent = position.percent();
+    let offset = position.offset_px;
+    let limit = position.max_offset_px;
+}
+```
+
+Readback reflects the last successful view layout, including wheel input, row
+navigation, resizes and data changes. A visible list that fits reports zero
+scrollable distance and zero percent. Before layout, after unmount, and for a
+hidden or zero-sized viewport, the handle returns `None`.
+
+A uniform list knows the full document height. A variable list sets
+`is_estimated` while any rows are unmeasured. A seek uses the available height
+information to locate the destination. When measuring those rows changes the
+extent, the viewport preserves the destination row and within-row distance.
+The reported offset and percentage can consequently change. Zero and 100
+percent seek to the document edges.

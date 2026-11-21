@@ -1,0 +1,240 @@
+//! One-shot positioning for retained list viewports.
+use anyhow::{Result, ensure};
+use std::{
+    cell::{Cell, RefCell},
+    rc::{Rc, Weak},
+};
+
+/// Placement of a requested row within the list's content viewport.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScrollAlignment {
+    /// Align the row's top edge with the viewport's top edge.
+    Top,
+    /// Center the row vertically, subject to the document bounds.
+    Center,
+    /// Align the row's bottom edge with the viewport's bottom edge.
+    Bottom,
+    /// Move the minimum distance to show the row, or fill the viewport with an oversized row.
+    Nearest,
+}
+
+/// Vertical position in the last successfully laid-out list viewport.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ListScrollPosition {
+    /// Distance from the top in logical pixels.
+    pub offset_px: f64,
+    /// Maximum scroll distance in logical pixels, excluding the viewport height.
+    pub max_offset_px: f64,
+    /// Whether the document extent includes any unmeasured row heights.
+    pub is_estimated: bool,
+}
+
+impl ListScrollPosition {
+    /// Percentage of scrollable travel, from 0 to 100. A list that fits returns 0.
+    pub fn percent(self) -> f64 {
+        if self.max_offset_px > 0.0 {
+            self.offset_px / self.max_offset_px * 100.0
+        } else {
+            0.0
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Request {
+    Row {
+        index: usize,
+        alignment: ScrollAlignment,
+        initial_relative_offset: Option<f64>,
+    },
+    Coordinate {
+        target: Coordinate,
+        anchor: Option<(usize, f64)>,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Coordinate {
+    Percent(f64),
+    Offset(f64),
+}
+
+impl Request {
+    fn offset(
+        &mut self,
+        current: f64,
+        viewport: f64,
+        count: usize,
+        limit: f64,
+        top: impl Fn(usize) -> f64,
+    ) -> f64 {
+        match self {
+            Self::Coordinate { target, anchor } => {
+                // Keep the selected reading position while distant estimates are replaced.
+                if let Some((index, within)) = *anchor {
+                    let index = index.min(count - 1);
+                    let start = top(index);
+                    return start + within.min(top(index + 1) - start);
+                }
+                match target {
+                    Coordinate::Percent(percent) => (*percent / 100.0) * limit,
+                    Coordinate::Offset(pixels) => *pixels,
+                }
+            }
+            Self::Row {
+                index,
+                alignment,
+                initial_relative_offset,
+            } => {
+                let index = (*index).min(count - 1);
+                let start = top(index);
+                let end = top(index + 1) - viewport;
+                match alignment {
+                    ScrollAlignment::Top => start,
+                    ScrollAlignment::Center => start + (end - start) / 2.0,
+                    ScrollAlignment::Bottom => end,
+                    ScrollAlignment::Nearest => {
+                        let relative = *initial_relative_offset.get_or_insert(current - start);
+                        start + relative.clamp(0.0_f64.min(end - start), 0.0_f64.max(end - start))
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct State {
+    pending: Cell<Option<Request>>,
+    staged: Cell<Option<ListScrollPosition>>,
+    published: Cell<Option<ListScrollPosition>>,
+    viewport: RefCell<Weak<Cell<bool>>>,
+}
+
+/// Positions one mounted virtual list. Clones address the same list.
+/// A handle can be reused after its list unmounts.
+#[derive(Clone, Default)]
+pub struct ListScrollHandle(Rc<State>);
+
+impl ListScrollHandle {
+    /// Creates a handle that can receive a request before its list is mounted.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Requests alignment of a zero-based row in the next layout. The latest request wins.
+    /// An empty or hidden list waits for a visible, nonempty viewport. An index beyond
+    /// the current data targets the final row.
+    pub fn scroll_to(&self, index: usize, alignment: ScrollAlignment) {
+        self.enqueue(Request::Row {
+            index,
+            alignment,
+            initial_relative_offset: None,
+        });
+    }
+
+    /// Scrolls to a percentage of the available travel, with 100 at the bottom.
+    /// Finite inputs are clamped to 0..=100.
+    pub fn scroll_to_percent(&self, percent: f64) -> Result<()> {
+        ensure!(percent.is_finite(), "scroll percentage must be finite");
+        self.enqueue(Request::Coordinate {
+            target: Coordinate::Percent(percent.clamp(0.0, 100.0)),
+            anchor: None,
+        });
+        Ok(())
+    }
+
+    /// Scrolls to a logical-pixel distance from the top, clamped to the document bounds.
+    /// Accepts a finite double-precision distance or a framework pixel length.
+    pub fn scroll_to_offset_px(&self, pixels: impl Into<f64>) -> Result<()> {
+        let pixels = pixels.into();
+        ensure!(pixels.is_finite(), "scroll offset must be finite");
+        self.enqueue(Request::Coordinate {
+            target: Coordinate::Offset(pixels.max(0.0)),
+            anchor: None,
+        });
+        Ok(())
+    }
+
+    /// Reads the last completed layout. Returns none before layout, for a hidden or
+    /// zero-sized viewport, or after its list unmounts.
+    pub fn position(&self) -> Option<ListScrollPosition> {
+        self.0.viewport.borrow().upgrade()?;
+        self.0.published.get()
+    }
+
+    fn enqueue(&self, request: Request) {
+        self.0.pending.set(Some(request));
+        if let Some(dirty) = self.0.viewport.borrow().upgrade() {
+            dirty.set(true);
+        }
+    }
+
+    pub(super) fn attach(&self, dirty: &Rc<Cell<bool>>) -> Result<()> {
+        let mut viewport = self.0.viewport.borrow_mut();
+        ensure!(
+            viewport.upgrade().is_none(),
+            "list scroll handle already attached"
+        );
+        // A deferred command may outlive a previous mount. Resolve it against this document.
+        if let Some(mut request) = self.pending() {
+            match &mut request {
+                Request::Coordinate { anchor, .. } => *anchor = None,
+                Request::Row {
+                    initial_relative_offset,
+                    ..
+                } => *initial_relative_offset = None,
+            }
+            self.0.pending.set(Some(request));
+        }
+        *viewport = Rc::downgrade(dirty);
+        self.0.staged.set(None);
+        self.0.published.set(None);
+        Ok(())
+    }
+
+    pub(super) fn resolve(
+        &self,
+        current: f64,
+        viewport: f64,
+        count: usize,
+        limit: f64,
+        top: impl Fn(usize) -> f64,
+    ) -> f64 {
+        let Some(mut request) = self.pending() else {
+            return current;
+        };
+        let offset = request.offset(current, viewport, count, limit, top);
+        self.0.pending.set(Some(request));
+        offset
+    }
+
+    pub(super) fn anchor_estimated_target(&self, index: usize, within: f64) {
+        if let Some(Request::Coordinate {
+            target,
+            anchor: None,
+        }) = self.pending()
+        {
+            self.0.pending.set(Some(Request::Coordinate {
+                target,
+                anchor: Some((index, within)),
+            }));
+        }
+    }
+
+    pub(super) fn stage(&self, position: Option<ListScrollPosition>) {
+        self.0.staged.set(position);
+    }
+
+    pub(crate) fn publish(&self) {
+        self.0.published.set(self.0.staged.get());
+    }
+
+    pub(super) fn pending(&self) -> Option<Request> {
+        self.0.pending.get()
+    }
+
+    pub(super) fn clear(&self) {
+        self.0.pending.set(None);
+    }
+}

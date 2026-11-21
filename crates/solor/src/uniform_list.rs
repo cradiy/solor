@@ -1,6 +1,8 @@
 //! Retained rows in a bounded vertical viewport.
 mod measured;
+mod scroll;
 use measured::{HeightIndex, MeasuredWindow};
+pub use scroll::{ListScrollHandle, ListScrollPosition, ScrollAlignment};
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
@@ -170,12 +172,13 @@ pub fn uniform_list<K, E>(
     items: impl Into<ListItems<K>>,
     height: Pixels,
     row: impl Fn(K) -> E + 'static,
-) -> impl IntoElement + Styled
+) -> VirtualList<K, impl Fn(K) -> E>
 where
     K: Clone + Eq + Hash + 'static,
     E: IntoElement + 'static,
 {
     VirtualList {
+        scroll: None,
         measured: false,
         items: items.into(),
         height,
@@ -193,12 +196,13 @@ pub fn variable_list<K, E>(
     items: impl Into<ListItems<K>>,
     estimated_height: Pixels,
     row: impl Fn(K) -> E + 'static,
-) -> impl IntoElement + Styled
+) -> VirtualList<K, impl Fn(K) -> E>
 where
     K: Clone + Eq + Hash + 'static,
     E: IntoElement + 'static,
 {
     VirtualList {
+        scroll: None,
         items: items.into(),
         height: estimated_height,
         row,
@@ -208,12 +212,22 @@ where
     .overflow_hidden()
 }
 
-struct VirtualList<K, F> {
+/// A stylable virtual list declaration with an optional scroll handle.
+pub struct VirtualList<K, F> {
+    scroll: Option<ListScrollHandle>,
     measured: bool,
     items: ListItems<K>,
     height: Pixels,
     row: F,
     style: StyleRefinement,
+}
+
+impl<K, F> VirtualList<K, F> {
+    /// Attaches a handle for programmatic row positioning.
+    pub fn scroll_handle(mut self, handle: &ListScrollHandle) -> Self {
+        self.scroll = Some(handle.clone());
+        self
+    }
 }
 
 impl<K, F> Styled for VirtualList<K, F> {
@@ -225,11 +239,13 @@ impl<K, F> Styled for VirtualList<K, F> {
 type Reconcile = Box<dyn FnMut(&mut Instance, NodeId, &Path, &mut Attachment<'_>) -> Result<()>>;
 
 pub(super) struct UpdateList {
+    pub(super) scroll: Option<ListScrollHandle>,
     pub(super) dirty: Rc<Cell<bool>>,
     reconcile: Reconcile,
 }
 
 struct Viewport<K> {
+    scroll: Option<ListScrollHandle>,
     measured: Option<MeasuredWindow<K>>,
     items: Rc<ListItems<K>>,
     height: Pixels,
@@ -251,6 +267,7 @@ where
             let offset = cx.signal(0_f64);
             let items = Rc::new(self.items);
             let scroll_items = items.clone();
+            let wheel_handle = self.scroll.clone();
             let index = self
                 .measured
                 .then(|| Rc::new(RefCell::new(HeightIndex::default())));
@@ -271,6 +288,11 @@ where
                 let delta = f64::from(event.delta.y);
                 let used = delta.clamp(-previous, limit - previous);
                 cx.set(offset, previous + used)?;
+                if used != 0.0
+                    && let Some(handle) = &wheel_handle
+                {
+                    handle.clear();
+                }
                 cx.propagate_remaining(ScrollDelta {
                     x: event.delta.x,
                     y: px((delta - used) as f32),
@@ -282,7 +304,11 @@ where
             let keys_changed = Rc::new(Cell::new(true));
             let source_changed = keys_changed.clone();
             let source = items.signal();
+            let handle = self.scroll.clone();
             node.watches.push(Box::new(move |cx, target, _, _, _| {
+                if let Some(handle) = handle {
+                    handle.attach(&viewport_dirty)?;
+                }
                 let scrolled = viewport_dirty.clone();
                 cx.state
                     .observe(offset.id(), target, move || scrolled.set(true))?;
@@ -295,6 +321,7 @@ where
                 Ok(())
             }));
             let mut viewport = Viewport {
+                scroll: self.scroll.clone(),
                 measured: index.map(|index| MeasuredWindow {
                     index,
                     keys: Vec::new(),
@@ -309,6 +336,7 @@ where
                 rows: MountedRows::default(),
             };
             node.children.push(Child::List(UpdateList {
+                scroll: self.scroll,
                 dirty,
                 reconcile: Box::new(move |instance, id, path, cx| {
                     viewport.update(instance, id, path, cx, &self.row)
@@ -327,23 +355,63 @@ struct Window {
 }
 
 impl Window {
-    fn new(
-        offset: f64,
-        range: Range<usize>,
-        top: impl FnOnce(usize) -> f64,
+    fn resolve(
+        count: usize,
         size: Size,
         visible: bool,
+        distance: f64,
+        estimate: f64,
+        measured: Option<&HeightIndex>,
+        handle: Option<&ListScrollHandle>,
     ) -> Self {
-        let range = if visible && size.width.get() > 0.0 && size.height.get() > 0.0 {
-            range
-        } else {
-            0..0
+        let top = |i| measured.map_or_else(|| i as f64 * estimate, |index| index.top(i, estimate));
+        let viewport = f64::from(size.height);
+        let limit = (top(count) - viewport).max(0.0);
+        let mut offset = distance.min(limit);
+        let active = visible && size.width.get() > 0.0 && viewport > 0.0;
+        let is_estimated = measured.is_some_and(|index| !index.covers(count));
+
+        if count == 0 || !active {
+            if let Some(handle) = handle {
+                handle.stage(active.then_some(ListScrollPosition {
+                    offset_px: offset,
+                    max_offset_px: limit,
+                    is_estimated,
+                }));
+            }
+            return Self {
+                offset,
+                range: 0..0,
+                first_y: px(0.0),
+            };
+        }
+        if let Some(handle) = handle {
+            offset = handle
+                .resolve(offset, viewport, count, limit, top)
+                .clamp(0.0, limit);
+        }
+        let row_at = |y: f64| {
+            measured.map_or_else(
+                || ((y / estimate).floor() as usize).min(count),
+                |index| index.row_at(y, count, estimate),
+            )
         };
-        let first_y = if range.is_empty() {
-            px(0.0)
-        } else {
-            px((top(range.start) - offset) as f32)
-        };
+        let first = row_at(offset);
+        let bottom = offset + viewport;
+        let last = row_at(bottom);
+        let end = last.saturating_add(usize::from(top(last) < bottom));
+        let range = first.saturating_sub(1)..end.saturating_add(1).min(count);
+        if let Some(handle) = handle {
+            handle.stage(Some(ListScrollPosition {
+                offset_px: offset,
+                max_offset_px: limit,
+                is_estimated,
+            }));
+            if measured.is_some() && range != (0..count) && offset > 0.0 && offset < limit {
+                handle.anchor_estimated_target(first, offset - top(first));
+            }
+        }
+        let first_y = px((top(range.start) - offset) as f32);
         Self {
             offset,
             range,
@@ -372,30 +440,27 @@ impl<K: Clone + Eq + Hash + 'static> Viewport<K> {
         );
         let count = self.items.len(cx.state)?;
         let distance = *cx.state.read(self.offset)?;
-        let (window, index) = if self.measured.is_some() {
-            let (window, index) = self.measured_window(instance, id, size, cx, count, distance)?;
-            (window, Some(index))
+        let (distance, index) = if self.measured.is_some() {
+            let (anchored, index) =
+                self.measured_offset(instance, id, size, cx, count, distance)?;
+            (anchored, Some(index))
         } else {
-            let h = f64::from(self.height);
-            let offset = distance.min((count as f64 * h - f64::from(size.height)).max(0.0));
-            let first = (offset / h).floor() as usize;
-            let end = ((offset + f64::from(size.height)) / h).ceil() as usize;
-            (
-                Window::new(
-                    offset,
-                    first.saturating_sub(1).min(count)..end.saturating_add(1).min(count),
-                    |i| i as f64 * h,
-                    size,
-                    instance.bodies[&id].visible,
-                ),
-                None,
-            )
+            (distance, None)
         };
         let Window {
             offset,
             range,
             first_y,
-        } = window;
+        } = Window::resolve(
+            count,
+            size,
+            instance.bodies[&id].visible,
+            distance,
+            f64::from(self.height),
+            index.as_ref(),
+            self.scroll.as_ref(),
+        );
+        let request = self.scroll.as_ref().and_then(ListScrollHandle::pending);
         let refresh_measurements = self.measured.is_some() && self.keys_changed.get();
         let moved = body.content.first_y != first_y;
         if range != self.range || self.keys_changed.get() {
@@ -417,6 +482,15 @@ impl<K: Clone + Eq + Hash + 'static> Viewport<K> {
             instance
                 .scene
                 .edit_layout::<StyledBody<RowLayout>>(id, |body| body.content.first_y = first_y)?;
+        }
+        // Retain the target through all passes that mount or remeasure destination rows.
+        if let Some(handle) = &self.scroll
+            && request.is_some()
+            && request == handle.pending()
+            && !self.range.is_empty()
+            && !instance.scene.is_pending()
+        {
+            handle.clear();
         }
         Ok(())
     }
@@ -511,8 +585,11 @@ impl Instance {
             };
             let node = self.nodes[&path];
             let result = if self.scene.geometry(node).is_some() {
+                update.dirty.set(false);
                 let result = (update.reconcile)(self, node, &path, cx);
-                update.dirty.set(result.is_err());
+                if result.is_err() {
+                    update.dirty.set(true);
+                }
                 result
             } else {
                 Ok(())

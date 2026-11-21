@@ -3,7 +3,7 @@ use std::{cell::Cell, rc::Rc, time::Instant};
 
 use anyhow::Result;
 use solor::{
-    IntoElement, Styled, Ui, ViewId, component, div,
+    IntoElement, ListScrollHandle, ScrollAlignment, Styled, Ui, ViewId, component, div,
     layout::{Origin, Size},
     platform::{WindowEvent, WindowHandler},
     pointer::{PointerButton, PointerId, PointerInput, PointerKind, PointerSample, ScrollDelta},
@@ -170,6 +170,8 @@ fn scroll_frames(variable: bool) -> Result<()> {
     };
     for count in [100_000usize, 1_000_000] {
         let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
+        let handle = ListScrollHandle::new();
+        let list = handle.clone();
         let mut window = CpuWindow::mount(
             Ui::with_font(font.to_vec())?,
             component(move |_| {
@@ -189,9 +191,12 @@ fn scroll_frames(variable: bool) -> Result<()> {
                     variable_list(count, px(32.0), move |key| {
                         row(key).py(px(if key.is_multiple_of(2) { 2.0 } else { 12.0 }))
                     })
+                    .scroll_handle(&list)
                     .into_element()
                 } else {
-                    uniform_list(count, px(24.0), row).into_element()
+                    uniform_list(count, px(24.0), row)
+                        .scroll_handle(&list)
+                        .into_element()
                 }
             }),
         )?;
@@ -200,16 +205,30 @@ fn scroll_frames(variable: bool) -> Result<()> {
             window.frame_submitted()
         };
         frame(&mut window)?;
-        for jump in [false, true] {
+        #[derive(Debug)]
+        enum Motion {
+            Wheel,
+            WheelToEdge,
+            ScrollToRow,
+        }
+        for motion in [Motion::Wheel, Motion::WheelToEdge, Motion::ScrollToRow] {
             let mut times = Vec::with_capacity(240);
             for i in 0..272 {
-                let delta = if jump {
-                    if i % 2 == 0 { 1e9 } else { -1e9 }
-                } else {
-                    24.0
-                };
                 let start = Instant::now();
-                window.event(WindowEvent::Pointer(wheel(delta)))?;
+                match motion {
+                    Motion::ScrollToRow => {
+                        let index = if i % 2 == 0 { count / 4 } else { 3 * count / 4 };
+                        handle.scroll_to(index, ScrollAlignment::Center);
+                    }
+                    Motion::Wheel | Motion::WheelToEdge => {
+                        let delta = match motion {
+                            Motion::Wheel => 24.0,
+                            _ if i % 2 == 0 => 1e9,
+                            _ => -1e9,
+                        };
+                        window.event(WindowEvent::Pointer(wheel(delta)))?;
+                    }
+                }
                 frame(&mut window)?;
                 if i >= 32 {
                     times.push(start.elapsed());
@@ -217,7 +236,7 @@ fn scroll_frames(variable: bool) -> Result<()> {
             }
             times.sort_unstable();
             eprintln!(
-                "{count} rows, jump={jump}, CPU frame p95 {:?}, p99 {:?}",
+                "{count} rows, {motion:?}, CPU frame p95 {:?}, p99 {:?}",
                 times[227], times[237]
             );
         }
