@@ -69,6 +69,24 @@ unmounts. Tasks started with `Ui::context` belong to the UI. A custom host
 calls `Ui::poll_tasks` before checking redraw deadlines and supplies a waker
 that interrupts its event wait.
 
+### Blocking work
+
+Use `spawn_blocking` inside a foreground task for synchronous operations such
+as reading a local file. The closure and its result must be `Send`.
+
+```rust
+cx.spawn(async move |cx| {
+    let contents = cx.spawn_blocking(move || Ok(std::fs::read_to_string(path)?)).await?;
+    cx.set(document, SharedString::from(contents))
+});
+```
+
+On native hosts, all windows share up to two workers and 64 waiting jobs.
+Workers start on demand and exit after 30 idle seconds. A full queue returns
+`std::io::ErrorKind::WouldBlock` through the awaited error. Cancelling the
+foreground future releases a queued closure and its captures. Work already
+claimed by a worker can finish independently and its result is discarded.
+
 ## Composition
 
 Start with a general container and a text leaf. The container arranges children

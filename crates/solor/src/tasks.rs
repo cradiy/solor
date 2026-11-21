@@ -1,5 +1,6 @@
 //! Cooperative foreground work owned by the component that starts it.
 
+mod blocking;
 use crate::{
     Context, Ui,
     state::{Runtime, Signal},
