@@ -7,10 +7,10 @@ use wayland_client::{
 };
 
 use super::Window;
-use solor::raster::RasterFrame;
 use solor::raster::{Clip, Damage, DeviceSize};
+use solor::{platform::WindowBackground, raster::RasterFrame};
 
-/// Byte order of the three visible channels in an opaque shared-memory pixel.
+/// Byte order of the three visible channels in a shared-memory pixel.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum PixelOrder {
     Rgb,
@@ -18,10 +18,12 @@ pub(super) enum PixelOrder {
 }
 
 impl PixelOrder {
-    fn format(self) -> wl_shm::Format {
-        match self {
-            Self::Rgb => wl_shm::Format::Xbgr8888,
-            Self::Bgr => wl_shm::Format::Xrgb8888,
+    pub(super) fn format(self, background: WindowBackground) -> wl_shm::Format {
+        match (self, background) {
+            (Self::Rgb, WindowBackground::Opaque) => wl_shm::Format::Xbgr8888,
+            (Self::Bgr, WindowBackground::Opaque) => wl_shm::Format::Xrgb8888,
+            (Self::Rgb, WindowBackground::Transparent) => wl_shm::Format::Abgr8888,
+            (Self::Bgr, WindowBackground::Transparent) => wl_shm::Format::Argb8888,
         }
     }
 }
@@ -41,6 +43,7 @@ impl Buffer {
         size: DeviceSize,
         slot: usize,
         order: PixelOrder,
+        background: WindowBackground,
         shm: &wl_shm::WlShm,
         qh: &QueueHandle<Window>,
     ) -> io::Result<Self> {
@@ -53,7 +56,7 @@ impl Buffer {
             size.width as i32,
             size.height as i32,
             (size.width * 4) as i32,
-            order.format(),
+            order.format(background),
             qh,
             slot,
         );
@@ -88,12 +91,12 @@ impl Buffer {
                 .iter()
                 .zip(expected.as_chunks::<4>().0)
             {
-                let [first, green, third, _] = *word;
-                let rgb = match self.order {
-                    PixelOrder::Rgb => [first, green, third],
-                    PixelOrder::Bgr => [third, green, first],
+                let [first, green, third, alpha] = *word;
+                let pixel = match self.order {
+                    PixelOrder::Rgb => [first, green, third, alpha],
+                    PixelOrder::Bgr => [third, green, first, alpha],
                 };
-                if rgb != rgba[..3] {
+                if pixel != *rgba {
                     return Err(io::Error::other("shm pixel differs from uncached frame"));
                 }
             }
@@ -181,7 +184,7 @@ fn write_span(
             .iter()
             .zip(staging.as_chunks_mut::<4>().0)
         {
-            *dst = [src[2], src[1], src[0], 255];
+            *dst = [src[2], src[1], src[0], src[3]];
         }
         file.write_all_at(&staging[..rgba.len()], offset)?;
         offset += rgba.len() as u64;

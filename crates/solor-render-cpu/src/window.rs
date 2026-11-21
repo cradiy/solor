@@ -3,7 +3,7 @@ use anyhow::Result;
 use solor::{
     Draw, Render, Ui, ViewId,
     layout::Size,
-    platform::{EventResponse, WindowEvent, WindowHandler},
+    platform::{EventResponse, WindowBackground, WindowEvent, WindowHandler},
     pointer::PointerFrame,
     raster::{Clip, Damage, RasterFrame, RasterScale, Rgba8},
 };
@@ -16,6 +16,7 @@ pub struct CpuWindow {
     view: ViewId,
     prepared: Option<(PointerFrame, bool)>,
     animate: bool,
+    clear_byte: u8,
     retained: Option<RetainedView>,
     // Masks retain their face identity across submissions.
     glyph_masks: GlyphMasks,
@@ -30,13 +31,26 @@ struct RetainedView {
 
 impl CpuWindow {
     /// Mounts a component once. The platform supplies the size for its first layout.
-    pub fn mount(mut ui: Ui, root: impl Render) -> Result<Self> {
+    pub fn mount(ui: Ui, root: impl Render) -> Result<Self> {
+        Self::mount_with_background(ui, root, WindowBackground::Opaque)
+    }
+
+    /// Mounts a component with an opaque white or transparent canvas for full and partial draws.
+    pub fn mount_with_background(
+        mut ui: Ui,
+        root: impl Render,
+        background: WindowBackground,
+    ) -> Result<Self> {
         let view = ui.mount(root)?;
         Ok(Self {
             ui,
             view,
             prepared: None,
             animate: false,
+            clear_byte: match background {
+                WindowBackground::Opaque => 255,
+                WindowBackground::Transparent => 0,
+            },
             retained: None,
             glyph_masks: GlyphMasks::new(64, 32 * 1024),
         })
@@ -88,13 +102,24 @@ impl WindowHandler<Rgba8> for CpuWindow {
             Some(mut old) if old.logical == size && old.scale == scale => {
                 let damage = crate::view::damage(&old.draws, frame.draws(), scale, canvas)?;
                 for &area in damage.rects() {
-                    old.surface
-                        .repair(&frame, scale, area, &mut self.glyph_masks)?;
+                    old.surface.repair(
+                        &frame,
+                        scale,
+                        area,
+                        self.clear_byte,
+                        &mut self.glyph_masks,
+                    )?;
                 }
                 (old.surface, damage)
             }
             _ => (
-                Surface::raster_view(&frame, physical, scale, Some(&mut self.glyph_masks))?,
+                Surface::raster_view(
+                    &frame,
+                    physical,
+                    scale,
+                    self.clear_byte,
+                    Some(&mut self.glyph_masks),
+                )?,
                 Damage::from_rect(canvas),
             ),
         };

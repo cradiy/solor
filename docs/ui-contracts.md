@@ -128,7 +128,9 @@ wallpaper or overlay. Both entry points mount the same types of components and
 run until the surface closes. The driver borrows the CPU renderer's output for
 one submission.
 
-Run `cargo run -p solor-platform --example layer_panel` to open a top panel.
+Run `cargo run -p solor-platform --example layer_panel` to open a 300 × 36
+logical-pixel panel centered on the top edge. Set the panel's dimensions in
+`LayerShellOptions`. Its root element receives the configured surface size.
 `LayerShellOptions::new(namespace, layer)` spans the compositor-selected output
 and leaves keyboard focus with the active application. Set a fixed axis with
 `Some(px(...))` or leave it as `None` with both opposite edges anchored.
@@ -136,6 +138,11 @@ For instance, a top bar can stretch horizontally and use the same logical
 height for its fixed height and its reserved space. A corner overlay can set
 both dimensions and leave the exclusive zone at its default. Layer surfaces
 require `zwlr_layer_shell_v1`; on-demand keyboard focus requires version 4.
+
+For a translucent window or layer panel, call `.transparent()` on its creation
+options. Unpainted areas reveal the desktop, and fills, glyphs and antialiased
+edges retain per-pixel alpha. The default CPU canvas is opaque white. Configure
+the input region separately when clicks should pass through.
 
 To start hidden, create a `LayerSurfaceHandle::new(false)?` and pass
 `handle: Some(&handle)` in the layer options. A worker can keep a clone and
@@ -202,7 +209,7 @@ coordinates cover the full vertex bounds and stay fixed during partial repairs.
 
 ## Presenting a mounted view
 
-Inside the Linux host, `CpuWindow::mount(ui, component)` owns the UI and
+Inside the Linux host, `CpuWindow` owns the UI and
 mounts the root once. The host passes this handler to the Wayland driver. It
 dispatches pointer events against the accepted layout and requests a frame
 when signal bindings have work to flush. Each frame records the view and

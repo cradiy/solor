@@ -3,7 +3,7 @@ use solor::{Render, Ui, platform::Platform};
 use solor_linux::{Wayland, layer_shell::LayerShellOptions};
 use solor_render_cpu::CpuWindow;
 
-use super::WindowOptions;
+use super::{WindowBackground, WindowOptions};
 
 pub(super) struct Host(Wayland);
 
@@ -21,7 +21,8 @@ impl Host {
         ui: Ui,
         root: impl Render,
     ) -> Result<()> {
-        self.0.run_window(options, Box::new(mount(ui, root)?))
+        self.0
+            .run_window(options, Box::new(mount(ui, root, options.background)?))
     }
 
     pub(super) fn run_layer_surface(
@@ -31,11 +32,11 @@ impl Host {
         root: impl Render,
     ) -> Result<()> {
         self.0
-            .run_layer_surface(options, Box::new(mount(ui, root)?))
+            .run_layer_surface(options, Box::new(mount(ui, root, options.background)?))
     }
 }
 
-fn mount(mut ui: Ui, root: impl Render) -> Result<CpuWindow> {
+fn mount(mut ui: Ui, root: impl Render, background: WindowBackground) -> Result<CpuWindow> {
     ui.set_system_font_provider(solor_linux::system_ui_font);
-    CpuWindow::mount(ui, root)
+    CpuWindow::mount_with_background(ui, root, background)
 }

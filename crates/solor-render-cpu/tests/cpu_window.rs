@@ -379,3 +379,56 @@ fn focus_indicator_moves_over_hover_backgrounds_and_under_content() -> Result<()
     render(&mut window, [idle, ink, idle])?;
     Ok(())
 }
+
+#[test]
+fn translucent_layers_repair_to_transparent_without_a_full_repaint() -> Result<()> {
+    use solor::{platform::WindowBackground, raster::Clip, rgba};
+
+    let mut window = CpuWindow::mount_with_background(
+        Ui::new(),
+        component(|cx| {
+            let visible = cx.signal(true);
+            div()
+                .on_frame_when(visible, move |_, cx| cx.set(visible, false))
+                .child_when(visible, || {
+                    div()
+                        .size(px(12.0))
+                        .rounded(px(4.0))
+                        .bg(rgba(0xc8000080))
+                        .child(div().size(px(6.0)).bg(rgba(0x0000c880)))
+                })
+        }),
+        WindowBackground::Transparent,
+    )?;
+    let size = Size {
+        width: px(32.0),
+        height: px(20.0),
+    };
+    let frame = window.frame(size, RasterScale::ONE)?;
+    let at = |x: usize, y: usize| (y * 32 + x) * 4;
+    assert_eq!(frame.rgba[at(4, 4)..][..4], [50, 0, 100, 192]);
+    assert_eq!(frame.rgba[at(7, 7)..][..4], [100, 0, 0, 128]);
+    assert_eq!(frame.rgba[at(20, 12)..][..4], [0; 4]);
+    assert!(
+        frame
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|p| p[3] > 0 && p[3] < 128)
+    );
+    window.frame_submitted()?;
+    window.event(WindowEvent::FrameReady(Duration::ZERO))?;
+    let repaired = window.frame(size, RasterScale::ONE)?;
+    assert_eq!(
+        repaired.damage.bounds(),
+        Some(Clip {
+            left: 0,
+            top: 0,
+            right: 12,
+            bottom: 12
+        })
+    );
+    assert!(repaired.rgba.iter().all(|&byte| byte == 0));
+    Ok(())
+}

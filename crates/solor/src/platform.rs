@@ -40,10 +40,22 @@ pub enum WindowControl {
     Close,
 }
 
+/// How the window's pixels compose with the desktop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindowBackground {
+    /// Draw onto an opaque canvas.
+    #[default]
+    Opaque,
+    /// Preserve per-pixel alpha, including fully transparent unpainted areas.
+    Transparent,
+}
+
 /// Initial identity and preferred logical size of a window.
 #[derive(Clone, Copy, Debug)]
 #[must_use]
 pub struct WindowOptions<'a> {
+    /// Composition of the window background with the desktop.
+    pub background: WindowBackground,
     /// Whether to request the native window frame and title bar. Defaults to true.
     pub native_decorations: bool,
     /// Human-readable window title.
@@ -59,6 +71,7 @@ impl<'a> WindowOptions<'a> {
     pub const fn new(title: &'a str) -> Self {
         Self {
             native_decorations: true,
+            background: WindowBackground::Opaque,
             title,
             app_id: None,
             size: Size {
@@ -66,6 +79,12 @@ impl<'a> WindowOptions<'a> {
                 height: px(600.0),
             },
         }
+    }
+
+    /// Enables per-pixel transparency for the window content.
+    pub const fn transparent(mut self) -> Self {
+        self.background = WindowBackground::Transparent;
+        self
     }
 
     /// Requests the native frame and title bar when enabled.

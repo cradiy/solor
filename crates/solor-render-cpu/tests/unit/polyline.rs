@@ -29,7 +29,7 @@ fn retraced_translucent_stroke_blends_once_and_clipped_replay_preserves_coverage
     for scale in [RasterScale::ONE, RasterScale(1.5)] {
         let origin = point(3.0, 2.0);
         let render = |clip| -> std::io::Result<Surface> {
-            let mut image = Surface::white(size, scale)?;
+            let mut image = Surface::cleared(size, scale, 255)?;
             image.stroke_polyline(origin, &points, px(2.5), rgba(0xff000080), scale, clip);
             Ok(image)
         };

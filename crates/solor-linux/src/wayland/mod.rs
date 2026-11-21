@@ -29,7 +29,9 @@ use buffer::{Buffer, PixelOrder};
 use solor::{
     ResizeEdge,
     layout::Size,
-    platform::{Platform, WindowControl, WindowEvent, WindowHandler, WindowOptions},
+    platform::{
+        Platform, WindowBackground, WindowControl, WindowEvent, WindowHandler, WindowOptions,
+    },
     raster::{Clip, Damage, DeviceSize, RasterFrame, RasterScale, Rgba8},
 };
 
@@ -51,6 +53,7 @@ struct Window {
     scale_120: u32,
     surface: wl_surface::WlSurface,
     shm: wl_shm::WlShm,
+    background: WindowBackground,
     pixel_order: PixelOrder,
     slots: [Option<Buffer>; 2],
     next_slot: usize,
@@ -194,10 +197,11 @@ impl Wayland {
         request: Request<'_>,
         view: Box<dyn WindowHandler<Rgba8>>,
     ) -> anyhow::Result<()> {
-        let control = match &request {
-            Request::Layer(options) => options.handle.map(|handle| handle.claim()).transpose()?,
-            Request::Toplevel(_) => None,
+        let (background, handle) = match &request {
+            Request::Layer(options) => (options.background, options.handle),
+            Request::Toplevel(options) => (options.background, None),
         };
+        let control = handle.map(|handle| handle.claim()).transpose()?;
         let start = Instant::now();
         let connection = Connection::connect_to_env()?;
         let (globals, mut queue) = registry_queue_init::<Window>(&connection)?;
@@ -226,6 +230,7 @@ impl Wayland {
             scale_120: 120,
             surface,
             shm,
+            background,
             pixel_order: PixelOrder::Bgr,
             slots: [None, None],
             next_slot: 0,
@@ -498,7 +503,14 @@ impl Window {
             .as_ref()
             .is_some_and(|slot| slot.size == size);
         if !reuse {
-            self.slots[index] = Some(Buffer::new(size, index, self.pixel_order, &self.shm, qh)?);
+            self.slots[index] = Some(Buffer::new(
+                size,
+                index,
+                self.pixel_order,
+                self.background,
+                &self.shm,
+                qh,
+            )?);
         }
         let slot = self.slots[index]
             .as_mut()
@@ -592,8 +604,9 @@ impl Dispatch<wl_shm::WlShm, ()> for Window {
         _: &QueueHandle<Self>,
     ) {
         if let wl_shm::Event::Format {
-            format: wayland_client::WEnum::Value(wl_shm::Format::Xbgr8888),
+            format: wayland_client::WEnum::Value(format),
         } = event
+            && format == PixelOrder::Rgb.format(state.background)
         {
             state.pixel_order = PixelOrder::Rgb;
         }

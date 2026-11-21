@@ -46,7 +46,7 @@ fn delayed_slot_repairs_disjoint_edits_and_retries_after_io_error() {
             for (word, rgba) in data.as_chunks::<4>().0.iter().zip(rgba.as_chunks::<4>().0) {
                 let expected = match order {
                     PixelOrder::Rgb => *rgba,
-                    PixelOrder::Bgr => [rgba[2], rgba[1], rgba[0], 255],
+                    PixelOrder::Bgr => [rgba[2], rgba[1], rgba[0], rgba[3]],
                 };
                 assert_eq!(*word, expected);
             }

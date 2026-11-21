@@ -193,7 +193,8 @@ impl crate::platform::Presentation for Rgba8 {
 pub struct RasterFrame<'a> {
     /// Physical dimensions of the image.
     pub size: DeviceSize,
-    /// Four bytes per pixel in RGBA order. Opaque targets ignore alpha.
+    /// Four bytes per pixel in RGBA order. Transparent targets require premultiplied RGB.
+    /// Opaque targets ignore the alpha byte.
     pub rgba: &'a [u8],
     /// Physical regions changed since the last submission.
     pub damage: Damage,

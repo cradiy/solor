@@ -20,16 +20,17 @@ enum Brush<'a, F> {
 impl Surface {
     /// Replays a complete mounted view in paint order onto an opaque white surface.
     pub fn draw_view(frame: &ViewFrame, size: DeviceSize, scale: RasterScale) -> Result<Self> {
-        Self::raster_view(frame, size, scale, None)
+        Self::raster_view(frame, size, scale, 255, None)
     }
 
     pub(super) fn raster_view(
         frame: &ViewFrame,
         size: DeviceSize,
         scale: RasterScale,
+        clear_byte: u8,
         masks: Option<&mut GlyphMasks>,
     ) -> Result<Self> {
-        let mut surface = Self::white(size, scale)?;
+        let mut surface = Self::cleared(size, scale, clear_byte)?;
         surface.replay(frame.draws(), scale, Clip::canvas(size), masks)?;
         Ok(surface)
     }
@@ -39,10 +40,11 @@ impl Surface {
         frame: &ViewFrame,
         scale: RasterScale,
         clip: Clip,
+        clear_byte: u8,
         masks: &mut GlyphMasks,
     ) -> Result<()> {
         let mut draws = frame.draws();
-        let mut background = [255; 4];
+        let mut background = [clear_byte; 4];
         while let Some((draw, tail)) = draws.split_first() {
             let bounds = device_bounds(draw, scale)?.intersect(clip);
             if !bounds.empty() {

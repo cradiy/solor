@@ -1,5 +1,5 @@
 //! Wayland layer surfaces for panels, wallpapers and overlays.
-use solor::{Edges, Pixels};
+use solor::{Edges, Pixels, platform::WindowBackground};
 
 mod handle;
 mod input_region;
@@ -28,6 +28,8 @@ pub enum ExclusiveZone {
 /// Initial placement and input policy on a compositor-selected output.
 #[derive(Clone, Copy, Debug)]
 pub struct LayerShellOptions<'a> {
+    /// Composition of the panel background with the desktop.
+    pub background: WindowBackground,
     /// Optional handle for controlling visibility and closing this surface from any thread.
     pub handle: Option<&'a LayerSurfaceHandle>,
     /// Stable name used by compositor rules to identify the surface.
@@ -52,6 +54,7 @@ impl<'a> LayerShellOptions<'a> {
     /// Creates a surface spanning all four edges with no keyboard focus or reserved space.
     pub fn new(namespace: &'a str, layer: Layer) -> Self {
         Self {
+            background: WindowBackground::Opaque,
             handle: None,
             namespace,
             layer,
@@ -62,5 +65,11 @@ impl<'a> LayerShellOptions<'a> {
             exclusive_zone: ExclusiveZone::Avoid,
             keyboard_interactivity: KeyboardInteractivity::None,
         }
+    }
+
+    /// Enables per-pixel transparency for the panel content.
+    pub const fn transparent(mut self) -> Self {
+        self.background = WindowBackground::Transparent;
+        self
     }
 }

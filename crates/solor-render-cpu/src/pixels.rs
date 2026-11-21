@@ -12,7 +12,7 @@ pub use solor::raster::{Clip, DeviceSize, RasterScale};
 pub struct Surface {
     /// Physical extent of the image.
     pub size: DeviceSize,
-    /// RGBA bytes in top-to-bottom row order.
+    /// Premultiplied RGBA bytes in top-to-bottom row order.
     pub rgba: Vec<u8>,
 }
 
@@ -73,7 +73,7 @@ impl Surface {
         scale: RasterScale,
         cache: Option<&mut GlyphMasks>,
     ) -> Result<Self> {
-        let mut surface = Self::white(size, scale)?;
+        let mut surface = Self::cleared(size, scale, 255)?;
         // Sample a device-pixel crop of the document at the current scale.
         let origin = (
             origin.0,
@@ -96,7 +96,7 @@ impl Surface {
         Ok(surface)
     }
 
-    pub(super) fn white(size: DeviceSize, scale: RasterScale) -> Result<Self> {
+    pub(super) fn cleared(size: DeviceSize, scale: RasterScale, clear_byte: u8) -> Result<Self> {
         if !scale.0.is_finite() || scale.0 <= 0.0 {
             return Err(Error::other("invalid raster scale"));
         }
@@ -106,7 +106,7 @@ impl Surface {
         }
         Ok(Self {
             size,
-            rgba: vec![255; pixels as usize * 4],
+            rgba: vec![clear_byte; pixels as usize * 4],
         })
     }
 
@@ -137,11 +137,11 @@ impl Surface {
     }
 }
 
-pub(super) fn blend(pixel: &mut [u8], color: solor::Rgba, coverage: u8) {
+pub(super) fn blend(pixel: &mut [u8; 4], color: solor::Rgba, coverage: u8) {
     let alpha = (u32::from(coverage) * u32::from(color.alpha) + 127) / 255;
-    for (channel, src) in pixel[..3]
+    for (channel, src) in pixel
         .iter_mut()
-        .zip([color.red, color.green, color.blue])
+        .zip([color.red, color.green, color.blue, 255])
     {
         *channel =
             ((u32::from(src) * alpha + u32::from(*channel) * (255 - alpha) + 127) / 255) as u8;
@@ -160,7 +160,7 @@ pub(super) fn blend_solid_span(pixels: &mut [[u8; 4]], color: solor::Rgba, cover
     }
 
     let inverse = 255 - alpha;
-    // The surface is opaque. Blending its fourth lane against 255 preserves that invariant.
+    // Source-over uses the same weights for premultiplied RGB and destination alpha.
     let source = [color.red, color.green, color.blue, 255].map(|c| u16::from(c) * alpha + 127);
     for pixel in pixels {
         for (channel, source) in pixel.iter_mut().zip(source) {

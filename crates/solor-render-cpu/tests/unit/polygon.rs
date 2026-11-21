@@ -11,7 +11,7 @@ const SIZE: DeviceSize = DeviceSize {
 };
 
 fn render(points: &[Origin], fill: Fill, scale: RasterScale, clip: Clip) -> Result<Surface> {
-    let mut image = Surface::white(SIZE, scale)?;
+    let mut image = Surface::cleared(SIZE, scale, 255)?;
     image.fill_polygon(point(0.5, 1.0), points, &fill, scale, clip)?;
     Ok(image)
 }
