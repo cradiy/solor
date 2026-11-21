@@ -19,25 +19,23 @@ pub fn current_platform() -> Result<SystemPlatform> {
     system::select().map(SystemPlatform)
 }
 
-/// Opens ordinary windows during application startup.
-pub struct Application<'a>(&'a mut system::Windows);
+/// A cloneable UI-thread handle for opening windows during setup or from event handlers.
+/// Keeping a handle does not keep the event loop alive.
+#[derive(Clone)]
+pub struct Application(system::Windows);
 
-impl Application<'_> {
-    /// Mounts an independent view and opens a window with the supplied options.
-    pub fn open_window(
-        &mut self,
-        options: WindowOptions<'_>,
-        ui: Ui,
-        root: impl Render,
-    ) -> Result<()> {
-        system::open_window(self.0, options, ui, root)
+impl Application {
+    /// Mounts an independent view and opens a window on the current event loop.
+    /// Returns an error if the application has exited or window creation fails.
+    pub fn open_window(&self, options: WindowOptions<'_>, ui: Ui, root: impl Render) -> Result<()> {
+        system::open_window(&self.0, options, ui, root)
     }
 }
 
 impl SystemPlatform {
     /// Calls the setup function once, then runs the windows together on the calling thread
     /// until the last one closes. Each window owns its UI and frame schedule.
-    pub fn run(&self, setup: impl FnOnce(&mut Application<'_>) -> Result<()>) -> Result<()> {
+    pub fn run(&self, setup: impl FnOnce(Application) -> Result<()>) -> Result<()> {
         self.0.run(setup)
     }
 

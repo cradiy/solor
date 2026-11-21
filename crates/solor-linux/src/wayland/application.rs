@@ -9,9 +9,15 @@ use solor::{
     platform::{WindowBackground, WindowHandler, WindowOptions},
     raster::Rgba8,
 };
-use std::{collections::HashMap, io, time::Instant};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    io,
+    rc::{Rc, Weak},
+    time::Instant,
+};
 use wayland_client::{
-    Connection, EventQueue, Proxy,
+    Connection, EventQueue, Proxy, QueueHandle,
     backend::ObjectId,
     globals::{GlobalList, registry_queue_init},
     protocol::{wl_compositor, wl_shm, wl_surface},
@@ -41,11 +47,47 @@ impl Desktop {
     }
 }
 
-/// Ordinary windows opened on one connection and dispatched on the calling thread.
-pub struct WaylandApplication {
+/// A UI-thread handle for opening windows on a running Wayland connection.
+#[derive(Clone)]
+pub struct WaylandApplication(Weak<WindowFactory>);
+
+impl WaylandApplication {
+    /// Creates an XDG toplevel and schedules it for dispatch after the current callback.
+    /// Returns an error if the application has exited or window creation fails.
+    pub fn open_window(
+        &self,
+        options: WindowOptions<'_>,
+        view: Box<dyn WindowHandler<Rgba8>>,
+    ) -> anyhow::Result<()> {
+        self.open_window_with(options, || Ok(view))
+    }
+
+    /// Builds the handler on the UI thread once the application is available.
+    pub fn open_window_with(
+        &self,
+        options: WindowOptions<'_>,
+        build: impl FnOnce() -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
+    ) -> anyhow::Result<()> {
+        let windows = self
+            .0
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("application has exited"))?;
+        windows
+            .open(Request::Toplevel(options), build()?)
+            .map(|_| ())
+    }
+}
+
+struct EventLoop {
+    windows: Rc<WindowFactory>,
     connection: Connection,
     queue: EventQueue<Desktop>,
     desktop: Desktop,
+}
+
+struct WindowFactory {
+    qh: QueueHandle<Desktop>,
+    pending: RefCell<Vec<Window>>,
     globals: GlobalList,
     compositor: wl_compositor::WlCompositor,
     shm: wl_shm::WlShm,
@@ -60,11 +102,11 @@ impl Wayland {
     /// Opens the initial windows, then dispatches events until the last window closes.
     pub fn run(
         &self,
-        setup: impl FnOnce(&mut WaylandApplication) -> anyhow::Result<()>,
+        setup: impl FnOnce(WaylandApplication) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
-        let mut app = WaylandApplication::connect(self)?;
-        setup(&mut app)?;
-        app.dispatch(None)
+        let mut events = EventLoop::connect(self)?;
+        setup(WaylandApplication(Rc::downgrade(&events.windows)))?;
+        events.dispatch(None)
     }
 
     /// Runs a desktop layer surface until the compositor or the application closes it.
@@ -74,13 +116,13 @@ impl Wayland {
         view: Box<dyn WindowHandler<Rgba8>>,
     ) -> anyhow::Result<()> {
         let control = options.handle.map(|h| h.claim()).transpose()?;
-        let mut app = WaylandApplication::connect(self)?;
-        let id = app.open(Request::Layer(options), view)?;
-        app.dispatch(control.map(|control| (id, control)))
+        let mut events = EventLoop::connect(self)?;
+        let id = events.windows.open(Request::Layer(options), view)?;
+        events.dispatch(control.map(|control| (id, control)))
     }
 }
 
-impl WaylandApplication {
+impl EventLoop {
     fn connect(host: &Wayland) -> anyhow::Result<Self> {
         let connection = Connection::connect_to_env()?;
         let (globals, queue) = registry_queue_init::<Desktop>(&connection)?;
@@ -94,7 +136,7 @@ impl WaylandApplication {
                 desktop.add_seat(globals.registry(), global.name, global.version, &qh);
             }
         }
-        Ok(Self {
+        let windows = WindowFactory {
             compositor: globals.bind(&qh, 4..=4, ())?,
             shm: globals.bind(&qh, 1..=1, ())?,
             viewporter: globals.bind(&qh, 1..=1, ())?,
@@ -106,32 +148,30 @@ impl WaylandApplication {
             },
             trace_submissions: host.trace_submissions,
             verify_shm: host.verify_shm,
-            connection,
+            qh,
             globals,
+            pending: RefCell::default(),
+        };
+        Ok(Self {
+            windows: Rc::new(windows),
+            connection,
             queue,
             desktop,
         })
     }
+}
 
-    /// Adds an independently sized and rendered XDG toplevel to this application.
-    pub fn open_window(
-        &mut self,
-        options: WindowOptions<'_>,
-        view: Box<dyn WindowHandler<Rgba8>>,
-    ) -> anyhow::Result<()> {
-        self.open(Request::Toplevel(options), view).map(|_| ())
-    }
-
+impl WindowFactory {
     fn open(
-        &mut self,
+        &self,
         request: Request<'_>,
         view: Box<dyn WindowHandler<Rgba8>>,
     ) -> anyhow::Result<ObjectId> {
-        let surface = self.compositor.create_surface(&self.queue.handle(), ());
+        let surface = self.compositor.create_surface(&self.qh, ());
         let id = surface.id();
         match self.create_window(&surface, request, view) {
             Ok(window) => {
-                self.desktop.windows.insert(id.clone(), window);
+                self.pending.borrow_mut().push(window);
                 Ok(id)
             }
             Err(error) => {
@@ -147,12 +187,12 @@ impl WaylandApplication {
         request: Request<'_>,
         mut view: Box<dyn WindowHandler<Rgba8>>,
     ) -> anyhow::Result<Window> {
-        let qh = self.queue.handle();
+        let qh = &self.qh;
         let background = match &request {
             Request::Layer(options) => options.background,
             Request::Toplevel(options) => options.background,
         };
-        let (role, size) = request.create(&self.globals, &qh, surface)?;
+        let (role, size) = request.create(&self.globals, qh, surface)?;
         buffer_size(120, size)?;
         view.set_window_resizable(matches!(
             &role,
@@ -169,12 +209,12 @@ impl WaylandApplication {
                 &self.viewporter,
                 surface,
                 floating::Geometry::new(size, p.anchor, p.margin),
-                &qh,
+                qh,
             )?),
             _ => None,
         };
         let content = floating.as_ref().map_or(surface, |p| &p.content);
-        let viewport = self.viewporter.get_viewport(content, &qh, ());
+        let viewport = self.viewporter.get_viewport(content, qh, ());
 
         Ok(Window {
             role,
@@ -184,13 +224,13 @@ impl WaylandApplication {
             presentation: self.presentation.clone(),
             fractional: self
                 .scale_manager
-                .get_fractional_scale(surface, &qh, surface.id()),
+                .get_fractional_scale(surface, qh, surface.id()),
             viewport,
             scale_120: 120,
             surface: surface.clone(),
             shm: self.shm.clone(),
             background,
-            pixel_order: self.desktop.order(background),
+            pixel_order: PixelOrder::Bgr,
             slots: [None, None],
             next_slot: 0,
             view,
@@ -209,10 +249,16 @@ impl WaylandApplication {
             start: Instant::now(),
         })
     }
+}
 
+impl EventLoop {
     fn dispatch(&mut self, control: Option<(ObjectId, Binding<'_>)>) -> anyhow::Result<()> {
         let qh = self.queue.handle();
         loop {
+            for mut window in self.windows.pending.take() {
+                window.pixel_order = self.desktop.order(window.background);
+                self.desktop.windows.insert(window.surface.id(), window);
+            }
             let mut deadline = None;
             let mut closed = Vec::new();
             for (id, window) in &mut self.desktop.windows {
@@ -234,7 +280,7 @@ impl WaylandApplication {
                     window.input_region.update(handle.take_input_region());
                 }
                 if visible && (handle.is_some() || window.floating.is_some()) {
-                    window.apply_input_region(&self.compositor, &qh);
+                    window.apply_input_region(&self.windows.compositor, &qh);
                 }
                 if !visible && window.mapping == Mapping::Mapped {
                     pointer::cancel_focus(&mut self.desktop.seats, id, window);
@@ -260,11 +306,15 @@ impl WaylandApplication {
                     window.destroy();
                 }
             }
+            self.desktop.sync_cursors();
+            // Frame and disposal callbacks can also open a window before the loop sleeps.
+            if !self.windows.pending.borrow().is_empty() {
+                continue;
+            }
             if self.desktop.windows.is_empty() {
                 self.connection.flush()?;
                 return Ok(());
             }
-            self.desktop.sync_cursors();
             dispatch_until(
                 &mut self.queue,
                 &mut self.desktop,

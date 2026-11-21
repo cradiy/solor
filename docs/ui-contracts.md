@@ -87,12 +87,14 @@ owns the pairing of the window system with a compatible renderer. The same
 application entry point compiles on other targets. Platform selection returns
 an unsupported-platform error where a host is unavailable.
 
-For multiple ordinary windows, call `platform.run(|app| { ... })` and open
-each window with `app.open_window(options, ui, root)?` in the setup callback.
-Each window owns its mounted UI, focus and redraw schedule. The event loop
-returns after the last window closes. The
-[multiple windows example](../crates/solor-platform/examples/multiple_windows.rs)
-opens two notes that can be bookmarked independently.
+For multiple ordinary windows, call `platform.run(|app| { ... })`. Use
+`app.open_window(options, ui, root)?` during setup or capture `app.clone()`
+in a UI callback to open another window. The call mounts the view and reports
+creation errors to its caller. The new window receives events after the
+callback returns. Each window owns its UI, focus and redraw schedule.
+Closing the last window ends the event loop, even if an application handle
+is still held. The [multiple windows example](../crates/solor-platform/examples/multiple_windows.rs)
+opens additional notes from a button in any existing note.
 
 `WindowOptions::new("Settings")` requests an 800 × 600 logical-pixel window.
 Use `.size(px(480.0), px(320.0))` for a different preference and

@@ -5,6 +5,7 @@ use solor::{Render, Ui};
 
 use super::{Application, WindowOptions};
 
+#[derive(Clone)]
 pub(super) enum Host {}
 
 pub(super) fn select() -> Result<Host> {
@@ -21,7 +22,7 @@ pub(super) fn select() -> Result<Host> {
 pub(super) type Windows = Host;
 
 pub(super) fn open_window(
-    app: &mut Windows,
+    app: &Windows,
     _: WindowOptions<'_>,
     _: Ui,
     _: impl Render,
@@ -30,7 +31,7 @@ pub(super) fn open_window(
 }
 
 impl Host {
-    pub(super) fn run(&self, _: impl FnOnce(&mut Application<'_>) -> Result<()>) -> Result<()> {
+    pub(super) fn run(&self, _: impl FnOnce(Application) -> Result<()>) -> Result<()> {
         match *self {}
     }
 }

@@ -17,17 +17,19 @@ pub(super) fn select() -> Result<Host> {
 pub(super) type Windows = solor_linux::WaylandApplication;
 
 pub(super) fn open_window(
-    app: &mut Windows,
+    app: &Windows,
     options: WindowOptions<'_>,
     ui: Ui,
     root: impl Render,
 ) -> Result<()> {
-    app.open_window(options, Box::new(mount(ui, root, options.background)?))
+    app.open_window_with(options, || {
+        Ok(Box::new(mount(ui, root, options.background)?))
+    })
 }
 
 impl Host {
-    pub(super) fn run(&self, setup: impl FnOnce(&mut Application<'_>) -> Result<()>) -> Result<()> {
-        self.0.run(|app| setup(&mut Application(app)))
+    pub(super) fn run(&self, setup: impl FnOnce(Application) -> Result<()>) -> Result<()> {
+        self.0.run(|app| setup(Application(app)))
     }
 
     pub(super) fn run_layer_surface(

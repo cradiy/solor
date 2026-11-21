@@ -70,6 +70,14 @@ impl Request<'_> {
     ) -> Result<(Role, Size)> {
         match self {
             Self::Toplevel(options) => {
+                ensure!(
+                    !options.title.contains('\0'),
+                    "window title contains a null byte"
+                );
+                ensure!(
+                    options.app_id.is_none_or(|id| !id.contains('\0')),
+                    "application identifier contains a null byte"
+                );
                 let sizing = ToplevelSizing::new(&options)?;
                 let shell: XdgWmBase = globals.bind(qh, 1..=1, ())?;
                 let topmost = if options.always_on_top {
