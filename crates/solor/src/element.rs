@@ -512,6 +512,7 @@ pub(super) struct MountedNode {
     pub(crate) cursor: Option<crate::style::Cursor>,
     pub(crate) hit_testable: bool,
     pub(crate) overflow_clip: OverflowClip,
+    pub(crate) scroll_axes: crate::pointer::ScrollAxes,
 }
 
 impl MountedNode {
@@ -548,6 +549,7 @@ impl MountedNode {
                 .and_then(|a| a.z_index)
                 .unwrap_or_default(),
             overflow_clip: OverflowClip::from_layout(style.layout.as_deref()),
+            scroll_axes: crate::pointer::ScrollAxes::from_layout(style.layout.as_deref()),
             cursor: style.appearance.as_deref().and_then(|a| a.cursor),
             hit_testable: style.appearance.as_deref().and_then(|a| a.pointer_events)
                 != Some(PointerEvents::None),

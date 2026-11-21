@@ -2,6 +2,8 @@
 mod frame;
 mod hover;
 mod routing;
+mod scroll;
+pub(crate) use scroll::ScrollAxes;
 mod tooltip;
 pub use tooltip::{Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle};
 
@@ -311,7 +313,7 @@ impl<E: crate::Element> crate::Node<E> {
         /// Reports changes in content coordinates or dimensions after input or frame acceptance,
         /// and reports `None` when the last mouse leaves.
         on_hover_position => hover_position (Option<HoverPosition>, &mut Context<'_>);
-        /// Handles scroll input at the nearest listener. Call `cx.propagate()` to pass it to an ancestor.
+        /// Overrides wheel scrolling on this element. Call `cx.propagate()` to pass the delta to an ancestor.
         on_scroll => scroll (&ScrollEvent, &mut ScrollContext<'_>);
         /// Handles a button press on this element. The callback can capture the pointer.
         on_pointer_down => down (&PointerEvent, &mut PointerDownContext<'_>);

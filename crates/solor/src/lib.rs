@@ -791,6 +791,15 @@ impl Ui {
         let layout_pending = instance.scene.is_pending();
         let changed = instance.scene.run_assigned(size, false)?;
         if changed != 0 {
+            instance.pointer.scroll_offsets.retain(|id, offset| {
+                let geometry = instance
+                    .scene
+                    .geometry(*id)
+                    .expect("mounted scroll container");
+                instance.bodies[id]
+                    .scroll_axes
+                    .clamp_offset(offset, geometry)
+            });
             instance.invalidate_geometry();
         } else if layout_pending {
             // Custom layout can change internal paint data at the same published size.

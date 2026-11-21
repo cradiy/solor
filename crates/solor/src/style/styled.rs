@@ -240,6 +240,8 @@ pub trait Styled: Sized {
         align_self { self_center: Align::Center, self_start: Align::Start, self_end: Align::End, self_stretch: Align::Stretch, self_baseline: Align::Baseline };
         justify_content { justify_center: Distribution::Center, justify_between: Distribution::SpaceBetween, justify_around: Distribution::SpaceAround, justify_evenly: Distribution::SpaceEvenly, justify_start: Distribution::Start, justify_end: Distribution::End };
         overflow { overflow_hidden: Overflow::Hidden, overflow_scroll: Overflow::Scroll, overflow_auto: Overflow::Auto, overflow_visible: Overflow::Visible };
+        overflow_x { overflow_x_scroll: Overflow::Scroll };
+        overflow_y { overflow_y_scroll: Overflow::Scroll };
         border_style { border_solid: BorderStyle::Solid, border_dashed: BorderStyle::Dashed, border_dotted: BorderStyle::Dotted };
         mx { mx_auto: Length::Auto };
         margin { m_auto: Length::Auto };

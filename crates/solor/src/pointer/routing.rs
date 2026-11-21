@@ -25,6 +25,8 @@ struct Press {
 #[derive(Default)]
 pub(crate) struct PointerRouter {
     pub(super) frame: Option<PointerFrame>,
+    pub(crate) scroll_offsets: HashMap<NodeId, crate::layout::Origin>,
+    pub(super) scroll_pending: bool,
     pub(super) geometry: OnceCell<Arc<HitGeometry>>,
     presses: HashMap<PointerId, Vec<Press>>,
     pub(super) hover: super::hover::Hover,
@@ -42,6 +44,7 @@ impl PointerRouter {
     }
 
     pub(crate) fn retire(&mut self, node: NodeId) {
+        self.scroll_offsets.remove(&node);
         self.hover.retire(node);
         self.tooltips.retire(node);
         self.presses.retain(|_, presses| {
@@ -221,32 +224,37 @@ impl Delivery<'_> {
         let Some(mut owner) = self.hit(sample, |r| r.scroll) else {
             return Ok(());
         };
-        let frame = self
-            .instance
-            .pointer
-            .frame
-            .as_ref()
-            .expect("accepted scroll hit");
         loop {
-            let pointer = self.event(owner, sample, None)?;
-            let node = self
+            let frame = self
                 .instance
-                .bodies
-                .get_mut(&owner)
-                .expect("live scroll ancestor");
-            let (handlers, context) = context_and_handlers(node, self.state, self.engine);
-            let scroll = handlers.scroll.as_ref().expect("accepted scroll listener");
-            let mut cx = ScrollContext {
-                context,
-                received: delta,
-                remaining: ScrollDelta::default(),
-            };
-            scroll(&ScrollEvent { pointer, delta }, &mut cx)?;
-            delta = cx.remaining;
+                .pointer
+                .frame
+                .as_ref()
+                .expect("accepted scroll hit");
+            let parent = frame.scroll_parent(owner);
+            if let Some(limit) = frame.scroll_limit(owner) {
+                delta = self.instance.scroll_children(owner, limit, delta)?;
+            } else {
+                let pointer = self.event(owner, sample, None)?;
+                let node = self
+                    .instance
+                    .bodies
+                    .get_mut(&owner)
+                    .expect("live scroll ancestor");
+                let (handlers, context) = context_and_handlers(node, self.state, self.engine);
+                let scroll = handlers.scroll.as_ref().expect("accepted scroll listener");
+                let mut cx = ScrollContext {
+                    context,
+                    received: delta,
+                    remaining: ScrollDelta::default(),
+                };
+                scroll(&ScrollEvent { pointer, delta }, &mut cx)?;
+                delta = cx.remaining;
+            }
             if delta == ScrollDelta::default() {
                 break;
             }
-            let Some(parent) = frame.scroll_parent(owner) else {
+            let Some(parent) = parent else {
                 break;
             };
             owner = parent;
@@ -391,7 +399,7 @@ impl Ui {
     /// A host rechecks this after input and after accepting a frame.
     pub fn next_redraw(&self, view: ViewId) -> Option<std::time::Instant> {
         let instance = self.instances.get(&view)?;
-        if self.has_pending_bindings() {
+        if self.has_pending_bindings() || instance.pointer.scroll_pending {
             return Some(std::time::Instant::now());
         }
         instance.pointer.tooltips.deadline()
@@ -412,6 +420,9 @@ impl Ui {
             .frame
             .as_ref()
             .is_none_or(|old| !old.same_geometry(&frame));
+        if frame.is_current(router) {
+            router.scroll_pending = false;
+        }
         router.frame = Some(frame);
         let result = delivery.cancel_ids(canceled);
         if changed {

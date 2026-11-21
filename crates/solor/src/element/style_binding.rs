@@ -278,13 +278,23 @@ impl crate::Instance {
         let z_index = appearance.and_then(|a| a.z_index).unwrap_or_default();
         let cursor = appearance.and_then(|a| a.cursor);
         let hit_testable = appearance.and_then(|a| a.pointer_events) != Some(PointerEvents::None);
-        let routing_changed = (z_index, &clip, cursor, hit_testable)
+        let scroll_axes = crate::pointer::ScrollAxes::from_layout(style.layout.as_deref());
+        let routing_changed = (z_index, &clip, scroll_axes, cursor, hit_testable)
             != (
                 node.z_index,
                 &node.overflow_clip,
+                node.scroll_axes,
                 node.cursor,
                 node.hit_testable,
             );
+        if scroll_axes != node.scroll_axes
+            && let Some(offset) = self.pointer.scroll_offsets.get_mut(&id)
+            && let Some(geometry) = self.scene.geometry(id)
+            && !scroll_axes.clamp_offset(offset, geometry)
+        {
+            self.pointer.scroll_offsets.remove(&id);
+        }
+        node.scroll_axes = scroll_axes;
         node.z_index = z_index;
         node.overflow_clip = clip;
         node.cursor = cursor;

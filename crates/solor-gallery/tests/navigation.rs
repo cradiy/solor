@@ -562,3 +562,57 @@ fn sparse_market_repairs_match_full_redraw_at_fractional_scale() -> Result<()> {
     assert!(saw_sparse_damage);
     Ok(())
 }
+
+#[test]
+fn compact_market_scrolls_the_watchlist_below_its_header() -> Result<()> {
+    let (mut ui, view) = market_view()?;
+    let viewport = Size {
+        width: px(800.0),
+        height: px(320.0),
+    };
+    let submit = |ui: &mut solor::Ui| -> Result<_> {
+        ui.flush()?;
+        ui.layout(view, viewport)?;
+        let frame = ui.record_frame(view)?;
+        let label = |name| {
+            frame
+                .draws()
+                .iter()
+                .find_map(|draw| match draw {
+                    solor::Draw::Text {
+                        origin, paragraph, ..
+                    } if paragraph.text.as_str() == name => Some(*origin),
+                    _ => None,
+                })
+                .expect("watchlist label")
+        };
+        let positions = (label("Watchlist"), label("QBFG"));
+        ui.accept_pointer_frame(frame.into_pointer_frame())?;
+        Ok(positions)
+    };
+    let (header, last) = submit(&mut ui)?;
+    assert!(last.y >= viewport.height);
+    ui.dispatch_pointer(
+        view,
+        PointerInput::Scroll(
+            mouse_at(header.x.get(), header.y.get() + 60.0),
+            solor::pointer::ScrollDelta {
+                x: px(0.0),
+                y: px(400.0),
+            },
+        ),
+    )?;
+    let (scrolled_header, scrolled_last) = submit(&mut ui)?;
+    assert_eq!(scrolled_header, header);
+    assert!(scrolled_last.y < viewport.height && scrolled_last.y > header.y);
+    let target = mouse_at(scrolled_last.x.get() + 2.0, scrolled_last.y.get() + 4.0);
+    for input in [
+        PointerInput::Down(target, PointerButton::Primary),
+        PointerInput::Up(target, PointerButton::Primary),
+    ] {
+        ui.dispatch_pointer(view, input)?;
+    }
+    let labels = submit_labels(&mut ui, view)?;
+    assert_eq!(labels.iter().filter(|s| s.as_str() == "QBFG").count(), 2);
+    Ok(())
+}

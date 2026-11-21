@@ -56,6 +56,7 @@ pub(super) struct HitGeometry {
     interactive: HashMap<NodeId, InteractiveBox>,
     hover_parents: HashMap<NodeId, Option<NodeId>>,
     scroll_parents: HashMap<NodeId, NodeId>,
+    scroll_limits: HashMap<NodeId, Size>,
     has_cursor: bool,
 }
 
@@ -107,6 +108,17 @@ impl PointerFrame {
 
     pub(super) fn hover_path(&self, owner: Option<NodeId>) -> impl Iterator<Item = NodeId> + '_ {
         std::iter::successors(owner, |id| self.geometry.hover_parents[id])
+    }
+
+    pub(super) fn scroll_limit(&self, owner: NodeId) -> Option<Size> {
+        self.geometry.scroll_limits.get(&owner).copied()
+    }
+
+    pub(super) fn is_current(&self, router: &super::PointerRouter) -> bool {
+        router
+            .geometry
+            .get()
+            .is_some_and(|g| Arc::ptr_eq(g, &self.geometry))
     }
 
     pub(super) fn scroll_parent(&self, owner: NodeId) -> Option<NodeId> {
@@ -169,6 +181,7 @@ impl HitGeometry {
             interactive: HashMap::new(),
             hover_parents: HashMap::new(),
             scroll_parents: HashMap::new(),
+            scroll_limits: HashMap::new(),
             has_cursor: false,
         };
         let root = &instance.bodies[&instance.scene.root()];
@@ -226,12 +239,28 @@ impl HitGeometry {
                     frame.has_cursor |=
                         matches!(handlers.control, Some(crate::WindowControl::Resize(_)));
                 }
-                if handlers.scroll.is_some() {
-                    if let Some(parent) = inherited.scroll {
-                        frame.scroll_parents.insert(id, parent);
+            }
+            let children = instance.scene.children(id)?;
+            let mut child_origin = origin;
+            let mut scroll_listener = body.handlers.as_deref().is_some_and(|h| h.scroll.is_some());
+            if body.scroll_axes != super::ScrollAxes::default() && children.len() != 0 {
+                let limit = body.scroll_axes.limit(geometry);
+                if limit != Size::default() {
+                    if let Some(offset) = instance.pointer.scroll_offsets.get(&id) {
+                        child_origin.x = origin.x - offset.x.min(limit.width);
+                        child_origin.y = origin.y - offset.y.min(limit.height);
                     }
-                    recipients.scroll = Some(id);
+                    if !scroll_listener && body.hit_testable {
+                        frame.scroll_limits.insert(id, limit);
+                        scroll_listener = true;
+                    }
                 }
+            }
+            if body.hit_testable && scroll_listener {
+                if let Some(parent) = inherited.scroll {
+                    frame.scroll_parents.insert(id, parent);
+                }
+                recipients.scroll = Some(id);
             }
             let clips = body
                 .overflow_clip
@@ -245,10 +274,10 @@ impl HitGeometry {
                 testable: body.hit_testable,
             });
             let start = pending.len();
-            for child in instance.scene.children(id)? {
+            for child in children {
                 let child = &instance.bodies[&child];
                 if child.visible {
-                    pending.push((child, origin, recipients, child_clip.clone()));
+                    pending.push((child, child_origin, recipients, child_clip.clone()));
                 }
             }
             let siblings = &mut pending[start..];

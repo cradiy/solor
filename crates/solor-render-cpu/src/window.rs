@@ -56,7 +56,9 @@ impl WindowHandler<Rgba8> for CpuWindow {
             }
             _ => {}
         }
-        response.redraw |= self.ui.has_pending_bindings();
+        response.redraw |= self
+            .next_redraw()
+            .is_some_and(|deadline| deadline <= std::time::Instant::now());
         Ok(response)
     }
 

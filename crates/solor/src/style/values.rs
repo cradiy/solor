@@ -25,8 +25,8 @@ keywords! {
     Overflow {
         Visible: "Allow content beyond the box on this axis.",
         Hidden: "Clip content and descendant hits to the box on this axis.",
-        Scroll: "Declare a scroll axis and clip its contents. The application controls the offset.",
-        Auto: "Clip overflow on this axis. The application controls the offset when content overflows."
+        Scroll: "Clip this axis and scroll overflowing children with wheel input.",
+        Auto: "Clip this axis and consume wheel input while child content can scroll."
     }
     /// Reference box used by width and height constraints.
     BoxSizing { BorderBox: "Include border and padding.", ContentBox: "Size the content area." }

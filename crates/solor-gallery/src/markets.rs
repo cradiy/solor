@@ -144,7 +144,7 @@ impl Quotes {
 }
 
 fn watchlist(quotes: Quotes, feed: Feed) -> Div {
-    let mut list = div().w(px(210.0)).items_stretch().bg(PANEL).child(
+    let list = div().w(px(210.0)).items_stretch().bg(PANEL).child(
         div()
             .px(px(14.0))
             .h(px(42.0))
@@ -154,9 +154,10 @@ fn watchlist(quotes: Quotes, feed: Feed) -> Div {
             .child(label("Watchlist", 15.0, 22.0))
             .child(label("6 symbols", 11.0, 18.0).text_color(DIM)),
     );
+    let mut rows = div().flex_1().items_stretch().overflow_y_scroll();
     for (i, &(symbol, name, _)) in SYMBOLS.iter().enumerate() {
         let tape = feed[i];
-        list = list.child(
+        rows = rows.child(
             div()
                 .px(px(14.0))
                 .h(px(51.0))
@@ -199,7 +200,7 @@ fn watchlist(quotes: Quotes, feed: Feed) -> Div {
                 }),
         );
     }
-    list
+    list.child(rows)
 }
 
 fn live_updates(

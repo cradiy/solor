@@ -8,7 +8,8 @@ stage consumes it, and how a host learns about the resulting work.
 
 Run `cargo run -p solor-gallery --release` in a Linux Wayland session to compare
 letter spacing, OpenType ligatures, gradient geometry and flex distribution.
-The Markets tab runs a deterministic feed of six instruments. Each host frame
+The Markets tab runs a deterministic feed of six instruments. In a short window,
+the watchlist rows scroll beneath their fixed header. Each host frame
 advances 32 ticks per instrument and appends the latest price to a 96-sample
 history. The green price line and amber 16-sample moving average share the same
 axis. A translucent polygon marks the area under the price line. Scroll vertically over the plot to zoom its latest 12 to 96 samples.
@@ -378,8 +379,9 @@ with it. Flex placement continues to use the declared layout direction.
 The `Hidden`, `Scroll` and `Auto` overflow policies clip content and descendant
 hits to the element's border box, including its padding. Use `.overflow_hidden()`
 to clip both axes, or set an axis independently with a value or signal such as
-`.overflow_y(Overflow::Scroll)`. The application handles scrolling and owns
-the offset. Each viewport keeps its full local content extent in `Ui::geometry`.
+`.overflow_y(Overflow::Scroll)`. Containers with `Scroll` or `Auto` overflow
+move their children along the enabled axes in response to wheel input. The
+background and the container's own drawing stay fixed in the viewport. Each viewport keeps its full local content extent in `Ui::geometry`.
 On a clipped axis, the child's border edge bounds its contribution to the parent's
 content extent, including when the child is relatively positioned. On a visible
 axis, descendant overflow can extend the parent's content. Nested clips intersect
