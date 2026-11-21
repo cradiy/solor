@@ -101,6 +101,10 @@ impl Damage {
 
     /// Includes every pixel in a rectangle, with bounded storage for scattered changes.
     pub fn include(&mut self, rect: Clip) {
+        self.include_with_gap(rect, 128);
+    }
+
+    pub(crate) fn include_with_gap(&mut self, rect: Clip, gap_area: u128) {
         if rect.empty() {
             return;
         }
@@ -119,7 +123,7 @@ impl Damage {
         }
         // Combine nearby edits when their gap costs less than another small repair.
         if let Some((index, cost)) = nearest
-            && (cost <= area(rect).saturating_add(128)
+            && (cost <= area(rect).saturating_add(gap_area)
                 || self.rects.len() == self.rects.inline_size())
         {
             let merged = self.rects[index].union(rect);

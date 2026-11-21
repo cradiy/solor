@@ -3,7 +3,7 @@ use super::{ImageAsset, Placement};
 use crate::{
     Fill, ImageSource,
     layout::{Origin, Size},
-    raster::{Clip, DeviceSize},
+    raster::{Clip, Damage, DeviceSize},
     style::ObjectFit,
 };
 use anyhow::{Result, ensure};
@@ -46,7 +46,7 @@ pub struct CustomImage {
 
 struct ImageChange {
     previous: Weak<dyn ImageRenderer>,
-    region: Clip,
+    regions: smallvec::SmallVec<[Clip; 1]>,
 }
 
 impl CustomImage {
@@ -70,30 +70,56 @@ impl CustomImage {
         region: Clip,
         renderer: impl ImageRenderer + 'static,
     ) -> Result<Self> {
+        self.updated_regions([region], renderer)
+    }
+
+    /// Publishes several changed rectangles in one snapshot. Supply at least one
+    /// nonempty source rectangle and include any pixels influenced by filtering.
+    pub fn updated_regions(
+        &self,
+        regions: impl IntoIterator<Item = Clip>,
+        renderer: impl ImageRenderer + 'static,
+    ) -> Result<Self> {
         let mut next = Self::new(renderer)?;
         ensure!(
             next.size == self.size,
             "regional image update changed dimensions"
         );
-        ensure!(
-            !region.empty() && region.intersect(Clip::canvas(self.size)) == region,
-            "invalid image update region"
-        );
+        let canvas = Clip::canvas(self.size);
+        let mut damage = Damage::default();
+        for region in regions {
+            ensure!(
+                !region.empty() && region.intersect(canvas) == region,
+                "invalid image update region"
+            );
+            // The cost of painting gaps depends on the eventual display scale.
+            damage.include_with_gap(region, 0);
+        }
+        ensure!(!damage.is_empty(), "empty image update");
         next.change = Some(Rc::new(ImageChange {
             previous: Rc::downgrade(&self.renderer),
-            region,
+            regions: smallvec::SmallVec::from_slice(damage.rects()),
         }));
         next.placement = self.placement;
         Ok(next)
     }
 
-    /// Returns the declared change relative to the given painted snapshot when
+    /// Returns the bounding rectangle of all changes since the painted snapshot when
     /// its identity and placement match the previous version.
     pub fn changed_region_since(&self, previous: &Self) -> Option<Clip> {
+        self.changed_regions_since(previous)?
+            .iter()
+            .copied()
+            .reduce(Clip::union)
+    }
+
+    /// Returns source rectangles covering the changes since the direct predecessor
+    /// when placement matches. Dense batches may be coalesced.
+    pub fn changed_regions_since(&self, previous: &Self) -> Option<&[Clip]> {
         let change = self.change.as_ref()?;
         (self.placement == previous.placement
             && change.previous.ptr_eq(&Rc::downgrade(&previous.renderer)))
-        .then_some(change.region)
+        .then_some(&change.regions)
     }
 
     /// Returns the intrinsic image dimensions.

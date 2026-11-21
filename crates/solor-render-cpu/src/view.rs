@@ -424,7 +424,13 @@ fn same_draw(a: &Draw, b: &Draw) -> bool {
     }
 }
 
-fn image_change(before: &Draw, after: &Draw, scale: RasterScale) -> Result<Option<Clip>> {
+fn include_image_change(
+    before: &Draw,
+    after: &Draw,
+    scale: RasterScale,
+    canvas: Clip,
+    damage: &mut Damage,
+) -> Result<bool> {
     let (
         Draw::Fill {
             origin,
@@ -442,16 +448,20 @@ fn image_change(before: &Draw, after: &Draw, scale: RasterScale) -> Result<Optio
         },
     ) = (before, after)
     else {
-        return Ok(None);
+        return Ok(false);
     };
     if origin != at || size != extent || corner_radii != radii || clip != next_clip {
-        return Ok(None);
+        return Ok(false);
     }
-    let Some(region) = next.changed_region_since(previous) else {
-        return Ok(None);
+    let Some(regions) = next.changed_regions_since(previous) else {
+        return Ok(false);
     };
-    let projected = crate::bitmap::project_region(next, *size, *origin, scale, region)?;
-    Ok(Some(projected.intersect(device_bounds(after, scale)?)))
+    let project = crate::bitmap::region_projection(next, *size, *origin, scale)?;
+    let visible = device_bounds(after, scale)?.intersect(canvas);
+    for &region in regions {
+        damage.include(project(region).intersect(visible));
+    }
+    Ok(true)
 }
 
 pub(super) fn damage(
@@ -480,8 +490,7 @@ pub(super) fn damage(
             if same_draw(a, b) {
                 continue;
             }
-            if let Some(bounds) = image_change(a, b, scale)? {
-                area.include(bounds.intersect(canvas));
+            if include_image_change(a, b, scale, canvas, &mut area)? {
                 continue;
             }
         }

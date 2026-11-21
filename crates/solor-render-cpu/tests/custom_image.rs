@@ -249,8 +249,15 @@ fn tile_publication_repairs_the_fitted_region_and_handles_skipped_snapshots() ->
     tiles.changed.push(b);
     let skipped = first.updated_region(b, tiles.clone())?;
     tiles.changed.push(c);
-    let last = skipped.updated_region(c, tiles)?;
-    let snapshots = [first.clone(), last.clone()];
+    let last = skipped.updated_region(c, tiles.clone())?;
+    tiles.changed = vec![a];
+    let batch = last.updated_regions([b, c], tiles.clone())?;
+    assert!(last.updated_regions([], tiles.clone()).is_err());
+    assert!(
+        last.updated_regions([b, Clip { right: 9, ..c }], tiles)
+            .is_err()
+    );
+    let snapshots = [first.clone(), last.clone(), batch.clone()];
     let mut window = CpuWindow::mount(
         Ui::new(),
         component(move |cx| {
@@ -309,5 +316,44 @@ fn tile_publication_repairs_the_fitted_region_and_handles_skipped_snapshots() ->
         assert_eq!(frame.rgba, reference.frame(size, scale)?.rgba);
         window.frame_submitted()?;
     }
+
+    // At this zoom the corner tiles leave a wide span of unchanged output.
+    let scale = RasterScale(2.5);
+    window.frame(size, scale)?;
+    window.frame_submitted()?;
+    requests.borrow_mut().clear();
+    window.event(WindowEvent::FrameReady(Duration::ZERO))?;
+    let frame = window.frame(size, scale)?;
+    let corners = [
+        Clip {
+            left: 5,
+            top: 0,
+            right: 8,
+            bottom: 3,
+        },
+        Clip {
+            left: 22,
+            top: 17,
+            right: 25,
+            bottom: 20,
+        },
+    ];
+    assert_eq!(frame.damage.rects().len(), 2);
+    for corner in corners {
+        assert!(frame.damage.rects().contains(&corner));
+    }
+    let tile_size = DeviceSize {
+        width: 3,
+        height: 3,
+    };
+    assert_eq!(requests.borrow().len(), 2);
+    assert!(
+        requests
+            .borrow()
+            .iter()
+            .all(|request| request.output == tile_size)
+    );
+    let mut reference = CpuWindow::mount(Ui::new(), component(move |_| image(batch)))?;
+    assert_eq!(frame.rgba, reference.frame(size, scale)?.rgba);
     Ok(())
 }
