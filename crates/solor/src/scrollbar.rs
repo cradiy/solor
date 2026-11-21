@@ -79,10 +79,7 @@ impl ScrollSource {
     fn scroll_to_percent(&self, percent: f64) -> anyhow::Result<()> {
         match self {
             Self::List(handle) => handle.scroll_to_percent(percent),
-            Self::Container(handle) => {
-                handle.seek_percent(percent);
-                Ok(())
-            }
+            Self::Container(handle) => handle.scroll_to_percent(percent),
         }
     }
 

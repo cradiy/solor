@@ -493,3 +493,93 @@ fn container_handle_follows_conditional_mounts_and_rejects_two_live_owners() -> 
     assert!(handle.metrics().is_none());
     Ok(())
 }
+
+#[test]
+fn container_seeks_use_the_new_extent_and_keep_fractional_offsets() -> Result<()> {
+    use solor::{ScrollHandle, style::Overflow};
+    let mut ui = Ui::new();
+    let scroll = ScrollHandle::new();
+    let container = scroll.clone();
+    let button = scroll.clone();
+    let expanded = ui.context().signal(false);
+    let offset = |x, y| Origin { x: px(x), y: px(y) };
+    scroll.scroll_to_offset(offset(8.75, 13.25))?;
+    let view = ui.mount(component(move |_| {
+        div()
+            .flex_row()
+            .items_stretch()
+            .child(
+                div()
+                    .flex_1()
+                    .overflow(Overflow::Auto)
+                    .track_scroll(&container)
+                    .child(div().min_w(px(200.0)).min_h(px(160.0)))
+                    .child_when(expanded, || div().min_h(px(45.5))),
+            )
+            .child(div().w(px(20.0)).on_click(move |cx| {
+                cx.set(expanded, true)?;
+                button.scroll_to_percent(100.0)
+            }))
+    }))?;
+    submit(&mut ui, view, 80.0)?;
+    assert_eq!(scroll.metrics().unwrap().offset, offset(8.75, 13.25));
+    let click = point(110.0, 5.0);
+    ui.dispatch_pointer(view, PointerInput::Down(click, PointerButton::Primary))?;
+    ui.dispatch_pointer(view, PointerInput::Up(click, PointerButton::Primary))?;
+    submit(&mut ui, view, 80.0)?;
+    assert_eq!(scroll.metrics().unwrap().offset, offset(8.75, 125.5));
+
+    scroll.scroll_to_offset(offset(16.5, 2.0))?;
+    scroll.scroll_to_percent(50.0)?;
+    assert!(scroll.scroll_to_percent(f64::NAN).is_err());
+    assert!(scroll.scroll_to_offset(offset(f32::INFINITY, 0.0)).is_err());
+    assert!(ui.next_redraw(view).is_some());
+    submit(&mut ui, view, 100.0)?;
+    assert_eq!(scroll.metrics().unwrap().offset, offset(16.5, 52.75));
+    assert!(ui.next_redraw(view).is_none());
+    scroll.scroll_to_offset(offset(22.25, 150.0))?;
+    ui.dispatch_pointer(
+        view,
+        PointerInput::Scroll(
+            point(10.0, 10.0),
+            ScrollDelta {
+                x: px(1.5),
+                y: px(-5.0),
+            },
+        ),
+    )?;
+    submit(&mut ui, view, 100.0)?;
+    assert_eq!(scroll.metrics().unwrap().offset, offset(23.75, 100.5));
+    Ok(())
+}
+
+#[test]
+fn container_seek_waits_for_scrollable_layout_and_expires_on_unmount() -> Result<()> {
+    use solor::{ScrollHandle, style::Overflow};
+    let mut ui = Ui::new();
+    let scroll = ScrollHandle::new();
+    let overflow = ui.context().signal(Overflow::Hidden);
+    let mount = |ui: &mut Ui| {
+        let scroll = scroll.clone();
+        ui.mount(component(move |_| {
+            div()
+                .overflow_y(overflow)
+                .track_scroll(&scroll)
+                .child(div().min_h(px(200.0)))
+        }))
+    };
+    let view = mount(&mut ui)?;
+    submit(&mut ui, view, 80.0)?;
+    scroll.scroll_to_percent(105.0)?;
+    submit(&mut ui, view, 80.0)?;
+    assert!(ui.next_redraw(view).is_none());
+    ui.context().set(overflow, Overflow::Scroll)?;
+    submit(&mut ui, view, 80.0)?;
+    assert_eq!(scroll.metrics().unwrap().offset.y, px(120.0));
+    scroll.scroll_to_percent(50.0)?;
+    ui.unmount(view)?;
+    let next = mount(&mut ui)?;
+    submit(&mut ui, next, 80.0)?;
+    assert_eq!(scroll.metrics().unwrap().offset, Origin::default());
+    Ok(())
+}

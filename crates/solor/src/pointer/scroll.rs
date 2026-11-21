@@ -10,10 +10,7 @@ use crate::{
 
 use super::ScrollDelta;
 use anyhow::{Context as _, ensure};
-use std::{
-    cell::{Cell, RefCell},
-    rc::{Rc, Weak},
-};
+use std::{cell::Cell, rc::Rc};
 
 /// Scroll distances and clipping viewport of a laid-out overflow container in logical pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -26,14 +23,57 @@ pub struct ScrollMetrics {
     pub viewport: Size,
 }
 
+#[derive(Clone, Copy)]
+enum VerticalTarget {
+    Pixels(Pixels),
+    Percent(f64),
+}
+
+#[derive(Clone, Copy)]
+struct ScrollRequest {
+    x: Option<Pixels>,
+    y: VerticalTarget,
+}
+
+impl ScrollRequest {
+    fn offset(offset: Origin) -> Result<Self> {
+        ensure!(
+            offset.x.get().is_finite() && offset.y.get().is_finite(),
+            "scroll offset must be finite"
+        );
+        Ok(Self {
+            x: Some(offset.x),
+            y: VerticalTarget::Pixels(offset.y),
+        })
+    }
+
+    fn resolve(self, current: Origin, limit: Size) -> Origin {
+        let y = match self.y {
+            VerticalTarget::Pixels(y) => y,
+            VerticalTarget::Percent(percent) => {
+                px((f64::from(limit.height) * (percent / 100.0)) as f32)
+            }
+        };
+        Origin {
+            x: self
+                .x
+                .unwrap_or(current.x)
+                .max(Pixels::default())
+                .min(limit.width),
+            y: y.max(Pixels::default()).min(limit.height),
+        }
+    }
+}
+
 #[derive(Default)]
 struct ContainerState {
     metrics: Cell<Option<ScrollMetrics>>,
-    pending: RefCell<Weak<Cell<Option<Pixels>>>>,
+    pending: Cell<Option<ScrollRequest>>,
+    attached: Cell<bool>,
     observers: PositionObservers,
 }
 
-/// Connects one mounted overflow container to a vertical scrollbar.
+/// Reads and positions one scrollable overflow container.
 /// Clones address the same container and can be reused after unmount.
 #[derive(Clone, Default)]
 pub struct ScrollHandle(Rc<ContainerState>);
@@ -46,8 +86,31 @@ impl ScrollHandle {
 
     /// Returns the live container's last published metrics, or none until layout and after unmount.
     pub fn metrics(&self) -> Option<ScrollMetrics> {
-        self.0.pending.borrow().upgrade()?;
         self.0.metrics.get()
+    }
+
+    /// Requests a logical-pixel offset from the top left on both axes.
+    /// Layout clamps the destination to the available range. Intervening wheel input
+    /// continues from the requested position using the current scroll range.
+    /// Requests may be made before mount. Unmounting discards any outstanding request.
+    pub fn scroll_to_offset(&self, offset: Origin) -> Result<()> {
+        self.0.pending.set(Some(ScrollRequest::offset(offset)?));
+        Ok(())
+    }
+
+    /// Requests a vertical percentage of scrollable travel, preserving the horizontal destination.
+    /// Layout resolves the percentage against its content and viewport. Intervening wheel
+    /// input continues from the requested percentage of the current range.
+    /// Finite values are clamped to 0..=100.
+    pub fn scroll_to_percent(&self, percent: f64) -> Result<()> {
+        ensure!(percent.is_finite(), "scroll percentage must be finite");
+        self.request_vertical(VerticalTarget::Percent(percent.clamp(0.0, 100.0)));
+        Ok(())
+    }
+
+    fn request_vertical(&self, y: VerticalTarget) {
+        let x = self.0.pending.get().and_then(|request| request.x);
+        self.0.pending.set(Some(ScrollRequest { x, y }));
     }
 
     pub(crate) fn vertical_position(&self) -> Option<ListScrollPosition> {
@@ -66,30 +129,18 @@ impl ScrollHandle {
         self.0.observers.observe(cx, self.vertical_position())
     }
 
-    pub(crate) fn seek_percent(&self, percent: f64) {
-        if let Some(pending) = self.0.pending.borrow().upgrade()
-            && let Some(metrics) = self.0.metrics.get()
-        {
-            let y = px(
-                (f64::from(metrics.max_offset.height) * (percent / 100.0).clamp(0.0, 1.0)) as f32,
-            );
-            pending.set((y != metrics.offset.y).then_some(y));
-        }
-    }
-
     pub(crate) fn scroll_by(&self, delta: f64) -> f64 {
-        let Some(pending) = self.0.pending.borrow().upgrade() else {
-            return 0.0;
-        };
         let Some(metrics) = self.0.metrics.get() else {
             return 0.0;
         };
         let limit = f64::from(metrics.max_offset.height);
-        let current = f64::from(pending.get().unwrap_or(metrics.offset.y)).min(limit);
+        let start = self.0.pending.get().map_or(metrics.offset, |request| {
+            request.resolve(metrics.offset, metrics.max_offset)
+        });
+        let current = f64::from(start.y);
         let used = delta.clamp(-current, limit - current);
         if used != 0.0 {
-            let y = px((current + used) as f32);
-            pending.set((y != metrics.offset.y).then_some(y));
+            self.request_vertical(VerticalTarget::Pixels(px((current + used) as f32)));
         }
         used
     }
@@ -103,27 +154,31 @@ impl ScrollHandle {
 
 pub(crate) struct TrackedScroll {
     handle: ScrollHandle,
-    pending: Rc<Cell<Option<Pixels>>>,
 }
 
 impl TrackedScroll {
     pub(crate) fn attach(handle: ScrollHandle) -> Result<Self> {
         ensure!(
-            handle.0.pending.borrow().upgrade().is_none(),
+            !handle.0.attached.replace(true),
             "scroll handle already attached"
         );
-        let pending = Rc::new(Cell::new(None));
-        *handle.0.pending.borrow_mut() = Rc::downgrade(&pending);
-        handle.0.metrics.set(None);
-        Ok(Self { handle, pending })
+        Ok(Self { handle })
     }
 
     pub(crate) fn has_request(&self) -> bool {
-        self.pending.get().is_some()
+        self.handle.metrics().is_some() && self.handle.0.pending.get().is_some()
     }
 
     pub(crate) fn detach(&self, state: &mut Runtime<()>) {
         self.handle.publish(None, state);
+    }
+}
+
+impl Drop for TrackedScroll {
+    fn drop(&mut self) {
+        self.handle.0.pending.set(None);
+        self.handle.0.metrics.set(None);
+        self.handle.0.attached.set(false);
     }
 }
 
@@ -143,10 +198,7 @@ impl Ui {
         node: NodeId,
         offset: Origin,
     ) -> Result<bool> {
-        ensure!(
-            offset.x.get().is_finite() && offset.y.get().is_finite(),
-            "scroll offset must be finite"
-        );
+        let request = ScrollRequest::offset(offset)?;
         let instance = self
             .instances
             .get_mut(&view)
@@ -154,19 +206,10 @@ impl Ui {
         let metrics = instance
             .scroll_metrics(node)
             .context("expected a visible, laid-out scroll container")?;
-        let next = Origin {
-            x: offset
-                .x
-                .max(Pixels::default())
-                .min(metrics.max_offset.width),
-            y: offset
-                .y
-                .max(Pixels::default())
-                .min(metrics.max_offset.height),
-        };
+        let next = request.resolve(metrics.offset, metrics.max_offset);
         let moved = instance.apply_scroll_offset(node, metrics.offset, next)?;
         if let Some(tracked) = instance.tracked_scroll.get(&node) {
-            tracked.pending.set(None);
+            tracked.handle.0.pending.set(None);
             tracked.handle.publish(
                 Some(ScrollMetrics {
                     offset: next,
@@ -263,11 +306,10 @@ impl Instance {
             .iter()
             .try_for_each(|(&node, tracked)| -> Result<()> {
                 let mut metrics = self.scroll_metrics(node);
-                if let (Some(y), Some(m)) = (tracked.pending.take(), &mut metrics) {
-                    let next = Origin {
-                        y: y.min(m.max_offset.height),
-                        ..m.offset
-                    };
+                if let Some(m) = &mut metrics
+                    && let Some(request) = tracked.handle.0.pending.take()
+                {
+                    let next = request.resolve(m.offset, m.max_offset);
                     self.apply_scroll_offset(node, m.offset, next)?;
                     m.offset = next;
                 }
@@ -303,8 +345,8 @@ impl Instance {
         let start = self
             .tracked_scroll
             .get(&owner)
-            .and_then(|tracked| tracked.pending.take())
-            .map_or(previous, |y| Origin { y, ..previous });
+            .and_then(|tracked| tracked.handle.0.pending.take())
+            .map_or(previous, |request| request.resolve(previous, limit));
         let (next, remaining) = advance(start, limit, delta);
         self.apply_scroll_offset(owner, previous, next)?;
         if let Some(tracked) = self.tracked_scroll.get(&owner) {

@@ -595,6 +595,23 @@ pixels after layout. The bar moves the vertical offset and preserves the horizon
 offset. Each handle tracks one mounted container at a time and can be reused
 after unmount.
 
+Use the handle directly from an event handler to jump to a logical-pixel
+coordinate or a percentage of the vertical range.
+
+```rust
+let jump = scroll.clone();
+div().child(text("Jump to latest"))
+    .on_click(move |_| jump.scroll_to_percent(100.0))
+```
+
+`scroll.scroll_to_offset(Origin { x: px(12.5), y: px(80.0) })` sets both
+axes. A percentage request changes only the vertical destination. Requests
+can be issued before mount and are resolved against the next scrollable layout.
+For example, appending a row and requesting 100 percent in the same handler
+reveals the new bottom row. If wheel input arrives before layout, it continues
+from the requested position within the current range. Unmounting clears
+outstanding requests.
+
 Uniform and variable lists use their own `ListScrollHandle` with the same scrollbar.
 
 ```rust
