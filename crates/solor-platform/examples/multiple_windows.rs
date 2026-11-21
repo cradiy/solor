@@ -49,6 +49,7 @@ fn open_note(app: &Application, name: String) -> anyhow::Result<()> {
     let mut ui = Ui::new();
     ui.bind_keys([KeyBinding::new(Key::Enter, Activate)]);
     app.open_window(options, ui, sheet(name.clone(), app.clone()))
+        .map(drop)
 }
 
 fn main() -> anyhow::Result<()> {

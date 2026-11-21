@@ -6,11 +6,11 @@ use super::{
 };
 use crate::layer_shell::{Binding, LayerShellOptions};
 use solor::{
-    platform::{WindowBackground, WindowHandler, WindowOptions},
+    platform::{PlatformWindow, WindowBackground, WindowHandle, WindowHandler, WindowOptions},
     raster::Rgba8,
 };
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashMap,
     io,
     rc::{Rc, Weak},
@@ -58,7 +58,7 @@ impl WaylandApplication {
         &self,
         options: WindowOptions<'_>,
         view: Box<dyn WindowHandler<Rgba8>>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<WindowHandle> {
         self.open_window_with(options, || Ok(view))
     }
 
@@ -67,14 +67,32 @@ impl WaylandApplication {
         &self,
         options: WindowOptions<'_>,
         build: impl FnOnce() -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<WindowHandle> {
         let windows = self
             .0
             .upgrade()
             .ok_or_else(|| anyhow::anyhow!("application has exited"))?;
         windows
             .open(Request::Toplevel(options), build()?)
-            .map(|_| ())
+            .map(|(_, handle)| handle)
+    }
+}
+
+pub(super) struct WindowLife {
+    open: Cell<bool>,
+    // A callback can close a window the event loop has already visited this turn.
+    revisit: Rc<Cell<bool>>,
+}
+
+impl PlatformWindow for WindowLife {
+    fn is_open(&self) -> bool {
+        self.open.get()
+    }
+
+    fn close(&self) {
+        if self.open.replace(false) {
+            self.revisit.set(true);
+        }
     }
 }
 
@@ -88,6 +106,7 @@ struct EventLoop {
 struct WindowFactory {
     qh: QueueHandle<Desktop>,
     pending: RefCell<Vec<Window>>,
+    close_requested: Rc<Cell<bool>>,
     globals: GlobalList,
     compositor: wl_compositor::WlCompositor,
     shm: wl_shm::WlShm,
@@ -117,7 +136,7 @@ impl Wayland {
     ) -> anyhow::Result<()> {
         let control = options.handle.map(|h| h.claim()).transpose()?;
         let mut events = EventLoop::connect(self)?;
-        let id = events.windows.open(Request::Layer(options), view)?;
+        let (id, _) = events.windows.open(Request::Layer(options), view)?;
         events.dispatch(control.map(|control| (id, control)))
     }
 }
@@ -151,6 +170,7 @@ impl EventLoop {
             qh,
             globals,
             pending: RefCell::default(),
+            close_requested: Rc::default(),
         };
         Ok(Self {
             windows: Rc::new(windows),
@@ -166,13 +186,15 @@ impl WindowFactory {
         &self,
         request: Request<'_>,
         view: Box<dyn WindowHandler<Rgba8>>,
-    ) -> anyhow::Result<ObjectId> {
+    ) -> anyhow::Result<(ObjectId, WindowHandle)> {
         let surface = self.compositor.create_surface(&self.qh, ());
         let id = surface.id();
         match self.create_window(&surface, request, view) {
             Ok(window) => {
+                let target = Rc::downgrade(&window.life);
+                let handle = WindowHandle::new(target);
                 self.pending.borrow_mut().push(window);
-                Ok(id)
+                Ok((id, handle))
             }
             Err(error) => {
                 surface.destroy();
@@ -243,7 +265,10 @@ impl WindowFactory {
             input_region: Default::default(),
             dirty: true,
             waiting: None,
-            closed: false,
+            life: Rc::new(WindowLife {
+                open: Cell::new(true),
+                revisit: self.close_requested.clone(),
+            }),
             commits: 0,
             audit: self.verify_shm.then(DamageAudit::default),
             start: Instant::now(),
@@ -255,6 +280,7 @@ impl EventLoop {
     fn dispatch(&mut self, control: Option<(ObjectId, Binding<'_>)>) -> anyhow::Result<()> {
         let qh = self.queue.handle();
         loop {
+            self.windows.close_requested.set(false);
             for mut window in self.windows.pending.take() {
                 window.pixel_order = self.desktop.order(window.background);
                 self.desktop.windows.insert(window.surface.id(), window);
@@ -271,7 +297,7 @@ impl EventLoop {
                     .map(|(_, h)| h);
                 let Some(visible) = handle
                     .map_or(Some(true), Binding::visibility)
-                    .filter(|_| !window.closed)
+                    .filter(|_| window.life.is_open())
                 else {
                     closed.push(id.clone());
                     continue;
@@ -308,7 +334,7 @@ impl EventLoop {
             }
             self.desktop.sync_cursors();
             // Frame and disposal callbacks can also open a window before the loop sleeps.
-            if !self.windows.pending.borrow().is_empty() {
+            if self.windows.close_requested.get() || !self.windows.pending.borrow().is_empty() {
                 continue;
             }
             if self.desktop.windows.is_empty() {
@@ -393,3 +419,7 @@ fn dispatch_until(
     queue.dispatch_pending(desktop)?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/window_handle.rs"]
+mod tests;

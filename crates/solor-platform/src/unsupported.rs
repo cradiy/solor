@@ -3,7 +3,7 @@ use std::io::{Error, ErrorKind};
 use anyhow::Result;
 use solor::{Render, Ui};
 
-use super::{Application, WindowOptions};
+use super::{Application, WindowHandle, WindowOptions};
 
 #[derive(Clone)]
 pub(super) enum Host {}
@@ -26,7 +26,7 @@ pub(super) fn open_window(
     _: WindowOptions<'_>,
     _: Ui,
     _: impl Render,
-) -> Result<()> {
+) -> Result<WindowHandle> {
     match *app {}
 }
 

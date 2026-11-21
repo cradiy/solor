@@ -1,5 +1,10 @@
 use anyhow::{Context, Result, ensure};
-use solor::{Pixels, layout::Size, platform::WindowOptions, px};
+use solor::{
+    Pixels,
+    layout::Size,
+    platform::{PlatformWindow, WindowOptions},
+    px,
+};
 use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle, delegate_noop, globals::GlobalList,
     protocol::wl_surface::WlSurface,
@@ -341,7 +346,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, wayland_client::backend::ObjectId> for Desktop
                 }
                 state.resize(size);
             }
-            Event::Closed => state.closed = true,
+            Event::Closed => state.life.close(),
             _ => {}
         }
     }

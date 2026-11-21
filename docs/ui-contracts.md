@@ -96,6 +96,13 @@ Closing the last window ends the event loop, even if an application handle
 is still held. The [multiple windows example](../crates/solor-platform/examples/multiple_windows.rs)
 opens additional notes from a button in any existing note.
 
+Keep the `WindowHandle` returned by `app.open_window(...)?` to manage a
+specific window. Use `window.is_open()` to reuse a settings window, and
+`window.close()` to close it from another window's callback. A close request
+immediately changes the status observed by every clone. Reopening creates a
+distinct handle. Dropping a handle leaves its window open. See the
+[settings window example](../crates/solor-platform/examples/settings_window.rs).
+
 `WindowOptions::new("Settings")` requests an 800 × 600 logical-pixel window.
 Use `.size(px(480.0), px(320.0))` for a different preference and
 `.app_id("org.example.settings")` to identify the application to the window system.

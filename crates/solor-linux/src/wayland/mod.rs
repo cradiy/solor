@@ -9,8 +9,8 @@ mod pointer;
 mod presentation;
 mod role;
 mod stacking;
-use application::Desktop;
 pub use application::WaylandApplication;
+use application::{Desktop, WindowLife};
 
 use role::Role;
 
@@ -34,7 +34,8 @@ use solor::{
     ResizeEdge,
     layout::Size,
     platform::{
-        Platform, WindowBackground, WindowControl, WindowEvent, WindowHandler, WindowOptions,
+        Platform, PlatformWindow, WindowBackground, WindowControl, WindowEvent, WindowHandler,
+        WindowOptions,
     },
     pointer::{PointerButton, PointerInput},
     raster::{Clip, Damage, DeviceSize, RasterFrame, RasterScale, Rgba8},
@@ -74,7 +75,7 @@ struct Window {
     input_region: input_region::SurfaceInputRegion,
     dirty: bool,
     waiting: Option<wl_callback::WlCallback>,
-    closed: bool,
+    life: std::rc::Rc<WindowLife>,
     commits: usize,
     audit: Option<DamageAudit>,
     start: Instant,
@@ -186,7 +187,7 @@ impl Platform for Wayland {
         options: WindowOptions<'_>,
         view: Box<dyn WindowHandler<Self::Target>>,
     ) -> anyhow::Result<()> {
-        self.run(|app| app.open_window(options, view))
+        self.run(|app| app.open_window(options, view).map(drop))
     }
 }
 
@@ -212,7 +213,7 @@ impl Window {
     }
 
     fn dispatch(&mut self, mut event: WindowEvent, press: Option<(wl_seat::WlSeat, u32)>) {
-        if self.failure.is_some() || self.closed {
+        if self.failure.is_some() || !self.life.is_open() {
             return;
         }
         let mut panel_press = None;
@@ -247,7 +248,9 @@ impl Window {
             ..
         } = &mut self.role
         else {
-            self.closed |= control == WindowControl::Close;
+            if control == WindowControl::Close {
+                self.life.close();
+            }
             return;
         };
         match control {
@@ -278,7 +281,7 @@ impl Window {
                     decorations.toggle();
                 }
             }
-            WindowControl::Close => self.closed = true,
+            WindowControl::Close => self.life.close(),
             WindowControl::Minimize => top.set_minimized(),
             WindowControl::ToggleMaximize if self.maximized => top.unset_maximized(),
             WindowControl::ToggleMaximize => top.set_maximized(),
@@ -591,7 +594,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for Desktop {
                     },
                 });
             }
-            xdg_toplevel::Event::Close => state.closed = true,
+            xdg_toplevel::Event::Close => state.life.close(),
             _ => {}
         }
     }

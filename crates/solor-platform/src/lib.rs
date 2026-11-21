@@ -6,7 +6,7 @@ use solor::{Render, Ui};
 #[cfg_attr(not(target_os = "linux"), path = "unsupported.rs")]
 mod system;
 
-pub use solor::platform::{WindowBackground, WindowOptions};
+pub use solor::platform::{WindowBackground, WindowHandle, WindowOptions};
 #[cfg(target_os = "linux")]
 pub use solor_linux::layer_shell;
 
@@ -27,7 +27,12 @@ pub struct Application(system::Windows);
 impl Application {
     /// Mounts an independent view and opens a window on the current event loop.
     /// Returns an error if the application has exited or window creation fails.
-    pub fn open_window(&self, options: WindowOptions<'_>, ui: Ui, root: impl Render) -> Result<()> {
+    pub fn open_window(
+        &self,
+        options: WindowOptions<'_>,
+        ui: Ui,
+        root: impl Render,
+    ) -> Result<WindowHandle> {
         system::open_window(&self.0, options, ui, root)
     }
 }
@@ -42,7 +47,7 @@ impl SystemPlatform {
     /// Mounts the root and hands input, frame scheduling and presentation to the host.
     /// On Linux this runs the event loop until the window closes.
     pub fn run_window(&self, options: WindowOptions<'_>, ui: Ui, root: impl Render) -> Result<()> {
-        self.run(|app| app.open_window(options, ui, root))
+        self.run(|app| app.open_window(options, ui, root).map(drop))
     }
 
     /// Mounts a Wayland desktop panel or overlay on the compositor-selected output.

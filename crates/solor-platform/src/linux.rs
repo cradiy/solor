@@ -3,7 +3,7 @@ use solor::{Render, Ui};
 use solor_linux::{Wayland, layer_shell::LayerShellOptions};
 use solor_render_cpu::CpuWindow;
 
-use super::{Application, WindowBackground, WindowOptions};
+use super::{Application, WindowBackground, WindowHandle, WindowOptions};
 
 pub(super) struct Host(Wayland);
 
@@ -21,7 +21,7 @@ pub(super) fn open_window(
     options: WindowOptions<'_>,
     ui: Ui,
     root: impl Render,
-) -> Result<()> {
+) -> Result<WindowHandle> {
     app.open_window_with(options, || {
         Ok(Box::new(mount(ui, root, options.background)?))
     })

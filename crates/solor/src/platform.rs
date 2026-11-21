@@ -1,6 +1,48 @@
 //! Window lifecycle and input shared by platform implementations.
 use crate::{Pixels, layout::Size, pointer::PointerInput, px, raster::RasterScale};
 use anyhow::Result;
+use std::rc::Weak;
+
+/// Host-side lifecycle of a window on its event thread.
+pub trait PlatformWindow {
+    /// Returns true while the window accepts input and frame requests, including during startup.
+    fn is_open(&self) -> bool;
+    /// Marks the window closed and schedules native teardown before the event loop sleeps.
+    fn close(&self);
+}
+
+/// A cloneable UI-thread reference to one window. Handles compare equal when they
+/// refer to the same window, including after it closes.
+#[derive(Clone, Debug)]
+pub struct WindowHandle(Weak<dyn PlatformWindow>);
+
+impl WindowHandle {
+    /// Creates a handle for a host-owned window. The host retains the target for its lifetime.
+    pub fn new(window: Weak<dyn PlatformWindow>) -> Self {
+        Self(window)
+    }
+
+    /// Returns true from successful creation until closure is requested or the host exits.
+    pub fn is_open(&self) -> bool {
+        self.0.upgrade().is_some_and(|window| window.is_open())
+    }
+
+    /// Requests closure of this window. All clones immediately observe it as closed.
+    /// Repeated requests and requests after the window is gone have no effect.
+    pub fn close(&self) {
+        if let Some(window) = self.0.upgrade() {
+            window.close();
+        }
+    }
+}
+
+impl PartialEq for WindowHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ptr_eq(&other.0)
+    }
+}
+
+impl Eq for WindowHandle {}
 
 /// Edge or corner moved during an interactive window resize.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
