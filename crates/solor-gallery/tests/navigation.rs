@@ -348,31 +348,53 @@ fn mouse_at(x: f32, y: f32) -> PointerSample {
     }
 }
 
+fn label_target(frame: &solor::ViewFrame, name: &str) -> Option<PointerSample> {
+    frame.draws().iter().find_map(|draw| {
+        let solor::Draw::Text {
+            paragraph,
+            origin,
+            clip,
+            ..
+        } = draw
+        else {
+            return None;
+        };
+        if paragraph.text.as_str() != name {
+            return None;
+        }
+        let target = mouse_at(origin.x.get() + 3.0, origin.y.get() + 5.0);
+        let visible = clip.as_ref().is_none_or(|clip| {
+            clip.x
+                .as_ref()
+                .is_none_or(|x| x.contains(&target.position.x))
+                && clip
+                    .y
+                    .as_ref()
+                    .is_none_or(|y| y.contains(&target.position.y))
+        });
+        visible.then_some(target)
+    })
+}
+
+fn click_label(ui: &mut solor::Ui, view: solor::ViewId, name: &str) -> Result<()> {
+    let target = label_target(&ui.record_frame(view)?, name)
+        .ok_or_else(|| anyhow::anyhow!("missing visible label {name}"))?;
+    for input in [
+        PointerInput::Down(target, PointerButton::Primary),
+        PointerInput::Up(target, PointerButton::Primary),
+    ] {
+        ui.dispatch_pointer(view, input)?;
+    }
+    Ok(())
+}
+
 #[test]
 fn atlas_scrubs_across_the_color_space_and_returns_to_idle() -> Result<()> {
     use solor::{Draw, pointer::ScrollDelta};
     let (mut ui, root) = gallery()?;
     let view = ui.mount(root)?;
     submit_labels(&mut ui, view)?;
-    let frame = ui.record_frame(view)?;
-    let tab = frame
-        .draws()
-        .iter()
-        .find_map(|draw| match draw {
-            Draw::Text {
-                origin, paragraph, ..
-            } if paragraph.text == "Lists" => {
-                Some(mouse_at(origin.x.get() + 2.0, origin.y.get() + 4.0))
-            }
-            _ => None,
-        })
-        .expect("Lists tab");
-    for input in [
-        PointerInput::Down(tab, PointerButton::Primary),
-        PointerInput::Up(tab, PointerButton::Primary),
-    ] {
-        ui.dispatch_pointer(view, input)?;
-    }
+    click_label(&mut ui, view, "Lists")?;
     let labels = submit_labels(&mut ui, view)?;
     assert!(labels.iter().any(|s| s.as_str() == "#000000"));
     assert!((2..20).contains(&labels.iter().filter(|s| s.starts_with('#')).count()));
@@ -704,5 +726,72 @@ fn compact_market_scrolls_the_watchlist_below_its_header() -> Result<()> {
     }
     let labels = submit_labels(&mut ui, view)?;
     assert_eq!(labels.iter().filter(|s| s.as_str() == "QBFG").count(), 2);
+    Ok(())
+}
+
+#[test]
+fn tone_sheet_selects_the_last_swatch_after_scrolling_both_axes() -> Result<()> {
+    use solor::{Draw, pointer::ScrollDelta};
+    use solor_render_cpu::pixels::{DeviceSize, Surface};
+    let (mut ui, root) = gallery()?;
+    let view = ui.mount(root)?;
+    submit_labels(&mut ui, view)?;
+    click_label(&mut ui, view, "Lists")?;
+    submit_labels(&mut ui, view)?;
+    click_label(&mut ui, view, "Tone sheet")?;
+    let labels = submit_labels(&mut ui, view)?;
+    assert!(labels.iter().any(|s| s.as_str() == "Clay 100"));
+    assert!(label_target(&ui.record_frame(view)?, "Rose 900").is_none());
+    let chip = |ui: &solor::Ui| -> Result<Origin> {
+        ui.record_frame(view)?
+            .draws()
+            .iter()
+            .find_map(|d| match d {
+                Draw::Fill { origin, size, .. }
+                    if size.width == px(20.0) && size.height == px(20.0) =>
+                {
+                    Some(*origin)
+                }
+                _ => None,
+            })
+            .ok_or_else(|| anyhow::anyhow!("missing selection chip"))
+    };
+    let fixed = chip(&ui)?;
+    let pan = |ui: &mut solor::Ui, distance| -> Result<()> {
+        ui.dispatch_pointer(
+            view,
+            PointerInput::Scroll(
+                mouse_at(240.0, 250.0),
+                ScrollDelta {
+                    x: px(distance),
+                    y: px(distance),
+                },
+            ),
+        )?;
+        Ok(())
+    };
+    pan(&mut ui, 2000.0)?;
+    submit_labels(&mut ui, view)?;
+    click_label(&mut ui, view, "Rose 900")?;
+    let labels = submit_labels(&mut ui, view)?;
+    assert!(labels.iter().any(|s| s.as_str() == "Rose 900  /  #503D3F"));
+    pan(&mut ui, -2000.0)?;
+    let labels = submit_labels(&mut ui, view)?;
+    assert!(labels.iter().any(|s| s.as_str() == "Clay 100"));
+    assert!(label_target(&ui.record_frame(view)?, "Rose 900").is_none());
+    assert_eq!(chip(&ui)?, fixed);
+    let surface = Surface::draw_view(
+        &ui.record_frame(view)?,
+        DeviceSize {
+            width: 800,
+            height: 560,
+        },
+        RasterScale::ONE,
+    )?;
+    let at =
+        ((fixed.y.get() as usize + 10) * surface.size.width as usize + fixed.x.get() as usize + 10)
+            * 4;
+    assert_eq!(&surface.rgba[at..at + 4], &[0x50, 0x3d, 0x3f, 255]);
+    assert!(ui.next_redraw(view).is_none());
     Ok(())
 }

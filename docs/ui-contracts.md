@@ -11,6 +11,9 @@ letter spacing, OpenType ligatures, gradient geometry and flex distribution.
 The Lists tab shows the 24-bit RGB color space in a virtual list. Scroll to
 browse swatches, or click and drag the position indicator to seek across all
 16,777,216 colors. A slim thumb sits over the list’s right edge and widens on hover.
+Choose **Tone sheet** to browse nine color families down the rows and nine tones
+across the columns. Both scrollbars control the same viewport. Selecting a swatch
+shows its name and hex value above the sheet, where they stay visible while scrolling.
 
 The Markets tab runs a deterministic feed of six instruments. In a short window,
 the watchlist rows scroll beneath their fixed header. Each host frame

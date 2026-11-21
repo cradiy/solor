@@ -2,6 +2,7 @@
 mod lists;
 mod markets;
 mod specimens;
+mod tone_sheet;
 
 use anyhow::Result;
 use solor::{

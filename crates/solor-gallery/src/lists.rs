@@ -1,4 +1,4 @@
-use crate::{INK, LINE, MUTED, label};
+use crate::{INK, LINE, MUTED, Selection, label, tone_sheet};
 use solor::{
     Context, Div, IntoElement, ListScrollHandle, ListScrollPosition, Signal, Styled, component,
     div,
@@ -11,7 +11,7 @@ const COLORS: usize = 1 << 24;
 
 pub(super) fn palette() -> impl IntoElement {
     component(|cx| {
-        let (list, position) = ListScrollHandle::with_position_signal(cx);
+        let modes = Selection::new(cx, 0);
         div()
             .flex_1()
             .items_stretch()
@@ -22,10 +22,28 @@ pub(super) fn palette() -> impl IntoElement {
                     .flex_row()
                     .items_center()
                     .justify_between()
-                    .child(label("RGB atlas", 33.0, 44.0).letter_spacing(px(-1.3)))
-                    .child(label("16,777,216 colors", 13.0, 20.0).text_color(MUTED)),
+                    .child(label("Color atlas", 33.0, 44.0).letter_spacing(px(-1.3)))
+                    .child(modes.buttons(["RGB list", "Tone sheet"], false)),
             )
-            .child(seek_bar(cx, list.clone(), position))
+            .child_when(modes.0[0], rgb_list)
+            .child_when(modes.0[1], tone_sheet::sheet)
+    })
+}
+
+fn rgb_list() -> impl IntoElement {
+    component(|cx| {
+        let (list, position) = ListScrollHandle::with_position_signal(cx);
+        div()
+            .flex_1()
+            .items_stretch()
+            .child(
+                div()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(label("16,777,216 colors", 13.0, 20.0).text_color(MUTED))
+                    .child(seek_bar(cx, list.clone(), position).flex_1()),
+            )
             .child(
                 div()
                     .flex_row()
