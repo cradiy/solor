@@ -8,6 +8,10 @@ stage consumes it, and how a host learns about the resulting work.
 
 Run `cargo run -p solor-gallery --release` in a Linux Wayland session to compare
 letter spacing, OpenType ligatures, gradient geometry and flex distribution.
+The Lists tab shows the 24-bit RGB color space in a virtual list. Scroll to
+browse swatches, or click and drag the position indicator to seek across all
+16,777,216 colors.
+
 The Markets tab runs a deterministic feed of six instruments. In a short window,
 the watchlist rows scroll beneath their fixed header. Each host frame
 advances 32 ticks per instrument and appends the latest price to a 96-sample

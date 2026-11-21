@@ -348,6 +348,99 @@ fn mouse_at(x: f32, y: f32) -> PointerSample {
     }
 }
 
+#[test]
+fn atlas_scrubs_across_the_color_space_and_returns_to_idle() -> Result<()> {
+    use solor::{Draw, pointer::ScrollDelta};
+    let (mut ui, root) = gallery()?;
+    let view = ui.mount(root)?;
+    submit_labels(&mut ui, view)?;
+    let frame = ui.record_frame(view)?;
+    let tab = frame
+        .draws()
+        .iter()
+        .find_map(|draw| match draw {
+            Draw::Text {
+                origin, paragraph, ..
+            } if paragraph.text == "Lists" => {
+                Some(mouse_at(origin.x.get() + 2.0, origin.y.get() + 4.0))
+            }
+            _ => None,
+        })
+        .expect("Lists tab");
+    for input in [
+        PointerInput::Down(tab, PointerButton::Primary),
+        PointerInput::Up(tab, PointerButton::Primary),
+    ] {
+        ui.dispatch_pointer(view, input)?;
+    }
+    let labels = submit_labels(&mut ui, view)?;
+    assert!(labels.iter().any(|s| s.as_str() == "#000000"));
+    assert!((2..20).contains(&labels.iter().filter(|s| s.starts_with('#')).count()));
+    let rail = ui
+        .record_frame(view)?
+        .draws()
+        .iter()
+        .find_map(|draw| match draw {
+            Draw::Fill { origin, size, .. } if size.height == px(4.0) && size.width > px(100.0) => {
+                Some((*origin, *size))
+            }
+            _ => None,
+        })
+        .expect("seek rail");
+    let (start, size) = rail;
+    let midpoint = mouse_at((start.x + size.width / 2.0).get(), start.y.get() + 2.0);
+    ui.dispatch_pointer(view, PointerInput::Down(midpoint, PointerButton::Primary))?;
+    let halfway = submit_labels(&mut ui, view)?;
+    assert!(halfway.iter().any(|s| s.as_str() == "#000001"));
+    let outside = mouse_at(860.0, 400.0);
+    ui.dispatch_pointer(view, PointerInput::Move(outside))?;
+    assert!(
+        submit_labels(&mut ui, view)?
+            .iter()
+            .any(|s| s.as_str() == "#FFFFFF")
+    );
+    ui.dispatch_pointer(view, PointerInput::Up(outside, PointerButton::Primary))?;
+    submit_labels(&mut ui, view)?;
+    ui.dispatch_pointer(view, PointerInput::Move(midpoint))?;
+    assert!(
+        submit_labels(&mut ui, view)?
+            .iter()
+            .any(|s| s.as_str() == "#FFFFFF")
+    );
+    ui.dispatch_pointer(
+        view,
+        PointerInput::Scroll(
+            mouse_at(240.0, 220.0),
+            ScrollDelta {
+                x: px(0.0),
+                y: px(-167_772_160.0), // One quarter of the color rows.
+            },
+        ),
+    )?;
+    assert!(
+        !submit_labels(&mut ui, view)?
+            .iter()
+            .any(|s| s.as_str() == "#FFFFFF")
+    );
+    submit_labels(&mut ui, view)?;
+    let thumb = ui
+        .record_frame(view)?
+        .draws()
+        .iter()
+        .find_map(|draw| match draw {
+            Draw::Fill { origin, size, .. }
+                if size.width == px(12.0) && size.height == px(12.0) =>
+            {
+                Some(origin.x + size.width / 2.0)
+            }
+            _ => None,
+        })
+        .expect("seek thumb");
+    assert!((thumb - start.x - size.width * 0.75).get().abs() < 0.5);
+    assert!(ui.next_redraw(view).is_none());
+    Ok(())
+}
+
 fn market_view() -> Result<(solor::Ui, solor::ViewId)> {
     let (mut ui, root) = gallery()?;
     let view = ui.mount(root)?;
