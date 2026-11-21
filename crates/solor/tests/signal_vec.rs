@@ -190,8 +190,11 @@ fn splice_reuses_mounted_rows_outside_the_replacement() -> Result<()> {
         assert!(ui.context().read(*old).is_err());
     }
 
-    rows.splice(3..3, [a, b], &mut ui.context())?;
+    ui.context().spawn(async move |cx| cx.extend(rows, [a, b]));
+    ui.poll_tasks(std::task::Waker::noop())?;
     assert_eq!(&submit(&mut ui, view)?[..3], &after);
+    let cx = ui.context();
+    assert_eq!(cx.read(rows.item(4, &cx)?)?, &b);
     let all = rows.items(&ui.context())?.to_vec();
     rows.splice(0..all.len(), [], &mut ui.context())?;
     assert!(submit(&mut ui, view)?.is_empty());

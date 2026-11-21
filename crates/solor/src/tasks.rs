@@ -3,7 +3,7 @@
 mod blocking;
 use crate::{
     Context, Ui,
-    state::{Runtime, Signal},
+    state::{Runtime, Signal, SignalVec},
 };
 use anyhow::{Context as _, Result};
 use async_task::{Runnable, Task};
@@ -94,6 +94,18 @@ impl AsyncContext {
             .try_borrow()?
             .clone()
             .context("outside foreground task dispatch")
+    }
+
+    /// Appends a batch to the current end of a signal vector and publishes the new order once.
+    pub fn extend<T: 'static>(
+        &self,
+        rows: SignalVec<T>,
+        values: impl IntoIterator<Item = T>,
+    ) -> Result<()> {
+        let state = self.active_state()?;
+        let mut state = state.try_borrow_mut()?;
+        let end = state.read(rows.order)?.len();
+        rows.splice_in(end..end, values, &mut state)
     }
 }
 

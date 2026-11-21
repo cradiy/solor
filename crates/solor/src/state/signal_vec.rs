@@ -164,7 +164,16 @@ impl<T: 'static> SignalVec<T> {
         values: impl IntoIterator<Item = T>,
         cx: &mut Context<'_>,
     ) -> Result<()> {
-        let len = self.items(cx)?.len();
+        self.splice_in(range, values, cx.state)
+    }
+
+    pub(crate) fn splice_in(
+        self,
+        range: Range<usize>,
+        values: impl IntoIterator<Item = T>,
+        state: &mut Runtime<()>,
+    ) -> Result<()> {
+        let len = state.read(self.order)?.len();
         ensure!(
             range.start <= range.end && range.end <= len,
             "invalid item range"
@@ -176,11 +185,11 @@ impl<T: 'static> SignalVec<T> {
         }
         let inserted: Vec<_> = values
             .into_iter()
-            .map(|value| cx.state.create_signal(value))
+            .map(|value| state.create_signal(value))
             .collect();
         let removed =
-            cx.update_in_place(self.order, |items| items.splice(range, inserted).collect())?;
-        cx.state.retire_items(removed);
+            state.update_in_place(self.order, |items| items.splice(range, inserted).collect())?;
+        state.retire_items(removed);
         Ok(())
     }
 
