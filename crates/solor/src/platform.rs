@@ -7,6 +7,8 @@ use std::rc::Weak;
 pub trait PlatformWindow {
     /// Returns true while the window accepts input and frame requests, including during startup.
     fn is_open(&self) -> bool;
+    /// Asks the host to activate this window if supported.
+    fn activate(&self) {}
     /// Marks the window closed and schedules native teardown before the event loop sleeps.
     fn close(&self);
 }
@@ -25,6 +27,15 @@ impl WindowHandle {
     /// Returns true from successful creation until closure is requested or the host exits.
     pub fn is_open(&self) -> bool {
         self.0.upgrade().is_some_and(|window| window.is_open())
+    }
+
+    /// Asks the window system to bring this window to the user's attention.
+    /// The window system decides whether to raise it or transfer keyboard focus.
+    /// Closed windows and hosts without activation support ignore the request.
+    pub fn activate(&self) {
+        if let Some(window) = self.0.upgrade().filter(|window| window.is_open()) {
+            window.activate();
+        }
     }
 
     /// Requests closure of this window. All clones immediately observe it as closed.

@@ -68,7 +68,7 @@ fn native_shape(cursor: Cursor) -> Option<Shape> {
 pub(super) struct Seat {
     pub(super) keyboard: Option<Keyboard>,
     name: u32,
-    seat: wl_seat::WlSeat,
+    pub(super) seat: wl_seat::WlSeat,
     pointer: Option<wl_pointer::WlPointer>,
     position: Option<PointerSample>,
     focus: Option<ObjectId>,
@@ -285,6 +285,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
         let Some(window) = state.windows.get_mut(&target) else {
             return;
         };
+        let mut input = None;
         let mut press = None;
         let event = match event {
             wl_pointer::Event::Enter {
@@ -360,6 +361,10 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
                         Err(_) => return,
                     },
                 };
+                input = state
+                    .activation
+                    .as_ref()
+                    .map(|activation| activation.input(&window.surface, &seat.seat, serial));
                 match button_state {
                     wl_pointer::ButtonState::Pressed => {
                         if button == PointerButton::Primary {
@@ -374,6 +379,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
             _ => return,
         };
         window.dispatch(WindowEvent::Pointer(event), press);
+        drop(input);
         state.sync_cursors();
     }
 }

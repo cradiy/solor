@@ -1,5 +1,6 @@
 use super::{
     DamageAudit, Mapping, Wayland, Window,
+    activation::{Activation, ActivationTarget},
     buffer::PixelOrder,
     buffer_size, floating, pointer,
     role::{Request, Role},
@@ -30,6 +31,7 @@ use wayland_protocols::wp::{
 
 #[derive(Default)]
 pub(super) struct Desktop {
+    pub(super) activation: Option<Rc<Activation>>,
     pub(super) windows: HashMap<ObjectId, Window>,
     pub(super) seats: Vec<pointer::Seat>,
     pub(super) cursor_shapes: Option<WpCursorShapeManagerV1>,
@@ -79,6 +81,7 @@ impl WaylandApplication {
 }
 
 pub(super) struct WindowLife {
+    pub(super) activation: Option<ActivationTarget>,
     open: Cell<bool>,
     // A callback can close a window the event loop has already visited this turn.
     revisit: Rc<Cell<bool>>,
@@ -89,8 +92,18 @@ impl PlatformWindow for WindowLife {
         self.open.get()
     }
 
+    fn activate(&self) {
+        if let Some(target) = &self.activation {
+            target.request();
+        }
+    }
+
     fn close(&self) {
         if self.open.replace(false) {
+            if let Some(target) = &self.activation {
+                target.cancel();
+            }
+
             self.revisit.set(true);
         }
     }
@@ -104,6 +117,7 @@ struct EventLoop {
 }
 
 struct WindowFactory {
+    activation: Option<Rc<Activation>>,
     qh: QueueHandle<Desktop>,
     pending: RefCell<Vec<Window>>,
     close_requested: Rc<Cell<bool>>,
@@ -147,6 +161,7 @@ impl EventLoop {
         let (globals, queue) = registry_queue_init::<Desktop>(&connection)?;
         let qh = queue.handle();
         let mut desktop = Desktop {
+            activation: Activation::bind(&globals, &qh),
             cursor_shapes: globals.bind(&qh, 1..=1, ()).ok(),
             ..Desktop::default()
         };
@@ -156,6 +171,7 @@ impl EventLoop {
             }
         }
         let windows = WindowFactory {
+            activation: desktop.activation.clone(),
             compositor: globals.bind(&qh, 4..=4, ())?,
             shm: globals.bind(&qh, 1..=1, ())?,
             viewporter: globals.bind(&qh, 1..=1, ())?,
@@ -214,6 +230,14 @@ impl WindowFactory {
             Request::Layer(options) => options.background,
             Request::Toplevel(options) => options.background,
         };
+        let activation = match (&request, &self.activation) {
+            (Request::Toplevel(options), Some(activation)) => Some(ActivationTarget {
+                activation: activation.clone(),
+                id: surface.id(),
+                app_id: options.app_id.map(str::to_owned),
+            }),
+            _ => None,
+        };
         let (role, size) = request.create(&self.globals, qh, surface)?;
         buffer_size(120, size)?;
         view.set_window_resizable(matches!(
@@ -266,6 +290,7 @@ impl WindowFactory {
             dirty: true,
             waiting: None,
             life: Rc::new(WindowLife {
+                activation,
                 open: Cell::new(true),
                 revisit: self.close_requested.clone(),
             }),

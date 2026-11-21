@@ -103,6 +103,12 @@ immediately changes the status observed by every clone. Reopening creates a
 distinct handle. Dropping a handle leaves its window open. See the
 [settings window example](../crates/solor-platform/examples/settings_window.rs).
 
+Call `window.activate()` when the user selects an already open window.
+On Wayland the host requests activation through `xdg_activation_v1` when
+available. Requests from pointer button and keyboard callbacks identify the
+input event and the requesting surface. The compositor decides whether to
+transfer focus. A closed handle ignores activation requests.
+
 `WindowOptions::new("Settings")` requests an 800 × 600 logical-pixel window.
 Use `.size(px(480.0), px(320.0))` for a different preference and
 `.app_id("org.example.settings")` to identify the application to the window system.

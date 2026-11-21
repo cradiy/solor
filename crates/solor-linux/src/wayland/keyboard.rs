@@ -120,11 +120,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let Some(keyboard) = desktop
+        let Some((seat, keyboard)) = desktop
             .seats
             .iter_mut()
-            .filter_map(|seat| seat.keyboard.as_mut())
-            .find(|keyboard| &keyboard.device == device)
+            .filter_map(|seat| Some((&seat.seat, seat.keyboard.as_mut()?)))
+            .find(|(_, keyboard)| &keyboard.device == device)
         else {
             return;
         };
@@ -160,6 +160,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
                 };
             }
             wl_keyboard::Event::Key {
+                serial,
                 key,
                 state: WEnum::Value(state),
                 ..
@@ -188,6 +189,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
                     key,
                     modifiers: keyboard.modifiers,
                 };
+                let _input = desktop
+                    .activation
+                    .as_ref()
+                    .map(|activation| activation.input(&window.surface, seat, serial));
                 window.event(WindowEvent::Key(event));
             }
             _ => {}

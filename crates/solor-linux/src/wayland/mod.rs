@@ -1,4 +1,5 @@
 use solor::px;
+mod activation;
 mod application;
 mod buffer;
 mod decorations;
@@ -411,7 +412,12 @@ impl Window {
             }
         }
         self.surface.commit();
-        self.mapping = Mapping::Mapped;
+        if self.mapping != Mapping::Mapped {
+            self.mapping = Mapping::Mapped;
+            if let Some(target) = &self.life.activation {
+                target.activation.apply(&self.surface);
+            }
+        }
         let queued_ns = self.trace.then(presentation::monotonic_ns);
         slot.busy = true;
         self.next_slot = 1 - index;

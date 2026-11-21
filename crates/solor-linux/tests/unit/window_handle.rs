@@ -6,6 +6,7 @@ fn a_retained_handle_cannot_close_a_replacement_window() {
     let create = || {
         let life = Rc::new(WindowLife {
             open: Cell::new(true),
+            activation: None,
             revisit: revisit.clone(),
         });
         let target = Rc::downgrade(&life);
