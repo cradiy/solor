@@ -269,8 +269,10 @@ impl Scene {
                 CheckOutcome::Unverifiable
             })
         });
+        let display_requires_layout =
+            !self.flow_updates.is_empty() || self.store.get(root)?.item_style.display_none;
         let (published, reused_layouts, skipped_parent_layout) =
-            if selected.iter().flatten().all(Vec::is_empty) {
+            if display_requires_layout || selected.iter().flatten().all(Vec::is_empty) {
                 (self.run(query, Some(assigned), false)?, 0, false)
             } else {
                 let request = RootRequest::Measure(query, Some(assigned));

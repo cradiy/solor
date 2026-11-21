@@ -27,7 +27,8 @@ pub(super) fn prepare<E: Element>(
         .chain(node.style.bindings.sources())
         .collect();
     let fixed = sources.is_empty();
-    let bound_visibility = node.style.bindings.contains("appearance_mut.visibility");
+    let bound_visibility = node.style.bindings.contains("appearance_mut.visibility")
+        || node.style.bindings.contains("layout_mut.display");
     let (style, fixed_text) = if fixed {
         let mut style = base;
         let fixed = style.refine(&node.style, &inherited.fixed, units);
@@ -43,7 +44,7 @@ pub(super) fn prepare<E: Element>(
             },
         };
         let style = recipe.resolve(cx.state, units)?;
-        let initial = style.appearance.as_deref().and_then(|a| a.visibility);
+        let initial = local_visibility(&style);
         node.watches.push(Box::new(move |cx, target, id, path, _| {
             let key = (ViewId(cx.scope), id);
             let visibility = bound_visibility.then(|| VisibilityObserver {
@@ -58,7 +59,7 @@ pub(super) fn prepare<E: Element>(
             }
             let apply: crate::Restyle = Rc::new(move |instance, id, state, layout| {
                 let style = recipe.resolve(state, instance.units)?;
-                let value = style.appearance.as_deref().and_then(|a| a.visibility);
+                let value = local_visibility(&style);
                 instance.update_style::<E>(id, style, layout)?;
                 if let Some(observer) = &visibility {
                     observer.set(state, value)?;
@@ -91,7 +92,7 @@ pub(super) fn prepare<E: Element>(
         bindings: child_bindings,
     };
 
-    let local_visible = match style.appearance.as_deref().and_then(|a| a.visibility) {
+    let local_visible = match local_visibility(&style) {
         Some(Visibility::Hidden) => false,
         Some(Visibility::When(source)) => {
             let initial = *cx.read(source)?;
@@ -122,6 +123,14 @@ pub(super) fn prepare<E: Element>(
         fixed,
         visible: local_visible,
     })
+}
+
+fn local_visibility(style: &Style) -> Option<Visibility> {
+    if style.display_none() {
+        Some(Visibility::Hidden)
+    } else {
+        style.appearance.as_deref().and_then(|a| a.visibility)
+    }
 }
 
 pub(super) fn gradient_map(style: &Style) -> Option<crate::GradientMap> {
@@ -248,6 +257,7 @@ pub(super) fn item_style(style: &Style) -> Result<crate::layout::FlexItemStyle> 
         .and_then(|layout| layout.align_self)
         .unwrap_or(Align::Auto);
     Ok(crate::layout::FlexItemStyle {
+        display_none: style.display_none(),
         overflow_clip: OverflowClip::from_layout(style.layout.as_deref()),
         grow,
         shrink,

@@ -199,6 +199,10 @@ pub struct StyleRefinement {
 }
 
 impl Style {
+    pub(crate) fn display_none(&self) -> bool {
+        self.layout.as_deref().and_then(|layout| layout.display) == Some(Display::None)
+    }
+
     pub(crate) fn refine(
         &mut self,
         later: &StyleRefinement,

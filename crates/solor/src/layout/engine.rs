@@ -6,6 +6,7 @@ pub mod validation;
 use std::any::Any;
 #[cfg(feature = "layout-audit")]
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use std::rc::Rc;
 
@@ -437,6 +438,7 @@ impl DependencyRecords {
 
 #[derive(Clone, Copy)]
 pub(crate) struct FlexItemStyle {
+    pub(crate) display_none: bool,
     pub(crate) overflow_clip: OverflowClip,
     pub(crate) grow: f32,
     pub(crate) shrink: f32,
@@ -448,6 +450,7 @@ pub(crate) struct FlexItemStyle {
 impl Default for FlexItemStyle {
     fn default() -> Self {
         Self {
+            display_none: false,
             overflow_clip: OverflowClip::default(),
             grow: 0.0,
             shrink: 0.0,
@@ -503,6 +506,7 @@ pub enum ItemQuery {
 }
 
 struct Entry {
+    flow_children: Option<Box<[NodeId]>>,
     // Replaced together with the box inputs during a style update.
     item_style: FlexItemStyle,
     item_sizing: Option<Box<ItemSizing>>,
@@ -527,6 +531,7 @@ impl Entry {
         item_sizing: Option<ItemSizing>,
     ) -> Self {
         Self {
+            flow_children: None,
             item_style,
             item_sizing: item_sizing.map(Box::new),
             body: Box::new(body),
@@ -573,12 +578,30 @@ impl Entry {
     }
 }
 
+#[derive(Clone, Copy)]
+struct FlowChildren<'a>(Option<&'a [NodeId]>);
+
+impl FlowChildren<'_> {
+    fn len(self, access: &Context<'_, Entry>) -> usize {
+        self.0.map_or_else(|| access.child_count(), <[_]>::len)
+    }
+
+    fn child(self, access: &Context<'_, Entry>, index: usize) -> Result<NodeId> {
+        match self.0 {
+            Some(children) => children.get(index).copied(),
+            None => access.child(index),
+        }
+        .ok_or(LayoutError::MissingChild(index))
+    }
+}
+
 /// Access to children during a preferred-size calculation.
 pub struct MeasureContext<'a, 'store> {
     pub(crate) height_range: SizeRange,
     pub(crate) item_basis: ItemBasis,
     containing_block: ContainingBlock,
     child_basis: ContainingBlock,
+    flow_children: FlowChildren<'a>,
     access: &'a mut Context<'store, Entry>,
     #[cfg(feature = "layout-audit")]
     reads: &'a mut ReadSet,
@@ -600,9 +623,9 @@ impl MeasureContext<'_, '_> {
         self.child_basis = basis;
     }
 
-    /// Returns the number of direct children in sibling order.
+    /// Returns the number of children participating in layout, in sibling order.
     pub fn child_count(&self) -> usize {
-        self.access.child_count()
+        self.flow_children.len(self.access)
     }
 
     /// Queries one child's preferred metrics under the supplied constraint.
@@ -628,10 +651,7 @@ impl MeasureContext<'_, '_> {
             return Err(LayoutError::FailedChildOperation);
         }
         self.failed = true;
-        let id = self
-            .access
-            .child(index)
-            .ok_or(LayoutError::MissingChild(index))?;
+        let id = self.flow_children.child(self.access, index)?;
         let (result, style, height_limits, main_limits, shrink_inset) =
             self.access.execute_child(id, |entry, access| {
                 let (main_limits, shrink_inset) =
@@ -743,7 +763,8 @@ fn measure_item(
             force,
         )?;
         if !matches!(bounded, Query::Exact(_))
-            && (metrics.size.width < min || access.child_count() > 0)
+            && (metrics.size.width < min
+                || FlowChildren(entry.flow_children.as_deref()).len(access) > 0)
         {
             // Descendant percentages and wrapping need a definite containing width.
             let used = metrics.size.width.max(min);
@@ -815,6 +836,7 @@ fn measure(
             .unwrap_or_default(),
         containing_block,
         child_basis: ContainingBlock::default(),
+        flow_children: FlowChildren(entry.flow_children.as_deref()),
         access,
         #[cfg(feature = "layout-audit")]
         reads: &mut reads,
@@ -916,6 +938,7 @@ impl Drop for Attempt<'_> {
 /// Access to measurement and staged placement for the current node's children.
 pub struct LayoutContext<'a, 'store> {
     child_basis: ContainingBlock,
+    flow_children: FlowChildren<'a>,
     access: &'a mut Context<'store, Entry>,
     scratch: &'a mut Scratch,
     children_start: usize,
@@ -937,9 +960,9 @@ impl LayoutContext<'_, '_> {
         self.child_basis = basis;
     }
 
-    /// Returns the number of direct children to arrange.
+    /// Returns the number of children participating in this layout.
     pub fn child_count(&self) -> usize {
-        self.access.child_count()
+        self.flow_children.len(self.access)
     }
 
     /// Queries a child's preferred metrics before assigning its box.
@@ -970,6 +993,7 @@ impl LayoutContext<'_, '_> {
             item_basis: ItemBasis::Preferred,
             containing_block: ContainingBlock::default(),
             child_basis: self.child_basis,
+            flow_children: self.flow_children,
             access: self.access,
             #[cfg(feature = "layout-audit")]
             reads: &mut self.reads,
@@ -993,10 +1017,7 @@ impl LayoutContext<'_, '_> {
         if child.draft.is_some() {
             return Err(LayoutError::DuplicateLayout(index));
         }
-        let id = self
-            .access
-            .child(index)
-            .ok_or(LayoutError::MissingChild(index))?;
+        let id = self.flow_children.child(self.access, index)?;
         let (result, relative_offset, clip) = self.access.execute_child(id, |entry, access| {
             let offset = entry
                 .item_sizing
@@ -1123,12 +1144,15 @@ fn layout(
     entry.layout_dirty = true;
     entry.counts.layouts += 1;
     let children_start = scratch.children.len();
+    let flow_children = FlowChildren(entry.flow_children.as_deref());
+    let count = flow_children.len(access);
     scratch
         .children
-        .resize(children_start + access.child_count(), ChildState::default());
+        .resize(children_start + count, ChildState::default());
     let mut cx = LayoutContext {
         child_basis: ContainingBlock::default(),
         access,
+        flow_children,
         scratch,
         children_start,
         #[cfg(feature = "layout-audit")]
@@ -1244,6 +1268,7 @@ pub struct Scene {
     store: NodeStore<Entry>,
     scratch: Scratch,
     nodes: Vec<NodeId>,
+    flow_updates: HashSet<NodeId>,
     shared_geometry: Option<Rc<[Geometry]>>,
     pending: bool,
     request: Option<RootRequest>,
@@ -1258,8 +1283,12 @@ pub struct Scene {
 impl Scene {
     /// Create a scene with a three-query measurement cache and a maximum callback depth of 64.
     pub fn new(root: impl LayoutNode) -> Self {
+        Self::with_root_style(root, FlexItemStyle::default())
+    }
+
+    pub(crate) fn with_root_style(root: impl LayoutNode, style: FlexItemStyle) -> Self {
         let store = NodeStore::new(
-            Box::new(Entry::new(root, FlexItemStyle::default(), None)),
+            Box::new(Entry::new(root, style, None)),
             NonZeroUsize::new(64).unwrap(),
         );
         let nodes = vec![store.root()];
@@ -1267,6 +1296,7 @@ impl Scene {
             store,
             scratch: Scratch::default(),
             nodes,
+            flow_updates: HashSet::new(),
             shared_geometry: None,
             pending: true,
             request: None,
@@ -1311,6 +1341,7 @@ impl Scene {
             .topology_revision
             .checked_add(1)
             .ok_or(LayoutError::RevisionExhausted)?;
+        self.flow_changed(parent, false)?;
         self.invalidate(parent)?;
         self.store
             .sort_children_by_key(parent, key)
@@ -1340,6 +1371,7 @@ impl Scene {
         index: Option<usize>,
         entry: Entry,
     ) -> Result<NodeId> {
+        let hidden = entry.item_style.display_none;
         let entry = Box::new(entry);
         let node = match index {
             Some(index) => self.store.insert(parent, index, entry),
@@ -1347,6 +1379,7 @@ impl Scene {
         }
         .map_err(AccessError::from)?;
         self.invalidate(parent)?;
+        self.flow_changed(parent, hidden)?;
         self.nodes.push(node);
         self.shared_geometry = None;
         Ok(node)
@@ -1413,6 +1446,7 @@ impl Scene {
             .topology_revision
             .checked_add(1)
             .ok_or(LayoutError::RevisionExhausted)?;
+        self.flow_changed(parent, false)?;
         self.invalidate(parent)?;
         #[cfg(feature = "layout-audit")]
         {
@@ -1498,9 +1532,52 @@ impl Scene {
         sizing: Option<ItemSizing>,
     ) -> Result<()> {
         let entry = self.store.get_mut(node)?;
+        let display_changed = entry.item_style.display_none != style.display_none;
         entry.item_style = style;
         entry.item_sizing = sizing.map(Box::new);
+        if display_changed {
+            if let Some(parent) = self.parent(node)? {
+                self.flow_changed(parent, true)?;
+            }
+            #[cfg(feature = "layout-audit")]
+            {
+                self.topology_revision = self
+                    .topology_revision
+                    .checked_add(1)
+                    .ok_or(LayoutError::RevisionExhausted)?;
+            }
+        }
         Ok(())
+    }
+
+    fn flow_changed(&mut self, parent: NodeId, display_changed: bool) -> Result<()> {
+        if display_changed || self.store.get(parent)?.flow_children.is_some() {
+            self.flow_updates.insert(parent);
+        }
+        Ok(())
+    }
+
+    // Rebuild once for a batch of mounts, reorders or display changes.
+    // Parents with all children in flow continue indexing the tree directly.
+    fn prepare_flow(&mut self) -> Result<Vec<NodeId>> {
+        let mut hidden = Vec::new();
+        for &parent in &self.flow_updates {
+            if self.store.get(parent).is_err() {
+                continue;
+            }
+            let start = hidden.len();
+            let mut participating = Vec::new();
+            for id in self.store.children(parent).map_err(AccessError::from)? {
+                if self.store.get(id)?.item_style.display_none {
+                    hidden.push(id);
+                } else {
+                    participating.push(id);
+                }
+            }
+            self.store.get_mut(parent)?.flow_children =
+                (hidden.len() != start).then(|| participating.into_boxed_slice());
+        }
+        Ok(hidden)
     }
 
     /// Read node data for presentation. Layout-affecting changes must use `edit_layout`.
@@ -1538,10 +1615,32 @@ impl Scene {
             .checked_add(1)
             .ok_or(LayoutError::RevisionExhausted)?;
         self.pending = true;
+        let mut hidden = self.prepare_flow()?;
+        let root = self.root();
         let attempt = Attempt(&mut self.scratch);
-        layout_root(&mut self.store, attempt.0, request, force)?;
-        let published = publish_layout(&mut self.store, attempt.0);
+        if self.store.get(root)?.item_style.display_none {
+            match request {
+                RootRequest::Measure(query, size) => {
+                    query.validate()?;
+                    if let Some(size) = size {
+                        size.validate()?;
+                    }
+                }
+                RootRequest::Assigned(size) => size.validate()?,
+            }
+            hidden.push(root);
+        } else {
+            layout_root(&mut self.store, attempt.0, request, force)?;
+        }
+        let mut published = publish_layout(&mut self.store, attempt.0);
         drop(attempt);
+        while let Some(id) = hidden.pop() {
+            if self.store.get_mut(id)?.geometry.take().is_some() {
+                published += 1;
+                hidden.extend(self.store.children(id).map_err(AccessError::from)?);
+            }
+        }
+        self.flow_updates.clear();
         self.finish_layout(request, published);
         #[cfg(feature = "layout-audit")]
         {
@@ -1558,7 +1657,7 @@ impl Scene {
         self.pending = false;
     }
 
-    /// Share the completed layout in surviving insertion order, in parent-local coordinates.
+    /// Share the geometry of participating nodes in insertion order, in parent-local coordinates.
     /// Returns `None` before the first layout or while an update is pending.
     /// The first request copies the geometry. Further requests share that allocation
     /// until geometry or membership changes. Held snapshots survive edits and scene drop.
@@ -1569,13 +1668,7 @@ impl Scene {
         let geometry = self.shared_geometry.get_or_insert_with(|| {
             self.nodes
                 .iter()
-                .map(|&id| {
-                    self.store
-                        .get(id)
-                        .expect("live layout node")
-                        .geometry
-                        .expect("completed layout")
-                })
+                .filter_map(|&id| self.store.get(id).expect("live layout node").geometry)
                 .collect()
         });
         Some(Rc::clone(geometry))
@@ -1640,6 +1733,7 @@ impl Scene {
 
     /// Query preferred metrics without publishing geometry.
     pub fn probe(&mut self, node: NodeId, query: Query) -> Result<Metrics> {
+        self.prepare_flow()?;
         self.store.execute(node, |entry, access| {
             Ok(measure(entry, access, MeasureInput::direct(query), false))
         })?

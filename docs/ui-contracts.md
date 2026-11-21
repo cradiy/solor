@@ -502,6 +502,10 @@ over right and bottom when both opposing offsets are definite. An automatic
 edge defers to its opposite. The parent includes the shifted subtree's far
 edges in its content extent. The view root stays at the viewport origin.
 
+Use `.hidden()` or `.display(Display::None)` to remove a mounted subtree from
+layout, drawing and focus navigation. Siblings close the gap. Restoring its
+display through a signal reuses the same nodes and component state.
+
 Use `.invisible()` to keep a subtree mounted and reserve its layout space.
 A hidden meter can receive layout updates while its painting and frame
 requests are suspended. Signal-bound text still reflows and can move visible

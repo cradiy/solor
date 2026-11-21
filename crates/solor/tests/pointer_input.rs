@@ -1371,3 +1371,108 @@ fn container_seek_shares_wheel_offsets_and_switches_hits_on_submission() -> Resu
     assert!(ui.scroll_metrics(view, root).is_none());
     Ok(())
 }
+
+#[test]
+fn display_none_removes_the_box_and_restores_the_same_interactive_subtree() -> Result<()> {
+    use solor::{Draw, Fill, rgb, style::Display};
+
+    let mut ui = Ui::new();
+    let display = ui.context().signal(Display::Flex);
+    let sibling_clicks = ui.context().signal(0);
+    let view = ui.mount(component(move |_| {
+        div()
+            .gap(px(3.))
+            .child(div().display(display).child(component(|cx| {
+                let ink = cx.signal(rgb(0xff0000));
+                div()
+                    .size(px(12.))
+                    .focusable()
+                    .bg(ink)
+                    .on_click(move |cx| cx.set(ink, rgb(0x0000ff)))
+            })))
+            .child(
+                div()
+                    .size(px(12.))
+                    .focusable()
+                    .on_click(move |cx| cx.update(sibling_clicks, |count| *count += 1)),
+            )
+    }))?;
+    let root = ui.root(view)?;
+    let nodes: Vec<_> = ui.children(view, root)?.collect();
+    let (panel, sibling) = (nodes[0], nodes[1]);
+    let child = ui.children(view, panel)?.next().unwrap();
+    let point = sample(1, 4., 4.);
+    accept(&mut ui, view, 40.)?;
+    assert_eq!(ui.geometry(view, sibling).unwrap().origin.y, px(15.));
+    ui.dispatch_pointer(view, Down(point, Primary))?;
+    ui.dispatch_pointer(view, Up(point, Primary))?;
+    assert_eq!(ui.focused(view)?, Some(child));
+
+    ui.context().set(display, Display::None)?;
+    accept(&mut ui, view, 40.)?;
+    assert!(ui.geometry(view, panel).is_none() && ui.geometry(view, child).is_none());
+    assert_eq!(ui.geometry(view, sibling).unwrap().origin.y, px(0.));
+    assert!(ui.record_frame(view)?.draws().is_empty());
+    assert_eq!(ui.focused(view)?, None);
+    assert_eq!(ui.focus_next(view)?, Some(sibling));
+    ui.dispatch_pointer(view, Down(point, Primary))?;
+    ui.dispatch_pointer(view, Up(point, Primary))?;
+    assert_eq!(*ui.context().read(sibling_clicks)?, 1);
+
+    ui.context().set(display, Display::Flex)?;
+    accept(&mut ui, view, 40.)?;
+    assert_eq!(ui.focus_next(view)?, Some(child));
+    assert_eq!(ui.geometry(view, sibling).unwrap().origin.y, px(15.));
+    assert!(
+        matches!(ui.record_frame(view)?.draws(), [Draw::Fill {fill: Fill::Solid(c), ..}] if *c == rgb(0x0000ff))
+    );
+    Ok(())
+}
+
+#[test]
+fn a_hidden_root_resumes_with_the_latest_child_display_and_visibility() -> Result<()> {
+    use solor::{rgb, style::Display};
+
+    let mut ui = Ui::new();
+    let root_display = ui.context().signal(Display::None);
+    let child_display = ui.context().signal(Display::None);
+    let extra = ui.context().signal(false);
+    let visible = ui.context().signal(false);
+    let view = ui.mount(component(move |_| {
+        div()
+            .display(root_display)
+            .items_start()
+            .child(div().hidden().size(px(17.)).bg(rgb(0xffffff)))
+            .child_when(extra, || div().size(px(4.)))
+            .child(
+                div()
+                    .display(child_display)
+                    .visible_when(visible)
+                    .size(px(12.))
+                    .bg(rgb(0xff0000)),
+            )
+    }))?;
+    let root = ui.root(view)?;
+    let child = ui.children(view, root)?.last().unwrap();
+    accept(&mut ui, view, 40.)?;
+    assert!(ui.geometry(view, root).is_none());
+    ui.context().set(child_display, Display::Flex)?;
+    accept(&mut ui, view, 40.)?;
+    assert!(ui.geometry(view, child).is_none());
+    ui.context().set(root_display, Display::Flex)?;
+    accept(&mut ui, view, 40.)?;
+    assert_eq!(ui.geometry(view, child).unwrap().origin.y, px(0.));
+    assert!(ui.record_frame(view)?.draws().is_empty());
+    ui.context().set(visible, true)?;
+    accept(&mut ui, view, 40.)?;
+    assert_eq!(ui.record_frame(view)?.draws().len(), 1);
+    for (mounted, y) in [(true, 4.), (false, 0.)] {
+        ui.context().set(extra, mounted)?;
+        accept(&mut ui, view, 40.)?;
+        assert_eq!(ui.geometry(view, child).unwrap().origin.y, px(y));
+    }
+    ui.context().set(root_display, Display::None)?;
+    accept(&mut ui, view, 40.)?;
+    assert!(ui.geometry(view, child).is_none());
+    Ok(())
+}

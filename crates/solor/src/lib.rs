@@ -283,8 +283,9 @@ impl Instance {
         let changed = self.scene.run_assigned(size, false)?;
         if changed != 0 {
             self.pointer.scroll_offsets.retain(|id, offset| {
-                let geometry = self.scene.geometry(*id).expect("mounted scroll container");
-                self.bodies[id].scroll_axes.clamp_offset(offset, geometry)
+                self.scene.geometry(*id).is_none_or(|geometry| {
+                    self.bodies[id].scroll_axes.clamp_offset(offset, geometry)
+                })
             });
             self.invalidate_geometry();
         } else if layout_pending {

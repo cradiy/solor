@@ -884,7 +884,7 @@ impl AnyElement {
                 handlers.padding = body.bounds.content_insets();
             }
             let id = match target {
-                Target::Root(slot) => slot.insert(Scene::new(body)).root(),
+                Target::Root(slot) => slot.insert(Scene::with_root_style(body, item)).root(),
                 Target::Child {
                     scene,
                     parent,
