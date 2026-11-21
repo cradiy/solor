@@ -53,7 +53,21 @@ impl Axis {
     }
 }
 
+struct Column {
+    left: usize,
+    right: usize,
+    weight: u32,
+    coverage: f64,
+}
+
+enum RowSampling {
+    Scalar,
+    Native(Clip),
+    Filtered { first: i64, columns: Vec<Column> },
+}
+
 pub(super) struct ImageSampler<'a> {
+    rows: RowSampling,
     pixels: &'a [[u8; 4]],
     x: Axis,
     y: Axis,
@@ -65,6 +79,7 @@ impl<'a> ImageSampler<'a> {
         let (offset, size) = fill.bounds(target).map_err(Error::other)?;
         let source = fill.asset().dimensions();
         Ok(Self {
+            rows: RowSampling::Scalar,
             pixels: fill.asset().pixels(),
             x: Axis::new(offset.x, size.width, target.width, source.width),
             y: Axis::new(offset.y, size.height, target.height, source.height),
@@ -73,7 +88,7 @@ impl<'a> ImageSampler<'a> {
     }
 
     /// Device bounds when a whole source texel lands exactly on each output pixel.
-    pub(super) fn native_bounds(&self, origin: [f64; 2], scale: RasterScale) -> Option<Clip> {
+    fn native_bounds(&self, origin: [f64; 2], scale: RasterScale) -> Option<Clip> {
         if self.x.density != scale.0 || self.y.density != scale.0 {
             return None;
         }
@@ -92,8 +107,84 @@ impl<'a> ImageSampler<'a> {
         })
     }
 
+    pub(super) fn prepare_rows(&mut self, origin: [f64; 2], scale: RasterScale, clip: Clip) {
+        if let Some(rect) = self.native_bounds(origin, scale) {
+            self.rows = RowSampling::Native(rect);
+            return;
+        }
+        // Amortize a column table across rows of this repair, with bounded scratch
+        // even for an extremely wide, shallow surface.
+        if clip.bottom - clip.top < 2 || clip.right - clip.left > 8192 {
+            return;
+        }
+        let columns = (clip.left..clip.right)
+            .map(|x| {
+                let center = (x as f64 + 0.5 - origin[0]) / scale.0;
+                let (left, right, weight) = self.x.coordinate(center);
+                Column {
+                    left,
+                    right,
+                    weight,
+                    coverage: self.x.coverage(center, self.half_pixel),
+                }
+            })
+            .collect();
+        self.rows = RowSampling::Filtered {
+            first: clip.left,
+            columns,
+        };
+    }
+
+    pub(super) fn blend_span(
+        &self,
+        dst: &mut [[u8; 4]],
+        x: i64,
+        y: i64,
+        origin: [f64; 2],
+        scale: RasterScale,
+    ) {
+        let center_y = (y as f64 - origin[1] + 0.5) / scale.0;
+        match &self.rows {
+            RowSampling::Native(rect) => self.blend_native_span(dst, x, y, *rect),
+            RowSampling::Scalar => {
+                for (column, pixel) in (x..).zip(dst) {
+                    self.blend(
+                        pixel,
+                        (column as f64 + 0.5 - origin[0]) / scale.0,
+                        center_y,
+                        255,
+                    );
+                }
+            }
+            RowSampling::Filtered { first, columns } => {
+                let y_coverage = self.y.coverage(center_y, self.half_pixel);
+                if y_coverage == 0.0 {
+                    return;
+                }
+                let (top, bottom, wy) = self.y.coordinate(center_y);
+                let (upper, lower) = self.source_rows(top, bottom);
+                for (pixel, column) in dst.iter_mut().zip(&columns[(x - first) as usize..]) {
+                    let coverage = (255.0 * column.coverage * y_coverage).round() as u8;
+                    if coverage != 0 {
+                        let src =
+                            bilinear(upper, lower, column.left, column.right, column.weight, wy);
+                        blend_sample(pixel, src, coverage);
+                    }
+                }
+            }
+        }
+    }
+
+    fn source_rows(&self, top: usize, bottom: usize) -> (&[[u8; 4]], &[[u8; 4]]) {
+        let width = self.x.texels;
+        (
+            &self.pixels[top * width..(top + 1) * width],
+            &self.pixels[bottom * width..(bottom + 1) * width],
+        )
+    }
+
     /// Composites the visible part of a fully covered row without filtering.
-    pub(super) fn blend_native_span(&self, dst: &mut [[u8; 4]], x: i64, y: i64, image: Clip) {
+    fn blend_native_span(&self, dst: &mut [[u8; 4]], x: i64, y: i64, image: Clip) {
         let left = x.max(image.left);
         let right = (x + dst.len() as i64).min(image.right);
         if left >= right || !(image.top..image.bottom).contains(&y) {
@@ -118,27 +209,44 @@ impl<'a> ImageSampler<'a> {
         }
         let (left, right, wx) = self.x.coordinate(x);
         let (top, bottom, wy) = self.y.coordinate(y);
-        let stride = self.x.texels;
-        let a = self.pixels[top * stride + left];
-        let src = if wx == 0 && wy == 0 {
-            a
-        } else {
-            let b = self.pixels[top * stride + right];
-            let c = self.pixels[bottom * stride + left];
-            let d = self.pixels[bottom * stride + right];
-            std::array::from_fn(|i| {
-                let upper = u32::from(a[i]) * (256 - wx) + u32::from(b[i]) * wx;
-                let lower = u32::from(c[i]) * (256 - wx) + u32::from(d[i]) * wx;
-                ((upper * (256 - wy) + lower * wy + 32768) >> 16) as u8
-            })
-        };
-        let src = if coverage == 255 {
-            src
-        } else {
-            src.map(|v| ((u16::from(v) * u16::from(coverage) + 127) / 255) as u8)
-        };
-        crate::pixels::blend_premultiplied(dst, src);
+        let (upper, lower) = self.source_rows(top, bottom);
+        let src = bilinear(upper, lower, left, right, wx, wy);
+        blend_sample(dst, src, coverage);
     }
+}
+
+#[inline]
+fn bilinear(
+    upper_row: &[[u8; 4]],
+    lower_row: &[[u8; 4]],
+    left: usize,
+    right: usize,
+    wx: u32,
+    wy: u32,
+) -> [u8; 4] {
+    let a = upper_row[left];
+    if wx == 0 && wy == 0 {
+        a
+    } else {
+        let b = upper_row[right];
+        let c = lower_row[left];
+        let d = lower_row[right];
+        std::array::from_fn(|i| {
+            let upper = u32::from(a[i]) * (256 - wx) + u32::from(b[i]) * wx;
+            let lower = u32::from(c[i]) * (256 - wx) + u32::from(d[i]) * wx;
+            ((upper * (256 - wy) + lower * wy + 32768) >> 16) as u8
+        })
+    }
+}
+
+#[inline]
+fn blend_sample(dst: &mut [u8; 4], src: [u8; 4], coverage: u8) {
+    let src = if coverage == 255 {
+        src
+    } else {
+        src.map(|v| ((u16::from(v) * u16::from(coverage) + 127) / 255) as u8)
+    };
+    crate::pixels::blend_premultiplied(dst, src);
 }
 
 /// A rasterized region aligned to the destination pixel grid. Repairs use the same

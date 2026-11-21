@@ -38,7 +38,7 @@ struct Replay<'a> {
 enum Brush<'a, F> {
     Solid(solor::Rgba),
     Region(crate::bitmap::RegionSampler),
-    Image(crate::bitmap::ImageSampler<'a>, Option<Clip>),
+    Image(crate::bitmap::ImageSampler<'a>),
     Gradient(F, Option<OpaqueLinearGradient<'a>>),
 }
 
@@ -285,9 +285,9 @@ impl Surface {
                 Brush::Region(sampler)
             }
             Fill::Image(image) => {
-                let sampler = crate::bitmap::ImageSampler::new(image, size, scale)?;
-                let native = sampler.native_bounds([left, top], scale);
-                Brush::Image(sampler, native)
+                let mut sampler = crate::bitmap::ImageSampler::new(image, size, scale)?;
+                sampler.prepare_rows([left, top], scale, clip);
+                Brush::Image(sampler)
             }
             Fill::Gradient(gradient) => {
                 // Tiny damage on a dense ramp should not scan the complete stop list.
@@ -342,19 +342,7 @@ impl Surface {
                         image.blend(pixel, x, y, scale, 255);
                     }
                 }
-                Brush::Image(image, Some(bounds)) => {
-                    image.blend_native_span(middle, from, y, *bounds)
-                }
-                Brush::Image(image, None) => {
-                    for (x, pixel) in (from..to).zip(middle) {
-                        image.blend(
-                            pixel,
-                            (x as f64 + 0.5 - left) / scale.0,
-                            (dy + 0.5) / scale.0,
-                            255,
-                        );
-                    }
-                }
+                Brush::Image(image) => image.blend_span(middle, from, y, [left, top], scale),
                 Brush::Gradient(_, Some(linear)) => linear
                     .write_span(from as u32, y as u32, middle)
                     .map_err(Error::other)?,
@@ -384,7 +372,7 @@ impl Surface {
                                 image.blend(pixel, x, y, scale, coverage);
                                 continue;
                             }
-                            Brush::Image(image, _) => {
+                            Brush::Image(image) => {
                                 image.blend(
                                     pixel,
                                     (dx + 0.5) / scale.0,

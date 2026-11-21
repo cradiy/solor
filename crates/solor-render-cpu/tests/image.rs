@@ -165,3 +165,52 @@ fn native_bitmap_rows_respect_crop_letterboxing_and_alpha() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn clipped_scaled_bitmap_matches_individual_scanlines() -> Result<()> {
+    use solor::layout::Origin;
+    let scale = RasterScale(1.5);
+    let viewport = size(24., 16.);
+    let pixels = (0..35u8)
+        .flat_map(|i| [i * 7, 255 - i, i * 3, [0, 128, 255][usize::from(i % 3)]])
+        .collect();
+    let asset = ImageAsset::from_rgba8(7, 5, pixels)?;
+    let draw = |rows: usize| -> Result<Surface> {
+        let mut ui = Ui::new();
+        let source = asset.clone();
+        let view = ui.mount(component(move |_| {
+            div().bg(rgb(0x273851)).paint(move |cx| {
+                // The same crop starts inside the fitted image at a fractional origin.
+                for y in (2..22).step_by(rows) {
+                    let at = Origin {
+                        x: px(2.),
+                        y: px(y as f32 / 1.5),
+                    };
+                    cx.with_clip(at, size(18., rows.min(22 - y) as f32 / 1.5), |cx| {
+                        cx.fill_rounded_rect(
+                            Origin {
+                                x: px(1.25),
+                                y: px(0.5),
+                            },
+                            size(20.5, 15.25),
+                            px(2.75),
+                            source.clone(),
+                        )
+                    })?;
+                }
+                Ok(())
+            })
+        }))?;
+        ui.layout(view, viewport)?;
+        Ok(Surface::draw_view(
+            &ui.record_frame(view)?,
+            scale.buffer_size(viewport)?,
+            scale,
+        )?)
+    };
+    let whole = draw(20)?;
+    assert_ne!(pixel(&whole, 10, 10), [0x27, 0x38, 0x51, 255]);
+    assert_eq!(whole.rgba, draw(1)?.rgba);
+    assert_eq!(whole.rgba, draw(4)?.rgba);
+    Ok(())
+}
