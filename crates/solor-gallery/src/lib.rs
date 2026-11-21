@@ -115,7 +115,7 @@ struct ActivateChoice;
 fn activation_button(
     button: Div,
     accent: Option<Rgba>,
-    activate: impl Fn(&mut Context<'_>) -> Result<()> + Copy + 'static,
+    activate: impl Fn(&mut Context<'_>) -> Result<()> + Clone + 'static,
 ) -> Div {
     button
         .cursor_pointer()
@@ -137,7 +137,7 @@ fn activation_button(
                 },
             )
         })
-        .on_click(activate)
+        .on_click(activate.clone())
         .on_action(move |_: &ActivateChoice, cx| activate(cx))
 }
 

@@ -16,9 +16,10 @@ browse swatches, or click and drag the position indicator to seek across all
 and Page Down scroll one viewport, and Home and End jump to the first and last swatches. A slim thumb sits over the list’s right edge and widens on hover.
 Choose **Tone sheet** to browse nine color families down the rows and nine tones
 across the columns. With focus in the grid, arrow keys pan one column or row
-at a time. Both scrollbars control the same viewport. Selecting a swatch
-shows its name and hex value above the sheet, where they stay visible while scrolling.
-Choose **Show selection** to bring that swatch back into view.
+at a time. Shift+Arrow selects the adjacent swatch and scrolls it into view.
+Clicking a swatch also selects it. Its label is highlighted, and the header
+shows its color and hex value while browsing. To return to it from the grid,
+press Shift+Tab to focus **Show selection**, then Enter or Space.
 
 Run `cargo test --release -p solor-gallery --test navigation tone_sheet_recording_cost -- --ignored --nocapture`
 to measure frame recording during two-axis scrolling and repeated stationary

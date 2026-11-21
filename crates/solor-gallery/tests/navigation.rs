@@ -900,6 +900,66 @@ fn tone_sheet_arrow_keys_pan_a_tile_at_a_time_and_keep_the_selection() -> Result
 }
 
 #[test]
+fn tone_sheet_keyboard_selection_follows_the_pointer_and_reveals_the_selected_tile() -> Result<()> {
+    let (mut ui, root) = gallery()?;
+    let view = ui.mount(root)?;
+    open_tone_sheet(&mut ui, view)?;
+    submit_labels(&mut ui, view)?;
+    click_label(&mut ui, view, "Amber 200")?;
+    let press = |ui: &mut solor::Ui, key, shift| {
+        ui.dispatch_key(
+            view,
+            &KeyEvent {
+                key,
+                state: KeyState::Down,
+                modifiers: solor::keyboard::Modifiers {
+                    shift,
+                    ..Default::default()
+                },
+            },
+        )
+    };
+    assert!(press(&mut ui, Key::ArrowRight, true)?);
+    assert!(press(&mut ui, Key::ArrowDown, true)?);
+    assert!(
+        submit_labels(&mut ui, view)?
+            .iter()
+            .any(|s| s.starts_with("Olive 300  /  "))
+    );
+
+    for _ in 0..9 {
+        assert!(press(&mut ui, Key::ArrowDown, true)?);
+        assert!(press(&mut ui, Key::ArrowRight, true)?);
+    }
+    let labels = submit_labels(&mut ui, view)?;
+    assert!(labels.iter().any(|s| s.as_str() == "Rose 900  /  #503D3F"));
+    let frame = ui.record_frame(view)?;
+    let label = label_target(&frame, "Rose 900").expect("selected swatch is visible");
+    let surface = solor_render_cpu::pixels::Surface::draw_view(
+        &frame,
+        solor_render_cpu::pixels::DeviceSize {
+            width: 800,
+            height: 560,
+        },
+        RasterScale::ONE,
+    )?;
+    // Sample the label's left padding, clear of the glyphs.
+    let pixel = (label.position.y.get() as usize * 800 + label.position.x.get() as usize - 7) * 4;
+    assert_eq!(&surface.rgba[pixel..pixel + 4], &[0xd7, 0xdb, 0xd2, 255]);
+    for _ in 0..9 {
+        assert!(press(&mut ui, Key::ArrowLeft, false)?);
+        assert!(press(&mut ui, Key::ArrowUp, false)?);
+    }
+    submit_labels(&mut ui, view)?;
+    assert!(label_target(&ui.record_frame(view)?, "Rose 900").is_none());
+    assert!(press(&mut ui, Key::Tab, true)?);
+    assert!(press(&mut ui, Key::Enter, false)?);
+    submit_labels(&mut ui, view)?;
+    assert!(label_target(&ui.record_frame(view)?, "Rose 900").is_some());
+    Ok(())
+}
+
+#[test]
 fn tone_sheet_selects_the_last_swatch_after_scrolling_both_axes() -> Result<()> {
     use solor::{Draw, pointer::ScrollDelta};
     use solor_render_cpu::pixels::{DeviceSize, Surface};
