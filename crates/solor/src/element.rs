@@ -1,5 +1,6 @@
 //! Composition, conversion at attachment, and retained element behavior.
 pub(crate) mod image;
+mod outline;
 mod style_binding;
 pub(crate) mod svg;
 
@@ -609,6 +610,7 @@ pub(super) struct MountedNode {
     text_color: Foreground,
     background: Option<Box<MountedBackground>>,
     border: Option<Rc<crate::style::BorderPaint>>,
+    outline: Option<Box<outline::MountedOutline>>,
     pub(super) binding_target: Option<NodeId>,
     record: Option<Record>,
     pub(super) owned: crate::Owned,
@@ -641,6 +643,7 @@ impl MountedNode {
             .as_deref()
             .is_some_and(|h| h.focus_indicator.is_some())
             || mounted.border.is_some()
+            || mounted.outline.is_some()
             || !mounted.fixed
             || !matches!(paint_mode, RefreshPolicy::Fixed(RefreshMode::OnDemand))
         {
@@ -690,6 +693,7 @@ impl MountedNode {
             text_color: style.text.color,
             background: mounted.background,
             border: mounted.border,
+            outline: mounted.outline,
             owned: Default::default(),
             record,
         }
@@ -789,6 +793,11 @@ impl MountedNode {
         {
             commands.truncate(start);
             return Err(error);
+        }
+        if let Some(outline) = &self.outline
+            && let Some(draw) = outline.draw(size, &clips.inherited)?
+        {
+            cx.commands.push(draw);
         }
         Ok(cx.next_frame)
     }

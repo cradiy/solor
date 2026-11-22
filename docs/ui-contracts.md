@@ -574,6 +574,12 @@ Use `.border_dashed()` or `.border_dotted()` for the whole box, or set a
 single edge with `.border_bottom_style(BorderStyle::Dotted)`. Dash length
 and dot diameter scale with the edge width.
 
+Use `.outline_width(px(2.0)).outline_color(ink)` to draw a ring outside the
+border without changing layout or pointer bounds. For example,
+`.outline_offset(px(2.0))` leaves a two-pixel gap. A negative offset moves
+the ring inward. The ring follows the box corners and is clipped by ancestors.
+Use `.outline_style(BorderStyle::Dashed)` for a dashed ring.
+
 Each background corner has an independent circular radius. If two adjacent
 radii exceed their shared edge, the frame scales all four by the same factor
 until they fit. The CPU renderer applies this shape to solid and gradient

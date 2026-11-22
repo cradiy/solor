@@ -256,3 +256,56 @@ fn a_partial_repair_preserves_the_pattern_phase_through_a_rounded_corner() -> Re
     assert_eq!(repaired.rgba, reference.frame(size, scale)?.rgba);
     Ok(())
 }
+
+#[test]
+fn moving_an_outline_repaints_both_rings_inside_the_ancestor_clip() -> Result<()> {
+    use solor::platform::{WindowEvent, WindowHandler};
+    use solor_render_cpu::CpuWindow;
+    use std::time::Duration;
+
+    let scene = |initial: f32| {
+        component(move |cx| {
+            let offset = cx.signal(px(initial));
+            div().p(px(8.)).child(
+                div().size(px(24.)).overflow_hidden().child(
+                    div()
+                        .absolute()
+                        .top(px(4.))
+                        .left(px(1.))
+                        .size(px(16.))
+                        .rounded(px(2.))
+                        .overflow_hidden()
+                        .bg(rgb(0x447799))
+                        .outline_width(px(2.))
+                        .outline_offset(offset)
+                        .outline_color(rgb(0))
+                        .on_frame(move |_, cx| cx.set(offset, px(-3.))),
+                ),
+            )
+        })
+    };
+    let size = Size {
+        width: px(80.),
+        height: px(48.),
+    };
+    let scale = RasterScale(1.5);
+    let mut window = CpuWindow::mount(Ui::new(), scene(2.))?;
+    let first = window.frame(size, scale)?;
+    let at = |x: usize, y: usize| 4 * (y * first.size.width as usize + x);
+    let ink = |x, y| first.rgba[at(x, y)];
+    // Top edge at logical y=8..10, with a two-pixel gap to the card.
+    assert_eq!((ink(24, 13), ink(24, 16), ink(24, 22)), (0, 255, 0x44));
+    // The left edge extends beyond the ancestor at x=8.
+    assert_eq!(ink(8, 27), 255);
+    window.frame_submitted()?;
+    window.event(WindowEvent::FrameReady(Duration::ZERO))?;
+    let repaired = window.frame(size, scale)?;
+    let damage = repaired.damage.bounds().unwrap();
+    assert!(damage.right < i64::from(repaired.size.width));
+    let mut reference = CpuWindow::mount(Ui::new(), scene(-3.))?;
+    assert_eq!(repaired.rgba, reference.frame(size, scale)?.rgba);
+    let stride = repaired.size.width as usize;
+    let ink = |x: usize, y: usize| repaired.rgba[4 * (y * stride + x)];
+    assert_eq!((ink(24, 13), ink(24, 18), ink(24, 21)), (255, 0x44, 0));
+    Ok(())
+}
