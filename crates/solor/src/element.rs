@@ -1,6 +1,7 @@
 //! Composition, conversion at attachment, and retained element behavior.
 pub(crate) mod image;
 mod outline;
+mod shadow;
 mod style_binding;
 pub(crate) mod svg;
 
@@ -159,6 +160,19 @@ pub enum Draw {
         fill: Fill,
         /// Circular radii in logical pixels, fitted to the fill bounds.
         corner_radii: Corners<Pixels>,
+    },
+    /// Paints a single inner or outer shadow of a rounded border box.
+    Shadow {
+        /// Ancestor clip in the recording coordinate space.
+        clip: Option<Arc<ContentClip>>,
+        /// Upper-left corner of the unshifted box.
+        origin: Origin,
+        /// Extent of the unshifted box.
+        size: Size,
+        /// Fitted corner radii of the unshifted box.
+        corner_radii: Corners<Pixels>,
+        /// Layer parameters in logical pixels.
+        shadow: crate::style::BoxShadow<Pixels>,
     },
     /// Paints the ring between a box and its inner border edges.
     Border {
@@ -611,6 +625,7 @@ pub(super) struct MountedNode {
     background: Option<Box<MountedBackground>>,
     border: Option<Rc<crate::style::BorderPaint>>,
     outline: Option<Box<outline::MountedOutline>>,
+    shadows: Option<Box<shadow::Shadows>>,
     pub(super) binding_target: Option<NodeId>,
     record: Option<Record>,
     pub(super) owned: crate::Owned,
@@ -644,6 +659,7 @@ impl MountedNode {
             .is_some_and(|h| h.focus_indicator.is_some())
             || mounted.border.is_some()
             || mounted.outline.is_some()
+            || mounted.shadows.is_some()
             || !mounted.fixed
             || !matches!(paint_mode, RefreshPolicy::Fixed(RefreshMode::OnDemand))
         {
@@ -694,6 +710,7 @@ impl MountedNode {
             background: mounted.background,
             border: mounted.border,
             outline: mounted.outline,
+            shadows: mounted.shadows,
             owned: Default::default(),
             record,
         }
@@ -741,6 +758,9 @@ impl MountedNode {
             RefreshPolicy::Bound(source) => *cx.read(source)?,
         };
         cx.next_frame = mode == RefreshMode::Continuous;
+        if let Some(shadows) = &self.shadows {
+            shadows.record(false, size, &clips.inherited, cx.commands);
+        }
         if let Some(paint) = &self.background {
             let mut fill = match &paint.source {
                 Background::Fixed(fill) => fill.clone(),
@@ -766,6 +786,9 @@ impl MountedNode {
                 fill,
                 corner_radii: paint.corner_radii.fit_to(size),
             });
+        }
+        if let Some(shadows) = &self.shadows {
+            shadows.record(true, size, &clips.inherited, cx.commands);
         }
         if let Some(paint) = &self.border {
             cx.commands.push(Draw::Border {

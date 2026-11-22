@@ -580,6 +580,12 @@ border without changing layout or pointer bounds. For example,
 the ring inward. The ring follows the box corners and is clipped by ancestors.
 Use `.outline_style(BorderStyle::Dashed)` for a dashed ring.
 
+Use `.shadow([BoxShadow::new(px(0.), px(2.), ink).blur(px(6.))])` for a soft
+outer shadow. Layers are declared front to back. Outer shadows follow the box
+corners and stay outside the border box, including on transparent elements.
+Use `.inset()` for a shadow above the background and beneath the border.
+Offsets, blur and spread accept pixels or rems.
+
 Each background corner has an independent circular radius. If two adjacent
 radii exceed their shared edge, the frame scales all four by the same factor
 until they fit. The CPU renderer applies this shape to solid and gradient

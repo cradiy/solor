@@ -2,6 +2,7 @@
 use super::*;
 
 pub(super) struct PreparedStyle {
+    pub shadows: Option<Box<shadow::Shadows>>,
     pub outline: Option<Box<outline::MountedOutline>>,
     pub border: Option<Rc<crate::style::BorderPaint>>,
     pub background: Option<Box<MountedBackground>>,
@@ -119,6 +120,7 @@ pub(super) fn prepare<E: Element>(
     };
     Ok(PreparedStyle {
         border: style.border_paint(units)?,
+        shadows: shadow::Shadows::resolve(&style, units)?,
         outline: outline::MountedOutline::resolve(&style, units)?,
         opacity: opacity(&style)?,
         background: MountedBackground::resolve(&style, units)?,
@@ -276,6 +278,7 @@ impl crate::Instance {
         let opacity = opacity(&style)?;
         let item = item_style(&style)?;
         let border = style.border_paint(self.units)?;
+        let shadows = shadow::Shadows::resolve(&style, self.units)?;
         let outline = outline::MountedOutline::resolve(&style, self.units)?;
         let background = MountedBackground::resolve(&style, self.units)?;
         // Custom content can use any declared property to determine its metrics.
@@ -344,6 +347,7 @@ impl crate::Instance {
         node.background = background;
         node.border = border;
         node.outline = outline;
+        node.shadows = shadows;
         if routing_changed {
             self.invalidate_geometry();
         }

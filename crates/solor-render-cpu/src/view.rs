@@ -43,6 +43,8 @@ enum Brush<'a, F> {
 }
 
 mod border;
+mod rounded_box;
+mod shadow;
 
 trait SampleGradient:
     FnMut(f32, f32) -> std::result::Result<solor::Rgba, solor::GradientError>
@@ -223,6 +225,16 @@ impl Surface {
                 } => {
                     let fill = replay.images.resolve(fill).map_err(Error::other)?;
                     self.fill_box(*origin, *size, &fill, *corner_radii, scale, bounds)?;
+                }
+                Draw::Shadow {
+                    origin,
+                    size,
+                    corner_radii,
+                    shadow,
+                    ..
+                } => {
+                    shadow::Geometry::new(*origin, *size, *corner_radii, *shadow, scale)
+                        .draw(self, bounds);
                 }
                 Draw::Border {
                     origin,
@@ -469,7 +481,8 @@ fn opaque_cover(draw: &Draw, scale: RasterScale, area: Clip) -> Result<Option<so
 // Fill coverage includes fractional edge pixels. Text is clipped to rounded layout edges.
 fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     let mut bounds = primitive_bounds(draw, scale)?;
-    let (Draw::Border { clip, .. }
+    let (Draw::Shadow { clip, .. }
+    | Draw::Border { clip, .. }
     | Draw::Fill { clip, .. }
     | Draw::Polygon { clip, .. }
     | Draw::Polyline { clip, .. }
@@ -517,6 +530,13 @@ fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
             width,
             ..
         } => crate::polyline::bounds(*origin, points, *width, scale),
+        Draw::Shadow {
+            origin,
+            size,
+            corner_radii,
+            shadow,
+            ..
+        } => Ok(shadow::Geometry::new(*origin, *size, *corner_radii, *shadow, scale).bounds()),
         Draw::Svg { origin, size, .. } | Draw::Text { origin, size, .. } => {
             Ok(scale.bounds(*origin, *size))
         }

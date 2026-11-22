@@ -134,19 +134,51 @@ pub struct FontFeature {
 
 /// Parameters of one box shadow. Layers are ordered front to back.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BoxShadow {
+pub struct BoxShadow<L = AbsoluteLength> {
     /// Horizontal displacement.
-    pub x: AbsoluteLength,
+    pub x: L,
     /// Vertical displacement.
-    pub y: AbsoluteLength,
+    pub y: L,
     /// Blur radius.
-    pub blur: AbsoluteLength,
+    pub blur: L,
     /// Expansion before blurring.
-    pub spread: AbsoluteLength,
+    pub spread: L,
     /// Shadow color.
     pub color: Rgba,
     /// Draw inside the border box.
     pub inset: bool,
+}
+
+impl BoxShadow {
+    /// Creates an outer shadow with the given offset and color.
+    pub fn new(x: impl Into<AbsoluteLength>, y: impl Into<AbsoluteLength>, color: Rgba) -> Self {
+        Self {
+            x: x.into(),
+            y: y.into(),
+            color,
+            spread: crate::px(0.).into(),
+            blur: crate::px(0.).into(),
+            inset: false,
+        }
+    }
+
+    /// Softens the shadow edge by the given blur radius.
+    pub fn blur(mut self, radius: impl Into<AbsoluteLength>) -> Self {
+        self.blur = radius.into();
+        self
+    }
+
+    /// Expands the shadow before blurring. Negative lengths contract it.
+    pub fn spread(mut self, length: impl Into<AbsoluteLength>) -> Self {
+        self.spread = length.into();
+        self
+    }
+
+    /// Casts the shadow into the box.
+    pub fn inset(mut self) -> Self {
+        self.inset = true;
+        self
+    }
 }
 
 /// A two-dimensional operation in a transform list.
