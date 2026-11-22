@@ -184,7 +184,8 @@ impl MountedNode {
         for draw in &mut draws[start..] {
             let origin = match draw {
                 Draw::Group { .. } => unreachable!("groups are formed after node recording"),
-                Draw::Shadow { origin, .. }
+                Draw::WavyUnderline { origin, .. }
+                | Draw::Shadow { origin, .. }
                 | Draw::Border { origin, .. }
                 | Draw::Fill { origin, .. }
                 | Draw::Polygon { origin, .. }

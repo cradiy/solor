@@ -241,7 +241,7 @@ pub trait Styled: Sized {
     property_setters! { attributes_mut;
         font_weight => font_weight: u16, font_style => font_style: FontStyle, text_align => text_align: TextAlign,
         white_space => white_space: WhiteSpace, text_overflow => text_overflow: TextOverflow,
-         text_underline => underline: bool,
+        text_underline => underline: UnderlineStyle,
         text_strikethrough => strikethrough: bool
     }
     property_setters! { attributes_mut;
@@ -261,6 +261,7 @@ pub trait Styled: Sized {
         overflow { overflow_hidden: Overflow::Hidden, overflow_scroll: Overflow::Scroll, overflow_auto: Overflow::Auto, overflow_visible: Overflow::Visible };
         overflow_x { overflow_x_scroll: Overflow::Scroll };
         overflow_y { overflow_y_scroll: Overflow::Scroll };
+        text_underline { underline: UnderlineStyle::Solid, underline_wavy: UnderlineStyle::Wavy };
         border_style { border_solid: BorderStyle::Solid, border_dashed: BorderStyle::Dashed, border_dotted: BorderStyle::Dotted };
         mx { mx_auto: Length::Auto };
         margin { m_auto: Length::Auto };
@@ -327,10 +328,6 @@ pub trait Styled: Sized {
     /// Requests a single clipped line with a trailing ellipsis.
     fn truncate(self) -> Self {
         self.whitespace_nowrap().overflow_hidden().text_ellipsis()
-    }
-    /// Enables underlining.
-    fn underline(self) -> Self {
-        self.text_underline(true)
     }
     /// Enables strikethrough.
     fn line_through(self) -> Self {

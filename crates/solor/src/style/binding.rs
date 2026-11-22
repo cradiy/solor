@@ -49,6 +49,7 @@ macro_rules! exact {
 }
 
 converted!(
+    UnderlineStyle,
     Visibility,
     crate::GradientMap,
     Length,

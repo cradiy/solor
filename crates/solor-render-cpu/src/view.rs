@@ -45,6 +45,7 @@ enum Brush<'a, F> {
 mod border;
 mod rounded_box;
 mod shadow;
+mod underline;
 
 trait SampleGradient:
     FnMut(f32, f32) -> std::result::Result<solor::Rgba, solor::GradientError>
@@ -225,6 +226,14 @@ impl Surface {
                 } => {
                     let fill = replay.images.resolve(fill).map_err(Error::other)?;
                     self.fill_box(*origin, *size, &fill, *corner_radii, scale, bounds)?;
+                }
+                Draw::WavyUnderline {
+                    origin,
+                    size,
+                    color,
+                    ..
+                } => {
+                    underline::draw(self, *origin, *size, color, scale, bounds)?;
                 }
                 Draw::Shadow {
                     origin,
@@ -481,7 +490,8 @@ fn opaque_cover(draw: &Draw, scale: RasterScale, area: Clip) -> Result<Option<so
 // Fill coverage includes fractional edge pixels. Text is clipped to rounded layout edges.
 fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     let mut bounds = primitive_bounds(draw, scale)?;
-    let (Draw::Shadow { clip, .. }
+    let (Draw::WavyUnderline { clip, .. }
+    | Draw::Shadow { clip, .. }
     | Draw::Border { clip, .. }
     | Draw::Fill { clip, .. }
     | Draw::Polygon { clip, .. }
@@ -539,6 +549,9 @@ fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
         } => Ok(shadow::Geometry::new(*origin, *size, *corner_radii, *shadow, scale).bounds()),
         Draw::Svg { origin, size, .. } | Draw::Text { origin, size, .. } => {
             Ok(scale.bounds(*origin, *size))
+        }
+        Draw::WavyUnderline { origin, size, .. } => {
+            box_bounds(*origin, *size, Corners::default(), scale)
         }
         Draw::Border {
             origin,

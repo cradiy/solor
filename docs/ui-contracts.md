@@ -446,7 +446,9 @@ The highlight fills the line height behind glyphs and decorations and clips
 to the label's content box. Empty lines leave a gap. Descendants inherit the
 color and can clear it with `.text_bg(rgba(0))`.
 
-Use `.underline()` and `.line_through()` independently or together. Each
+Use `.underline()` or `.underline_wavy()` beneath text. Either can be combined
+with `.line_through()`. Bind `.text_underline(signal)` to an `UnderlineStyle`
+to switch between a straight line, a wave and no underline. Each
 visible line is decorated across its shaped advances inside the text content
 box. The face supplies the baseline offsets and natural thickness, with
 em-based defaults for missing metrics. Strokes follow the text foreground.

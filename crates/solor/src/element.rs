@@ -116,9 +116,13 @@ impl Element for Text {
             });
         }
         if let Some(d) = decorations
-            && let Some(stroke) = d.underline
+            && let Some((stroke, kind)) = d.underline
         {
-            cx.text_stroke(&paragraph, stroke, d.thickness, stroke_color);
+            if kind == crate::style::UnderlineStyle::Wavy {
+                cx.wavy_underline(&paragraph, stroke, d.thickness, stroke_color)?;
+            } else {
+                cx.text_stroke(&paragraph, stroke, d.thickness, stroke_color);
+            }
         }
         cx.commands.push(Draw::Text {
             clip: cx.clip.clone(),
@@ -147,6 +151,17 @@ pub enum Draw {
         alpha: u8,
         /// Commands in paint order, in the same coordinates as the enclosing frame.
         draws: Vec<Draw>,
+    },
+    /// Draws one sinusoidal underline across a shaped line.
+    WavyUnderline {
+        /// Effective clip, including the label's content box.
+        clip: Option<Arc<ContentClip>>,
+        /// Upper-left corner and horizontal phase origin of the wave.
+        origin: Origin,
+        /// Line width and wave band height. The stroke is one third of the band height.
+        size: Size,
+        /// Foreground paint across the wave.
+        color: crate::Ink,
     },
     /// Fills a rounded rectangle.
     Fill {
@@ -344,6 +359,48 @@ impl<'paint> PaintContext<'paint> {
         });
     }
 
+    fn wavy_underline(
+        &mut self,
+        paragraph: &Paragraph,
+        stroke: crate::text::Stroke,
+        thickness: Option<Pixels>,
+        color: &crate::Ink,
+    ) -> Result<()> {
+        if matches!(color, crate::Ink::Solid(c) if c.alpha == 0) {
+            return Ok(());
+        }
+        let em = paragraph.style.size.get();
+        let height = thickness.unwrap_or(px(stroke.thickness * em)) * 3.0;
+        anyhow::ensure!(height.is_extent(), "invalid underline extent");
+        self.with_clip(Origin::default(), self.size, |cx| {
+            for line in &paragraph.lines {
+                let (left, right) = line.advance_bounds();
+                let center = px(line.baseline - stroke.position * em);
+                let top = center - height * 0.5;
+                if right > left
+                    && right > 0.
+                    && left < cx.size.width.get()
+                    && top < cx.size.height
+                    && center + height * 0.5 > px(0.)
+                {
+                    cx.commands.push(Draw::WavyUnderline {
+                        origin: Origin {
+                            x: cx.origin.x + px(left),
+                            y: cx.origin.y + top,
+                        },
+                        size: Size {
+                            width: px(right - left),
+                            height,
+                        },
+                        color: color.clone(),
+                        clip: cx.clip.clone(),
+                    });
+                }
+            }
+            Ok(())
+        })
+    }
+
     fn text_line_fills(
         &mut self,
         paragraph: &Paragraph,
@@ -357,12 +414,7 @@ impl<'paint> PaintContext<'paint> {
             let (top, bottom) = vertical_bounds(line);
             let top = top.max(0.0);
             let bottom = bottom.min(self.size.height.get());
-            let (left, right) = line
-                .glyphs
-                .iter()
-                .fold((f32::INFINITY, f32::NEG_INFINITY), |(left, right), g| {
-                    (left.min(g.x), right.max(g.x + g.width))
-                });
+            let (left, right) = line.advance_bounds();
             let left = left.max(0.0);
             let right = right.min(self.size.width.get());
             if right > left && bottom > top {
@@ -673,7 +725,8 @@ impl MountedNode {
         } else if fixed_label
             && style.background.is_none()
             && !style.text.attributes.as_deref().is_some_and(|a| {
-                a.underline == Some(true)
+                a.underline
+                    .is_some_and(|s| s != crate::style::UnderlineStyle::None)
                     || a.strikethrough == Some(true)
                     || a.text_background.is_some_and(|color| color.alpha != 0)
             })

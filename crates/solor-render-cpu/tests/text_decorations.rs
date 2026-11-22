@@ -219,3 +219,113 @@ fn inherited_highlight_follows_aligned_ink_and_clips_the_last_line() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn switching_an_inherited_underline_preserves_shaping_and_draws_a_wave() -> Result<()> {
+    use solor::style::UnderlineStyle;
+    use std::rc::Rc;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
+    let style = ui.context().signal(UnderlineStyle::Solid);
+    let view = ui.mount(component(|_| {
+        div().p(px(3.5)).text_underline(style).child(
+            text("Audio settings")
+                .text_size(px(20.))
+                .line_height(px(36.))
+                .text_color(rgba(0))
+                .decoration_color(rgb(0))
+                .decoration_thickness(px(2.)),
+        )
+    }))?;
+    let size = DeviceSize {
+        width: 170,
+        height: 45,
+    }
+    .at_unit_scale();
+    ui.layout(view, size)?;
+    let solid = ui.record_frame(view)?;
+    let [
+        Draw::Fill { .. },
+        Draw::Text {
+            paragraph: before, ..
+        },
+    ] = solid.draws()
+    else {
+        panic!("expected a solid underline and text");
+    };
+    ui.context().set(style, UnderlineStyle::Wavy)?;
+    ui.flush()?;
+    let wave = ui.record_frame(view)?;
+    let [
+        Draw::WavyUnderline { origin, .. },
+        Draw::Text {
+            paragraph: after, ..
+        },
+    ] = wave.draws()
+    else {
+        panic!("expected a wavy underline and text");
+    };
+    assert!(Rc::ptr_eq(before, after));
+    let scale = RasterScale(1.5);
+    let surface = Surface::draw_view(&wave, scale.buffer_size(size)?, scale)?;
+    let x = (f64::from(origin.x) * scale.0).floor() as usize;
+    let y = (f64::from(origin.y) * scale.0 + 6.9).floor() as usize;
+    let gray = |x: usize| surface.rgba[4 * (y * surface.size.width as usize + x)];
+    // Sample the crest and trough at the same height within one period.
+    assert!(gray(x + 7) < 64);
+    assert_eq!(gray(x + 20), 255);
+    Ok(())
+}
+
+#[test]
+fn a_narrow_repair_under_a_wave_keeps_its_phase() -> Result<()> {
+    use solor::platform::{WindowEvent, WindowHandler};
+    use solor_render_cpu::CpuWindow;
+    use std::time::Duration;
+
+    let scene = |updated: bool| {
+        component(move |cx| {
+            let bg = cx.signal(if updated {
+                rgb(0xffeeaa)
+            } else {
+                rgb(0xffffff)
+            });
+            div()
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(23.5))
+                        .top(px(0.))
+                        .w(px(9.5))
+                        .h(px(40.))
+                        .bg(bg)
+                        .on_frame(move |_, cx| cx.set(bg, rgb(0xffeeaa))),
+                )
+                .child(
+                    text("Audio settings")
+                        .underline_wavy()
+                        .text_size(px(20.))
+                        .line_height(px(36.))
+                        .decoration_thickness(px(2.))
+                        .decoration_color(rgb(0))
+                        .text_color(rgba(0)),
+                )
+        })
+    };
+    let size = DeviceSize {
+        width: 150,
+        height: 45,
+    }
+    .at_unit_scale();
+    let scale = RasterScale(1.5);
+    let mut window = CpuWindow::mount(Ui::with_font(FONT.to_vec())?, scene(false))?;
+    let first = window.frame(size, scale)?.rgba.to_vec();
+    window.frame_submitted()?;
+    window.event(WindowEvent::FrameReady(Duration::ZERO))?;
+    let repaired = window.frame(size, scale)?;
+    let damage = repaired.damage.bounds().unwrap();
+    assert!(damage.left > 0 && damage.right - damage.left < 20);
+    assert_ne!(first, repaired.rgba);
+    let mut reference = CpuWindow::mount(Ui::with_font(FONT.to_vec())?, scene(true))?;
+    assert_eq!(repaired.rgba, reference.frame(size, scale)?.rgba);
+    Ok(())
+}

@@ -202,8 +202,8 @@ properties! {
         line_clamp: Option<NonZeroUsize>,
         /// Background color behind glyph runs.
         text_background: Rgba,
-        /// Draw an underline.
-        underline: bool,
+        /// Stroke beneath each visible text line.
+        underline: UnderlineStyle,
         /// Draw a line through the text.
         strikethrough: bool,
         /// Color for text decorations.

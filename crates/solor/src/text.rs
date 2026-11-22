@@ -110,6 +110,16 @@ pub struct Line {
     pub glyphs: Vec<Glyph>,
 }
 
+impl Line {
+    pub(crate) fn advance_bounds(&self) -> (f32, f32) {
+        self.glyphs
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(left, right), g| {
+                (left.min(g.x), right.max(g.x + g.width))
+            })
+    }
+}
+
 /// Owned immutable layout data; no borrowed Buffer or FontSystem state.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Paragraph {

@@ -42,6 +42,8 @@ keywords! {
     GridAutoFlow { Row: "Fill rows.", Column: "Fill columns.", RowDense: "Backfill holes by row.", ColumnDense: "Backfill holes by column." }
     /// Stroke pattern of an element's border.
     BorderStyle { None: "No stroke.", Solid: "Continuous stroke.", Dashed: "Dashed stroke.", Dotted: "Dotted stroke." }
+    /// Stroke used beneath a line of text.
+    UnderlineStyle { None: "Omit the underline.", Solid: "Draw a straight underline.", Wavy: "Draw a sinusoidal underline." }
     /// Requested font slant.
     FontStyle { Normal: "Upright glyphs.", Italic: "Italic glyphs.", Oblique: "Slanted glyphs." }
     /// Horizontal alignment within a text line.
@@ -54,6 +56,12 @@ keywords! {
     Cursor { Auto: "Platform default.", Default: "Standard arrow.", Pointer: "Clickable target.", Text: "Text selection.", Crosshair: "Crosshair.", Move: "Move target.", Grab: "Grabbable.", Grabbing: "Dragging.", NotAllowed: "Unavailable action.", Wait: "Busy.", Progress: "Working in the background.", ColResize: "Resize columns.", RowResize: "Resize rows.", Resize(crate::ResizeEdge): "Resize a specific edge or corner.", None: "Hide the cursor." }
     /// Participation in pointer hit testing.
     PointerEvents { Auto: "Participate in hit testing.", None: "Ignore the box for pointer targeting." }
+}
+
+impl From<bool> for UnderlineStyle {
+    fn from(enabled: bool) -> Self {
+        if enabled { Self::Solid } else { Self::None }
+    }
 }
 
 /// Visibility of a mounted subtree that retains its layout space.

@@ -1,7 +1,7 @@
 use crate::{
     Pixels, Rgba,
     layout::{LayoutError, Result},
-    style::Typography,
+    style::{Typography, UnderlineStyle},
 };
 
 use super::Text;
@@ -45,7 +45,7 @@ impl FontStrokes {
 
 pub(crate) struct Decorations {
     pub background: Option<Rgba>,
-    pub underline: Option<Stroke>,
+    pub underline: Option<(Stroke, UnderlineStyle)>,
     pub strike: Option<Stroke>,
     pub thickness: Option<Pixels>,
     pub color: Option<Rgba>,
@@ -59,9 +59,11 @@ impl Text {
         self.decorations = text.attributes.as_deref().and_then(|attrs| {
             let background = attrs.text_background.filter(|color| color.alpha != 0);
             let strokes_visible = !text.decoration_thickness.is_some_and(|v| v.get() == 0.0);
-            let underline = strokes_visible && attrs.underline == Some(true);
+            let underline = attrs
+                .underline
+                .filter(|s| strokes_visible && *s != UnderlineStyle::None);
             let strike = strokes_visible && attrs.strikethrough == Some(true);
-            if background.is_none() && !underline && !strike {
+            if background.is_none() && underline.is_none() && !strike {
                 return None;
             }
             let engine = self.engine.borrow();
@@ -73,7 +75,7 @@ impl Text {
                 style: self.paragraph.slant,
                 ..Default::default()
             };
-            let strokes = (underline || strike)
+            let strokes = (underline.is_some() || strike)
                 .then(|| {
                     let id = db
                         .query(&query)
@@ -88,7 +90,10 @@ impl Text {
                 .flatten();
             Some(Box::new(Decorations {
                 background,
-                underline: strokes.as_ref().filter(|_| underline).map(|s| s.underline),
+                underline: strokes
+                    .as_ref()
+                    .zip(underline)
+                    .map(|(s, kind)| (s.underline, kind)),
                 strike: strokes.as_ref().filter(|_| strike).map(|s| s.strike),
                 thickness: text.decoration_thickness,
                 color: attrs.decoration_color,
