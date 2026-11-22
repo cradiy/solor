@@ -507,12 +507,44 @@ impl From<Ink> for Fill {
     }
 }
 
+/// Alternating colored and transparent squares, anchored to the fill's top-left corner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Checkerboard {
+    /// Color of the squares adjacent to the transparent top-left square.
+    pub color: Rgba,
+    cell_size: crate::Pixels,
+}
+
+impl Checkerboard {
+    /// Side length of each square in logical pixels.
+    pub fn cell_size(&self) -> crate::Pixels {
+        self.cell_size
+    }
+}
+
+/// Creates a checkerboard with a finite, positive cell size in logical pixels.
+pub fn checkerboard(color: Rgba, cell_size: crate::Pixels) -> anyhow::Result<Checkerboard> {
+    anyhow::ensure!(
+        cell_size.get().is_finite() && cell_size.get() > 0.0,
+        "checkerboard cell size must be finite and positive"
+    );
+    Ok(Checkerboard { color, cell_size })
+}
+
+impl From<Checkerboard> for Fill {
+    fn from(pattern: Checkerboard) -> Self {
+        Self::Checkerboard(pattern)
+    }
+}
+
 /// Paint for a bounded region, shared by backgrounds and local drawing.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Fill {
     /// Fills the region with a single color.
     Solid(Rgba),
+    /// Repeats colored and transparent squares at a fixed logical size.
+    Checkerboard(Checkerboard),
     /// Samples a gradient in the bounds of the region.
     Gradient(Gradient),
     /// Samples shared bitmap pixels within the painted bounds.

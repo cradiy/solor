@@ -1,5 +1,6 @@
 //! CPU rasterization of mounted views and incremental rendering of shaped text frames.
 mod bitmap;
+mod checkerboard;
 /// Incremental raster updates.
 pub mod damage;
 /// Immutable input to the text rasterizer.

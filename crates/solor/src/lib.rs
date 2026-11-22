@@ -80,9 +80,9 @@ pub use element::{
     RefreshMode, RefreshPolicy, Render, TextContent, div, element, text,
 };
 pub use fill::{
-    ColorSpace, ColorStop, Fill, Gradient, GradientError, GradientKind, GradientMap, Ink, Rgba,
-    color_stop, gradient_bottom_to_top, gradient_left_to_right, gradient_right_to_left,
-    gradient_top_to_bottom, linear_gradient, rgb, rgba,
+    Checkerboard, ColorSpace, ColorStop, Fill, Gradient, GradientError, GradientKind, GradientMap,
+    Ink, Rgba, checkerboard, color_stop, gradient_bottom_to_top, gradient_left_to_right,
+    gradient_right_to_left, gradient_top_to_bottom, linear_gradient, rgb, rgba,
 };
 use length::UnitResolver;
 pub use length::{AbsoluteLength, Length, percent, rem};

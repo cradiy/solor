@@ -1165,3 +1165,63 @@ fn automatic_heading_height_preserves_descenders() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn checkerboard_cells_keep_their_phase_across_partial_repairs() -> Result<()> {
+    use solor::platform::{WindowEvent, WindowHandler};
+    use solor_render_cpu::CpuWindow;
+    use std::time::Duration;
+
+    let pattern = solor::checkerboard(rgb(0x000000), px(3.0))?;
+    let mut window = CpuWindow::mount(
+        Ui::new(),
+        component(move |cx| {
+            let overlay = cx.signal(rgba(0));
+            div().bg(pattern).child(
+                div()
+                    .absolute()
+                    .left(px(7.))
+                    .top(px(3.))
+                    .size(px(10.))
+                    .bg(overlay)
+                    .on_frame(move |_, cx| {
+                        cx.update(overlay, |color| {
+                            *color = if color.alpha == 0 {
+                                rgb(0xff0000)
+                            } else {
+                                rgba(0)
+                            };
+                        })
+                    }),
+            )
+        }),
+    )?;
+    let size = DeviceSize {
+        width: 64,
+        height: 36,
+    }
+    .at_unit_scale();
+    let scale = RasterScale(1.5);
+    let first = window.frame(size, scale)?;
+    let stride = first.size.width as usize * 4;
+    let offset = |x: usize, y: usize| y * stride + x * 4;
+    // At this scale a cell is 4.5 device pixels wide.
+    for (x, gray) in [(3, 255), (4, 127), (5, 0), (9, 255)] {
+        assert_eq!(&first.rgba[offset(x, 1)..][..4], &[gray, gray, gray, 255]);
+    }
+    let initial = first.rgba.to_vec();
+    window.frame_submitted()?;
+    for step in 1..=2 {
+        window.event(WindowEvent::FrameReady(Duration::from_millis(8 * step)))?;
+        let frame = window.frame(size, scale)?;
+        let rect = frame.damage.bounds().unwrap();
+        assert!(rect.left > 0 && rect.top > 0);
+        if step == 1 {
+            assert_eq!(&frame.rgba[offset(15, 9)..][..4], &[255, 0, 0, 255]);
+        } else {
+            assert_eq!(frame.rgba, initial.as_slice());
+        }
+        window.frame_submitted()?;
+    }
+    Ok(())
+}

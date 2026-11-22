@@ -123,6 +123,19 @@ impl Surface {
                     Ok(())
                 })
             }
+            Fill::Checkerboard(pattern) => {
+                let bounds = PathBounds::new(origin, points, scale)?;
+                let brush = crate::checkerboard::CheckerBrush::new(
+                    *pattern,
+                    bounds.left,
+                    bounds.top,
+                    scale,
+                );
+                for_each_span(points, origin, scale, clip, |row, from, to, coverage| {
+                    brush.blend_span(self.span_pixels(row, from, to), from, row, coverage);
+                    Ok(())
+                })
+            }
             Fill::CustomImage(image) => {
                 let bounds = PathBounds::new(origin, points, scale)?;
                 let size = Size {
