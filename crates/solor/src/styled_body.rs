@@ -14,6 +14,7 @@ pub(crate) struct StyledBody<E> {
 }
 
 pub(crate) struct BoxModel {
+    border: ContentInsets,
     origin: Origin,
     inset: Size,
     margins: Option<Box<Edges<Option<ComputedLength>>>>,
@@ -98,16 +99,28 @@ impl BoxModel {
             .map(|edges| map_edges(edges, |value| units.offset(value.unwrap_or(px(0.0).into()))))
             .transpose()?
             .map(Box::new);
+        let b = style.border_widths(units)?;
+        let border = ContentInsets {
+            origin: Origin {
+                x: b.left,
+                y: b.top,
+            },
+            total: Size {
+                width: add(b.left, b.right)?,
+                height: add(b.top, b.bottom)?,
+            },
+        };
         Ok(Self {
+            border,
             margins,
             aspect_ratio,
             origin: Origin {
-                x: p.left,
-                y: p.top,
+                x: add(p.left, b.left)?,
+                y: add(p.top, b.top)?,
             },
             inset: Size {
-                width: add(p.left, p.right)?,
-                height: add(p.top, p.bottom)?,
+                width: add(add(p.left, p.right)?, border.total.width)?,
+                height: add(add(p.top, p.bottom)?, border.total.height)?,
             },
             box_sizing: style
                 .layout
@@ -287,6 +300,10 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
     }
     fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {
         let content_size = self.content_size(assigned);
+        cx.padding_box = (
+            self.bounds.border.origin,
+            self.bounds.border.content_size(assigned),
+        );
         cx.set_child_containing_block(content_size.into());
         let out = self.content.layout(cx, content_size)?.validate()?;
         let origin = self.origin();

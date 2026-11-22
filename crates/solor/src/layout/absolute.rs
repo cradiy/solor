@@ -76,7 +76,7 @@ impl Axis {
 pub(super) fn place(
     entry: &mut Entry,
     access: &mut Context<'_, Entry>,
-    parent: Size,
+    (offset, parent): (Origin, Size),
     scratch: &mut Scratch,
     force: bool,
     parent_content: &mut Size,
@@ -149,6 +149,6 @@ pub(super) fn place(
     };
     let (slot, _) = layout(entry, access, size, scratch, force)?;
     let geometry = &mut scratch.draft[slot].geometry;
-    geometry.origin = Origin::default();
+    geometry.origin = offset;
     geometry.shift_and_extend(origin, entry.item_style.overflow_clip, parent_content)
 }

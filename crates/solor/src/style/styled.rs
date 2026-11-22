@@ -26,6 +26,9 @@ macro_rules! declare {
     }};
 }
 macro_rules! affects_layout {
+    (appearance_mut.border_width.$side:ident) => {
+        true
+    };
     (appearance_mut.$($field:ident).+) => {
         false
     };

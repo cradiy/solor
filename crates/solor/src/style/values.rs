@@ -198,7 +198,8 @@ impl<T> Corners<T> {
 }
 
 impl Corners<crate::Pixels> {
-    pub(crate) fn fit_to(self, size: crate::layout::Size) -> Self {
+    /// Scales all radii proportionally until adjacent corners fit each edge.
+    pub fn fit_to(self, size: crate::layout::Size) -> Self {
         let r = self.map(f64::from);
         let horizontal = (r.top_left + r.top_right).max(r.bottom_left + r.bottom_right);
         let vertical = (r.top_left + r.bottom_left).max(r.top_right + r.bottom_right);

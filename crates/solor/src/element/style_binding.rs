@@ -2,6 +2,7 @@
 use super::*;
 
 pub(super) struct PreparedStyle {
+    pub border: Option<Rc<crate::style::BorderPaint>>,
     pub background: Option<Box<MountedBackground>>,
     pub style: Style,
     pub text: InheritedText,
@@ -116,6 +117,7 @@ pub(super) fn prepare<E: Element>(
         _ => true,
     };
     Ok(PreparedStyle {
+        border: style.border_paint(units)?,
         opacity: opacity(&style)?,
         background: MountedBackground::resolve(&style, units)?,
         style,
@@ -271,6 +273,7 @@ impl crate::Instance {
     fn update_style<E: Element>(&mut self, id: NodeId, style: Style, layout: bool) -> Result<()> {
         let opacity = opacity(&style)?;
         let item = item_style(&style)?;
+        let border = style.border_paint(self.units)?;
         let background = MountedBackground::resolve(&style, self.units)?;
         // Custom content can use any declared property to determine its metrics.
         let builtin = std::any::TypeId::of::<E>() == std::any::TypeId::of::<FlexLayout>()
@@ -336,6 +339,7 @@ impl crate::Instance {
         node.hit_testable = hit_testable;
         node.text_color = style.text.color;
         node.background = background;
+        node.border = border;
         if routing_changed {
             self.invalidate_geometry();
         }

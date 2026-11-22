@@ -14,6 +14,17 @@ use std::rc::Rc;
 pub use styled::Styled;
 pub use values::*;
 
+/// Resolved per-edge paint for a border drawn inside an element's bounds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BorderPaint {
+    /// Border widths in logical pixels.
+    pub widths: Edges<Pixels>,
+    /// Paint mapped across the border box on each visible side.
+    pub fills: Edges<Option<Fill>>,
+    /// Outer corner radii in logical pixels.
+    pub radii: Corners<Pixels>,
+}
+
 /// Paint source used when recording a background.
 #[derive(Clone, Debug)]
 pub enum Background {
@@ -199,6 +210,62 @@ pub struct StyleRefinement {
 }
 
 impl Style {
+    pub(crate) fn border_widths(
+        &self,
+        units: UnitResolver,
+    ) -> crate::layout::Result<Edges<Pixels>> {
+        let Some(a) = self.appearance.as_deref() else {
+            return Ok(Edges::default());
+        };
+        let width = |v: Option<AbsoluteLength>| {
+            let value = v.map_or(Pixels::default(), |v| units.absolute(v));
+            if value.is_extent() {
+                Ok(value)
+            } else {
+                Err(crate::layout::LayoutError::InvalidSize)
+            }
+        };
+        Ok(Edges {
+            top: width(a.border_width.top)?,
+            right: width(a.border_width.right)?,
+            bottom: width(a.border_width.bottom)?,
+            left: width(a.border_width.left)?,
+        })
+    }
+
+    pub(crate) fn border_paint(
+        &self,
+        units: UnitResolver,
+    ) -> crate::layout::Result<Option<Rc<BorderPaint>>> {
+        let Some(a) = self.appearance.as_deref() else {
+            return Ok(None);
+        };
+        let widths = self.border_widths(units)?;
+        if widths == Edges::default() {
+            return Ok(None);
+        }
+        let fill = |w: Pixels, pattern: Option<BorderStyle>, fill: &Option<Fill>| {
+            if w.get() > 0.0 && pattern.unwrap_or(BorderStyle::Solid) == BorderStyle::Solid {
+                fill.clone()
+            } else {
+                None
+            }
+        };
+        let fills = Edges {
+            top: fill(widths.top, a.border_style.top, &a.border_fill.top),
+            right: fill(widths.right, a.border_style.right, &a.border_fill.right),
+            bottom: fill(widths.bottom, a.border_style.bottom, &a.border_fill.bottom),
+            left: fill(widths.left, a.border_style.left, &a.border_fill.left),
+        };
+        Ok((fills != Edges::default()).then(|| {
+            Rc::new(BorderPaint {
+                widths,
+                fills,
+                radii: self.corner_radii,
+            })
+        }))
+    }
+
     pub(crate) fn display_none(&self) -> bool {
         self.layout.as_deref().and_then(|layout| layout.display) == Some(Display::None)
     }

@@ -159,6 +159,17 @@ pub enum Draw {
         /// Circular radii in logical pixels, fitted to the fill bounds.
         corner_radii: Corners<Pixels>,
     },
+    /// Paints the ring between a box and its inner border edges.
+    Border {
+        /// Effective clip in view coordinates.
+        clip: Option<Arc<ContentClip>>,
+        /// Upper-left corner of the border box.
+        origin: Origin,
+        /// Border-box extent.
+        size: Size,
+        /// Per-edge widths and fills, with outer radii fitted at draw time.
+        paint: Rc<crate::style::BorderPaint>,
+    },
     /// Fills a closed contour using the even-odd rule.
     Polygon {
         /// Effective clip in view coordinates.
@@ -597,6 +608,7 @@ pub(super) struct MountedNode {
     pub(super) text_style: InheritedText,
     text_color: Foreground,
     background: Option<Box<MountedBackground>>,
+    border: Option<Rc<crate::style::BorderPaint>>,
     pub(super) binding_target: Option<NodeId>,
     record: Option<Record>,
     pub(super) owned: crate::Owned,
@@ -628,6 +640,7 @@ impl MountedNode {
         let frame_paint = if handlers
             .as_deref()
             .is_some_and(|h| h.focus_indicator.is_some())
+            || mounted.border.is_some()
             || !mounted.fixed
             || !matches!(paint_mode, RefreshPolicy::Fixed(RefreshMode::OnDemand))
         {
@@ -676,6 +689,7 @@ impl MountedNode {
             text_style: mounted.text,
             text_color: style.text.color,
             background: mounted.background,
+            border: mounted.border,
             owned: Default::default(),
             record,
         }
@@ -747,6 +761,14 @@ impl MountedNode {
                 size,
                 fill,
                 corner_radii: paint.corner_radii.fit_to(size),
+            });
+        }
+        if let Some(paint) = &self.border {
+            cx.commands.push(Draw::Border {
+                clip: clips.inherited.clone(),
+                origin: Origin::default(),
+                size,
+                paint: Rc::clone(paint),
             });
         }
         if let Some(indicator) = self

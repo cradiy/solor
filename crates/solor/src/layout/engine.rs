@@ -949,6 +949,7 @@ impl Drop for Attempt<'_> {
 
 /// Access to measurement and staged placement for the current node's children.
 pub struct LayoutContext<'a, 'store> {
+    pub(crate) padding_box: (Origin, Size),
     child_basis: ContainingBlock,
     flow_children: FlowChildren<'a>,
     access: &'a mut Context<'store, Entry>,
@@ -1165,6 +1166,7 @@ fn layout(
         .children
         .resize(children_start + count, ChildState::default());
     let mut cx = LayoutContext {
+        padding_box: (Origin::default(), assigned),
         child_basis: ContainingBlock::default(),
         access,
         flow_children,
@@ -1199,7 +1201,7 @@ fn layout(
                 Ok(absolute::place(
                     entry,
                     access,
-                    assigned,
+                    cx.padding_box,
                     cx.scratch,
                     force,
                     &mut output.content,

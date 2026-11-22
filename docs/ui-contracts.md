@@ -321,9 +321,9 @@ attachment and when a bound style input changes. Text attributes cascade from th
 parent, including when a conditional child is attached later. An explicit
 `clear_line_clamp()` removes an inherited line limit.
 
-Explicit width and height include padding by default. With
+Explicit width and height include border and padding by default. With
 `.box_sizing(BoxSizing::ContentBox)`, they describe the content area, and
-padding adds to the preferred outer size. Percentages use the parent's
+border and padding add to the preferred outer size. Percentages use the parent's
 definite content dimension on the same axis. Text wraps within the allocated
 content width.
 
@@ -566,12 +566,17 @@ transparent black, then blended once with the pixels behind it. Nested groups
 compose from the inside out. Finite values are clamped to 0–1 and rounded to
 8-bit alpha. An opacity of zero preserves layout and hit testing.
 
+A solid border is drawn inside the border box, above its background. Set its
+width and paint together, for example `.border_b(px(1.0)).border_bottom_color(ink)`.
+Each edge accepts its own width and fill. Gradients span the whole box. Border
+widths reserve space outside the padding, including edges without paint.
+
 Each background corner has an independent circular radius. If two adjacent
 radii exceed their shared edge, the frame scales all four by the same factor
 until they fit. The CPU renderer applies this shape to solid and gradient
-backgrounds. Overflow clipping and pointer hit boxes remain rectangular. Additional
-layout, paint, text shaping and input behaviors in this table are declarations
-pending engine support.
+backgrounds and solid borders. Overflow clipping and pointer hit boxes remain
+rectangular. Additional layout, paint, text shaping and input behaviors in
+this table are declarations pending engine support.
 
 ## Contracts to establish next
 

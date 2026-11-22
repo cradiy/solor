@@ -42,6 +42,85 @@ enum Brush<'a, F> {
     Gradient(F, Option<OpaqueLinearGradient<'a>>),
 }
 
+mod border;
+
+trait SampleGradient:
+    FnMut(f32, f32) -> std::result::Result<solor::Rgba, solor::GradientError>
+{
+}
+impl<F: FnMut(f32, f32) -> std::result::Result<solor::Rgba, solor::GradientError>> SampleGradient
+    for F
+{
+}
+
+impl<F: SampleGradient> Brush<'_, F> {
+    fn blend_at(
+        &mut self,
+        pixel: &mut [u8; 4],
+        x: i64,
+        y: i64,
+        origin: [f64; 2],
+        scale: RasterScale,
+        coverage: u8,
+    ) -> Result<()> {
+        let dx = (x as f64 - origin[0] + 0.5) / scale.0;
+        let dy = (y as f64 - origin[1] + 0.5) / scale.0;
+        match self {
+            Self::Solid(c) => blend(pixel, *c, coverage),
+            Self::Gradient(sample, _) => blend(
+                pixel,
+                sample(dx as f32, dy as f32).map_err(Error::other)?,
+                coverage,
+            ),
+            Self::Image(image) => image.blend(pixel, dx, dy, coverage),
+            Self::Region(image) => image.blend(pixel, x, y, scale, coverage),
+        }
+        Ok(())
+    }
+}
+
+fn brush(
+    fill: &Fill,
+    origin: Origin,
+    size: Size,
+    scale: RasterScale,
+    clip: Clip,
+) -> Result<Option<Brush<'_, impl SampleGradient + '_>>> {
+    let left = f64::from(origin.x) * scale.0;
+    let top = f64::from(origin.y) * scale.0;
+    Ok(Some(match fill {
+        Fill::Solid(color) => Brush::Solid(*color),
+        Fill::CustomImage(image) => {
+            let Some(sampler) =
+                crate::bitmap::RegionSampler::new(image, [left, top], size, scale, clip)?
+            else {
+                return Ok(None);
+            };
+            Brush::Region(sampler)
+        }
+        Fill::Image(image) => {
+            let mut sampler = crate::bitmap::ImageSampler::new(image, size, scale)?;
+            sampler.prepare_rows([left, top], scale, clip);
+            Brush::Image(sampler)
+        }
+        Fill::Gradient(gradient) => {
+            // Tiny damage on a dense ramp should not scan the complete stop list.
+            let spans = if gradient.stops().len() <= (clip.right - clip.left) as usize {
+                OpaqueLinearGradient::new(gradient, origin, size, scale)
+            } else {
+                None
+            };
+            Brush::Gradient(gradient.sampler(size).map_err(Error::other)?, spans)
+        }
+        _ => {
+            return Err(Error::new(
+                std::io::ErrorKind::Unsupported,
+                "unsupported CPU fill",
+            ));
+        }
+    }))
+}
+
 impl Surface {
     /// Replays a complete mounted view in paint order onto an opaque white surface.
     pub fn draw_view(frame: &ViewFrame, size: DeviceSize, scale: RasterScale) -> Result<Self> {
@@ -144,6 +223,14 @@ impl Surface {
                 } => {
                     let fill = replay.images.resolve(fill).map_err(Error::other)?;
                     self.fill_box(*origin, *size, &fill, *corner_radii, scale, bounds)?;
+                }
+                Draw::Border {
+                    origin,
+                    size,
+                    paint,
+                    ..
+                } => {
+                    self.draw_border(*origin, *size, paint, scale, bounds, replay.images)?;
                 }
                 Draw::Polygon {
                     origin,
@@ -271,36 +358,8 @@ impl Surface {
         let radii = corner_radii.map(|radius| f64::from(radius) * scale.0);
         let top_radius = radii.top_left.max(radii.top_right);
         let bottom_radius = radii.bottom_left.max(radii.bottom_right);
-        let mut brush = match fill {
-            Fill::Solid(color) => Brush::Solid(*color),
-            Fill::CustomImage(image) => {
-                let Some(sampler) =
-                    crate::bitmap::RegionSampler::new(image, [left, top], size, scale, clip)?
-                else {
-                    return Ok(());
-                };
-                Brush::Region(sampler)
-            }
-            Fill::Image(image) => {
-                let mut sampler = crate::bitmap::ImageSampler::new(image, size, scale)?;
-                sampler.prepare_rows([left, top], scale, clip);
-                Brush::Image(sampler)
-            }
-            Fill::Gradient(gradient) => {
-                // Tiny damage on a dense ramp should not scan the complete stop list.
-                let spans = if gradient.stops().len() <= (clip.right - clip.left) as usize {
-                    OpaqueLinearGradient::new(gradient, origin, size, scale)
-                } else {
-                    None
-                };
-                Brush::Gradient(gradient.sampler(size).map_err(Error::other)?, spans)
-            }
-            _ => {
-                return Err(Error::new(
-                    std::io::ErrorKind::Unsupported,
-                    "unsupported CPU fill",
-                ));
-            }
+        let Some(mut brush) = brush(fill, origin, size, scale, clip)? else {
+            return Ok(());
         };
         let stride = self.size.width as usize * 4;
         for y in clip.top..clip.bottom {
@@ -363,26 +422,7 @@ impl Surface {
                         rectangle_coverage(dx, width, row_height)
                     };
                     if coverage != 0 {
-                        let c = match &mut brush {
-                            Brush::Solid(c) => *c,
-                            Brush::Region(image) => {
-                                image.blend(pixel, x, y, scale, coverage);
-                                continue;
-                            }
-                            Brush::Image(image) => {
-                                image.blend(
-                                    pixel,
-                                    (dx + 0.5) / scale.0,
-                                    (dy + 0.5) / scale.0,
-                                    coverage,
-                                );
-                                continue;
-                            }
-                            Brush::Gradient(sample, _) => {
-                                sample(local_x(x), local_y).map_err(Error::other)?
-                            }
-                        };
-                        blend(pixel, c, coverage);
+                        brush.blend_at(pixel, x, y, [left, top], scale, coverage)?;
                     }
                 }
             }
@@ -429,7 +469,8 @@ fn opaque_cover(draw: &Draw, scale: RasterScale, area: Clip) -> Result<Option<so
 // Fill coverage includes fractional edge pixels. Text is clipped to rounded layout edges.
 fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     let mut bounds = primitive_bounds(draw, scale)?;
-    let (Draw::Fill { clip, .. }
+    let (Draw::Border { clip, .. }
+    | Draw::Fill { clip, .. }
     | Draw::Polygon { clip, .. }
     | Draw::Polyline { clip, .. }
     | Draw::Svg { clip, .. }
@@ -479,41 +520,54 @@ fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
         Draw::Svg { origin, size, .. } | Draw::Text { origin, size, .. } => {
             Ok(scale.bounds(*origin, *size))
         }
+        Draw::Border {
+            origin,
+            size,
+            paint,
+            ..
+        } => box_bounds(*origin, *size, paint.radii, scale),
         Draw::Fill {
             origin,
             size,
             corner_radii,
             ..
-        } => {
-            if !size.width.is_extent()
-                || !size.height.is_extent()
-                || [
-                    corner_radii.top_left,
-                    corner_radii.top_right,
-                    corner_radii.bottom_right,
-                    corner_radii.bottom_left,
-                ]
-                .iter()
-                .any(|r| !r.is_extent())
-            {
-                return Err(Error::other("invalid fill extent"));
-            }
-            if size.width.get() == 0.0 || size.height.get() == 0.0 {
-                return Ok(Clip::canvas(DeviceSize {
-                    width: 0,
-                    height: 0,
-                }));
-            }
-            let left = f64::from(origin.x) * scale.0;
-            let top = f64::from(origin.y) * scale.0;
-            Ok(Clip {
-                left: left.floor() as i64,
-                right: (left + f64::from(size.width) * scale.0).ceil() as i64,
-                top: top.floor() as i64,
-                bottom: (top + f64::from(size.height) * scale.0).ceil() as i64,
-            })
-        }
+        } => box_bounds(*origin, *size, *corner_radii, scale),
     }
+}
+
+fn box_bounds(
+    origin: Origin,
+    size: Size,
+    corner_radii: Corners<Pixels>,
+    scale: RasterScale,
+) -> Result<Clip> {
+    if !size.width.is_extent()
+        || !size.height.is_extent()
+        || [
+            corner_radii.top_left,
+            corner_radii.top_right,
+            corner_radii.bottom_right,
+            corner_radii.bottom_left,
+        ]
+        .iter()
+        .any(|r| !r.is_extent())
+    {
+        return Err(Error::other("invalid fill extent"));
+    }
+    if size.width.get() == 0.0 || size.height.get() == 0.0 {
+        return Ok(Clip::canvas(DeviceSize {
+            width: 0,
+            height: 0,
+        }));
+    }
+    let left = f64::from(origin.x) * scale.0;
+    let top = f64::from(origin.y) * scale.0;
+    Ok(Clip {
+        left: left.floor() as i64,
+        right: (left + f64::from(size.width) * scale.0).ceil() as i64,
+        top: top.floor() as i64,
+        bottom: (top + f64::from(size.height) * scale.0).ceil() as i64,
+    })
 }
 
 fn map_colors(
@@ -692,7 +746,25 @@ fn include_changes(
         }
         for draw in before.into_iter().chain(after) {
             let bounds = device_bounds(draw, scale)?.intersect(canvas);
-            area.include(bounds);
+            if let Draw::Border {
+                origin,
+                size,
+                paint,
+                ..
+            } = draw
+            {
+                let f = &paint.fills;
+                for (fill, edge) in [&f.top, &f.right, &f.bottom, &f.left]
+                    .into_iter()
+                    .zip(border::edge_clips(*origin, *size, paint, scale, bounds))
+                {
+                    if fill.is_some() {
+                        area.include(edge);
+                    }
+                }
+            } else {
+                area.include(bounds);
+            }
         }
     }
     Ok(())
