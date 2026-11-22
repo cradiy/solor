@@ -8,8 +8,8 @@ const MEASUREMENT_CACHE_SLOTS: usize = 3;
 
 mod engine;
 pub(crate) use engine::sizing::{
-    AxisLimits, ComputedLength, FlexBasis, ItemBasis, ItemSizing, RelativeOffset, WidthLimits,
-    border_extent,
+    AxisLimits, ComputedLength, FlexBasis, ItemBasis, ItemSizing, Positioning, RelativeOffset,
+    WidthLimits, border_extent,
 };
 pub(crate) use engine::{FlexItemStyle, OverflowClip};
 mod flex;

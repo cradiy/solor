@@ -147,8 +147,14 @@ impl RelativeOffset {
     }
 }
 
+pub(crate) enum Positioning {
+    Flow,
+    Relative(RelativeOffset),
+    Absolute(Edges<Option<ComputedLength>>),
+}
+
 pub(crate) struct ItemSizing {
-    pub(crate) relative_offset: Option<RelativeOffset>,
+    pub(crate) position: Positioning,
     pub(crate) shrink_inset: Size,
     pub(crate) basis: Option<FlexBasis>,
     pub(crate) width: Option<WidthLimits>,
@@ -199,5 +205,11 @@ impl SizeRange {
 
     pub(crate) fn reaches_limit(self, value: Pixels) -> bool {
         self.min.is_some_and(|min| value <= min) || self.max.is_some_and(|max| value >= max)
+    }
+}
+
+impl ItemSizing {
+    pub(super) fn is_absolute(sizing: Option<&Self>) -> bool {
+        sizing.is_some_and(|s| matches!(s.position, Positioning::Absolute(_)))
     }
 }

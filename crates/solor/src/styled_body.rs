@@ -1,8 +1,8 @@
 //! Shared content-box adapter for every retained element.
 use crate::layout::{
     AxisLimits, ComputedLength, ContainingBlock, FlexBasis, ItemBasis, ItemSizing, LayoutContext,
-    LayoutError, LayoutNode, LayoutOutput, Margin, Margins, MeasureContext, Metrics, Origin, Query,
-    RelativeOffset, Result, Size, WidthLimits, border_extent,
+    LayoutError, LayoutNode, LayoutOutput, Margin, Margins, MeasureContext, Metrics, Origin,
+    Positioning, Query, RelativeOffset, Result, Size, WidthLimits, border_extent,
 };
 use crate::length::UnitResolver;
 use crate::style::{BoxSizing, Position};
@@ -164,20 +164,20 @@ impl BoxModel {
         } else {
             Size::default()
         };
-        let relative_offset = if layout.position == Some(Position::Relative) {
-            RelativeOffset::from_edges(map_edges(layout.inset, |v| {
-                units.offset(v.unwrap_or_default())
-            })?)
-        } else {
-            None
+        let insets = || map_edges(layout.inset, |v| units.offset(v.unwrap_or_default()));
+        let position = match layout.position {
+            Some(Position::Absolute) => Positioning::Absolute(insets()?),
+            Some(Position::Relative) => RelativeOffset::from_edges(insets()?)
+                .map_or(Positioning::Flow, Positioning::Relative),
+            _ => Positioning::Flow,
         };
-        Ok((relative_offset.is_some()
+        Ok((!matches!(position, Positioning::Flow)
             || width.is_some()
             || height.is_some()
             || basis.is_some()
             || shrink_inset != Size::default())
         .then_some(ItemSizing {
-            relative_offset,
+            position,
             shrink_inset,
             width,
             height,

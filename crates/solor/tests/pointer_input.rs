@@ -1476,3 +1476,52 @@ fn a_hidden_root_resumes_with_the_latest_child_display_and_visibility() -> Resul
     assert!(ui.geometry(view, child).is_none());
     Ok(())
 }
+
+#[test]
+fn an_anchored_badge_tracks_the_painted_hit_target_across_resize() -> Result<()> {
+    use solor::{Draw, rgb};
+    let mut ui = Ui::new();
+    let target = ui.context().signal(0);
+    let view = ui.mount(component(|_| {
+        div()
+            .child(
+                div()
+                    .w_full()
+                    .h(px(12.))
+                    .on_click(move |cx| cx.set(target, 1)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .right(px(2.))
+                    .top(px(1.))
+                    .size(px(8.))
+                    .bg(rgb(0x44aa88))
+                    .on_click(move |cx| cx.set(target, 2)),
+            )
+    }))?;
+    let click = |ui: &mut Ui, x| -> Result<i32> {
+        let p = sample(1, x, 3.);
+        ui.dispatch_pointer(view, Down(p, Primary))?;
+        ui.dispatch_pointer(view, Up(p, Primary))?;
+        Ok(*ui.context().read(target)?)
+    };
+    accept(&mut ui, view, 40.)?;
+    assert_eq!(click(&mut ui, 31.)?, 2);
+    ui.layout(
+        view,
+        Size {
+            width: px(60.),
+            height: px(24.),
+        },
+    )?;
+    let frame = ui.record_frame(view)?;
+    assert!(
+        matches!(frame.draws(), [Draw::Fill { origin, .. }] if origin.x == px(50.) && origin.y == px(1.))
+    );
+    assert_eq!(click(&mut ui, 31.)?, 2);
+    ui.accept_pointer_frame(frame.into_pointer_frame())?;
+    assert_eq!(click(&mut ui, 31.)?, 1);
+    assert_eq!(click(&mut ui, 51.)?, 2);
+    Ok(())
+}

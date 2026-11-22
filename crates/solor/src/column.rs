@@ -1,7 +1,8 @@
 use super::Pixels;
+pub(crate) use super::layout::Margin;
 use super::layout::{
-    LayoutContext, LayoutError, LayoutNode, LayoutOutput, Margin, MeasureContext, Metrics, Origin,
-    Query, Result, Size,
+    LayoutContext, LayoutError, LayoutNode, LayoutOutput, MeasureContext, Metrics, Origin, Query,
+    Result, Size,
 };
 
 fn add(a: Pixels, b: Pixels) -> Result<Pixels> {

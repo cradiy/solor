@@ -13,9 +13,12 @@ use std::rc::Rc;
 use super::node_store::{AccessError, Context, NodeStore};
 use super::tree::NodeId;
 
+#[path = "absolute.rs"]
+mod absolute;
+
 #[path = "sizing.rs"]
 pub(super) mod sizing;
-use sizing::{AxisLimits, ItemBasis, ItemSizing, SizeRange};
+use sizing::{AxisLimits, ItemBasis, ItemSizing, Positioning, SizeRange};
 
 use super::Align;
 use super::column::Margins;
@@ -248,7 +251,7 @@ impl Geometry {
     }
 
     // Shift the placed border box and extend its parent's positive overflow.
-    fn shift_relative(
+    fn shift_and_extend(
         &mut self,
         offset: Origin,
         clip: OverflowClip,
@@ -506,7 +509,7 @@ pub enum ItemQuery {
 }
 
 struct Entry {
-    flow_children: Option<Box<[NodeId]>>,
+    groups: Option<Box<ChildGroups>>,
     // Replaced together with the box inputs during a style update.
     item_style: FlexItemStyle,
     item_sizing: Option<Box<ItemSizing>>,
@@ -531,7 +534,7 @@ impl Entry {
         item_sizing: Option<ItemSizing>,
     ) -> Self {
         Self {
-            flow_children: None,
+            groups: None,
             item_style,
             item_sizing: item_sizing.map(Box::new),
             body: Box::new(body),
@@ -578,10 +581,19 @@ impl Entry {
     }
 }
 
+struct ChildGroups {
+    flow: Vec<NodeId>,
+    absolute: Vec<NodeId>,
+}
+
 #[derive(Clone, Copy)]
 struct FlowChildren<'a>(Option<&'a [NodeId]>);
 
-impl FlowChildren<'_> {
+impl<'a> FlowChildren<'a> {
+    fn from_groups(groups: Option<&'a ChildGroups>) -> Self {
+        Self(groups.map(|groups| groups.flow.as_slice()))
+    }
+
     fn len(self, access: &Context<'_, Entry>) -> usize {
         self.0.map_or_else(|| access.child_count(), <[_]>::len)
     }
@@ -764,7 +776,7 @@ fn measure_item(
         )?;
         if !matches!(bounded, Query::Exact(_))
             && (metrics.size.width < min
-                || FlowChildren(entry.flow_children.as_deref()).len(access) > 0)
+                || FlowChildren::from_groups(entry.groups.as_deref()).len(access) > 0)
         {
             // Descendant percentages and wrapping need a definite containing width.
             let used = metrics.size.width.max(min);
@@ -836,7 +848,7 @@ fn measure(
             .unwrap_or_default(),
         containing_block,
         child_basis: ContainingBlock::default(),
-        flow_children: FlowChildren(entry.flow_children.as_deref()),
+        flow_children: FlowChildren::from_groups(entry.groups.as_deref()),
         access,
         #[cfg(feature = "layout-audit")]
         reads: &mut reads,
@@ -1022,7 +1034,10 @@ impl LayoutContext<'_, '_> {
             let offset = entry
                 .item_sizing
                 .as_ref()
-                .and_then(|s| s.relative_offset.as_ref())
+                .and_then(|s| match &s.position {
+                    Positioning::Relative(offset) => Some(offset),
+                    _ => None,
+                })
                 .map_or_else(Origin::default, |offset| offset.resolve(self.child_basis));
             Ok((
                 layout(entry, access, assigned, self.scratch, self.force),
@@ -1144,7 +1159,7 @@ fn layout(
     entry.layout_dirty = true;
     entry.counts.layouts += 1;
     let children_start = scratch.children.len();
-    let flow_children = FlowChildren(entry.flow_children.as_deref());
+    let flow_children = FlowChildren::from_groups(entry.groups.as_deref());
     let count = flow_children.len(access);
     scratch
         .children
@@ -1171,11 +1186,30 @@ fn layout(
         if child.relative_offset != Origin::default() {
             let position = child.draft.ok_or(LayoutError::UnplacedChildren)?;
             let geometry = &mut cx.scratch.draft[position].geometry;
-            geometry.shift_relative(
+            geometry.shift_and_extend(
                 child.relative_offset,
                 child.overflow_clip,
                 &mut output.content,
             )?;
+        }
+    }
+    if let Some(groups) = &entry.groups {
+        for &child in &groups.absolute {
+            cx.access.execute_child(child, |entry, access| {
+                Ok(absolute::place(
+                    entry,
+                    access,
+                    assigned,
+                    cx.scratch,
+                    force,
+                    &mut output.content,
+                ))
+            })??;
+        }
+        #[cfg(feature = "layout-audit")]
+        if !groups.absolute.is_empty() {
+            // Absolute placement also reads the child's insets and margins.
+            cx.reads.complete = false;
         }
     }
     let position = cx.scratch.draft.len();
@@ -1371,7 +1405,8 @@ impl Scene {
         index: Option<usize>,
         entry: Entry,
     ) -> Result<NodeId> {
-        let hidden = entry.item_style.display_none;
+        let out_of_flow =
+            entry.item_style.display_none || ItemSizing::is_absolute(entry.item_sizing.as_deref());
         let entry = Box::new(entry);
         let node = match index {
             Some(index) => self.store.insert(parent, index, entry),
@@ -1379,7 +1414,7 @@ impl Scene {
         }
         .map_err(AccessError::from)?;
         self.invalidate(parent)?;
-        self.flow_changed(parent, hidden)?;
+        self.flow_changed(parent, out_of_flow)?;
         self.nodes.push(node);
         self.shared_geometry = None;
         Ok(node)
@@ -1532,10 +1567,12 @@ impl Scene {
         sizing: Option<ItemSizing>,
     ) -> Result<()> {
         let entry = self.store.get_mut(node)?;
-        let display_changed = entry.item_style.display_none != style.display_none;
+        let flow_changed = entry.item_style.display_none != style.display_none
+            || ItemSizing::is_absolute(entry.item_sizing.as_deref())
+                != ItemSizing::is_absolute(sizing.as_ref());
         entry.item_style = style;
         entry.item_sizing = sizing.map(Box::new);
-        if display_changed {
+        if flow_changed {
             if let Some(parent) = self.parent(node)? {
                 self.flow_changed(parent, true)?;
             }
@@ -1550,8 +1587,8 @@ impl Scene {
         Ok(())
     }
 
-    fn flow_changed(&mut self, parent: NodeId, display_changed: bool) -> Result<()> {
-        if display_changed || self.store.get(parent)?.flow_children.is_some() {
+    fn flow_changed(&mut self, parent: NodeId, membership_changed: bool) -> Result<()> {
+        if membership_changed || self.store.get(parent)?.groups.is_some() {
             self.flow_updates.insert(parent);
         }
         Ok(())
@@ -1566,16 +1603,20 @@ impl Scene {
                 continue;
             }
             let start = hidden.len();
-            let mut participating = Vec::new();
+            let mut flow = Vec::new();
+            let mut absolute = Vec::new();
             for id in self.store.children(parent).map_err(AccessError::from)? {
-                if self.store.get(id)?.item_style.display_none {
+                let child = self.store.get(id)?;
+                if child.item_style.display_none {
                     hidden.push(id);
+                } else if ItemSizing::is_absolute(child.item_sizing.as_deref()) {
+                    absolute.push(id);
                 } else {
-                    participating.push(id);
+                    flow.push(id);
                 }
             }
-            self.store.get_mut(parent)?.flow_children =
-                (hidden.len() != start).then(|| participating.into_boxed_slice());
+            self.store.get_mut(parent)?.groups = (hidden.len() != start || !absolute.is_empty())
+                .then(|| Box::new(ChildGroups { flow, absolute }));
         }
         Ok(hidden)
     }

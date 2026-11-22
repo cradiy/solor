@@ -502,6 +502,14 @@ over right and bottom when both opposing offsets are definite. An automatic
 edge defers to its opposite. The parent includes the shifted subtree's far
 edges in its content extent. The view root stays at the viewport origin.
 
+Use `.absolute().top(px(4.0)).right(px(8.0))` to anchor a child inside the
+parent's padding box. It contributes to scrollable overflow and keeps its
+sibling paint order. Flow sizing and gaps use only in-flow children.
+Percent insets use the parent's width or height on the corresponding axis.
+Opposing insets stretch an automatic dimension. A definite dimension keeps
+its size, with the start edge taking precedence. An axis with both insets
+automatic starts at its leading margin.
+
 Use `.hidden()` or `.display(Display::None)` to remove a mounted subtree from
 layout, drawing and focus navigation. Siblings close the gap. Restoring its
 display through a signal reuses the same nodes and component state.
@@ -563,8 +571,7 @@ radii exceed their shared edge, the frame scales all four by the same factor
 until they fit. The CPU renderer applies this shape to solid and gradient
 backgrounds. Overflow clipping and pointer hit boxes remain rectangular. Additional
 layout, paint, text shaping and input behaviors in this table are declarations
-pending engine support. In particular, `.absolute().top(px(4.0)).right(px(8.0))`
-expresses placement but does not yet move a child or remove it from column flow.
+pending engine support.
 
 ## Contracts to establish next
 
