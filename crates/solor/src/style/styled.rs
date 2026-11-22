@@ -269,7 +269,10 @@ pub trait Styled: Sized {
         white_space { whitespace_nowrap: WhiteSpace::NoWrap, whitespace_normal: WhiteSpace::Normal };
         text_align { text_start: TextAlign::Start, text_end: TextAlign::End, text_left: TextAlign::Left, text_right: TextAlign::Right, text_center: TextAlign::Center, text_justify: TextAlign::Justify };
         text_overflow { text_ellipsis: TextOverflow::Ellipsis, text_ellipsis_start: TextOverflow::EllipsisStart, text_ellipsis_middle: TextOverflow::EllipsisMiddle };
-        cursor { cursor_pointer: Cursor::Pointer, cursor_text: Cursor::Text };
+        cursor {
+            cursor_pointer: Cursor::Pointer, cursor_text: Cursor::Text, cursor_grab: Cursor::Grab,
+            cursor_grabbing: Cursor::Grabbing, cursor_zoom_in: Cursor::ZoomIn, cursor_zoom_out: Cursor::ZoomOut
+        };
     }
     color_setters! {
         border_color => border_fill, border_top_color => border_top_fill, border_right_color => border_right_fill,

@@ -1042,12 +1042,13 @@ fn cursors_follow_the_accepted_branch_for_each_mouse_without_listeners() -> Resu
     use solor::style::{Cursor, PointerEvents};
 
     let mut ui = Ui::new();
+    let tool = ui.context().signal(Cursor::ZoomIn);
     let show = ui.context().signal(true);
     let view = ui.mount(component(|_| {
         div().cursor_pointer().child(
             div()
                 .size(px(30.0))
-                .cursor_text()
+                .cursor(tool)
                 .visible_when(show)
                 .child(div().size(px(10.0)).cursor(Cursor::None))
                 .child(
@@ -1065,8 +1066,13 @@ fn cursors_follow_the_accepted_branch_for_each_mouse_without_listeners() -> Resu
     accept(&mut ui, view, 80.0)?;
     ui.dispatch_pointer(view, Move(b))?;
     assert_eq!(ui.pointer_cursor(view, a.id), Cursor::None);
-    assert_eq!(ui.pointer_cursor(view, b.id), Cursor::Text);
+    assert_eq!(ui.pointer_cursor(view, b.id), Cursor::ZoomIn);
     assert!(ui.next_redraw(view).is_none());
+
+    ui.context().set(tool, Cursor::ZoomOut)?;
+    accept(&mut ui, view, 80.0)?;
+    assert_eq!(ui.pointer_cursor(view, b.id), Cursor::ZoomOut);
+    assert_eq!(ui.pointer_cursor(view, a.id), Cursor::None);
 
     ui.context().set(show, false)?;
     ui.flush()?;
@@ -1078,7 +1084,7 @@ fn cursors_follow_the_accepted_branch_for_each_mouse_without_listeners() -> Resu
         },
     )?;
     let frame = ui.prepare_pointer_frame(view)?;
-    assert_eq!(ui.pointer_cursor(view, b.id), Cursor::Text);
+    assert_eq!(ui.pointer_cursor(view, b.id), Cursor::ZoomOut);
     ui.accept_pointer_frame(frame)?;
     assert_eq!(ui.pointer_cursor(view, b.id), Cursor::Pointer);
     ui.dispatch_pointer(view, Leave(b.id))?;

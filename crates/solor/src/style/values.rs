@@ -53,7 +53,21 @@ keywords! {
     /// Presentation of a line that does not fit.
     TextOverflow { Clip: "Clip the line.", Ellipsis: "Ellipsis at the end.", EllipsisStart: "Ellipsis at the start.", EllipsisMiddle: "Ellipsis in the middle." }
     /// Visual indication for pointer interaction.
-    Cursor { Auto: "Platform default.", Default: "Standard arrow.", Pointer: "Clickable target.", Text: "Text selection.", Crosshair: "Crosshair.", Move: "Move target.", Grab: "Grabbable.", Grabbing: "Dragging.", NotAllowed: "Unavailable action.", Wait: "Busy.", Progress: "Working in the background.", ColResize: "Resize columns.", RowResize: "Resize rows.", Resize(crate::ResizeEdge): "Resize a specific edge or corner.", None: "Hide the cursor." }
+    Cursor {
+        Auto: "Platform default.", Default: "Standard arrow.", Pointer: "Clickable target.",
+        ContextMenu: "Context menu available.", Help: "Help available.", Cell: "Table cell selection.",
+        Text: "Text selection.", VerticalText: "Vertical text selection.", Crosshair: "Crosshair.",
+        Move: "Move target.", Grab: "Grabbable.", Grabbing: "Dragging.",
+        Alias: "Drop to create a link.", Copy: "Drop to copy.", NoDrop: "Cannot drop here.",
+        NotAllowed: "Unavailable action.", Wait: "Busy.", Progress: "Working in the background.",
+        ColResize: "Resize columns.", RowResize: "Resize rows.",
+        EwResize: "Resize horizontally.", NsResize: "Resize vertically.",
+        NeswResize: "Resize along the northeast to southwest diagonal.",
+        NwseResize: "Resize along the northwest to southeast diagonal.",
+        Resize(crate::ResizeEdge): "Resize a specific edge or corner.",
+        AllScroll: "Scroll in any direction.", ZoomIn: "Zoom in.", ZoomOut: "Zoom out.",
+        None: "Hide the cursor."
+    }
     /// Participation in pointer hit testing.
     PointerEvents { Auto: "Participate in hit testing.", None: "Ignore the box for pointer targeting." }
 }
