@@ -14,7 +14,8 @@ pub(crate) struct StyledBody<E> {
 }
 
 pub(crate) struct BoxModel {
-    border: ContentInsets,
+    padding_box_insets: ContentInsets,
+    padding_and_border: Size,
     origin: Origin,
     inset: Size,
     margins: Option<Box<Edges<Option<ComputedLength>>>>,
@@ -53,10 +54,10 @@ fn map_edges<T, U>(edges: Edges<T>, mut f: impl FnMut(T) -> Result<U>) -> Result
 }
 
 impl<E> StyledBody<E> {
-    pub fn new(content: E, style: &Style, units: UnitResolver) -> Result<Self> {
+    pub fn new(content: E, style: &Style, units: UnitResolver, gutter: Size) -> Result<Self> {
         Ok(Self {
             content,
-            bounds: BoxModel::resolve(style, units)?,
+            bounds: BoxModel::resolve(style, units, gutter)?,
         })
     }
 
@@ -79,7 +80,7 @@ impl BoxModel {
         }
     }
 
-    pub(crate) fn resolve(style: &Style, units: UnitResolver) -> Result<Self> {
+    pub(crate) fn resolve(style: &Style, units: UnitResolver, gutter: Size) -> Result<Self> {
         let aspect_ratio = style.layout.as_ref().and_then(|layout| layout.aspect_ratio);
         if aspect_ratio.is_some_and(|ratio| !ratio.is_finite() || ratio <= 0.0) {
             return Err(LayoutError::InvalidSize);
@@ -100,18 +101,25 @@ impl BoxModel {
             .transpose()?
             .map(Box::new);
         let b = style.border_widths(units)?;
-        let border = ContentInsets {
+        let border_width = add(b.left, b.right)?;
+        let border_height = add(b.top, b.bottom)?;
+        let padding_and_border = Size {
+            width: add(add(p.left, p.right)?, border_width)?,
+            height: add(add(p.top, p.bottom)?, border_height)?,
+        };
+        let padding_box_insets = ContentInsets {
             origin: Origin {
                 x: b.left,
                 y: b.top,
             },
             total: Size {
-                width: add(b.left, b.right)?,
-                height: add(b.top, b.bottom)?,
+                width: add(border_width, gutter.width)?,
+                height: add(border_height, gutter.height)?,
             },
         };
         Ok(Self {
-            border,
+            padding_box_insets,
+            padding_and_border,
             margins,
             aspect_ratio,
             origin: Origin {
@@ -119,8 +127,8 @@ impl BoxModel {
                 y: add(p.top, b.top)?,
             },
             inset: Size {
-                width: add(add(p.left, p.right)?, border.total.width)?,
-                height: add(add(p.top, p.bottom)?, border.total.height)?,
+                width: add(padding_and_border.width, gutter.width)?,
+                height: add(padding_and_border.height, gutter.height)?,
             },
             box_sizing: style
                 .layout
@@ -301,8 +309,8 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
     fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {
         let content_size = self.content_size(assigned);
         cx.padding_box = (
-            self.bounds.border.origin,
-            self.bounds.border.content_size(assigned),
+            self.bounds.padding_box_insets.origin,
+            self.bounds.padding_box_insets.content_size(assigned),
         );
         cx.set_child_containing_block(content_size.into());
         let out = self.content.layout(cx, content_size)?.validate()?;
@@ -312,8 +320,8 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
         }
         Ok(LayoutOutput {
             content: Size {
-                width: add(out.content.width, self.bounds.inset.width)?,
-                height: add(out.content.height, self.bounds.inset.height)?,
+                width: add(out.content.width, self.bounds.padding_and_border.width)?,
+                height: add(out.content.height, self.bounds.padding_and_border.height)?,
             },
             baseline: self
                 .baseline(out.baseline)?

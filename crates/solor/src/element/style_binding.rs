@@ -2,6 +2,7 @@
 use super::*;
 
 pub(super) struct PreparedStyle {
+    pub scroll_axes: crate::pointer::ScrollAxes,
     pub shadows: Option<Box<shadow::Shadows>>,
     pub outline: Option<Box<outline::MountedOutline>>,
     pub border: Option<Rc<crate::style::BorderPaint>>,
@@ -119,6 +120,7 @@ pub(super) fn prepare<E: Element>(
         _ => true,
     };
     Ok(PreparedStyle {
+        scroll_axes: crate::pointer::ScrollAxes::from_layout(style.layout.as_deref(), units)?,
         border: style.border_paint(units)?,
         shadows: shadow::Shadows::resolve(&style, units)?,
         outline: outline::MountedOutline::resolve(&style, units)?,
@@ -227,7 +229,7 @@ impl StyleRecipe {
     }
 }
 
-pub(super) fn item_style(style: &Style) -> Result<crate::layout::FlexItemStyle> {
+pub(super) fn item_style(style: &Style, gutter: Size) -> Result<crate::layout::FlexItemStyle> {
     if !style.text.letter_spacing.get().is_finite()
         || [
             style.corner_radii.top_left,
@@ -264,7 +266,7 @@ pub(super) fn item_style(style: &Style) -> Result<crate::layout::FlexItemStyle> 
         .unwrap_or(Align::Auto);
     Ok(crate::layout::FlexItemStyle {
         display_none: style.display_none(),
-        overflow_clip: OverflowClip::from_layout(style.layout.as_deref()),
+        overflow_clip: OverflowClip::from_layout(style.layout.as_deref(), gutter),
         grow,
         shrink,
         align_self,
@@ -276,7 +278,9 @@ pub(super) fn item_style(style: &Style) -> Result<crate::layout::FlexItemStyle> 
 impl crate::Instance {
     fn update_style<E: Element>(&mut self, id: NodeId, style: Style, layout: bool) -> Result<()> {
         let opacity = opacity(&style)?;
-        let item = item_style(&style)?;
+        let scroll_axes =
+            crate::pointer::ScrollAxes::from_layout(style.layout.as_deref(), self.units)?;
+        let item = item_style(&style, scroll_axes.gutter)?;
         let border = style.border_paint(self.units)?;
         let shadows = shadow::Shadows::resolve(&style, self.units)?;
         let outline = outline::MountedOutline::resolve(&style, self.units)?;
@@ -287,8 +291,13 @@ impl crate::Instance {
             || std::any::TypeId::of::<E>() == std::any::TypeId::of::<super::image::ImageBody>();
         let node = self.bodies.get_mut(&id).expect("mounted style target");
         let clip = item.overflow_clip;
-        if layout || !builtin || clip != node.overflow_clip {
-            let bounds = crate::styled_body::BoxModel::resolve(&style, self.units)?;
+        if layout
+            || !builtin
+            || clip != node.overflow_clip
+            || scroll_axes.gutter != node.scroll_axes.gutter
+        {
+            let bounds =
+                crate::styled_body::BoxModel::resolve(&style, self.units, scroll_axes.gutter)?;
             let sizing = bounds.item_sizing(&style, self.units)?;
             let padding = bounds.content_insets();
             let mut prepared = Ok(());
@@ -316,7 +325,6 @@ impl crate::Instance {
         let z_index = appearance.and_then(|a| a.z_index).unwrap_or_default();
         let cursor = appearance.and_then(|a| a.cursor);
         let hit_testable = appearance.and_then(|a| a.pointer_events) != Some(PointerEvents::None);
-        let scroll_axes = crate::pointer::ScrollAxes::from_layout(style.layout.as_deref());
         let routing_changed = (z_index, &clip, scroll_axes, cursor, hit_testable)
             != (
                 node.z_index,

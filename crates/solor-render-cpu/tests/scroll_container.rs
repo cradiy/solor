@@ -176,3 +176,105 @@ fn horizontal_strip_forwards_diagonal_remainder_and_resets_a_disabled_axis() -> 
     assert_eq!(submit(&mut ui)?, px(0.0));
     Ok(())
 }
+
+#[test]
+fn scrollbar_gutters_share_viewport_geometry_with_scrolling_paint_and_hits() -> Result<()> {
+    use solor_render_cpu::pixels::Surface;
+
+    let mut ui = Ui::new();
+    let gutter = ui.context().signal(px(4.5));
+    let policy = ui.context().signal(Overflow::Scroll);
+    let clicks = ui.context().signal(0);
+    let view = ui.mount(component(|_| {
+        div()
+            .overflow_x_scroll()
+            .overflow_y(policy)
+            .scrollbar_width(gutter)
+            .child(div().w_full().h(px(32.)).bg(rgb(0x123456)))
+            .child(div().absolute().right(px(0.)).bottom(px(0.)).size(px(2.)))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(0.))
+                    .top(px(0.))
+                    .w(px(50.))
+                    .h(px(36.))
+                    .bg(rgb(0xff0000))
+                    .on_click(move |cx| cx.update(clicks, |n| *n += 1)),
+            )
+    }))?;
+    let root = ui.root(view)?;
+    let children: Vec<_> = ui.children(view, root)?.collect();
+    let size = Size {
+        width: px(40.),
+        height: px(24.),
+    };
+    for (width, axis, right) in [
+        (4.5, Overflow::Scroll, 4.5),
+        (4.5, Overflow::Auto, 0.),
+        (6.25, Overflow::Scroll, 6.25),
+    ] {
+        if width != 4.5 {
+            ui.context().set(gutter, px(width))?;
+        }
+        ui.context().set(policy, axis)?;
+        ui.flush()?;
+        ui.layout(view, size)?;
+        let viewport = Size {
+            width: px(40. - right),
+            height: px(24. - width),
+        };
+        let m = ui.scroll_metrics(view, root).unwrap();
+        assert_eq!(m.viewport, viewport);
+        assert_eq!(
+            m.max_offset,
+            Size {
+                width: px(50.) - viewport.width,
+                height: px(36.) - viewport.height
+            }
+        );
+        assert_eq!(
+            ui.geometry(view, children[0]).unwrap().metrics.size.width,
+            viewport.width
+        );
+        assert_eq!(
+            ui.geometry(view, children[1]).unwrap().origin,
+            Origin {
+                x: viewport.width - px(2.),
+                y: viewport.height - px(2.)
+            }
+        );
+        ui.set_scroll_offset(
+            view,
+            root,
+            Origin {
+                x: px(100.),
+                y: px(100.),
+            },
+        )?;
+        let frame = ui.record_frame(view)?;
+        let scale = RasterScale(1.5);
+        let image = Surface::draw_view(&frame, scale.buffer_size(size)?, scale)?;
+        let pixel = |x, y| {
+            let i: usize = 4 * (y * image.size.width as usize + x);
+            &image.rgba[i..i + 3]
+        };
+        assert_eq!(pixel(10, 10), [255, 0, 0]);
+        assert_eq!(pixel(10, 34), [255; 3]);
+        assert_eq!(
+            pixel(58, 10),
+            if right > 0. { [255; 3] } else { [255, 0, 0] }
+        );
+        ui.accept_pointer_frame(frame.into_pointer_frame())?;
+        let before = *ui.context().read(clicks)?;
+        for position in [mouse(38., 6.), mouse(6., 23.), mouse(6., 6.)] {
+            ui.dispatch_pointer(view, PointerInput::Down(position, PointerButton::Primary))?;
+            ui.dispatch_pointer(view, PointerInput::Up(position, PointerButton::Primary))?;
+        }
+        assert_eq!(
+            *ui.context().read(clicks)? - before,
+            if right > 0. { 1 } else { 2 }
+        );
+    }
+    Ok(())
+}

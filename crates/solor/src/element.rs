@@ -753,8 +753,11 @@ impl MountedNode {
                 .as_deref()
                 .and_then(|a| a.z_index)
                 .unwrap_or_default(),
-            overflow_clip: OverflowClip::from_layout(style.layout.as_deref()),
-            scroll_axes: crate::pointer::ScrollAxes::from_layout(style.layout.as_deref()),
+            overflow_clip: OverflowClip::from_layout(
+                style.layout.as_deref(),
+                mounted.scroll_axes.gutter,
+            ),
+            scroll_axes: mounted.scroll_axes,
             cursor: style.appearance.as_deref().and_then(|a| a.cursor),
             hit_testable: style.appearance.as_deref().and_then(|a| a.pointer_events)
                 != Some(PointerEvents::None),
@@ -791,7 +794,11 @@ impl MountedNode {
         let (clips, frame_offset) = match frame_clips {
             Some(frame) => frame,
             None => {
-                local_clips = self.overflow_clip.resolve(None, Origin::default(), size)?;
+                local_clips = self.overflow_clip.resolve(
+                    None,
+                    Origin::default(),
+                    self.scroll_axes.viewport(size),
+                )?;
                 (&local_clips, Origin::default())
             }
         };
@@ -975,7 +982,7 @@ impl AnyElement {
             };
             let mounted = style_binding::prepare(&mut node, inherited, cx, units)?;
             let style = &mounted.style;
-            let item = style_binding::item_style(style)?;
+            let item = style_binding::item_style(style, mounted.scroll_axes.gutter)?;
             if let Some(tip) = node
                 .handlers
                 .as_deref()
@@ -985,7 +992,7 @@ impl AnyElement {
                 tip.resolve(&crate::TooltipStyle::default()).validate()?;
             }
             node.body.prepare_content(style)?;
-            let body = StyledBody::new(node.body, style, units)?;
+            let body = StyledBody::new(node.body, style, units, mounted.scroll_axes.gutter)?;
             let item_sizing = body.bounds.item_sizing(style, units)?;
             if let Some(handlers) = node.handlers.as_mut() {
                 handlers.padding = body.bounds.content_insets();

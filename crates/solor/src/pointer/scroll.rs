@@ -2,6 +2,7 @@
 use crate::{
     Context, Instance, NodeId, Pixels, Result, ScrollAxis, ScrollPosition, Signal, Ui, ViewId,
     layout::{Geometry, Origin, Size},
+    length::UnitResolver,
     px,
     scroll_position::{PositionObservers, PositionSignal, scroll_percent},
     state::Runtime,
@@ -325,23 +326,54 @@ impl Ui {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq)]
 pub(crate) struct ScrollAxes {
     x: bool,
     y: bool,
+    pub(crate) gutter: Size,
 }
 
 impl ScrollAxes {
-    pub(crate) fn from_layout(layout: Option<&LayoutProperties>) -> Self {
+    pub(crate) fn from_layout(
+        layout: Option<&LayoutProperties>,
+        units: UnitResolver,
+    ) -> Result<Self> {
         let scrolls = |axis| matches!(axis, Some(Overflow::Scroll | Overflow::Auto));
-        Self {
-            x: scrolls(layout.and_then(|v| v.overflow_x)),
-            y: scrolls(layout.and_then(|v| v.overflow_y)),
+        let width = layout
+            .and_then(|v| v.scrollbar_width)
+            .map_or(px(0.), |v| units.absolute(v));
+        if !width.is_extent() {
+            return Err(crate::layout::LayoutError::InvalidSize.into());
+        }
+        let x = layout.and_then(|v| v.overflow_x);
+        let y = layout.and_then(|v| v.overflow_y);
+        Ok(Self {
+            x: scrolls(x),
+            y: scrolls(y),
+            gutter: Size {
+                width: if y == Some(Overflow::Scroll) {
+                    width
+                } else {
+                    px(0.)
+                },
+                height: if x == Some(Overflow::Scroll) {
+                    width
+                } else {
+                    px(0.)
+                },
+            },
+        })
+    }
+
+    pub(crate) fn viewport(self, size: Size) -> Size {
+        Size {
+            width: size.width.saturating_sub(self.gutter.width),
+            height: size.height.saturating_sub(self.gutter.height),
         }
     }
 
     pub(crate) fn limit(self, geometry: Geometry) -> Size {
-        let size = geometry.metrics.size;
+        let size = self.viewport(geometry.metrics.size);
         Size {
             width: if self.x {
                 geometry.content.width.saturating_sub(size.width)
@@ -398,7 +430,7 @@ impl Instance {
                 .copied()
                 .unwrap_or_default(),
             max_offset: body.scroll_axes.limit(geometry),
-            viewport: geometry.metrics.size,
+            viewport: body.scroll_axes.viewport(geometry.metrics.size),
         })
     }
 
@@ -434,7 +466,8 @@ impl Instance {
             .scene
             .geometry(owner)
             .expect("laid-out scroll container");
-        let live = self.bodies[&owner].scroll_axes.limit(geometry);
+        let axes = self.bodies[&owner].scroll_axes;
+        let live = axes.limit(geometry);
         let limit = Size {
             width: live.width.min(accepted.width),
             height: live.height.min(accepted.height),
@@ -453,7 +486,7 @@ impl Instance {
                 request.resolve(ScrollMetrics {
                     offset: previous,
                     max_offset: limit,
-                    viewport: geometry.metrics.size,
+                    viewport: axes.viewport(geometry.metrics.size),
                 })
             });
         let (next, consumed) = advance(start, limit, delta);

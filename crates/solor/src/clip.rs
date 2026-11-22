@@ -50,7 +50,7 @@ impl ContentClip {
 }
 
 impl OverflowClip {
-    pub(crate) fn from_layout(layout: Option<&LayoutProperties>) -> Self {
+    pub(crate) fn from_layout(layout: Option<&LayoutProperties>, gutter: Size) -> Self {
         let clips = |policy| {
             matches!(
                 policy,
@@ -58,8 +58,8 @@ impl OverflowClip {
             )
         };
         Self {
-            x: clips(layout.and_then(|v| v.overflow_x)),
-            y: clips(layout.and_then(|v| v.overflow_y)),
+            x: clips(layout.and_then(|v| v.overflow_x)) || gutter.width > crate::px(0.),
+            y: clips(layout.and_then(|v| v.overflow_y)) || gutter.height > crate::px(0.),
         }
     }
 

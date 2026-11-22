@@ -7,7 +7,7 @@ use super::{PointerButton, PointerEvent, PointerSample};
 use crate::clip::{NodeClips, OverflowClip};
 use crate::{
     Instance, NodeId, Result, Ui, ViewId,
-    element::FramePaint,
+    element::{FramePaint, MountedNode},
     layout::{Origin, Size},
     styled_body::StyledBody,
     text::Text,
@@ -309,12 +309,8 @@ impl HitGeometry {
                 }
                 recipients.scroll = Some(id);
             }
-            let (clips, child_clip) = frame.resolve_clips(
-                inherited_clip,
-                body.overflow_clip,
-                area,
-                children.len() > 0,
-            )?;
+            let (clips, child_clip) =
+                frame.resolve_clips(inherited_clip, body, area, children.len() > 0)?;
             if body.is_group() {
                 frame.group_events.push((paint_index, Some(id)));
                 open_groups.push(pending.len());
@@ -349,17 +345,17 @@ impl HitGeometry {
     fn resolve_clips(
         &mut self,
         inherited: usize,
-        overflow: OverflowClip,
+        body: &MountedNode,
         area: HitBox,
         has_children: bool,
     ) -> Result<(usize, usize)> {
-        if overflow == OverflowClip::default() {
+        if body.overflow_clip == OverflowClip::default() {
             return Ok((inherited, inherited));
         }
-        let clips = overflow.resolve(
+        let clips = body.overflow_clip.resolve(
             self.clips[inherited].content.clone(),
             area.origin,
-            area.size,
+            body.scroll_axes.viewport(area.size),
         )?;
         let own = self.clips.len();
         self.clips.push(clips);

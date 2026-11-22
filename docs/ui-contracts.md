@@ -554,6 +554,12 @@ full text geometry and effective clip. Local
 recordings from `Ui::paint` use the element's own coordinate system and apply
 its own overflow setting. The CPU backend rounds clip edges to device pixels.
 
+Use `.overflow_y_scroll().scrollbar_width(px(8.0))` to reserve eight logical
+pixels on the right. Horizontal scrolling reserves space at the bottom. The
+gutter stays in place even when the content fits. Children lay out, paint and
+receive pointer input inside the reduced viewport. The default width is zero.
+`Overflow::Auto` uses overlay scrolling.
+
 A host can read a laid-out overflow container with `ui.scroll_metrics(view, node)`.
 The snapshot contains its current two-axis offset, maximum scroll distance and
 viewport size in logical pixels. To restore a saved position, call
