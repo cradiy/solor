@@ -566,15 +566,18 @@ transparent black, then blended once with the pixels behind it. Nested groups
 compose from the inside out. Finite values are clamped to 0–1 and rounded to
 8-bit alpha. An opacity of zero preserves layout and hit testing.
 
-A solid border is drawn inside the border box, above its background. Set its
+A border is drawn inside the border box, above its background. Set its
 width and paint together, for example `.border_b(px(1.0)).border_bottom_color(ink)`.
 Each edge accepts its own width and fill. Gradients span the whole box. Border
 widths reserve space outside the padding, including edges without paint.
+Use `.border_dashed()` or `.border_dotted()` for the whole box, or set a
+single edge with `.border_bottom_style(BorderStyle::Dotted)`. Dash length
+and dot diameter scale with the edge width.
 
 Each background corner has an independent circular radius. If two adjacent
 radii exceed their shared edge, the frame scales all four by the same factor
 until they fit. The CPU renderer applies this shape to solid and gradient
-backgrounds and solid borders. Overflow clipping and pointer hit boxes remain
+backgrounds and borders. Overflow clipping and pointer hit boxes remain
 rectangular. Additional layout, paint, text shaping and input behaviors in
 this table are declarations pending engine support.
 

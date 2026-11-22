@@ -9,6 +9,9 @@ use solor::{
 };
 use std::io::{Error, Result};
 
+mod pattern;
+use pattern::Pattern;
+
 struct RoundedBox {
     bounds: [f64; 4],       // left, top, right, bottom
     corners: [[f64; 2]; 4], // top left clockwise
@@ -70,6 +73,7 @@ struct Ring {
     outer: RoundedBox,
     inner: RoundedBox,
     widths: [f64; 4],
+    patterns: [Option<Pattern>; 4],
 }
 
 impl Ring {
@@ -135,8 +139,20 @@ impl Ring {
                 (1, x2.max(start), end),
             ] {
                 if active[side] {
-                    span_events(events, side, a, z.min(hole_l), weight, clip);
-                    span_events(events, side, a.max(hole_r), z, weight, clip);
+                    for (from, to) in [(a, z.min(hole_l)), (a.max(hole_r), z)] {
+                        if let Some(pattern) = &self.patterns[side] {
+                            pattern.spans(
+                                from.max(clip.left as f64),
+                                to.min(clip.right as f64),
+                                sy,
+                                |start, end, coverage| {
+                                    span_events(events, side, start, end, weight * coverage, clip)
+                                },
+                            );
+                        } else {
+                            span_events(events, side, from, to, weight, clip);
+                        }
+                    }
                 }
             }
         }
@@ -221,6 +237,8 @@ impl Surface {
             }),
         };
 
+        let s = paint.styles;
+        let styles = [s.top, s.right, s.bottom, s.left];
         let fills = &paint.fills;
         let fills = [&fills.top, &fills.right, &fills.bottom, &fills.left];
         let clips = edge_clips(origin, size, paint, scale, clip);
@@ -232,6 +250,7 @@ impl Surface {
                 .count()
                 == 1
             && let Some(i) = fills.iter().position(|f| f.is_some())
+            && styles[i] == solor::style::BorderStyle::Solid
             && let Some(fill @ Fill::Solid(_)) = &fills[i]
         {
             let mut at = origin;
@@ -277,10 +296,14 @@ impl Surface {
             return Ok(());
         };
         let mut events = Vec::with_capacity(64);
+        let widths = [t, r, b, l];
+        let patterns =
+            std::array::from_fn(|i| Pattern::new(i, styles[i], outer.bounds, widths, radii));
         let ring = Ring {
+            patterns,
             outer,
             inner,
-            widths: [t, r, b, l],
+            widths,
         };
         for y in rows.top..rows.bottom {
             events.clear();

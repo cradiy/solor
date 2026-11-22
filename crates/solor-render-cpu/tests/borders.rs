@@ -152,3 +152,107 @@ fn moving_a_fractional_rule_repairs_the_old_and_new_coverage() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn a_signal_switches_a_single_rule_between_dashes_and_round_dots() -> Result<()> {
+    use solor::style::BorderStyle;
+    let mut ui = Ui::new();
+    let pattern = ui.context().signal(BorderStyle::Dashed);
+    let view = ui.mount(component(move |_| {
+        div()
+            .border_t(px(8.))
+            .border_top_color(rgb(0))
+            .border_top_style(pattern)
+    }))?;
+    let size = Size {
+        width: px(80.),
+        height: px(16.),
+    };
+    ui.layout(view, size)?;
+    let root = ui.root(view)?;
+    let geometry = ui.geometry(view, root);
+    let render = |ui: &mut Ui| -> Result<Surface> {
+        Ok(Surface::draw_view(
+            &ui.record_frame(view)?,
+            RasterScale::ONE.buffer_size(size)?,
+            RasterScale::ONE,
+        )?)
+    };
+    let dashed = render(&mut ui)?;
+    assert_eq!(pixel(&dashed, 4, 3), [0, 0, 0, 255]);
+    assert_eq!(pixel(&dashed, 18, 3), [255; 4]);
+    assert_eq!(pixel(&dashed, 75, 3), [0, 0, 0, 255]);
+    ui.context().set(pattern, BorderStyle::Dotted)?;
+    ui.flush()?;
+    assert_eq!(ui.geometry(view, root), geometry);
+    let dotted = render(&mut ui)?;
+    // The first dot has its center at (4,4) and radius 4.
+    assert_eq!(pixel(&dotted, 0, 0), [255; 4]);
+    assert_eq!(pixel(&dotted, 4, 1), [0, 0, 0, 255]);
+    assert_eq!(pixel(&dotted, 1, 4), [0, 0, 0, 255]);
+    assert_eq!(pixel(&dotted, 9, 4), [255; 4]);
+    Ok(())
+}
+
+#[test]
+fn a_partial_repair_preserves_the_pattern_phase_through_a_rounded_corner() -> Result<()> {
+    use solor::{
+        Render,
+        platform::{WindowEvent, WindowHandler},
+        style::BorderStyle,
+    };
+    use solor_render_cpu::CpuWindow;
+    use std::time::Duration;
+
+    fn scene(changed: bool) -> impl Render {
+        component(move |cx| {
+            let fill = cx.signal(if changed {
+                rgb(0x203040)
+            } else {
+                rgb(0xffffff)
+            });
+            div()
+                .bg(rgb(0xffffff))
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(6.25))
+                        .top(px(0.))
+                        .w(px(19.))
+                        .h(px(10.))
+                        .bg(fill)
+                        .on_frame(move |_, cx| cx.set(fill, rgb(0x203040))),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .inset(px(0.))
+                        .border(px(3.))
+                        .rounded(px(12.))
+                        .border_dashed()
+                        .border_right_style(BorderStyle::Dotted)
+                        .border_color(rgba(0x000000c0)),
+                )
+        })
+    }
+    let size = Size {
+        width: px(72.),
+        height: px(36.),
+    };
+    let scale = RasterScale(1.5);
+    let mut window = CpuWindow::mount(Ui::new(), scene(false))?;
+    let initial = window.frame(size, scale)?;
+    let gray = |x: usize, y: usize| initial.rgba[(y * initial.size.width as usize + x) * 4];
+    // Follow the top-left arc from the shared corner dash into the next gap.
+    assert!(gray(6, 6) < 100);
+    assert_eq!(gray(12, 3), 255);
+    let first = initial.rgba.to_vec();
+    window.frame_submitted()?;
+    window.event(WindowEvent::FrameReady(Duration::ZERO))?;
+    let repaired = window.frame(size, scale)?;
+    assert!(repaired.damage.bounds().unwrap().right < i64::from(repaired.size.width));
+    assert_ne!(first, repaired.rgba);
+    let mut reference = CpuWindow::mount(Ui::new(), scene(true))?;
+    assert_eq!(repaired.rgba, reference.frame(size, scale)?.rgba);
+    Ok(())
+}

@@ -21,6 +21,8 @@ pub struct BorderPaint {
     pub widths: Edges<Pixels>,
     /// Paint mapped across the border box on each visible side.
     pub fills: Edges<Option<Fill>>,
+    /// Stroke pattern on each side of the border box.
+    pub styles: Edges<BorderStyle>,
     /// Outer corner radii in logical pixels.
     pub radii: Corners<Pixels>,
 }
@@ -244,23 +246,30 @@ impl Style {
         if widths == Edges::default() {
             return Ok(None);
         }
-        let fill = |w: Pixels, pattern: Option<BorderStyle>, fill: &Option<Fill>| {
-            if w.get() > 0.0 && pattern.unwrap_or(BorderStyle::Solid) == BorderStyle::Solid {
+        let styles = Edges {
+            top: a.border_style.top.unwrap_or(BorderStyle::Solid),
+            right: a.border_style.right.unwrap_or(BorderStyle::Solid),
+            bottom: a.border_style.bottom.unwrap_or(BorderStyle::Solid),
+            left: a.border_style.left.unwrap_or(BorderStyle::Solid),
+        };
+        let fill = |w: Pixels, pattern: BorderStyle, fill: &Option<Fill>| {
+            if w.get() > 0.0 && pattern != BorderStyle::None {
                 fill.clone()
             } else {
                 None
             }
         };
         let fills = Edges {
-            top: fill(widths.top, a.border_style.top, &a.border_fill.top),
-            right: fill(widths.right, a.border_style.right, &a.border_fill.right),
-            bottom: fill(widths.bottom, a.border_style.bottom, &a.border_fill.bottom),
-            left: fill(widths.left, a.border_style.left, &a.border_fill.left),
+            top: fill(widths.top, styles.top, &a.border_fill.top),
+            right: fill(widths.right, styles.right, &a.border_fill.right),
+            bottom: fill(widths.bottom, styles.bottom, &a.border_fill.bottom),
+            left: fill(widths.left, styles.left, &a.border_fill.left),
         };
         Ok((fills != Edges::default()).then(|| {
             Rc::new(BorderPaint {
                 widths,
                 fills,
+                styles,
                 radii: self.corner_radii,
             })
         }))
