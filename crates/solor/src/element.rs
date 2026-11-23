@@ -1151,6 +1151,9 @@ impl AnyElement {
         Self(Box::new(move |target, cx, resources| {
             let (units, _) = resources;
             let mut node = make(cx, resources)?;
+            if let Some(input) = node.handlers.as_deref().and_then(|h| h.text_input) {
+                cx.read(input)?;
+            }
             if let Some(source) = node.on_frame.as_ref().and_then(|handler| handler.enabled) {
                 node.watches.push(Box::new(move |cx, target, _, _, _| {
                     // Wake an idle host. Frame scheduling reads the live gate directly.
@@ -1367,6 +1370,15 @@ impl<E: Element> Node<E> {
         self
     }
 
+    /// Makes this element focusable and exposes its editing state to the host while focused.
+    /// The first visible label bound to the same state supplies the insertion point.
+    pub fn text_input(mut self, state: crate::Signal<crate::text::TextInputState>) -> Self {
+        self.handlers
+            .get_or_insert_with(Default::default)
+            .text_input = Some(state);
+        self.focusable()
+    }
+
     /// Makes this element focusable and controls whether Tab and Shift+Tab can land on it.
     /// A signal is sampled on navigation. Changing it preserves the current focus.
     pub fn tab_stop(mut self, enabled: impl Into<crate::style::Property<bool>>) -> Self {
@@ -1467,6 +1479,14 @@ pub enum TextContent {
     Fixed(SharedString),
     /// Text updated from the signal at flush.
     Bound(Signal<SharedString>),
+    /// Displays the editing buffer including preedit, within the text leaf's byte budget around the caret.
+    Input(Signal<crate::text::TextInputState>),
+}
+
+impl From<Signal<crate::text::TextInputState>> for TextContent {
+    fn from(input: Signal<crate::text::TextInputState>) -> Self {
+        Self::Input(input)
+    }
 }
 
 impl<T: Into<SharedString>> From<T> for TextContent {
@@ -1540,20 +1560,35 @@ impl IntoElement for Label {
     fn into_element(self) -> AnyElement {
         let fixed = matches!(self.content, TextContent::Fixed(_));
         AnyElement::new(fixed, move |cx, _| {
-            let (initial, source) = match self.content {
-                TextContent::Fixed(value) => (value, None),
-                TextContent::Bound(signal) => (cx.read(signal)?.clone(), Some(signal)),
+            let input = match &self.content {
+                TextContent::Input(s) => Some(*s),
+                _ => None,
             };
-            let mut node = element(Text::new(
+            let (initial, watch) = match self.content {
+                TextContent::Fixed(value) => (value, None),
+                TextContent::Bound(signal) => (
+                    cx.read(signal)?.clone(),
+                    Some(content_watch(signal, crate::ContentUpdate::Text(signal))),
+                ),
+                TextContent::Input(signal) => (
+                    cx.read(signal)?.label_content(),
+                    Some(content_watch(
+                        signal,
+                        crate::ContentUpdate::InputText(signal),
+                    )),
+                ),
+            };
+            let mut leaf = Text::new(
                 Rc::clone(cx.engine.engine()),
                 initial,
                 TextStyle::default(),
                 true,
-            )?);
+            )?;
+            leaf.input = input;
+            let mut node = element(leaf);
             node.style = self.style;
-            if let Some(signal) = source {
-                node.watches
-                    .push(content_watch(signal, crate::ContentUpdate::Text(signal)));
+            if let Some(watch) = watch {
+                node.watches.push(watch);
             }
             Ok(node)
         })

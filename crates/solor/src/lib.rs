@@ -239,6 +239,7 @@ type Restyle = Rc<dyn Fn(&mut Instance, NodeId, &mut Runtime<()>, bool) -> Resul
 type StyleUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), (Restyle, bool)>>>;
 #[derive(Clone, Copy)]
 enum ContentUpdate {
+    InputText(Signal<text::TextInputState>),
     Text(Signal<SharedString>),
     Image(Signal<ImageAsset>),
     ImageRegion(Signal<ImageFill>),
@@ -251,6 +252,7 @@ type ContentUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), ContentUpdate>>>;
 
 struct Instance {
     focused: Option<NodeId>,
+    focus_generation: u64,
     tab_order: Option<keyboard::TabOrder>,
     frame_handlers: HashMap<NodeId, element::FrameHandler>,
     scope: NodeId,
@@ -381,7 +383,7 @@ impl Instance {
                 } else {
                     self.visible_nodes -= 1;
                     if self.focused == Some(id) {
-                        self.set_focus(None, false);
+                        self.set_focus(None, false, state);
                     }
                     self.unobserve_paint(id, state);
                 }
@@ -415,6 +417,7 @@ impl Instance {
     }
 
     fn dispose(self, state: &mut Runtime<()>) -> Result<()> {
+        self.cancel_focused_preedit(state);
         for tracked in self.tracked_scroll.values() {
             tracked.detach(state);
         }
@@ -562,15 +565,15 @@ impl Instance {
         }
         for key in subtree_keys(&self.nodes, path) {
             let node = self.nodes.remove(&key).expect("mounted node");
+            if self.focused == Some(node) {
+                self.set_focus(None, false, cx.state);
+            }
             let node = self.bodies.remove(&node).expect("mounted body");
             self.visible_nodes -= usize::from(node.visible);
             if let Some(tracked) = self.tracked_scroll.remove(&node.id) {
                 tracked.detach(cx.state);
             }
             self.pointer.retire(node.id);
-            if self.focused == Some(node.id) {
-                self.focused = None;
-            }
             self.frame_handlers.remove(&node.id);
             self.unobserve_paint(node.id, cx.state);
             self.repaints.borrow_mut().dirty.remove(&node.id);
@@ -712,6 +715,7 @@ impl Ui {
         let root = scene.root();
         let mut instance = Instance {
             focused: None,
+            focus_generation: 0,
             tab_order: None,
             frame_handlers: on_frame
                 .into_iter()
@@ -874,6 +878,12 @@ impl Ui {
             let instance = self.instances.get_mut(&view).expect("live content view");
             let state = self.state.get_mut();
             let result = match *source {
+                ContentUpdate::InputText(source) => state.read(source).ok().map(|input| {
+                    if instance.text_input_signal() == Some(source) {
+                        instance.repaints.borrow_mut().invalidate(id);
+                    }
+                    instance.update_label(id, &input.label_content())
+                }),
                 ContentUpdate::Text(source) => state
                     .read(source)
                     .ok()
@@ -930,7 +940,7 @@ impl Ui {
 
     /// Gives focus to a visible, focusable element. An invalid request preserves existing focus.
     pub fn focus(&mut self, view: ViewId, target: NodeId) -> Result<()> {
-        let instance = self.instance_mut(view)?;
+        let (instance, state) = self.instance_and_state(view)?;
         let body = instance
             .bodies
             .get(&target)
@@ -939,13 +949,14 @@ impl Ui {
             body.visible && body.focusable,
             "focus requires a visible, focusable element"
         );
-        instance.set_focus(Some(target), true);
+        instance.set_focus(Some(target), true, state);
         Ok(())
     }
 
     /// Clears logical focus in this view.
     pub fn blur(&mut self, view: ViewId) -> Result<()> {
-        self.instance_mut(view)?.set_focus(None, false);
+        let (instance, state) = self.instance_and_state(view)?;
+        instance.set_focus(None, false, state);
         Ok(())
     }
 
@@ -964,10 +975,12 @@ impl Ui {
             .ok_or_else(|| crate::tree::TreeError::InvalidNode(view.0).into())
     }
 
-    fn instance_mut(&mut self, view: ViewId) -> Result<&mut Instance> {
-        self.instances
+    fn instance_and_state(&mut self, view: ViewId) -> Result<(&mut Instance, &mut Runtime<()>)> {
+        let instance = self
+            .instances
             .get_mut(&view)
-            .ok_or_else(|| tree::TreeError::InvalidNode(view.0).into())
+            .ok_or(tree::TreeError::InvalidNode(view.0))?;
+        Ok((instance, self.state.get_mut()))
     }
 
     /// Applies the viewport allocation, materializes visible list rows and returns the total

@@ -2,12 +2,15 @@ use crate::{CITRON, INK, MUTED, Selection, control, details, label, page, stage}
 use solor::{
     Div, Fill, FillRule, Gradient, GradientKind, GradientMap, PaintContext, Rgba, Signal, Styled,
     div,
+    keyboard::Key,
     layout::Origin,
     px, rgb, rgba,
     style::{Distribution, FontFeature},
+    text,
+    text::TextInputState,
 };
 
-pub(super) fn typography(spacing: Selection<3>) -> Div {
+pub(super) fn typography(spacing: Selection<3>, input: Signal<TextInputState>) -> Div {
     let mut specimen = div().items_stretch();
     for (flag, tracking) in spacing.flags().into_iter().zip([-1.5, 0.0, 3.0]) {
         specimen = specimen.child_when(flag, move || {
@@ -18,10 +21,41 @@ pub(super) fn typography(spacing: Selection<3>) -> Div {
                 .justify_center()
                 .px(px(16.0))
                 .overflow_hidden()
-                .child(label("NOTO SANS CJK SC", 11.0, 22.0).letter_spacing(px(1.4)))
-                .child(label("Aa", 82.0, 100.0).letter_spacing(px(tracking)))
+                .text_input(input)
+                .cursor_text()
+                .focus_indicator(crate::viewport_focus_indicator)
+                .on_key_down(move |key, cx| {
+                    let mods = key.modifiers;
+                    if mods.control || mods.alt || mods.meta || cx.read(input)?.preedit().is_some()
+                    {
+                        return Ok(());
+                    }
+                    match &key.key {
+                        Key::Character(ch) if !ch.is_control() => {
+                            cx.update_in_place(input, |state| {
+                                state.commit(ch.encode_utf8(&mut [0; 4]))
+                            })?;
+                        }
+                        Key::Text(value) if !value.chars().any(char::is_control) => {
+                            cx.update_in_place(input, |state| state.commit(value))?;
+                        }
+                        &Key::Backspace => cx.update_in_place(input, TextInputState::backspace)?,
+                        _ => return Ok(()),
+                    }
+                    cx.prevent_default();
+                    Ok(())
+                })
+                .child(label("TYPE SAMPLE", 11.0, 22.0).letter_spacing(px(1.4)))
+                .child(
+                    text(input)
+                        .text_size(px(82.))
+                        .line_height(px(100.))
+                        .white_space(solor::style::WhiteSpace::Pre)
+                        .text_ellipsis_start()
+                        .letter_spacing(px(tracking)),
+                )
                 .child(div().h(px(1.0)).bg(rgb(0xb6c77c)))
-                .child(label("AV 0123456789", 16.0, 29.0).letter_spacing(px(tracking)));
+                .child(label("Click to edit", 14.0, 29.0));
             let cjk = div()
                 .flex_1()
                 .items_center()

@@ -17,6 +17,76 @@ fn gallery() -> Result<(solor::Ui, impl solor::Render)> {
     solor_gallery::gallery(solor::Ui::with_font(font.to_vec())?)
 }
 
+#[test]
+fn typography_sample_displays_keyboard_and_composed_text() -> Result<()> {
+    use solor::text::{Preedit, TextInputEvent};
+    let (ui, root) = gallery()?;
+    let mut window = CpuWindow::mount(ui, root)?;
+    let size = Size {
+        width: px(800.),
+        height: px(560.),
+    };
+    let render = |w: &mut CpuWindow| -> Result<_> {
+        let frame = w.frame(size, RasterScale::ONE)?;
+        let pixels = frame.rgba[230 * 800 * 4..320 * 800 * 4].to_vec();
+        w.frame_submitted()?;
+        Ok(pixels)
+    };
+    let key = |key, repeat| {
+        WindowEvent::Key(KeyEvent {
+            key,
+            state: KeyState::Down,
+            repeat,
+            modifiers: Default::default(),
+        })
+    };
+    render(&mut window)?;
+    click(&mut window, 120., 275.)?;
+    let original = render(&mut window)?;
+    let original_caret = window.caret_bounds().expect("focused sample caret");
+    assert_eq!(window.surrounding_text(32).unwrap().text(), "Aa");
+    for repeat in [false, true, true] {
+        window.event(key(Key::from("e\u{301}"), repeat))?;
+    }
+    assert_eq!(
+        window.surrounding_text(64).unwrap().text(),
+        "Aae\u{301}e\u{301}e\u{301}"
+    );
+    assert_ne!(render(&mut window)?, original);
+    assert!(window.caret_bounds().unwrap().origin.x > original_caret.origin.x);
+    for repeat in [false, true, true] {
+        window.event(key(Key::Backspace, repeat))?;
+    }
+    assert_eq!(render(&mut window)?, original);
+    assert_eq!(window.caret_bounds(), Some(original_caret));
+    window.event(WindowEvent::TextInput(TextInputEvent::Preedit(Preedit {
+        text: "zhong".into(),
+        selection: None,
+    })))?;
+    let composing = render(&mut window)?;
+    assert_ne!(composing, original);
+    let preedit_caret = window.caret_bounds().unwrap();
+    window.event(WindowEvent::TextInput(TextInputEvent::Preedit(Preedit {
+        text: "zhong".into(),
+        selection: Some(solor::text::TextSelection::caret(5)),
+    })))?;
+    assert_ne!(render(&mut window)?, composing);
+    assert_eq!(window.caret_bounds(), Some(preedit_caret));
+    assert_eq!(window.surrounding_text(32).unwrap().text(), "Aa");
+    window.event(WindowEvent::TextInput(TextInputEvent::Commit("中".into())))?;
+    assert_ne!(render(&mut window)?, composing);
+    assert_eq!(window.surrounding_text(32).unwrap().text(), "Aa中");
+    let long = "中文".repeat(900);
+    window.event(WindowEvent::TextInput(TextInputEvent::Commit(long.clone())))?;
+    render(&mut window)?;
+    assert!(window.caret_bounds().is_some());
+    assert_eq!(
+        window.surrounding_text(8192).unwrap().text(),
+        format!("Aa中{long}")
+    );
+    Ok(())
+}
+
 fn click(window: &mut CpuWindow, x: f32, y: f32) -> Result<()> {
     let point = mouse_at(x, y);
     for input in [
@@ -139,6 +209,7 @@ fn startup_keyboard_navigation_keeps_focus_on_the_activated_tab() -> Result<()> 
             w.event(WindowEvent::Key(KeyEvent {
                 key: key.clone(),
                 state,
+                repeat: false,
                 modifiers: Default::default(),
             }))?;
         }
@@ -344,6 +415,7 @@ fn market_advances_freezes_and_retires_its_frame_listener() -> Result<()> {
                 .event(WindowEvent::Key(KeyEvent {
                     key: key.into(),
                     state: KeyState::Down,
+                    repeat: false,
                     modifiers: solor::keyboard::Modifiers {
                         shift: key == NamedKey::Tab,
                         ..Default::default()
@@ -564,6 +636,7 @@ fn atlas_scrubs_across_the_color_space_and_returns_to_idle() -> Result<()> {
         let press = KeyEvent {
             key,
             state: KeyState::Down,
+            repeat: false,
             modifiers: Default::default(),
         };
         assert!(ui.dispatch_key(view, &press)?);
@@ -577,6 +650,7 @@ fn atlas_scrubs_across_the_color_space_and_returns_to_idle() -> Result<()> {
     let home = KeyEvent {
         key: Key::Home,
         state: KeyState::Down,
+        repeat: false,
         modifiers: Default::default(),
     };
     assert!(!ui.dispatch_key(view, &home)?);
@@ -601,6 +675,7 @@ fn atlas_scroll_keys_move_visible_rows_and_pages_between_frames() -> Result<()> 
             view,
             &KeyEvent {
                 state: KeyState::Down,
+                repeat: false,
                 modifiers: Default::default(),
                 key,
             }
@@ -708,6 +783,7 @@ fn market_zoom_passes_unused_scroll_to_its_container() -> Result<()> {
             &KeyEvent {
                 key,
                 state: KeyState::Down,
+                repeat: false,
                 modifiers: Default::default(),
             }
         )?);
@@ -847,6 +923,7 @@ fn inspected_price_and_average_follow_the_sample_as_it_moves_through_history() -
             &KeyEvent {
                 key,
                 state: KeyState::Down,
+                repeat: false,
                 modifiers: Default::default(),
             }
         )?);
@@ -986,6 +1063,7 @@ fn compact_market_scrolls_the_watchlist_below_its_header() -> Result<()> {
             &KeyEvent {
                 key,
                 state: KeyState::Down,
+                repeat: false,
                 modifiers: Default::default(),
             }
         )?);
@@ -1034,6 +1112,7 @@ fn tone_sheet_arrow_keys_pan_a_tile_at_a_time_and_keep_the_selection() -> Result
             &KeyEvent {
                 key,
                 state: KeyState::Down,
+                repeat: false,
                 modifiers: Default::default(),
             },
         )
@@ -1065,6 +1144,7 @@ fn tone_sheet_keyboard_selection_follows_the_pointer_and_reveals_the_selected_ti
             &KeyEvent {
                 key,
                 state: KeyState::Down,
+                repeat: false,
                 modifiers: solor::keyboard::Modifiers {
                     shift,
                     ..Default::default()

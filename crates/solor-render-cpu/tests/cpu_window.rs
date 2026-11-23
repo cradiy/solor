@@ -15,6 +15,72 @@ use solor::{
 use solor_render_cpu::CpuWindow;
 
 #[test]
+fn native_text_edits_repaint_the_focused_field() -> Result<()> {
+    use solor::keyboard::{KeyEvent, KeyState, NamedKey};
+    use solor::text::{Preedit, TextInputEvent, TextInputState};
+    let mut window = CpuWindow::mount(
+        Ui::new(),
+        component(|cx| {
+            let input = cx.signal(TextInputState::default());
+            div()
+                .child(div().size(px(4.)).text_input(input).paint(move |cx| {
+                    let state = cx.read(input)?;
+                    let color = if state.preedit().is_some() {
+                        0x112233
+                    } else if state.text() == "你" {
+                        0x228833
+                    } else {
+                        0
+                    };
+                    cx.fill_rect(Default::default(), cx.size, rgb(color))
+                }))
+                .child(div().focusable())
+        }),
+    )?;
+    let draw = |w: &mut CpuWindow| -> Result<[u8; 4]> {
+        let frame = w.frame(
+            Size {
+                width: px(8.),
+                height: px(8.),
+            },
+            RasterScale::ONE,
+        )?;
+        let pixel = frame.rgba[..4].try_into()?;
+        w.frame_submitted()?;
+        Ok(pixel)
+    };
+    let tab = || {
+        WindowEvent::Key(KeyEvent {
+            key: NamedKey::Tab.into(),
+            state: KeyState::Down,
+            repeat: false,
+            modifiers: Default::default(),
+        })
+    };
+    draw(&mut window)?;
+    window.event(tab())?;
+    let first = window.text_input_session().unwrap();
+    window.event(WindowEvent::TextInput(TextInputEvent::Preedit(Preedit {
+        text: "ni".into(),
+        selection: None,
+    })))?;
+    assert_eq!(draw(&mut window)?, [17, 34, 51, 255]);
+    window.event(WindowEvent::TextInput(TextInputEvent::Commit("你".into())))?;
+    assert_eq!(draw(&mut window)?, [34, 136, 51, 255]);
+    assert_eq!(window.surrounding_text(4000).unwrap().text(), "你");
+    window.event(WindowEvent::TextInput(TextInputEvent::DeleteSurrounding {
+        before: 3,
+        after: 0,
+    }))?;
+    assert_eq!(draw(&mut window)?, [0, 0, 0, 255]);
+    window.event(tab())?;
+    assert_eq!(window.text_input_session(), None);
+    window.event(tab())?;
+    assert_ne!(window.text_input_session().unwrap(), first);
+    Ok(())
+}
+
+#[test]
 fn rejected_resize_keeps_old_hit_geometry_until_retry_is_submitted() -> Result<()> {
     let clicks = Rc::new(Cell::new(0));
     let observed = clicks.clone();
@@ -265,6 +331,7 @@ fn window_keys_follow_focus_and_retire_with_their_controls() -> Result<()> {
             .event(WindowEvent::Key(KeyEvent {
                 key: NamedKey::Enter.into(),
                 state,
+                repeat: false,
                 modifiers: Modifiers {
                     shift: true,
                     ..Default::default()
@@ -285,6 +352,7 @@ fn window_keys_follow_focus_and_retire_with_their_controls() -> Result<()> {
     window.event(WindowEvent::Key(KeyEvent {
         key: NamedKey::Tab.into(),
         state: KeyState::Down,
+        repeat: false,
         modifiers: Modifiers::default(),
     }))?;
     assert!(key(&mut window, KeyState::Down)?);
@@ -354,6 +422,7 @@ fn focus_indicator_moves_over_hover_backgrounds_and_under_content() -> Result<()
         WindowEvent::Key(KeyEvent {
             key: NamedKey::Tab.into(),
             state: KeyState::Down,
+            repeat: false,
             modifiers: Default::default(),
         })
     };

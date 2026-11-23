@@ -86,9 +86,15 @@ pub struct ViewFrame {
     next_frame: bool,
     fixed_edges: Option<Rc<FixedEdges>>,
     has_overlay: bool,
+    caret: Option<crate::text::CaretBounds>,
 }
 
 impl ViewFrame {
+    /// Returns the visible insertion point for input method placement.
+    pub fn caret_bounds(&self) -> Option<crate::text::CaretBounds> {
+        self.caret
+    }
+
     /// Returns commands in paint order, with each parent before its children.
     pub fn draws(&self) -> &[Draw] {
         &self.draws
@@ -290,6 +296,7 @@ impl Ui {
         let pointer = self.prepare_pointer_frame(view)?;
         let cache = &instance.fixed_draws;
         let mut state = self.state.try_borrow_mut()?;
+        let mut caret = crate::text::FrameCaret::focused(instance, &state);
         let mut next_frame = false;
         for id in pointer.frame_listeners() {
             if instance.frame_handlers[id].is_enabled(&state)? {
@@ -309,6 +316,7 @@ impl Ui {
             let mut backgrounds = commands.backgrounds.iter().peekable();
             for (index, (id, offset, clips)) in pointer.paint_order().enumerate() {
                 groups.advance(index, instance, &mut draws);
+                let start = draws.len();
                 if let Some(label) = labels.next_if(|label| label.index == index) {
                     draws.push(label.draw());
                 } else if let Some((_, draw)) =
@@ -318,6 +326,9 @@ impl Ui {
                 } else if !instance.replay_commands(id, &mut draws) {
                     next_frame |= instance.bodies[&id]
                         .record_at(offset, clips, instance, &mut state, &mut draws)?;
+                }
+                if let Some(caret) = &mut caret {
+                    caret.record(id, &mut draws, start);
                 }
             }
         } else if previous_peak.is_some() {
@@ -343,6 +354,9 @@ impl Ui {
                     prefix.get_or_insert(index);
                     suffix = 0;
                 }
+                if let Some(caret) = &mut caret {
+                    caret.record(id, &mut draws, start);
+                }
             }
             if pointer.group_events().is_empty() {
                 let edges = FixedEdges {
@@ -358,8 +372,12 @@ impl Ui {
             // Keep one-off layouts allocation-free with respect to the fixed draw cache.
             for (index, (id, offset, clips)) in pointer.paint_order().enumerate() {
                 groups.advance(index, instance, &mut draws);
+                let start = draws.len();
                 next_frame |= instance.bodies[&id]
                     .paint_at(offset, clips, instance, &mut state, &mut draws)?;
+                if let Some(caret) = &mut caret {
+                    caret.record(id, &mut draws, start);
+                }
             }
         }
         groups.advance(usize::MAX, instance, &mut draws);
@@ -379,6 +397,7 @@ impl Ui {
             } else {
                 None
             },
+            caret: caret.and_then(|c| c.bounds),
             has_overlay: draws.len() != content_len,
             draws,
             pointer,

@@ -80,6 +80,7 @@ fn native_shape(cursor: Cursor) -> Option<Shape> {
 }
 
 pub(super) struct Seat {
+    pub(super) text_input: Option<super::text_input::SeatInput>,
     pub(super) keyboard: Option<Keyboard>,
     name: u32,
     pub(super) seat: wl_seat::WlSeat,
@@ -96,6 +97,7 @@ impl Drop for Seat {
     fn drop(&mut self) {
         self.release_pointer();
         self.keyboard.take();
+        self.text_input.take();
         if self.seat.version() >= 5 {
             self.seat.release();
         }
@@ -201,9 +203,13 @@ impl Desktop {
         qh: &QueueHandle<Self>,
     ) {
         if !self.seats.iter().any(|s| s.name == name) {
+            let seat = registry.bind(name, version.min(5), qh, name);
             self.seats.push(Seat {
                 name,
-                seat: registry.bind(name, version.min(5), qh, name),
+                text_input: self.text_inputs.as_ref().map(|manager| {
+                    super::text_input::SeatInput::new(manager.get_text_input(&seat, qh, name), name)
+                }),
+                seat,
                 pointer: None,
                 keyboard: None,
                 position: None,
@@ -235,6 +241,9 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Desktop {
             wl_registry::Event::GlobalRemove { name } => {
                 if let Some(index) = state.seats.iter().position(|s| s.name == name) {
                     let seat = state.seats.swap_remove(index);
+                    if let Some(input) = &seat.text_input {
+                        input.cancel(&mut state.windows);
+                    }
                     if let Some(window) =
                         seat.focus.as_ref().and_then(|id| state.windows.get_mut(id))
                     {

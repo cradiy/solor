@@ -19,6 +19,7 @@ pub struct CpuWindow {
     view: ViewId,
     prepared: Option<(PointerFrame, bool)>,
     animate: bool,
+    caret: Option<(u64, solor::text::CaretBounds)>,
     clear_byte: u8,
     retained: Option<RetainedView>,
     caches: ViewCaches,
@@ -30,6 +31,7 @@ struct RetainedView {
     surface: Surface,
     frame: ViewFrame,
     index: RepairIndex,
+    session: Option<u64>,
 }
 
 impl CpuWindow {
@@ -50,6 +52,7 @@ impl CpuWindow {
             view,
             prepared: None,
             animate: false,
+            caret: None,
             clear_byte: match background {
                 WindowBackground::Opaque => 255,
                 WindowBackground::Transparent => 0,
@@ -61,8 +64,25 @@ impl CpuWindow {
 }
 
 impl WindowHandler<Rgba8> for CpuWindow {
+    fn text_input_session(&self) -> Option<u64> {
+        self.ui
+            .text_input_session(self.view)
+            .expect("mounted window view")
+    }
     fn poll_tasks(&mut self, waker: &std::task::Waker) -> Result<()> {
         self.ui.poll_tasks(waker)
+    }
+
+    fn caret_bounds(&self) -> Option<solor::text::CaretBounds> {
+        let (session, bounds) = self.caret?;
+        (self.text_input_session() == Some(session)).then_some(bounds)
+    }
+
+    fn surrounding_text(&mut self, max_bytes: usize) -> Option<solor::text::SurroundingText<'_>> {
+        self.ui
+            .focused_text_input(self.view)
+            .expect("mounted window view")?
+            .surrounding_text(max_bytes)
     }
 
     fn set_window_resizable(&mut self, resizable: bool) -> Result<()> {
@@ -72,6 +92,9 @@ impl WindowHandler<Rgba8> for CpuWindow {
     fn event(&mut self, event: WindowEvent) -> Result<EventResponse> {
         let mut response = EventResponse::default();
         match event {
+            WindowEvent::TextInput(edit) => {
+                self.ui.dispatch_text_input(self.view, edit)?;
+            }
             WindowEvent::Pointer(input) => {
                 response.window_control = self.ui.dispatch_pointer(self.view, input)?
             }
@@ -142,12 +165,14 @@ impl WindowHandler<Rgba8> for CpuWindow {
         };
         let animate = frame.requests_animation_frame();
         self.prepared = Some((frame.pointer_frame().clone(), animate));
+        let session = self.text_input_session();
         let retained = self.retained.insert(RetainedView {
             logical: size,
             scale,
             surface,
             frame,
             index,
+            session,
         });
         Ok(RasterFrame {
             size: physical,
@@ -161,6 +186,10 @@ impl WindowHandler<Rgba8> for CpuWindow {
         if let Some((pointer, animate)) = self.prepared.take() {
             self.animate = animate;
             self.ui.accept_pointer_frame(pointer)?;
+            self.caret = self
+                .retained
+                .as_ref()
+                .and_then(|r| r.session.zip(r.frame.caret_bounds()));
         }
         Ok(())
     }

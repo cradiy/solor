@@ -34,6 +34,7 @@ use wayland_protocols::wp::{
 
 #[derive(Default)]
 pub(super) struct Desktop {
+    pub(super) text_inputs: Option<super::text_input::Manager>,
     pub(super) activation: Option<Rc<Activation>>,
     pub(super) popup_only: bool,
     pub(super) windows: HashMap<ObjectId, Window>,
@@ -271,6 +272,11 @@ impl EventLoop {
         let qh = queue.handle();
         let mut desktop = Desktop {
             popup_only: guest,
+            text_inputs: if guest {
+                None
+            } else {
+                globals.bind(&qh, 1..=1, ()).ok()
+            },
             activation: if guest {
                 None
             } else {
@@ -415,6 +421,7 @@ impl WindowFactory {
         let viewport = self.viewporter.get_viewport(content, qh, ());
 
         let window = Window {
+            preedit_owner: None,
             role,
             floating,
             maximized: false,
@@ -518,6 +525,14 @@ impl EventLoop {
                 }
                 window.set_visible(visible, &self.connection, &qh);
                 if visible {
+                    if let Some(next) = super::keyboard::repeat_keys(
+                        &mut self.desktop.seats,
+                        id,
+                        window,
+                        Instant::now(),
+                    ) {
+                        deadline = Some(deadline.map_or(next, |d: Instant| d.min(next)));
+                    }
                     let mut next = window.deadline();
                     if next.is_some_and(|time| time <= Instant::now()) {
                         window.dirty = true;
@@ -541,6 +556,7 @@ impl EventLoop {
                 }
             }
             self.desktop.sync_cursors();
+            self.desktop.sync_text_inputs();
             // A newly mapped parent or a callback can make another window ready.
             if self.windows.revisit.get() || !self.windows.pending.borrow().is_empty() {
                 continue;

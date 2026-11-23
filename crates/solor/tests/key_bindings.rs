@@ -70,6 +70,7 @@ fn shortcut_resolves_against_focus_and_uses_the_latest_binding_value() -> Result
             ..Default::default()
         },
         state: KeyState::Down,
+        repeat: false,
     };
     ui.focus_next(view)?;
     assert_eq!(ui.shortcut_for_action(view, &Select(1))?, Some(&shortcut));
@@ -107,6 +108,7 @@ fn reloading_bindings_moves_the_shortcut_and_releases_tab_for_navigation() -> Re
         key: Key::Tab,
         modifiers: Modifiers::default(),
         state: KeyState::Down,
+        repeat: false,
     };
     ui.bind_keys([KeyBinding::new(Key::Tab, Select(1)).in_context("Editor")]);
     ui.dispatch_key(view, &tab)?;
@@ -155,6 +157,7 @@ fn focused_key_handler_can_consume_a_bound_press_before_action_dispatch() -> Res
             key: Key::Enter,
             modifiers: Default::default(),
             state: KeyState::Down,
+            repeat: false,
         }
     )?);
     assert_eq!(*ui.context().read(value)?, 3);
@@ -186,6 +189,7 @@ fn one_handler_resolves_the_same_shortcut_across_nested_and_sibling_regions() ->
         key: Key::Home,
         modifiers: Default::default(),
         state: KeyState::Down,
+        repeat: false,
     };
     for expected in [1, 4, 3, 1] {
         ui.focus_next(view)?;

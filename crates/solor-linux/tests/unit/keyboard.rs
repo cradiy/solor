@@ -3,6 +3,29 @@ use rustix::fs::{MemfdFlags, memfd_create};
 use std::io::Write;
 
 #[test]
+fn held_key_uses_seat_timing_and_stops_on_release() {
+    let start = Instant::now();
+    let at = |ms| start + Duration::from_millis(ms);
+    let mut repeat = Repeat::default();
+    repeat.configure(20, 300, start);
+    repeat.press(30, start);
+    assert_eq!(repeat.due(at(299)), None);
+    assert_eq!(repeat.due(at(300)), Some(30));
+    assert_eq!(repeat.due(at(350)), Some(30));
+    repeat.press(14, at(360));
+    repeat.release(30);
+    assert_eq!(repeat.due(at(400)), None);
+    assert_eq!(repeat.due(at(700)), Some(14));
+    assert_eq!(repeat.due(at(1000)), Some(14));
+    assert_eq!(repeat.due(at(1000)), None);
+    repeat.release(14);
+    assert_eq!(repeat.due(at(1100)), None);
+    repeat.press(30, at(1200));
+    repeat.configure(0, 300, at(1250));
+    assert_eq!(repeat.due(at(1600)), None);
+}
+
+#[test]
 fn shared_keymap_resolves_the_declared_symbol_and_shift_level() {
     let map = br#"xkb_keymap {
         xkb_keycodes "codes" { minimum = 8; maximum = 255; <AC01> = 38; };

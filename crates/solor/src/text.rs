@@ -1,12 +1,21 @@
+mod caret;
+pub use caret::CaretBounds;
+pub(crate) use caret::FrameCaret;
 mod decoration;
+mod edit;
 mod family;
 mod fonts;
+mod input;
+mod surrounding;
 use decoration::Decorations;
 pub(crate) use decoration::Stroke;
+pub use edit::{Preedit, TextInputState, TextSelection};
 use family::FamilyPreferences;
 pub use family::{FontFamily, GenericFontFamily};
 use fonts::sans_query;
 pub use fonts::{FontFace, Fonts};
+pub use input::TextInputEvent;
+pub use surrounding::SurroundingText;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -79,6 +88,8 @@ pub struct Glyph {
     pub end: usize,
     /// Index of the selected face in the paragraph's face table.
     pub face: usize,
+    /// Whether the source cluster advances from right to left.
+    pub rtl: bool,
     /// Glyph index in the selected face.
     pub id: u16,
     /// Horizontal position within the line.
@@ -98,6 +109,8 @@ pub struct Glyph {
 pub struct Line {
     /// Index of the source paragraph. Folding line breaks makes the entire input one paragraph.
     pub source_line: usize,
+    /// Byte offset of the source paragraph in the text.
+    pub source_start: usize,
     /// Top edge in paragraph-local coordinates.
     pub top: f32,
     /// Baseline in paragraph-local coordinates.
@@ -338,11 +351,12 @@ impl Engine {
         &mut self,
         faces: &mut Vec<FontFace>,
         glyphs: impl Iterator<Item = &'a LayoutGlyph>,
+        allow_notdef: bool,
         offset: impl Fn(usize) -> usize,
     ) -> Result<Vec<Glyph>> {
         let mut result = Vec::with_capacity(glyphs.size_hint().1.unwrap_or(0));
         for glyph in glyphs {
-            if glyph.glyph_id == 0 {
+            if glyph.glyph_id == 0 && !allow_notdef {
                 return Err(LayoutError::Node("glyph unavailable"));
             }
             if !glyph.x.is_finite() || !glyph.w.is_finite() {
@@ -380,6 +394,7 @@ impl Engine {
                 start: offset(glyph.start),
                 end: offset(glyph.end),
                 id: glyph.glyph_id,
+                rtl: glyph.level.is_rtl(),
                 x: glyph.x,
                 y: glyph.y,
                 width: glyph.w,
@@ -446,6 +461,7 @@ impl Engine {
         buffer: &Buffer,
         faces: &mut Vec<FontFace>,
         run: &LayoutRun<'_>,
+        allow_notdef: bool,
         source_offset: impl Fn(usize) -> usize,
     ) -> Result<(Vec<Glyph>, f32)> {
         // Glyphs may be in visual order. Shape the corresponding logical slice
@@ -494,7 +510,7 @@ impl Engine {
             .glyphs
             .iter()
             .filter(|g| g.start >= prefix || g.start == g.end);
-        let glyphs = self.glyphs(faces, visible, |i| {
+        let glyphs = self.glyphs(faces, visible, allow_notdef, |i| {
             source_offset((start + i.saturating_sub(prefix)).min(end))
         })?;
         Ok((glyphs, layout.w))
@@ -506,6 +522,7 @@ impl Engine {
         style: TextStyle,
         paragraph: &ParagraphStyle,
         width: Option<Pixels>,
+        allow_notdef: bool,
     ) -> Result<Paragraph> {
         if self.fonts.db().is_empty() {
             return Err(LayoutError::Node("no fonts available"));
@@ -594,15 +611,17 @@ impl Engine {
         let mut content = Size::default();
         let limit = line_clamp.map_or(usize::MAX, NonZeroUsize::get);
         let mut runs = buffer.layout_runs().peekable();
+        let mut source_line = 0;
+        let mut source_start = 0;
         while lines.len() < limit {
             let Some(run) = runs.next() else { break };
             let source_offset = |i: usize| collapsed.as_ref().map_or(i, |c| c.offsets[i]);
             let (glyphs, line_width) =
                 if mark_overflow && lines.len() + 1 == limit && runs.peek().is_some() {
-                    self.marked_run(&buffer, &mut faces, &run, source_offset)?
+                    self.marked_run(&buffer, &mut faces, &run, allow_notdef, source_offset)?
                 } else {
                     (
-                        self.glyphs(&mut faces, run.glyphs.iter(), source_offset)?,
+                        self.glyphs(&mut faces, run.glyphs.iter(), allow_notdef, source_offset)?,
                         run.line_w,
                     )
                 };
@@ -610,7 +629,13 @@ impl Engine {
             content.height = content
                 .height
                 .max(extent((run.line_top + run.line_height).max(run.line_y))?);
+            while source_line < run.line_i {
+                let previous = &buffer.lines[source_line];
+                source_start += previous.text().len() + previous.ending().as_str().len();
+                source_line += 1;
+            }
             lines.push(Line {
+                source_start,
                 source_line: run.line_i,
                 top: run.line_top,
                 baseline: run.line_y,
@@ -638,6 +663,7 @@ struct Cached {
 
 /// Retained text leaf with a bounded paragraph cache.
 pub struct Text {
+    pub(crate) input: Option<crate::Signal<TextInputState>>,
     engine: SharedEngine,
     content: SharedString,
     style: TextStyle,
@@ -658,6 +684,7 @@ impl Text {
         style.validate()?;
         Self::validate_content(content.as_ref())?;
         Ok(Self {
+            input: None,
             engine,
             content: content.into(),
             style,
@@ -755,7 +782,13 @@ impl Text {
             engine.counts.hits += 1;
             return Ok(Rc::clone(&cached.paragraph));
         }
-        let paragraph = Rc::new(engine.shape(&self.content, self.style, &self.paragraph, width)?);
+        let paragraph = Rc::new(engine.shape(
+            &self.content,
+            self.style,
+            &self.paragraph,
+            width,
+            self.input.is_some(),
+        )?);
         if self.cache_enabled {
             if cache.len() == CACHE_SLOTS {
                 cache.pop_front();

@@ -11,6 +11,7 @@ mod pointer;
 mod presentation;
 mod role;
 mod stacking;
+mod text_input;
 mod wake;
 pub use application::WaylandApplication;
 use application::{Desktop, WindowLife};
@@ -54,6 +55,7 @@ pub struct Wayland {
 }
 
 struct Window {
+    preedit_owner: Option<(u32, u64)>,
     registration: Option<parent::Registration>,
     role: Role,
     floating: Option<floating::FloatingPanel>,

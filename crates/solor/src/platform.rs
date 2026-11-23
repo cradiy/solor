@@ -235,6 +235,8 @@ pub enum WindowEvent {
     Pointer(PointerInput),
     /// A layout-resolved key press or release for this window.
     Key(crate::keyboard::KeyEvent),
+    /// A text edit from the active platform input method.
+    TextInput(crate::text::TextInputEvent),
     /// A requested frame opportunity, timestamped at dispatch from a monotonic host clock.
     /// Timestamps in one window share an origin and can be subtracted to measure cadence.
     FrameReady(std::time::Duration),
@@ -270,6 +272,22 @@ pub struct EventResponse {
 
 /// Application side of a single window. All calls are serialized on its event thread.
 pub trait WindowHandler<T: Presentation> {
+    /// Identifies the current text-input focus within this window. The token changes
+    /// when a field regains focus so queued edits can be matched to their session.
+    fn text_input_session(&self) -> Option<u64> {
+        None
+    }
+
+    /// Returns the focused insertion point in logical window coordinates.
+    fn caret_bounds(&self) -> Option<crate::text::CaretBounds> {
+        None
+    }
+
+    /// Queries the focused editor for committed context within the host's byte budget.
+    fn surrounding_text(&mut self, _max_bytes: usize) -> Option<crate::text::SurroundingText<'_>> {
+        None
+    }
+
     /// Informs the view whether native resize controls are available before the first frame.
     fn set_window_resizable(&mut self, _resizable: bool) -> Result<()> {
         Ok(())

@@ -172,14 +172,14 @@ impl Delivery<'_> {
         let frame = self.instance.pointer.frame.as_ref()?;
         let Some((leaf, recipients)) = frame.hit(sample.position) else {
             if button == PointerButton::Primary {
-                self.instance.set_focus(None, false);
+                self.instance.set_focus(None, false, self.state);
             }
             return None;
         };
         let body = self.instance.bodies.get(&leaf)?;
         if button == PointerButton::Primary && body.visible {
             // A live visible leaf retains its mounted ancestors, all of which are visible.
-            self.instance.set_focus(recipients.focus, false);
+            self.instance.set_focus(recipients.focus, false, self.state);
         }
         recipients.pointer
     }

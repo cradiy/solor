@@ -211,6 +211,7 @@ type CancelHandler = Box<dyn Fn(PointerId, &mut Context<'_>) -> Result<()>>;
 
 #[derive(Default)]
 pub(crate) struct Handlers {
+    pub(crate) text_input: Option<crate::Signal<crate::text::TextInputState>>,
     pub(crate) tab_stop: Option<crate::style::Property<bool>>,
     pub(crate) tab_index: Option<crate::style::Property<i32>>,
     pub(crate) tab_group: Option<crate::style::Property<i32>>,

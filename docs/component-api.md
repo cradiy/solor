@@ -216,7 +216,9 @@ and can be overridden with `Fonts::set_locale`.
 
 Solor ships without a runtime font. Applications that need predictable coverage
 can supply their own fonts. Text defaults to 16 logical pixels with a line height
-of 24 and accepts up to 4096 UTF-8 bytes. A missing glyph produces a layout error.
+of 24 and accepts up to 4096 UTF-8 bytes. A missing glyph produces a layout error
+for ordinary labels. `text(input)` accepts a `Signal<TextInputState>`, displays
+the current composition, and uses the font's missing-glyph symbol when needed.
 
 The inner container owns the padded hit area. Its child can be any element
 or composition. Moving the handler to another container changes which area

@@ -1,12 +1,13 @@
 use std::{
     fs::File,
     os::{fd::OwnedFd, unix::fs::FileExt},
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result, ensure};
 use solor::{
     keyboard::{Key, KeyEvent, KeyState, Modifiers, NamedKey},
-    platform::WindowEvent,
+    platform::{PlatformWindow, WindowEvent},
 };
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum, protocol::wl_keyboard};
 use xkbcommon::xkb::{self, Keysym};
@@ -18,6 +19,7 @@ pub(super) struct Keyboard {
     device: wl_keyboard::WlKeyboard,
     layout: Option<xkb::State>,
     focus: Option<ObjectId>,
+    repeat: Repeat,
     pub(super) modifiers: Modifiers,
 }
 
@@ -27,18 +29,107 @@ impl Keyboard {
             device,
             layout: None,
             focus: None,
+            repeat: Repeat::default(),
             modifiers: Modifiers::default(),
         }
     }
     pub(super) fn leave(&mut self, id: &ObjectId) {
         if self.focus.as_ref() == Some(id) {
             self.focus = None;
+            self.repeat.held = None;
             self.modifiers = Modifiers::default();
             if let Some(layout) = &mut self.layout {
                 layout.update_mask(0, 0, 0, 0, 0, 0);
             }
         }
     }
+}
+
+struct Repeat {
+    delay: Duration,
+    interval: Option<Duration>,
+    held: Option<(u32, Instant)>,
+}
+
+impl Default for Repeat {
+    fn default() -> Self {
+        // Seats older than version 4 do not advertise repeat settings.
+        Self {
+            delay: Duration::from_millis(500),
+            interval: Some(Duration::from_millis(40)),
+            held: None,
+        }
+    }
+}
+
+impl Repeat {
+    fn configure(&mut self, rate: i32, delay: i32, now: Instant) {
+        self.interval =
+            (rate > 0).then(|| Duration::from_nanos((1_000_000_000 / rate as u64).max(1)));
+        self.delay = Duration::from_millis(delay.max(0) as u64);
+        if let Some((code, _)) = self.held {
+            self.press(code, now);
+        }
+    }
+
+    fn press(&mut self, code: u32, now: Instant) {
+        self.held = self.interval.map(|_| (code, now + self.delay));
+    }
+
+    fn release(&mut self, code: u32) {
+        if self.held.is_some_and(|(held, _)| held == code) {
+            self.held = None;
+        }
+    }
+
+    fn due(&mut self, now: Instant) -> Option<u32> {
+        let (code, deadline) = self.held.as_mut()?;
+        if now < *deadline {
+            return None;
+        }
+        let interval = self.interval?;
+        let next = *deadline + interval;
+        *deadline = if next > now { next } else { now + interval };
+        Some(*code)
+    }
+}
+
+pub(super) fn repeat_keys(
+    seats: &mut [super::pointer::Seat],
+    surface: &ObjectId,
+    window: &mut super::Window,
+    now: Instant,
+) -> Option<Instant> {
+    let mut next = None;
+    for keyboard in seats.iter_mut().filter_map(|s| s.keyboard.as_mut()) {
+        if keyboard.repeat.held.is_none() || keyboard.focus.as_ref() != Some(surface) {
+            continue;
+        }
+        if window.mapping != super::Mapping::Mapped
+            || window.life.blocked()
+            || !window.life.is_open()
+        {
+            keyboard.repeat.held = None;
+            continue;
+        }
+        if let Some(code) = keyboard.repeat.due(now)
+            && let Some(key) = keyboard
+                .layout
+                .as_ref()
+                .and_then(|layout| key_for_code(layout, code))
+        {
+            window.event(WindowEvent::Key(KeyEvent {
+                key,
+                state: KeyState::Down,
+                repeat: true,
+                modifiers: keyboard.modifiers,
+            }));
+        }
+        if let Some((_, deadline)) = keyboard.repeat.held {
+            next = Some(next.map_or(deadline, |old: Instant| old.min(deadline)));
+        }
+    }
+    next
 }
 
 impl Drop for Keyboard {
@@ -133,6 +224,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
         };
         match event {
             wl_keyboard::Event::Keymap { format, fd, size } => {
+                keyboard.repeat.held = None;
                 keyboard.layout = match format {
                     WEnum::Value(wl_keyboard::KeymapFormat::XkbV1) => read_layout(fd, size)
                         .inspect_err(|err| {
@@ -144,7 +236,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
                 keyboard.modifiers = Modifiers::default();
             }
             wl_keyboard::Event::Enter { surface, .. } => {
+                keyboard.repeat.held = None;
                 keyboard.focus = Some(surface.id());
+            }
+            wl_keyboard::Event::RepeatInfo { rate, delay } => {
+                keyboard.repeat.configure(rate, delay, Instant::now());
             }
             wl_keyboard::Event::Leave { surface, .. } => keyboard.leave(&surface.id()),
             wl_keyboard::Event::Modifiers {
@@ -172,6 +268,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
                 state: WEnum::Value(state),
                 ..
             } => {
+                if state == wl_keyboard::KeyState::Released {
+                    keyboard.repeat.release(key);
+                }
                 let Some(window) = keyboard
                     .focus
                     .as_ref()
@@ -190,12 +289,19 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
                 let Some(layout) = &keyboard.layout else {
                     return;
                 };
+                if state == KeyState::Down
+                    && let Some(code) = key.checked_add(8)
+                    && layout.get_keymap().key_repeats(xkb::Keycode::new(code))
+                {
+                    keyboard.repeat.press(key, Instant::now());
+                }
                 let Some(key) = key_for_code(layout, key) else {
                     return;
                 };
                 let event = KeyEvent {
                     state,
                     key,
+                    repeat: false,
                     modifiers: keyboard.modifiers,
                 };
                 let _input = desktop

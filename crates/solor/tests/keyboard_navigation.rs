@@ -10,6 +10,7 @@ use solor::{
 fn tab(state: KeyState, shift: bool) -> KeyEvent {
     KeyEvent {
         state,
+        repeat: false,
         key: NamedKey::Tab.into(),
         modifiers: Modifiers {
             shift,
