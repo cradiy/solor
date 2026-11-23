@@ -822,13 +822,7 @@ impl MountedNode {
             shadows.record(false, size, &clips.inherited, cx.commands);
         }
         if let Some(paint) = &self.background {
-            let mut fill = match &paint.source {
-                Background::Fixed(fill) => fill.clone(),
-                Background::Bound(signal) => cx.read(*signal)?.clone(),
-                Background::Color(signal) => Fill::from(*cx.read(*signal)?),
-                Background::Image(signal) => Fill::from(cx.read(*signal)?.clone()),
-                Background::CustomImage(signal) => Fill::from(cx.read(*signal)?.clone()),
-            };
+            let mut fill = paint.source.sample(&cx)?;
             if let Fill::Image(image) = &mut fill {
                 image.placement = paint.placement;
             }

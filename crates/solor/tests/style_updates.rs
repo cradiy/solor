@@ -472,6 +472,57 @@ fn gradient_updates_share_all_stops_and_only_queue_the_live_background() -> Resu
 }
 
 #[test]
+fn typed_fill_signals_repaint_the_subscribed_box_without_layout() -> Result<()> {
+    fn check<T>(first: T, next: T) -> Result<()>
+    where
+        T: Clone + PartialEq + Into<Fill> + 'static,
+        solor::Signal<T>: Into<solor::style::Background>,
+    {
+        let mut ui = Ui::new();
+        let signal = ui.context().signal(first);
+        let view = ui.mount(component(|_| {
+            div()
+                .child(div().size(px(12.)).bg(signal))
+                .child(div().size(px(12.)).bg(ACCENT))
+        }))?;
+        let size = Size {
+            width: px(32.),
+            height: px(32.),
+        };
+        ui.layout(view, size)?;
+        let target = ui.children(view, ui.root(view)?)?.next().unwrap();
+        ui.record_frame(view)?;
+        ui.context().set(signal, next.clone())?;
+        ui.flush()?;
+        let mut dirty = Vec::new();
+        ui.collect_repaints(view, &mut dirty)?;
+        assert_eq!(dirty, [target]);
+        assert_eq!(ui.layout(view, size)?, 0);
+        let mut commands = Vec::new();
+        ui.paint(view, target, &mut commands)?;
+        let [Draw::Fill { fill, .. }] = commands.as_slice() else {
+            panic!("expected a single background fill")
+        };
+        assert_eq!(fill, &next.into());
+        Ok(())
+    }
+
+    let gradient = linear_gradient(45., [ColorStop::new(0., INK), ColorStop::new(1., ACCENT)])?;
+    check(
+        gradient.clone(),
+        gradient.gradient_kind(solor::GradientKind::Radial),
+    )?;
+    check(
+        solor::checkerboard(INK, px(2.))?,
+        solor::checkerboard(ACCENT, px(5.))?,
+    )?;
+    check(
+        solor::diagonal_stripes(INK, px(1.), px(3.))?,
+        solor::diagonal_stripes(ACCENT, px(2.), px(4.))?,
+    )
+}
+
+#[test]
 fn gradient_edges_validation_and_premultiplied_interpolation() -> Result<()> {
     let clear = Rgba::new(255, 0, 0, 0);
     let blue = Rgba::new(0, 0, 255, 255);

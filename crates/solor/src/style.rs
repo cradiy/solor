@@ -27,44 +27,58 @@ pub struct BorderPaint {
     pub radii: Corners<Pixels>,
 }
 
-/// Paint source used when recording a background.
-#[derive(Clone, Debug)]
-pub enum Background {
-    /// Paint stored directly on the declaration.
-    Fixed(Fill),
-    /// Paint read from the signal at recording time.
-    Bound(Signal<Fill>),
-    /// Solid color sampled during paint.
-    Color(Signal<Rgba>),
-    /// Shared bitmap sampled during paint.
-    Image(Signal<crate::ImageAsset>),
-    /// Application-rendered image snapshot sampled during paint.
-    CustomImage(Signal<crate::CustomImage>),
+macro_rules! background_sources {
+    ($($(#[$doc:meta])* $variant:ident($ty:ty)),+ $(,)?) => {
+        /// Paint source used when recording a background.
+        #[derive(Clone, Debug)]
+        pub enum Background {
+            /// Paint stored directly on the declaration.
+            Fixed(Fill),
+            $($(#[$doc])* $variant(Signal<$ty>)),+
+        }
+
+        $(impl From<Signal<$ty>> for Background {
+            fn from(signal: Signal<$ty>) -> Self {
+                Self::$variant(signal)
+            }
+        })+
+
+        impl Background {
+            pub(crate) fn sample(&self, cx: &crate::PaintContext<'_>) -> crate::Result<Fill> {
+                fn read<T: Clone + Into<Fill> + 'static>(
+                    cx: &crate::PaintContext<'_>, signal: Signal<T>,
+                ) -> crate::Result<Fill> {
+                    Ok(cx.read(signal)?.clone().into())
+                }
+                match self {
+                    Self::Fixed(fill) => Ok(fill.clone()),
+                    $(Self::$variant(signal) => read(cx, *signal)),+
+                }
+            }
+        }
+    };
 }
+
+background_sources! {
+    /// Fill sampled during paint.
+    Bound(Fill),
+    /// Solid color sampled during paint.
+    Color(Rgba),
+    /// Gradient sampled during paint.
+    Gradient(crate::Gradient),
+    /// Checkerboard sampled during paint.
+    Checkerboard(crate::Checkerboard),
+    /// Diagonal stripes sampled during paint.
+    DiagonalStripes(crate::DiagonalStripes),
+    /// Shared bitmap sampled during paint.
+    Image(crate::ImageAsset),
+    /// Application-rendered image sampled during paint.
+    CustomImage(crate::CustomImage),
+}
+
 impl<T: Into<Fill>> From<T> for Background {
     fn from(fill: T) -> Self {
         Self::Fixed(fill.into())
-    }
-}
-impl From<Signal<crate::ImageAsset>> for Background {
-    fn from(signal: Signal<crate::ImageAsset>) -> Self {
-        Self::Image(signal)
-    }
-}
-impl From<Signal<crate::CustomImage>> for Background {
-    fn from(signal: Signal<crate::CustomImage>) -> Self {
-        Self::CustomImage(signal)
-    }
-}
-impl From<Signal<Fill>> for Background {
-    fn from(signal: Signal<Fill>) -> Self {
-        Self::Bound(signal)
-    }
-}
-
-impl From<Signal<Rgba>> for Background {
-    fn from(signal: Signal<Rgba>) -> Self {
-        Self::Color(signal)
     }
 }
 

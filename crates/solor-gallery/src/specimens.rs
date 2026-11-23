@@ -1,6 +1,6 @@
 use crate::{CITRON, INK, MUTED, Selection, control, details, label, page, stage};
 use solor::{
-    Div, Fill, Gradient, GradientKind, Rgba, Styled, div, px, rgb,
+    Div, Fill, Gradient, GradientKind, Rgba, Signal, Styled, div, px, rgb,
     style::{Distribution, FontFeature},
 };
 
@@ -96,18 +96,10 @@ pub(super) const STOPS: [(f32, Rgba, &str); 4] = [
 pub(super) fn paint(
     geometry: Selection<3>,
     overlay: Selection<3>,
-    ramp: &Gradient,
+    ramp: Signal<Gradient>,
     patterns: &[Fill; 2],
 ) -> Div {
-    let mut specimen = div().items_stretch();
-    for (active, kind) in geometry.flags().into_iter().zip([
-        GradientKind::Linear,
-        GradientKind::Radial,
-        GradientKind::Diamond,
-    ]) {
-        let fill = ramp.clone().gradient_kind(kind);
-        specimen = specimen.child_when(active, move || stage(fill.clone()));
-    }
+    let mut specimen = stage(ramp);
     for (active, fill) in overlay
         .flags()
         .into_iter()
@@ -135,7 +127,15 @@ pub(super) fn paint(
             .gap(px(6.0))
             .child(control(
                 "Gradient",
-                geometry.buttons(["Linear", "Radial", "Diamond"]),
+                geometry.buttons_with(["Linear", "Radial", "Diamond"], move |i, cx| {
+                    let kind = [
+                        GradientKind::Linear,
+                        GradientKind::Radial,
+                        GradientKind::Diamond,
+                    ][i];
+                    let next = cx.read(ramp)?.clone().gradient_kind(kind);
+                    cx.set(ramp, next)
+                }),
             ))
             .child(control(
                 "Overlay",

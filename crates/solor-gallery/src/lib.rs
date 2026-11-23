@@ -92,6 +92,14 @@ impl<const N: usize> Selection<N> {
     }
 
     fn buttons(self, names: [&'static str; N]) -> Div {
+        self.buttons_with(names, |_, _| Ok(()))
+    }
+
+    fn buttons_with(
+        self,
+        names: [&'static str; N],
+        changed: impl Fn(usize, &mut Context<'_>) -> Result<()> + Clone + 'static,
+    ) -> Div {
         div()
             .flex_row()
             .gap(px(3.0))
@@ -105,7 +113,14 @@ impl<const N: usize> Selection<N> {
                     .bg(choice.background)
                     .text_color(choice.ink)
                     .child(label(name, 13.0, 18.0));
-                activation_button(button, None, move |cx| self.select(i, cx))
+                let changed = changed.clone();
+                activation_button(button, None, move |cx| {
+                    if !*cx.read(choice.selected)? {
+                        self.select(i, cx)?;
+                        changed(i, cx)?;
+                    }
+                    Ok(())
+                })
             }))
     }
 }
@@ -208,6 +223,7 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
             let pages = Selection::new(cx, 2, true);
             let spacing = Selection::new(cx, 1, false);
             let geometry = Selection::new(cx, 0, false);
+            let ramp = cx.signal(ramp);
             let overlay = Selection::new(cx, 0, false);
             let alignment = Selection::new(cx, 1, false);
             let header = div()
@@ -264,7 +280,7 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
                     specimens::typography(spacing)
                 })
                 .child_when(pages.choices[3].selected, move || {
-                    specimens::paint(geometry, overlay, &ramp, &patterns)
+                    specimens::paint(geometry, overlay, ramp, &patterns)
                 })
                 .child_when(pages.choices[4].selected, move || {
                     specimens::layout(alignment)
@@ -293,13 +309,13 @@ fn control(caption: &'static str, buttons: Div) -> Div {
         .child(buttons)
 }
 
-fn stage(fill: impl Into<Fill>) -> Div {
+fn stage(fill: impl Into<solor::style::Background>) -> Div {
     div()
         .items_stretch()
         .justify_center()
         .h(px(208.0))
         .rounded(px(16.0))
-        .bg(fill.into())
+        .bg(fill)
         .overflow_hidden()
 }
 
