@@ -2,7 +2,7 @@
 mod chart;
 use chart::{Inspection, chart};
 
-use std::{cell::Cell, time::Duration};
+use std::time::Duration;
 
 use anyhow::Result;
 use solor::{
@@ -16,6 +16,12 @@ use solor::{
 use crate::{activation_button, label};
 
 const WATCHLIST: &str = "MarketWatchlist";
+const PRICE_CHART: &str = "MarketPriceChart";
+
+enum ZoomChart {
+    In,
+    Out,
+}
 
 enum SelectQuote {
     Previous,
@@ -34,6 +40,10 @@ pub(super) fn bind_keys(ui: &mut solor::Ui) {
         ]
         .map(|(key, action)| KeyBinding::new(key, action).in_context(WATCHLIST)),
     );
+    ui.bind_keys([
+        KeyBinding::new(Key::ArrowUp, ZoomChart::In).in_context(PRICE_CHART),
+        KeyBinding::new(Key::ArrowDown, ZoomChart::Out).in_context(PRICE_CHART),
+    ]);
 }
 
 const SYMBOLS: [(&str, &str, i32); 6] = [
@@ -45,6 +55,7 @@ const SYMBOLS: [(&str, &str, i32); 6] = [
     ("QBFG", "Qubit Forge", 1798),
 ];
 const PERIODS: usize = 96;
+const MIN_VISIBLE: usize = 12;
 const TICKS: usize = 32;
 const AVERAGE_PERIODS: usize = 16;
 const AVERAGE_INK: solor::Rgba = rgb(0xf7b64d);
@@ -373,7 +384,19 @@ pub(super) fn market() -> impl IntoElement {
         };
         let visible = cx.signal(PERIODS);
         let sample_count = cx.signal(SharedString::from(format!("{PERIODS} samples")));
-        let zoom = Cell::new(PERIODS as f32);
+        let zoom = cx.signal(PERIODS as f32);
+        let set_zoom = move |next: f32, cx: &mut Context<'_>| -> Result<()> {
+            let next = next.clamp(MIN_VISIBLE as f32, PERIODS as f32);
+            cx.set(zoom, next)?;
+            let count = next.round() as usize;
+            if count != *cx.read(visible)? {
+                cx.set(visible, count)?;
+                let tape = feed[*cx.read(quotes.selected)?];
+                inspection.locate(cx, count, tape)?;
+                cx.set(sample_count, format!("{count} samples").into())?;
+            }
+            Ok(())
+        };
         let detail = div()
             .flex_1()
             .items_stretch()
@@ -446,29 +469,30 @@ pub(super) fn market() -> impl IntoElement {
                     .items_stretch()
                     .gap(px(6.0))
                     .on_scroll(move |event, cx| {
-                        let current = zoom.get();
+                        let current = *cx.read(zoom)?;
                         let pixels_per_sample = 2.0;
                         let used_y = event.delta.y.get().clamp(
-                            (12.0 - current) * pixels_per_sample,
+                            (MIN_VISIBLE as f32 - current) * pixels_per_sample,
                             (PERIODS as f32 - current) * pixels_per_sample,
                         );
                         cx.propagate_remaining(ScrollDelta {
                             x: event.delta.x,
                             y: event.delta.y - px(used_y),
                         })?;
-                        let next = current + used_y / pixels_per_sample;
-                        zoom.set(next);
-                        let count = next.round() as usize;
-                        if count != *cx.read(visible)? {
-                            cx.set(visible, count)?;
-                            let tape = feed[*cx.read(quotes.selected)?];
-                            inspection.locate(cx, count, tape)?;
-                            cx.set(sample_count, format!("{count} samples").into())?;
-                        }
-                        Ok(())
+                        set_zoom(current + used_y / pixels_per_sample, cx)
                     })
                     .child(
                         chart(feed, quotes.selected, visible, inspection)
+                            .key_context(PRICE_CHART)
+                            .focus_indicator(crate::viewport_focus_indicator)
+                            .on_action(move |action: &ZoomChart, cx| {
+                                let current = *cx.read(zoom)?;
+                                let next = match action {
+                                    ZoomChart::In => current / 2.0,
+                                    ZoomChart::Out => current * 2.0,
+                                };
+                                set_zoom(next, cx)
+                            })
                             .flex_1()
                             .on_frame_when(running, live_updates(feed, quotes, fps, timing)),
                     )
@@ -491,7 +515,7 @@ pub(super) fn market() -> impl IntoElement {
                             .flex_row()
                             .gap(px(12.0))
                             .child(text(sample_count).text_size(px(11.0)).line_height(px(18.0)))
-                            .child(label("Scroll to zoom", 11.0, 18.0)),
+                            .child(label("Scroll or Up/Down to zoom", 11.0, 18.0)),
                     )
                     .child(
                         text(inspection.readout)

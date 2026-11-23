@@ -669,6 +669,35 @@ fn market_zoom_passes_unused_scroll_to_its_container() -> Result<()> {
                 .any(|s| s.as_str() == labels)
         );
     }
+    ui.dispatch_pointer(view, PointerInput::Down(point, PointerButton::Primary))?;
+    ui.dispatch_pointer(view, PointerInput::Up(point, PointerButton::Primary))?;
+    let zoom = |ui: &mut solor::Ui, key, count: usize| -> Result<()> {
+        assert!(ui.dispatch_key(
+            view,
+            &KeyEvent {
+                key,
+                state: KeyState::Down,
+                modifiers: Default::default(),
+            }
+        )?);
+        let label = format!("{count} samples");
+        assert!(submit_labels(ui, view)?.iter().any(|s| s.as_str() == label));
+        let frame = ui.record_frame(view)?;
+        let lengths: Vec<_> = frame
+            .draws()
+            .iter()
+            .filter_map(|draw| match draw {
+                solor::Draw::Polyline { points, .. } => Some(points.len()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(lengths, [count, count]);
+        Ok(())
+    };
+    zoom(&mut ui, Key::ArrowDown, 24)?;
+    ui.dispatch_pointer(view, PointerInput::Scroll(point, delta(0.0, -1.0)))?;
+    zoom(&mut ui, Key::ArrowDown, 47)?;
+    zoom(&mut ui, Key::ArrowUp, 24)?;
     Ok(())
 }
 
