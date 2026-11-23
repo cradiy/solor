@@ -72,6 +72,7 @@ impl ImageAsset {
                 height: (bounds.bottom - bounds.top) as u32,
             },
             placement: Placement::centered(ObjectFit::Cover),
+            sampling: ImageSampling::default(),
         })
     }
 
@@ -94,6 +95,16 @@ impl PartialEq for ImageAsset {
     }
 }
 
+/// How a bitmap is sampled between source pixel centers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ImageSampling {
+    /// Interpolate the four neighboring pixels in premultiplied RGBA.
+    #[default]
+    Linear,
+    /// Use the nearest source pixel, preserving sharp texel boundaries.
+    Nearest,
+}
+
 /// A shared bitmap or source region with its fit and alignment in the painted box.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImageFill {
@@ -101,6 +112,7 @@ pub struct ImageFill {
     origin: [u32; 2],
     size: DeviceSize,
     pub(crate) placement: Placement,
+    sampling: ImageSampling,
 }
 
 impl ImageFill {
@@ -110,7 +122,17 @@ impl ImageFill {
             origin: [0, 0],
             asset,
             placement,
+            sampling: ImageSampling::default(),
         }
+    }
+    /// Sets the sampling method for this fill.
+    pub fn with_sampling(mut self, sampling: ImageSampling) -> Self {
+        self.sampling = sampling;
+        self
+    }
+    /// Returns the sampling method used when drawing this fill.
+    pub fn sampling(&self) -> ImageSampling {
+        self.sampling
     }
     /// Returns the shared source pixels.
     pub fn asset(&self) -> &ImageAsset {

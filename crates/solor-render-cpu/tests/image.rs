@@ -1,7 +1,7 @@
 //! Bitmap sizing, sampling and retained backgrounds on an offscreen CPU surface.
 use anyhow::Result;
 use solor::{
-    ImageAsset, Styled, Ui, component, div, image,
+    ImageAsset, ImageSampling, Styled, Ui, component, div, image,
     layout::Size,
     percent, px,
     raster::{Clip, RasterScale},
@@ -202,6 +202,44 @@ fn bilinear_sampling_keeps_transparent_rgb_out_of_blended_edges() -> Result<()> 
         [0, 0, 255, 255],
     ];
     assert_eq!(surface.rgba.as_chunks::<4>().0, expected.repeat(2));
+    Ok(())
+}
+
+#[test]
+fn switching_to_nearest_preserves_atlas_texels_at_fractional_scale() -> Result<()> {
+    let red = [255, 0, 0, 255];
+    let green = [0, 255, 0, 255];
+    let blue = [0, 0, 255, 255];
+    let white = [255; 4];
+    let pixels = [white, red, green, white, blue, white];
+    let atlas = ImageAsset::from_rgba8(3, 2, pixels.as_flattened().to_vec())?;
+    let tile = atlas.region(Clip {
+        left: 1,
+        top: 0,
+        right: 3,
+        bottom: 2,
+    })?;
+    let mut ui = Ui::new();
+    let source = ui.context().signal(tile.clone());
+    let view = ui.mount(component(move |_| image(source).size(px(4.))))?;
+    let extent = size(4., 4.);
+    ui.layout(view, extent)?;
+    let scale = RasterScale(1.5);
+    let target = scale.buffer_size(extent)?;
+    let first = ui.record_frame(view)?;
+    ui.context()
+        .set(source, tile.with_sampling(ImageSampling::Nearest))?;
+    ui.flush()?;
+    assert_eq!(ui.layout(view, extent)?, 0);
+    let sharp = Surface::draw_view(&ui.record_frame(view)?, target, scale)?;
+    let colors = [[red, green], [blue, white]];
+    for y in 0..6 {
+        for x in 0..6 {
+            assert_eq!(pixel(&sharp, x, y), colors[y / 3][x / 3]);
+        }
+    }
+    let smooth = Surface::draw_view(&first, target, scale)?;
+    assert_eq!(pixel(&smooth, 2, 0), [170, 85, 0, 255]);
     Ok(())
 }
 

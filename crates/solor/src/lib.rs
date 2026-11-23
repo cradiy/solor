@@ -72,7 +72,9 @@ pub use crate::{
 mod bitmap;
 #[cfg(feature = "image")]
 pub use bitmap::ImageFile;
-pub use bitmap::{CustomImage, ImageAsset, ImageCache, ImageFill, ImageRegion, ImageRenderer};
+pub use bitmap::{
+    CustomImage, ImageAsset, ImageCache, ImageFill, ImageRegion, ImageRenderer, ImageSampling,
+};
 pub use element::image::{ImageSource, image};
 pub use element::svg::{Svg, SvgAsset, SvgSource, svg};
 pub use element::{

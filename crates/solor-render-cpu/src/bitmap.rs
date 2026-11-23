@@ -1,6 +1,6 @@
 //! Sampling in the fitted image viewport, independent of the current damage rectangle.
 use solor::{
-    ImageFill, Pixels,
+    ImageFill, ImageSampling, Pixels,
     layout::Size,
     raster::{Clip, RasterScale},
 };
@@ -42,8 +42,13 @@ impl Axis {
         ((hi.min(self.end) - lo.max(self.start)) / (hi - lo)).clamp(0.0, 1.0)
     }
 
-    fn coordinate(&self, center: f64) -> (usize, usize, u32) {
-        let v = ((center - self.start) * self.density - 0.5).clamp(0.0, (self.texels - 1) as f64);
+    fn coordinate(&self, center: f64, sampling: ImageSampling) -> (usize, usize, u32) {
+        let source = (center - self.start) * self.density;
+        if sampling == ImageSampling::Nearest {
+            let i = (source as usize).min(self.texels - 1);
+            return (i, i, 0);
+        }
+        let v = (source - 0.5).clamp(0.0, (self.texels - 1) as f64);
         let i = v as usize;
         (
             i,
@@ -68,6 +73,7 @@ enum RowSampling {
 
 pub(super) struct ImageSampler<'a> {
     rows: RowSampling,
+    sampling: ImageSampling,
     pixels: &'a [[u8; 4]],
     stride: usize,
     x: Axis,
@@ -83,6 +89,7 @@ impl<'a> ImageSampler<'a> {
         let first = source.top as usize * stride + source.left as usize;
         Ok(Self {
             rows: RowSampling::Scalar,
+            sampling: fill.sampling(),
             pixels: &fill.asset().pixels()[first..],
             stride,
             x: Axis::new(
@@ -134,7 +141,7 @@ impl<'a> ImageSampler<'a> {
         let columns = (clip.left..clip.right)
             .map(|x| {
                 let center = (x as f64 + 0.5 - origin[0]) / scale.0;
-                let (left, right, weight) = self.x.coordinate(center);
+                let (left, right, weight) = self.x.coordinate(center, self.sampling);
                 Column {
                     left,
                     right,
@@ -175,7 +182,7 @@ impl<'a> ImageSampler<'a> {
                 if y_coverage == 0.0 {
                     return;
                 }
-                let (top, bottom, wy) = self.y.coordinate(center_y);
+                let (top, bottom, wy) = self.y.coordinate(center_y, self.sampling);
                 let (upper, lower) = self.source_rows(top, bottom);
                 for (pixel, column) in dst.iter_mut().zip(&columns[(x - first) as usize..]) {
                     let coverage = (255.0 * column.coverage * y_coverage).round() as u8;
@@ -223,8 +230,8 @@ impl<'a> ImageSampler<'a> {
         if coverage == 0 {
             return;
         }
-        let (left, right, wx) = self.x.coordinate(x);
-        let (top, bottom, wy) = self.y.coordinate(y);
+        let (left, right, wx) = self.x.coordinate(x, self.sampling);
+        let (top, bottom, wy) = self.y.coordinate(y, self.sampling);
         let (upper, lower) = self.source_rows(top, bottom);
         let src = bilinear(upper, lower, left, right, wx, wy);
         blend_sample(dst, src, coverage);
