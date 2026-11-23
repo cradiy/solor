@@ -102,6 +102,21 @@ fn controls_change_the_specimen_and_choices_survive_navigation() -> Result<()> {
     assert_eq!(even_odd[left.clone()], nonzero[left.clone()]);
     click(&mut window, 167., 154.)?;
     assert_ne!(nonzero[left.clone()], specimen(&mut window)?[left]);
+    click(&mut window, 360., 225.)?;
+    let radial_map = specimen(&mut window)?;
+    click(&mut window, 104., 154.)?;
+    let linear_map = specimen(&mut window)?;
+    let sky = |x: usize| ((304 - 240) * 800 + x) * 4;
+    for x in [100, 472] {
+        let pixel = sky(x)..sky(x) + 4;
+        assert_ne!(linear_map[pixel.clone()], radial_map[pixel]);
+    }
+    let ridge = |x: usize| ((344 - 240) * 800 + x) * 4;
+    assert_eq!(linear_map[ridge(111)..ridge(111) + 4], [113, 146, 137, 255]);
+    assert_ne!(
+        linear_map[ridge(111)..ridge(111) + 4],
+        linear_map[ridge(483)..ridge(483) + 4]
+    );
     Ok(())
 }
 

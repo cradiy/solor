@@ -1,6 +1,7 @@
 use crate::{CITRON, INK, MUTED, Selection, control, details, label, page, stage};
 use solor::{
-    Div, Fill, FillRule, Gradient, GradientKind, PaintContext, Rgba, Signal, Styled, div,
+    Div, Fill, FillRule, Gradient, GradientKind, GradientMap, PaintContext, Rgba, Signal, Styled,
+    div,
     layout::Origin,
     px, rgb, rgba,
     style::{Distribution, FontFeature},
@@ -98,9 +99,10 @@ pub(super) const STOPS: [(f32, Rgba, &str); 4] = [
 pub(super) fn paint(
     geometry: Selection<3>,
     overlay: Selection<3>,
-    preview: Selection<3>,
+    preview: Selection<4>,
     ramp: Signal<Gradient>,
     patterns: &[Fill; 2],
+    map: GradientMap,
 ) -> Div {
     let mut specimen = stage(rgb(0x262336))
         .h(px(192.0))
@@ -120,6 +122,17 @@ pub(super) fn paint(
                 .paint(move |cx| paint_contours(cx, ramp, rule))
         });
     }
+    specimen = specimen.child_when(preview.flags()[3], move || {
+        div()
+            .absolute()
+            .inset(px(0.))
+            .flex_row()
+            .items_stretch()
+            .p(px(12.))
+            .gap(px(12.))
+            .child(landscape_preview("Original", ramp, None))
+            .child(landscape_preview("Mapped", ramp, Some(map.clone())))
+    });
     for (active, fill) in overlay
         .flags()
         .into_iter()
@@ -163,10 +176,80 @@ pub(super) fn paint(
             ))
             .child(control(
                 "Preview",
-                preview.buttons(["Swatch", "Even-odd", "Nonzero"]),
+                preview.buttons(["Swatch", "Even-odd", "Nonzero", "Gradient map"]),
             )),
         specimen,
         details("Color stops", stops),
+    )
+}
+
+fn landscape_preview(title: &'static str, ramp: Signal<Gradient>, map: Option<GradientMap>) -> Div {
+    div()
+        .flex_1()
+        .items_stretch()
+        .gap(px(5.))
+        .child(label(title, 12., 18.).text_color(crate::PAPER))
+        .child(div().flex_1().paint(move |cx| {
+            let sky = cx.read(ramp)?;
+            match &map {
+                Some(map) => cx.with_gradient_map(map, |cx| landscape(cx, sky)),
+                None => landscape(cx, sky),
+            }
+        }))
+}
+
+fn landscape(cx: &mut PaintContext<'_>, sky: &Gradient) -> anyhow::Result<()> {
+    let size = cx.size;
+    let point = |x, y| Origin {
+        x: size.width * x,
+        y: size.height * y,
+    };
+    cx.fill(size, sky.clone());
+    cx.fill_circle(
+        point(0.68, 0.32),
+        size.height.min(size.width) * 0.19,
+        rgb(0xffefbe),
+    )?;
+    let ridge = |peaks: &[(f32, f32)]| {
+        peaks
+            .iter()
+            .copied()
+            .chain([(1., 1.), (0., 1.)])
+            .map(|(x, y)| point(x, y))
+            .collect::<Vec<_>>()
+    };
+    cx.fill_polygon(
+        ridge(&[
+            (0., 0.62),
+            (0.22, 0.31),
+            (0.40, 0.54),
+            (0.54, 0.38),
+            (0.78, 0.68),
+            (1., 0.43),
+        ]),
+        rgb(0x719289),
+    )?;
+    cx.fill_polygon(
+        ridge(&[
+            (0., 0.74),
+            (0.14, 0.62),
+            (0.30, 0.71),
+            (0.57, 0.52),
+            (0.78, 0.66),
+            (0.91, 0.57),
+            (1., 0.62),
+        ]),
+        rgb(0x385f60),
+    )?;
+    cx.fill_polygon(
+        ridge(&[
+            (0., 0.72),
+            (0.24, 0.85),
+            (0.45, 0.89),
+            (0.72, 0.78),
+            (1., 0.68),
+        ]),
+        rgb(0x203b4b),
     )
 }
 

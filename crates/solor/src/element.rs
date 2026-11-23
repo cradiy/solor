@@ -340,10 +340,27 @@ impl<'paint> PaintContext<'paint> {
         opacity: f32,
         draw: impl FnOnce(&mut PaintContext<'_>) -> Result<R>,
     ) -> Result<R> {
-        let alpha = opacity_alpha(opacity)?;
+        self.with_group(opacity_alpha(opacity)?, None, draw)
+    }
+
+    /// Recolors the callback's composited pixels by sampling the map at their luminance.
+    pub fn with_gradient_map<R>(
+        &mut self,
+        map: &crate::GradientMap,
+        draw: impl FnOnce(&mut PaintContext<'_>) -> Result<R>,
+    ) -> Result<R> {
+        self.with_group(255, (map.strength() > 0.).then_some(map), draw)
+    }
+
+    fn with_group<R>(
+        &mut self,
+        alpha: u8,
+        map: Option<&crate::GradientMap>,
+        draw: impl FnOnce(&mut PaintContext<'_>) -> Result<R>,
+    ) -> Result<R> {
         let start = self.commands.len();
         let value = self.scoped(self.origin, self.clip.clone(), draw)?;
-        crate::frame::wrap_group(self.commands, start, alpha, None);
+        crate::frame::wrap_group(self.commands, start, alpha, map);
         Ok(value)
     }
 

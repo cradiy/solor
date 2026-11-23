@@ -224,6 +224,7 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
             let pages = Selection::new(cx, 2, true);
             let spacing = Selection::new(cx, 1, false);
             let geometry = Selection::new(cx, 0, false);
+            let map = solor::GradientMap::from(ramp.clone());
             let ramp = cx.signal(ramp);
             let overlay = Selection::new(cx, 0, false);
             let preview = Selection::new(cx, 0, false);
@@ -282,7 +283,7 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
                     specimens::typography(spacing)
                 })
                 .child_when(pages.choices[3].selected, move || {
-                    specimens::paint(geometry, overlay, preview, ramp, &patterns)
+                    specimens::paint(geometry, overlay, preview, ramp, &patterns, map.clone())
                 })
                 .child_when(pages.choices[4].selected, move || {
                     specimens::layout(alignment)

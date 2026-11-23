@@ -12,6 +12,61 @@ use solor_render_cpu::CpuWindow;
 use std::time::Duration;
 
 #[test]
+fn paint_scope_samples_the_composited_overlap_and_leaves_other_draws_in_color() -> Result<()> {
+    use solor::layout::{Origin, Size};
+    use solor_render_cpu::pixels::Surface;
+
+    let ramp = gradient_left_to_right([
+        color_stop(rgb(0x0000ff), 0.0),
+        color_stop(rgb(0x0000ff), 0.6),
+        color_stop(rgb(0xff0000), 0.6),
+        color_stop(rgb(0xff0000), 1.0),
+    ])?;
+    let mut ui = Ui::new();
+    let map = ui.context().signal(GradientMap::from(ramp.clone()));
+    let block = Size {
+        width: px(2.),
+        height: px(2.),
+    };
+    let at = |x| Origin {
+        x: px(x),
+        y: px(0.),
+    };
+    let view = ui.mount(component(move |_| {
+        div().paint(move |cx| {
+            cx.with_gradient_map(cx.read(map)?, |cx| {
+                cx.fill(block, rgb(0xffffff));
+                cx.fill_rect(at(1.), block, rgba(0x00000080))
+            })?;
+            cx.fill_rect(at(3.), block, rgb(0x00ff00))
+        })
+    }))?;
+    let size = DeviceSize {
+        width: 5,
+        height: 2,
+    };
+    ui.layout(view, size.at_unit_scale())?;
+    let render = |ui: &Ui| -> Result<Surface> {
+        Ok(Surface::draw_view(
+            &ui.record_frame(view)?,
+            size,
+            RasterScale::ONE,
+        )?)
+    };
+    let mapped = render(&ui)?;
+    let row = mapped.rgba.as_chunks::<4>().0;
+    assert_eq!(row[0], [255, 0, 0, 255]);
+    assert_eq!(row[1], [0, 0, 255, 255]);
+    assert_eq!(row[2], [127, 127, 255, 255]);
+    assert_eq!(row[3], [0, 255, 0, 255]);
+    ui.context().set(map, GradientMap::new(ramp, 0.)?)?;
+    ui.flush()?;
+    let original = render(&ui)?;
+    assert_eq!(&original.rgba[4..8], &[127, 127, 127, 255]);
+    Ok(())
+}
+
+#[test]
 fn close_luminances_cross_a_hard_stop_and_translucent_colors_mix_in_premultiplied_space()
 -> Result<()> {
     let ramp = gradient_left_to_right([

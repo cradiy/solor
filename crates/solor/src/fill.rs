@@ -123,7 +123,7 @@ pub enum ColorSpace {
     Oklab,
 }
 
-/// Recolors the composited pixels of a subtree using their display-RGB luminance.
+/// Maps composited pixels to a color ramp using their display-RGB luminance.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GradientMap {
     palette: Arc<Gradient>,
