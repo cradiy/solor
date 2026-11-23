@@ -71,26 +71,32 @@ fn shrink_uses_content_weights_and_preserves_minima_on_both_axes() -> Result<()>
 }
 
 #[test]
-fn preferred_widths_larger_than_the_container_keep_their_relative_weights() -> Result<()> {
+fn auto_and_initial_items_share_a_deficit_but_only_auto_takes_surplus() -> Result<()> {
     let mut ui = Ui::new();
     let view = ui.mount(component(|_| {
         div()
             .flex_row()
-            .child(div().w(px(200.0)).flex_shrink(1.0))
-            .child(div().w(px(50.0)).flex_shrink(1.0))
+            .child(div().w(px(200.0)).flex_auto())
+            .child(div().w(px(50.0)).flex_initial())
     }))?;
-    ui.layout(
-        view,
-        Size {
-            width: px(100.0),
-            height: px(20.0),
-        },
-    )?;
-    let widths: Vec<_> = ui
-        .children(view, ui.root(view)?)?
-        .map(|node| ui.geometry(view, node).unwrap().metrics.size.width)
-        .collect();
-    assert_eq!(widths, [px(80.0), px(20.0)]);
+    for (width, expected) in [
+        (300.0, [250.0, 50.0]),
+        (100.0, [80.0, 20.0]),
+        (250.0, [200.0, 50.0]),
+    ] {
+        ui.layout(
+            view,
+            Size {
+                width: px(width),
+                height: px(20.0),
+            },
+        )?;
+        let widths: Vec<_> = ui
+            .children(view, ui.root(view)?)?
+            .map(|node| ui.geometry(view, node).unwrap().metrics.size.width)
+            .collect();
+        assert_eq!(widths, expected.map(px));
+    }
     Ok(())
 }
 

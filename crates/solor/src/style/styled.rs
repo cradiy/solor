@@ -148,6 +148,15 @@ macro_rules! presets {
     )+)+};
 }
 
+macro_rules! flex_presets {
+    ($(#[doc = $doc:literal] $name:ident($grow:literal, $shrink:literal, $basis:expr);)+) => {$(
+        #[doc = $doc]
+        fn $name(self) -> Self {
+            self.flex_grow($grow).flex_shrink($shrink).flex_basis($basis)
+        }
+    )+};
+}
+
 macro_rules! corner_presets {
     ($($setter:ident => $corners:literal),+ $(,)?) => { $(
         corner_presets!(@scale $setter, $corners;
@@ -335,17 +344,15 @@ pub trait Styled: Sized {
     fn aspect_square(self) -> Self {
         self.aspect_ratio(1.0)
     }
-    /// Declares a zero-percent basis and grow and shrink factors of one.
-    fn flex_1(self) -> Self {
-        self.flex_grow(1.0)
-            .flex_shrink(1.0)
-            .flex_basis(percent(0.0))
-    }
-    /// Keeps the item's automatic basis without growing or shrinking.
-    fn flex_none(self) -> Self {
-        self.flex_grow(0.0)
-            .flex_shrink(0.0)
-            .flex_basis(Length::Auto)
+    flex_presets! {
+        /// Grows and shrinks from a zero-percent basis.
+        flex_1(1.0, 1.0, percent(0.0));
+        /// Grows and shrinks from the item's preferred main-axis size.
+        flex_auto(1.0, 1.0, Length::Auto);
+        /// Shrinks from the item's preferred main-axis size when space is limited.
+        flex_initial(0.0, 1.0, Length::Auto);
+        /// Keeps the item's automatic basis without growing or shrinking.
+        flex_none(0.0, 0.0, Length::Auto);
     }
     /// Requests a single clipped line with a trailing ellipsis.
     fn truncate(self) -> Self {
