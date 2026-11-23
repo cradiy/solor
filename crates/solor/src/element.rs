@@ -236,6 +236,8 @@ pub enum Draw {
     Svg {
         /// Content box intersected with the ancestor clip.
         clip: Option<Arc<ContentClip>>,
+        /// Rounded content boundary before positioning and fitting the artwork.
+        rounded_clip: Option<Rc<crate::RoundedClip>>,
         /// Upper-left corner of the fitted viewport.
         origin: Origin,
         /// Fitted viewport in logical pixels.

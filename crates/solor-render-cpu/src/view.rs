@@ -273,6 +273,7 @@ impl Surface {
                     size,
                     asset,
                     tint,
+                    rounded_clip,
                     ..
                 } => {
                     let viewport = scale.bounds(*origin, *size);
@@ -281,9 +282,14 @@ impl Surface {
                         .as_ref()
                         .map(|ink| crate::mask::painter(ink, *origin, *size, scale, (0, 0)))
                         .transpose()?;
-                    replay
-                        .svgs
-                        .draw(self, asset, tint, viewport, visible, bounds)?;
+                    let region = crate::svg::Viewport {
+                        bounds: viewport,
+                        visible,
+                        corners: rounded_clip
+                            .as_deref()
+                            .map(|clip| crate::svg::CornerMask::new(clip, scale)),
+                    };
+                    replay.svgs.draw(self, asset, tint, region, bounds)?;
                 }
                 Draw::Text {
                     origin,
@@ -801,7 +807,14 @@ fn rectangle_coverage(x: f64, width: f64, row_height: f64) -> u8 {
 }
 
 // Sample only the corner regions.
-fn coverage(x: f64, y: f64, width: f64, height: f64, row_height: f64, radii: Corners<f64>) -> u8 {
+pub(super) fn coverage(
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    row_height: f64,
+    radii: Corners<f64>,
+) -> u8 {
     let right = width - x;
     let bottom = height - y;
     let touches = |dx: f64, dy: f64, r: f64| r > 0.0 && dx < r && dy < r;

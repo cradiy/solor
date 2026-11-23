@@ -349,6 +349,18 @@ impl Element for ImageBody {
                         origin,
                         size,
                         clip: cx.clip.clone(),
+                        rounded_clip: if self.radii != Corners::default() {
+                            Some(std::rc::Rc::new(crate::RoundedClip {
+                                origin: cx
+                                    .frame_offset
+                                    .checked_add(cx.origin)
+                                    .context("invalid SVG clip origin")?,
+                                size: cx.size,
+                                radii: self.radii.fit_to(cx.size),
+                            }))
+                        } else {
+                            None
+                        },
                         asset: asset.clone(),
                         tint: if *preserve_colors {
                             None

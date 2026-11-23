@@ -33,7 +33,7 @@ pub use url::Url;
 mod assets;
 pub use assets::{AssetSource, Assets, ImageResource};
 mod clip;
-pub use clip::ContentClip;
+pub use clip::{ContentClip, RoundedClip};
 mod column;
 mod element;
 mod fill;

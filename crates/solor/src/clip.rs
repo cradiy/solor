@@ -19,6 +19,17 @@ pub struct ContentClip {
     pub y: Option<Range<Pixels>>,
 }
 
+/// A rounded clipping box in the drawing coordinate system.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoundedClip {
+    /// Upper-left corner of the clip.
+    pub origin: Origin,
+    /// Dimensions before intersecting ancestor clips.
+    pub size: Size,
+    /// Outer radii fitted to the box.
+    pub radii: crate::style::Corners<Pixels>,
+}
+
 impl ContentClip {
     pub(crate) fn intersect_rect(mut self, origin: Origin, size: Size) -> Result<Self> {
         anyhow::ensure!(

@@ -108,6 +108,69 @@ fn fit_and_position_use_the_padded_content_box_and_view_rem() -> Result<()> {
 }
 
 #[test]
+fn rounded_svg_clips_the_content_box_before_the_ancestor_crop() -> Result<()> {
+    let asset = SvgAsset::from_bytes(br#"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="12"><rect width="32" height="12" fill="red" fill-opacity=".5"/></svg>"#)?;
+    let mut ui = Ui::new();
+    let radius = ui.context().signal(px(0.));
+    fn tile<T: Styled>(node: T, radius: solor::Signal<solor::Pixels>) -> T {
+        node.absolute()
+            .left(px(-2.))
+            .size(px(12.))
+            .rounded_tl(radius)
+            .rounded_br(px(4.))
+    }
+    fn crop(child: impl solor::IntoElement) -> solor::Div {
+        div()
+            .p(px(4.))
+            .child(div().size(px(12.)).overflow_hidden().child(child))
+    }
+    let size = Size {
+        width: px(24.),
+        height: px(20.),
+    };
+    let scale = RasterScale(1.5);
+    for original_colors in [false, true] {
+        let asset = asset.clone();
+        let art = ui.mount(component(move |_| {
+            let node = svg(asset)
+                .object_fit(ObjectFit::Cover)
+                .object_position_x(percent(100.));
+            let node = if original_colors {
+                node.preserve_colors()
+            } else {
+                node.text_color(rgb(0x00ff00))
+            };
+            crop(tile(node, radius))
+        }))?;
+        let reference = ui.mount(component(move |_| {
+            let color = if original_colors {
+                rgba(0xff000080)
+            } else {
+                rgba(0x00ff0080)
+            };
+            crop(tile(div().bg(color), radius))
+        }))?;
+        for r in [0., 8.] {
+            ui.context().set(radius, px(r))?;
+            ui.flush()?;
+            let mut render = |view| -> Result<Surface> {
+                ui.layout(view, size)?;
+                Ok(Surface::draw_view(
+                    &ui.record_frame(view)?,
+                    scale.buffer_size(size)?,
+                    scale,
+                )?)
+            };
+            let actual = render(art)?;
+            let expected = render(reference)?;
+            assert_ne!(pixel(&expected, 12, 15), [255; 4]);
+            assert_eq!(actual.rgba, expected.rgba);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn a_single_explicit_dimension_sizes_the_padded_svg_by_its_content_ratio() -> Result<()> {
     let asset = SvgAsset::from_bytes(ART)?;
     let mut ui = Ui::new();
@@ -160,7 +223,7 @@ fn a_window_repairs_only_the_tinted_icon_on_a_transparent_background() -> Result
                 .items_start()
                 .on_frame(move |_, cx| cx.set(ink, rgba(0x0000ff80)))
                 .text_color(ink)
-                .child(svg(asset.clone()))
+                .child(svg(asset.clone()).rounded_tl(px(5.)))
                 .child(svg(asset).preserve_colors())
         }),
         WindowBackground::Transparent,
@@ -184,6 +247,7 @@ fn a_window_repairs_only_the_tinted_icon_on_a_transparent_background() -> Result
         })
     );
     let row = 6 * 48 * 4;
+    assert_eq!(&updated.rgba[..4], &[0; 4]);
     assert_eq!(&updated.rgba[row + 18 * 4..row + 19 * 4], [0, 0, 64, 64]);
     assert_eq!(&updated.rgba[row + 42 * 4..row + 43 * 4], [0, 128, 0, 128]);
     assert_eq!(
