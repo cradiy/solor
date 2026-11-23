@@ -1181,10 +1181,17 @@ impl<E: Element> ParentElement for Node<E> {
 }
 
 impl<E: Element> Node<E> {
-    /// Includes this element in Tab navigation and allows focus by primary press or through `Ui::focus`.
+    /// Allows focus by primary press or through `Ui::focus`. Tab navigation is enabled by default.
     pub fn focusable(mut self) -> Self {
         self.focusable = true;
         self
+    }
+
+    /// Makes this element focusable and controls whether Tab and Shift+Tab can land on it.
+    /// A signal is sampled on navigation. Changing it preserves the current focus.
+    pub fn tab_stop(mut self, enabled: impl Into<crate::style::Property<bool>>) -> Self {
+        self.handlers.get_or_insert_with(Default::default).tab_stop = Some(enabled.into());
+        self.focusable()
     }
 
     /// Makes this element focusable and paints its keyboard focus indicator over the

@@ -109,6 +109,16 @@ impl From<std::num::NonZeroUsize> for Property<Option<std::num::NonZeroUsize>> {
 }
 
 impl<T: 'static> Property<T> {
+    pub(crate) fn read(&self, state: &Runtime<()>) -> Result<T>
+    where
+        T: Clone,
+    {
+        match &self.0 {
+            Source::Fixed(value) => Ok(value.clone()),
+            Source::Signal(_, read) => read(state),
+        }
+    }
+
     pub(super) fn map<U: 'static>(self, convert: fn(T) -> U) -> Property<U> {
         Property(match self.0 {
             Source::Fixed(value) => Source::Fixed(convert(value)),

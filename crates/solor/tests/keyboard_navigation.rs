@@ -192,3 +192,55 @@ fn focus_indicator_releases_paint_dependencies_on_blur_and_hide() -> Result<()> 
     assert!(ui.record_frame(view)?.draws().is_empty());
     Ok(())
 }
+
+#[test]
+fn tab_resumes_from_pointer_focus_and_reads_the_current_stop_policy() -> Result<()> {
+    use solor::{
+        layout::Origin,
+        pointer::{PointerButton, PointerId, PointerInput, PointerKind, PointerSample},
+    };
+
+    let mut ui = Ui::new();
+    let enabled = ui.context().signal(true);
+    let view = ui.mount(component(move |_| {
+        div()
+            .flex_row()
+            .child(div().size(px(10.)).tab_stop(enabled))
+            .child(div().size(px(10.)).tab_stop(false).focusable())
+            .child(div().size(px(10.)).tab_stop(enabled))
+    }))?;
+    ui.layout(
+        view,
+        Size {
+            width: px(30.),
+            height: px(10.),
+        },
+    )?;
+    ui.accept_pointer_frame(ui.prepare_pointer_frame(view)?)?;
+    let nodes: Vec<_> = ui.children(view, ui.root(view)?)?.collect();
+    let mouse = PointerSample {
+        id: PointerId(1),
+        kind: PointerKind::Mouse,
+        position: Origin {
+            x: px(15.),
+            y: px(5.),
+        },
+        modifiers: Default::default(),
+    };
+
+    ui.dispatch_pointer(view, PointerInput::Down(mouse, PointerButton::Primary))?;
+    ui.dispatch_pointer(view, PointerInput::Up(mouse, PointerButton::Primary))?;
+    assert_eq!(ui.focused(view)?, Some(nodes[1]));
+    assert_eq!(ui.focus_next(view)?, Some(nodes[2]));
+    assert_eq!(ui.focus_previous(view)?, Some(nodes[0]));
+    ui.focus(view, nodes[1])?;
+    assert_eq!(ui.focus_previous(view)?, Some(nodes[0]));
+
+    ui.context().set(enabled, false)?;
+    assert!(!ui.dispatch_key(view, &tab(KeyState::Down, false))?);
+    assert_eq!(ui.focused(view)?, Some(nodes[0]));
+    ui.context().set(enabled, true)?;
+    assert!(ui.dispatch_key(view, &tab(KeyState::Down, true))?);
+    assert_eq!(ui.focused(view)?, Some(nodes[2]));
+    Ok(())
+}

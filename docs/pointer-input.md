@@ -23,6 +23,10 @@ Tab moves forward and Shift+Tab moves backward among visible, mounted
 siblings in their current tree order. It wraps within the view. With no current
 focus, Tab starts at the first stop and Shift+Tab at the last. Virtual lists
 participate through their currently mounted rows, including overscan.
+Use `.tab_stop(false)` for a control that should take click or programmatic focus
+and let Tab move to the next eligible control from there. With
+`.tab_stop(selected)`, a `Signal<bool>` determines eligibility at each press.
+If every stop is disabled, focus stays where it is.
 Hosts can use `ui.focus_next(view)` and `ui.focus_previous(view)` directly.
 
 Use `.focus_indicator(|paint| ...)` to make an element focusable and draw its

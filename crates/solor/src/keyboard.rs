@@ -63,8 +63,15 @@ impl TabOrder {
         Ok(Self { stops, cursor: 0 })
     }
 
-    fn step(&mut self, focused: Option<NodeId>, backwards: bool) -> Option<NodeId> {
-        let last = self.stops.len().checked_sub(1)?;
+    fn step(
+        &mut self,
+        focused: Option<NodeId>,
+        backwards: bool,
+        eligible: impl Fn(NodeId) -> Result<bool>,
+    ) -> Result<Option<NodeId>> {
+        let Some(last) = self.stops.len().checked_sub(1) else {
+            return Ok(None);
+        };
         // Pointer and programmatic focus can reposition us between Tab presses.
         let current = focused.and_then(|id| {
             if self.stops[self.cursor] == id {
@@ -73,13 +80,21 @@ impl TabOrder {
                 self.stops.iter().position(|&stop| stop == id)
             }
         });
-        self.cursor = match (current, backwards) {
-            (None | Some(0), true) => last,
-            (Some(i), true) => i - 1,
-            (Some(i), false) if i < last => i + 1,
-            _ => 0,
-        };
-        Some(self.stops[self.cursor])
+        let mut index = current.unwrap_or(if backwards { 0 } else { last });
+        for _ in 0..self.stops.len() {
+            index = match (backwards, index) {
+                (true, 0) => last,
+                (true, i) => i - 1,
+                (false, i) if i < last => i + 1,
+                _ => 0,
+            };
+            let id = self.stops[index];
+            if eligible(id)? {
+                self.cursor = index;
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -108,27 +123,43 @@ impl Instance {
             self.repaints.borrow_mut().invalidate(id);
         }
     }
-
-    fn advance_focus(&mut self, backwards: bool) -> Result<Option<NodeId>> {
-        if self.tab_order.is_none() {
-            self.tab_order = Some(TabOrder::collect(self)?);
-        }
-        let order = self.tab_order.as_mut().expect("collected tab order");
-        let next = order.step(self.focused, backwards);
-        self.set_focus(next, true);
-        Ok(self.focused)
-    }
 }
 
 impl Ui {
-    /// Focuses the next visible, mounted focusable element, wrapping at the end of the view.
-    pub fn focus_next(&mut self, view: ViewId) -> Result<Option<NodeId>> {
-        self.instance_mut(view)?.advance_focus(false)
+    fn advance_focus(&mut self, view: ViewId, backwards: bool) -> Result<Option<NodeId>> {
+        let instance = self
+            .instances
+            .get_mut(&view)
+            .ok_or(TreeError::InvalidNode(view.0))?;
+        if instance.tab_order.is_none() {
+            instance.tab_order = Some(TabOrder::collect(instance)?);
+        }
+        let order = instance.tab_order.as_mut().expect("collected tab order");
+        let state = self.state.get_mut();
+        let next = order.step(instance.focused, backwards, |id| {
+            match instance.bodies[&id]
+                .handlers
+                .as_deref()
+                .and_then(|h| h.tab_stop.as_ref())
+            {
+                Some(stop) => stop.read(state),
+                None => Ok(true),
+            }
+        })?;
+        if next.is_some() {
+            instance.set_focus(next, true);
+        }
+        Ok(next)
     }
 
-    /// Focuses the previous visible, mounted focusable element, wrapping at the start of the view.
+    /// Focuses the next eligible Tab stop, wrapping at the end of the view.
+    pub fn focus_next(&mut self, view: ViewId) -> Result<Option<NodeId>> {
+        self.advance_focus(view, false)
+    }
+
+    /// Focuses the previous eligible Tab stop, wrapping at the start of the view.
     pub fn focus_previous(&mut self, view: ViewId) -> Result<Option<NodeId>> {
-        self.instance_mut(view)?.advance_focus(true)
+        self.advance_focus(view, true)
     }
 
     /// Delivers the transition to the focused element, then resolves bound actions on
@@ -207,7 +238,7 @@ impl Ui {
             && !mods.meta
             && !mods.control
         {
-            return Ok(instance.advance_focus(mods.shift)?.is_some() || delivered);
+            return Ok(self.advance_focus(view, mods.shift)?.is_some() || delivered);
         }
         Ok(delivered)
     }
