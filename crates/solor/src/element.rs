@@ -1194,11 +1194,18 @@ impl<E: Element> Node<E> {
         self.focusable()
     }
 
-    /// Makes this element focusable and orders it within the view's Tab sequence.
+    /// Makes this element focusable and orders it within its Tab group or view.
     /// Lower indices come first. The default is zero, with ties in tree order.
     pub fn tab_index(mut self, index: impl Into<crate::style::Property<i32>>) -> Self {
         self.handlers.get_or_insert_with(Default::default).tab_index = Some(index.into());
         self.focusable()
+    }
+
+    /// Keeps this subtree together at `index` in the enclosing Tab sequence.
+    /// A focusable group container uses its own Tab index inside the group.
+    pub fn tab_group(mut self, index: impl Into<crate::style::Property<i32>>) -> Self {
+        self.handlers.get_or_insert_with(Default::default).tab_group = Some(index.into());
+        self
     }
 
     /// Makes this element focusable and paints its keyboard focus indicator over the

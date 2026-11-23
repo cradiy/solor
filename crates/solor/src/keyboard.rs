@@ -49,32 +49,68 @@ pub(super) struct TabOrder {
     cursor: usize,
 }
 
+enum TabEntry {
+    Stop(NodeId),
+    Group(usize),
+}
+
 impl TabOrder {
     fn collect(instance: &Instance, state: &Runtime<()>) -> Result<Self> {
-        let mut pending = vec![instance.scene.root()];
-        let mut stops = Vec::new();
+        let mut pending = vec![(instance.scene.root(), 0)];
+        let mut groups = vec![Vec::new()];
         let mut dynamic_indices = Vec::new();
-        while let Some(id) = pending.pop() {
+        let mut read_index = |property: &Property<i32>| -> Result<i32> {
+            let index = property.read(state)?;
+            if property.is_signal() {
+                dynamic_indices.push((property.clone(), index));
+            }
+            Ok(index)
+        };
+        while let Some((id, mut group)) = pending.pop() {
             let body = &instance.bodies[&id];
-            if body.visible {
-                if body.focusable {
-                    let mut index = 0;
-                    if let Some(property) =
-                        body.handlers.as_ref().and_then(|h| h.tab_index.as_ref())
-                    {
-                        index = property.read(state)?;
-                        if property.is_signal() {
-                            dynamic_indices.push((property.clone(), index));
-                        }
-                    }
-                    stops.push((index, id));
+            if !body.visible {
+                continue;
+            }
+            let handlers = body.handlers.as_deref();
+            if let Some(index) = handlers.and_then(|h| h.tab_group.as_ref()) {
+                let child_group = groups.len();
+                groups[group].push((read_index(index)?, TabEntry::Group(child_group)));
+                groups.push(Vec::new());
+                group = child_group;
+            }
+            if body.focusable {
+                let index = match handlers.and_then(|h| h.tab_index.as_ref()) {
+                    Some(index) => read_index(index)?,
+                    None => 0,
+                };
+                groups[group].push((index, TabEntry::Stop(id)));
+            }
+            pending.extend(
+                instance
+                    .scene
+                    .children(id)?
+                    .rev()
+                    .map(|child| (child, group)),
+            );
+        }
+        for group in &mut groups {
+            group.sort_by_key(|(index, _)| *index);
+        }
+        let mut stops = Vec::new();
+        let mut traversal = vec![std::mem::take(&mut groups[0]).into_iter()];
+        while let Some(entries) = traversal.last_mut() {
+            match entries.next() {
+                Some((_, TabEntry::Stop(id))) => stops.push(id),
+                Some((_, TabEntry::Group(id))) => {
+                    traversal.push(std::mem::take(&mut groups[id]).into_iter());
                 }
-                pending.extend(instance.scene.children(id)?.rev());
+                None => {
+                    traversal.pop();
+                }
             }
         }
-        stops.sort_by_key(|&(index, _)| index);
         Ok(Self {
-            stops: stops.into_iter().map(|(_, id)| id).collect(),
+            stops,
             dynamic_indices,
             cursor: 0,
         })

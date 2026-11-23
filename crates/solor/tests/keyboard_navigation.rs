@@ -93,6 +93,43 @@ fn tab_indices_order_the_view_and_resume_from_focus_after_a_change() -> Result<(
 }
 
 #[test]
+fn nested_tab_groups_stay_together_when_the_outer_order_changes() -> Result<()> {
+    let mut ui = Ui::new();
+    let position = ui.context().signal(0);
+    let view = ui.mount(component(|_| {
+        div()
+            .child(
+                div()
+                    .tab_group(position)
+                    .tab_index(2)
+                    .child(div().tab_index(1))
+                    .child(div().tab_group(-1).child(div().tab_index(9))),
+            )
+            .child(div().tab_group(0).child(div().tab_index(-10)))
+            .child(div().focusable())
+    }))?;
+    let root = ui.root(view)?;
+    let children: Vec<_> = ui.children(view, root)?.collect();
+    let [first_group, second_group, tail] = children[..] else {
+        panic!("expected two groups and a trailing stop");
+    };
+    let first = ui.children(view, first_group)?.next().unwrap();
+    let subgroup = ui.children(view, first_group)?.nth(1).unwrap();
+    let nested = ui.children(view, subgroup)?.next().unwrap();
+    let second = ui.children(view, second_group)?.next().unwrap();
+
+    for expected in [nested, first, first_group, second, tail, nested] {
+        assert_eq!(ui.focus_next(view)?, Some(expected));
+    }
+    ui.context().set(position, 1)?;
+    assert_eq!(ui.focused(view)?, Some(nested));
+    for expected in [tail, second, first_group, first, nested] {
+        assert_eq!(ui.focus_previous(view)?, Some(expected));
+    }
+    Ok(())
+}
+
+#[test]
 fn key_callbacks_can_keep_tab_and_modified_tabs_and_releases_do_not_navigate() -> Result<()> {
     let mut ui = Ui::new();
     let capture = ui.context().signal(true);

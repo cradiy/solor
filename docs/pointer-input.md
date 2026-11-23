@@ -20,7 +20,9 @@ Showing it again starts it unfocused.
 
 Tab moves forward and Shift+Tab moves backward among visible, mounted
 `.focusable()` elements. Set `.tab_index(index)` to order stops by increasing
-index within the view. The default index is zero. Ties follow tree order,
+index within the current group or view. Use `.tab_group(index)` to keep a
+subtree together at that position in its enclosing sequence. Groups can nest.
+The default stop index is zero. Ties follow tree order,
 parent before children. A signal index takes effect on the next navigation.
 Traversal wraps within the view. With no current
 focus, Tab starts at the first stop and Shift+Tab at the last. Virtual lists
