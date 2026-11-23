@@ -7,10 +7,10 @@ mod tone_sheet;
 use anyhow::Result;
 use solor::{
     Context, Div, Fill, IntoElement, Render, ResizeEdge, Rgba, Signal, Styled, TooltipStyle, Ui,
-    color_stop, component, div,
+    checkerboard, color_stop, component, diagonal_stripes, div,
     keyboard::{Key, KeyBinding},
     layout::{Origin, Size},
-    linear_gradient, px, rgb, text,
+    linear_gradient, px, rgb, rgba, text,
 };
 
 const PAPER: Rgba = rgb(0xf8f7f2);
@@ -197,12 +197,18 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
         110.0,
         specimens::STOPS.map(|(at, color, _)| color_stop(color, at)),
     )?;
+    let overlay_ink = rgba(0x201e394d);
+    let patterns = [
+        checkerboard(overlay_ink, px(10.0))?.into(),
+        diagonal_stripes(overlay_ink, px(2.5), px(5.0))?.into(),
+    ];
     Ok((
         ui,
         component(move |cx| {
             let pages = Selection::new(cx, 2, true);
             let spacing = Selection::new(cx, 1, false);
             let geometry = Selection::new(cx, 0, false);
+            let overlay = Selection::new(cx, 0, false);
             let alignment = Selection::new(cx, 1, false);
             let header = div()
                 .window_drag_region()
@@ -258,7 +264,7 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
                     specimens::typography(spacing)
                 })
                 .child_when(pages.choices[3].selected, move || {
-                    specimens::paint(geometry, &ramp)
+                    specimens::paint(geometry, overlay, &ramp, &patterns)
                 })
                 .child_when(pages.choices[4].selected, move || {
                     specimens::layout(alignment)

@@ -40,7 +40,7 @@ fn controls_change_the_specimen_and_choices_survive_navigation() -> Result<()> {
     let specimen = |window: &mut CpuWindow| -> Result<Vec<u8>> {
         let frame = window.frame(size, RasterScale::ONE)?;
         let stride = frame.size.width as usize * 4;
-        let pixels = frame.rgba[200 * stride..350 * stride].to_vec();
+        let pixels = frame.rgba[240 * stride..350 * stride].to_vec();
         window.frame_submitted()?;
         assert!(
             !window
@@ -61,9 +61,20 @@ fn controls_change_the_specimen_and_choices_survive_navigation() -> Result<()> {
     click(&mut window, 167.0, 154.0)?;
     let radial = specimen(&mut window)?;
     assert!(radial != linear, "radial and linear gradients must differ");
+    click(&mut window, 172.0, 188.0)?;
+    let checked = specimen(&mut window)?;
+    click(&mut window, 263.0, 188.0)?;
+    let striped = specimen(&mut window)?;
+    assert!(radial != checked && checked != striped && striped != radial);
+    click(&mut window, 104.0, 154.0)?;
+    let striped_linear = specimen(&mut window)?;
+    assert!(striped_linear != striped && striped_linear != linear);
     click(&mut window, 683.0, 29.0)?;
     let center = specimen(&mut window)?;
-    assert!(center != radial, "Layout must replace the paint specimen");
+    assert!(
+        center != striped_linear,
+        "Layout must replace the paint specimen"
+    );
     click(&mut window, 215.0, 154.0)?;
     assert!(
         center != specimen(&mut window)?,
@@ -74,6 +85,10 @@ fn controls_change_the_specimen_and_choices_survive_navigation() -> Result<()> {
         wide == specimen(&mut window)?,
         "returning should preserve the selected tracking"
     );
+    click(&mut window, 627.0, 29.0)?;
+    assert!(striped_linear == specimen(&mut window)?);
+    click(&mut window, 102.0, 188.0)?;
+    assert!(linear == specimen(&mut window)?);
     Ok(())
 }
 
