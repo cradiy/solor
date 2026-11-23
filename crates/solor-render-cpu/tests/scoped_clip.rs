@@ -77,6 +77,43 @@ fn nested_clips_intersect_the_padded_box_and_restore_for_following_draws() -> Re
 }
 
 #[test]
+fn nested_offsets_place_new_clips_relative_to_the_drawing_origin() -> Result<()> {
+    let mut ui = Ui::new();
+    let view = ui.mount(component(|_| {
+        div().p(px(2.)).paint(|cx| {
+            cx.with_clip(at(1., 2.), size(4., 3.), |cx| {
+                cx.with_offset(at(-0.5, 1.5), |cx| {
+                    cx.with_clip(at(0.5, 1.), size(3.5, 3.), |cx| {
+                        cx.with_offset(at(1., 1.5), |cx| {
+                            cx.fill(size(8., 8.), rgb(0xff0000));
+                            Ok(())
+                        })
+                    })
+                })
+            })?;
+            cx.fill(size(1., 1.), rgb(0x0000ff));
+            Ok(())
+        })
+    }))?;
+    let viewport = size(12., 12.);
+    ui.layout(view, viewport)?;
+    let scale = RasterScale(2.);
+    let physical = scale.buffer_size(viewport)?;
+    let image = Surface::draw_view(&ui.record_frame(view)?, physical, scale)?;
+    for (i, pixel) in image.rgba.as_chunks::<4>().0.iter().enumerate() {
+        let x = i % physical.width as usize;
+        let y = i / physical.width as usize;
+        let expected = match (x, y) {
+            (6..11, 10..14) => [255, 0, 0, 255],
+            (4..6, 4..6) => [0, 0, 255, 255],
+            _ => [255; 4],
+        };
+        assert_eq!(*pixel, expected, "pixel ({x}, {y})");
+    }
+    Ok(())
+}
+
+#[test]
 fn a_caught_clip_error_allows_the_element_to_paint_a_fallback() -> Result<()> {
     let mut ui = Ui::new();
     let ready = ui.context().signal(false);

@@ -328,6 +328,20 @@ impl<'paint> PaintContext<'paint> {
         self.next_frame = true;
     }
 
+    /// Draws relative to a translated origin. Nested offsets add together.
+    /// Existing clips stay in place and clips created inside use the translated coordinates.
+    pub fn with_offset<R>(
+        &mut self,
+        offset: Origin,
+        draw: impl FnOnce(&mut PaintContext<'_>) -> Result<R>,
+    ) -> Result<R> {
+        let origin = self
+            .origin
+            .checked_add(offset)
+            .context("invalid paint offset")?;
+        self.scoped(origin, self.clip.clone(), draw)
+    }
+
     /// Clips drawing inside the callback to a rectangle in content-local coordinates.
     /// Nested clips intersect. The drawing origin and content size stay the same.
     /// An error discards the callback's commands and frame request.
@@ -348,10 +362,20 @@ impl<'paint> PaintContext<'paint> {
             .cloned()
             .unwrap_or_default()
             .intersect_rect(origin, size)?;
+        self.scoped(self.origin, Some(Arc::new(clip)), draw)
+    }
+
+    fn scoped<R>(
+        &mut self,
+        origin: Origin,
+        clip: Option<Arc<ContentClip>>,
+        draw: impl FnOnce(&mut PaintContext<'_>) -> Result<R>,
+    ) -> Result<R> {
         let start = self.commands.len();
         let mut scoped = PaintContext {
             commands: self.commands,
-            clip: Some(Arc::new(clip)),
+            origin,
+            clip,
             next_frame: false,
             ..*self
         };

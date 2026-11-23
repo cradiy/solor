@@ -175,7 +175,10 @@ fn paint_contours(
     ramp: Signal<Gradient>,
     rule: FillRule,
 ) -> anyhow::Result<()> {
-    let center = (cx.size.width / 2., cx.size.height / 2.);
+    let center = Origin {
+        x: cx.size.width / 2.,
+        y: cx.size.height / 2.,
+    };
     let radius = (cx.size.width / 3.6).min(cx.size.height / 2.5);
     let hexagon = |dx: f32, dy: f32| {
         [
@@ -187,13 +190,15 @@ fn paint_contours(
             (-0.5, 0.866),
         ]
         .map(|(x, y)| Origin {
-            x: center.0 + radius * (x + dx),
-            y: center.1 + radius * (y + dy),
+            x: radius * (x + dx),
+            y: radius * (y + dy),
         })
     };
     let contours = [hexagon(-0.56, -0.15), hexagon(0.56, 0.15)].map(std::rc::Rc::<[Origin]>::from);
-    cx.fill_contours(contours.iter().cloned(), cx.read(ramp)?.clone(), rule)?;
-    cx.stroke_contours(contours, px(1.5), rgba(0xfff7eaad))
+    cx.with_offset(center, |cx| {
+        cx.fill_contours(contours.iter().cloned(), cx.read(ramp)?.clone(), rule)?;
+        cx.stroke_contours(contours, px(1.5), rgba(0xfff7eaad))
+    })
 }
 
 pub(super) fn layout(alignment: Selection<3>) -> Div {
