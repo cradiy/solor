@@ -90,6 +90,22 @@ impl Instance {
 }
 
 impl Ui {
+    /// Whether the focused element or one of its ancestors handles this action type.
+    pub fn is_action_available(&self, view: ViewId, action: &dyn Any) -> Result<bool> {
+        let instance = self.instance(view)?;
+        let mut target = instance.focused;
+        while let Some(id) = target {
+            let node = instance.bodies.get(&id).ok_or(TreeError::InvalidNode(id))?;
+            if let Some(handlers) = node.handlers.as_deref()
+                && ActionHandler::for_value(&handlers.actions, action).is_some()
+            {
+                return Ok(true);
+            }
+            target = instance.scene.parent(id)?;
+        }
+        Ok(false)
+    }
+
     /// Sends an action to the nearest matching handler on the view's focus path.
     /// Returns true if a handler ran.
     pub fn dispatch_action(&mut self, view: ViewId, action: &dyn Any) -> Result<bool> {

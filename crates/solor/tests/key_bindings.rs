@@ -17,6 +17,7 @@ fn direct_actions_follow_current_focus_and_deliver_the_supplied_value() -> Resul
             .on_action(move |choice: &Select, cx| cx.set(received, Some(("root", choice.0))))
             .child(
                 div()
+                    .on_action(move |_: &Save, cx| cx.set(received, Some(("save", 0))))
                     .on_action(move |choice: &Select, cx| {
                         cx.set(received, Some(("editor", choice.0)))
                     })
@@ -24,11 +25,16 @@ fn direct_actions_follow_current_focus_and_deliver_the_supplied_value() -> Resul
             )
             .child(div().focusable())
     }))?;
+    assert!(!ui.is_action_available(view, &Select(1))?);
     assert!(!ui.dispatch_action(view, &Select(1))?);
     ui.focus_next(view)?;
+    assert!(ui.is_action_available(view, &Save)?);
+    assert_eq!(*ui.context().read(received)?, None);
     assert!(ui.dispatch_action(view, &Select(2))?);
     assert_eq!(*ui.context().read(received)?, Some(("editor", 2)));
     ui.focus_next(view)?;
+    assert!(!ui.is_action_available(view, &Save)?);
+    assert!(ui.is_action_available(view, &Select(3))?);
     assert!(ui.dispatch_action(view, &Select(3))?);
     assert_eq!(*ui.context().read(received)?, Some(("root", 3)));
     assert!(!ui.dispatch_action(view, &Save)?);
