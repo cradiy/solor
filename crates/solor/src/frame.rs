@@ -19,7 +19,7 @@ use crate::{
 
 #[derive(Default)]
 pub(super) struct FixedDraws {
-    recorded: Cell<bool>,
+    previous_peak: Cell<Option<usize>>,
     commands: OnceCell<FixedCommands>,
 }
 
@@ -106,6 +106,7 @@ impl ViewFrame {
 struct PaintGroups<'a> {
     events: &'a [(usize, Option<crate::NodeId>)],
     stack: Vec<(usize, crate::NodeId)>,
+    peak: usize,
 }
 
 impl PaintGroups<'_> {
@@ -119,6 +120,8 @@ impl PaintGroups<'_> {
                 self.stack.push((draws.len(), owner));
             } else {
                 let (start, owner) = self.stack.pop().expect("paired subtree boundaries");
+                // Closing a group moves its children out of the recording buffer.
+                self.peak = self.peak.max(draws.len());
                 wrap_group(draws, start, &instance.bodies[&owner]);
             }
         }
@@ -256,13 +259,14 @@ impl Ui {
                 break;
             }
         }
-        let mut draws = Vec::new();
+        let previous_peak = cache.previous_peak.get();
+        let mut draws = Vec::with_capacity(previous_peak.unwrap_or_default());
         let mut groups = PaintGroups {
             events: pointer.group_events(),
             stack: Vec::new(),
+            peak: 0,
         };
         if let Some(commands) = cache.commands.get() {
-            draws.reserve(commands.labels.len() + commands.backgrounds.len());
             let mut labels = commands.labels.iter().peekable();
             let mut backgrounds = commands.backgrounds.iter().peekable();
             for (index, (id, offset, clips)) in pointer.paint_order().enumerate() {
@@ -278,7 +282,7 @@ impl Ui {
                         .record_at(offset, clips, instance, &mut state, &mut draws)?;
                 }
             }
-        } else if cache.recorded.get() {
+        } else if previous_peak.is_some() {
             let mut fixed = FixedCommands::default();
             for (index, (id, offset, clips)) in pointer.paint_order().enumerate() {
                 groups.advance(index, instance, &mut draws);
@@ -303,13 +307,13 @@ impl Ui {
                 next_frame |= instance.bodies[&id]
                     .paint_at(offset, clips, instance, &mut state, &mut draws)?;
             }
-            cache.recorded.set(true);
         }
         groups.advance(usize::MAX, instance, &mut draws);
         instance
             .pointer
             .tooltips
             .paint(&pointer, instance, &self.engine, &mut draws)?;
+        cache.previous_peak.set(Some(groups.peak.max(draws.len())));
         instance.repaints.borrow_mut().dirty.clear();
         Ok(ViewFrame {
             draws,
