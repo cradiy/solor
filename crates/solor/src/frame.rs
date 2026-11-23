@@ -152,23 +152,52 @@ impl PaintGroups<'_> {
                 let (start, owner) = self.stack.pop().expect("paired subtree boundaries");
                 // Closing a group moves its children out of the recording buffer.
                 self.peak = self.peak.max(draws.len());
-                wrap_group(draws, start, &instance.bodies[&owner]);
+                let node = &instance.bodies[&owner];
+                wrap_group(draws, start, node.opacity, node.gradient_map.as_ref());
             }
         }
     }
 }
 
-pub(super) fn wrap_group(draws: &mut Vec<Draw>, start: usize, node: &MountedNode) {
-    if node.opacity == 0 {
+pub(super) fn wrap_group(
+    draws: &mut Vec<Draw>,
+    start: usize,
+    alpha: u8,
+    gradient_map: Option<&crate::GradientMap>,
+) {
+    if alpha == 0 {
         draws.truncate(start);
-    } else if node.is_group() && start < draws.len() {
+    } else if (alpha < 255 || gradient_map.is_some()) && start < draws.len() {
         let children = draws.split_off(start);
         draws.push(Draw::Group {
-            alpha: node.opacity,
-            gradient_map: node.gradient_map.clone(),
+            alpha,
+            gradient_map: gradient_map.cloned(),
             draws: children,
         });
     }
+}
+
+fn translate_draws(draws: &mut [Draw], offset: Origin) -> Result<()> {
+    for draw in draws {
+        let origin = match draw {
+            Draw::Group { draws, .. } => {
+                translate_draws(draws, offset)?;
+                continue;
+            }
+            Draw::WavyUnderline { origin, .. }
+            | Draw::Shadow { origin, .. }
+            | Draw::Border { origin, .. }
+            | Draw::Fill { origin, .. }
+            | Draw::Polygon { origin, .. }
+            | Draw::Polyline { origin, .. }
+            | Draw::Svg { origin, .. }
+            | Draw::Text { origin, .. } => origin,
+        };
+        *origin = offset
+            .checked_add(*origin)
+            .context("paint origin outside layout range")?;
+    }
+    Ok(())
 }
 
 impl Instance {
@@ -214,22 +243,7 @@ impl MountedNode {
             Some((clips, offset)),
             draws,
         )?;
-        for draw in &mut draws[start..] {
-            let origin = match draw {
-                Draw::Group { .. } => unreachable!("groups are formed after node recording"),
-                Draw::WavyUnderline { origin, .. }
-                | Draw::Shadow { origin, .. }
-                | Draw::Border { origin, .. }
-                | Draw::Fill { origin, .. }
-                | Draw::Polygon { origin, .. }
-                | Draw::Polyline { origin, .. }
-                | Draw::Svg { origin, .. }
-                | Draw::Text { origin, .. } => origin,
-            };
-            *origin = offset
-                .checked_add(*origin)
-                .context("paint origin outside layout range")?;
-        }
+        translate_draws(&mut draws[start..], offset)?;
         if !self.frame_paint.is_fixed_draw() {
             instance.observe_paint(self.id, state)?;
             let mut saved = instance.repaints.borrow_mut();

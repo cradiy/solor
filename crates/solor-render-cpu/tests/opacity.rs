@@ -12,6 +12,71 @@ use solor::{
 use solor_render_cpu::CpuWindow;
 
 #[test]
+fn paint_scope_composites_overlaps_once_and_tracks_opacity_changes() -> Result<()> {
+    use solor::layout::{Origin, Size};
+
+    let mut window = CpuWindow::mount_with_background(
+        Ui::new(),
+        component(|cx| {
+            let opacity = cx.signal(0.5);
+            let mut changes = [0.0, 1.0].into_iter();
+            div()
+                .on_frame(move |_, cx| {
+                    if let Some(value) = changes.next() {
+                        cx.set(opacity, value)?;
+                    }
+                    Ok(())
+                })
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(3.))
+                        .w(px(10.))
+                        .h(px(2.))
+                        .paint(move |cx| {
+                            let at = |x| Origin {
+                                x: px(x),
+                                y: px(0.),
+                            };
+                            let size = |w| Size {
+                                width: px(w),
+                                height: px(2.),
+                            };
+                            cx.with_opacity(*cx.read(opacity)?, |cx| {
+                                cx.fill(size(6.), rgb(0xff0000));
+                                cx.fill_rect(at(2.), size(4.), rgb(0x0000ff))?;
+                                cx.with_opacity(0.5, |cx| {
+                                    cx.fill_rect(at(6.), size(2.), rgb(0x00ff00))
+                                })
+                            })?;
+                            cx.fill_rect(at(8.), size(2.), rgb(0xffffff))
+                        }),
+                )
+        }),
+        WindowBackground::Transparent,
+    )?;
+    let size = DeviceSize {
+        width: 14,
+        height: 2,
+    }
+    .at_unit_scale();
+    for (i, (alpha, nested)) in [(128, 64), (0, 0), (255, 128)].into_iter().enumerate() {
+        if i > 0 {
+            window.event(WindowEvent::FrameReady(Duration::ZERO))?;
+        }
+        let frame = window.frame(size, RasterScale::ONE)?;
+        let row = frame.rgba.as_chunks::<4>().0;
+        assert_eq!(row[2], [0; 4]);
+        assert_eq!(row[3], [alpha, 0, 0, alpha]);
+        assert_eq!(row[5], [0, 0, alpha, alpha]);
+        assert_eq!(row[9], [0, nested, 0, nested]);
+        assert_eq!(row[11], [255; 4]);
+        window.frame_submitted()?;
+    }
+    Ok(())
+}
+
+#[test]
 fn nested_image_and_background_fade_as_one_group() -> Result<()> {
     let bitmap = ImageAsset::from_rgba8(1, 1, vec![0, 0, 255, 128])?;
     let mut window = CpuWindow::mount_with_background(

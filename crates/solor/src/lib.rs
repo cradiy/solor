@@ -1033,7 +1033,7 @@ impl Ui {
             None,
             commands,
         )?;
-        frame::wrap_group(commands, start, body);
+        frame::wrap_group(commands, start, body.opacity, body.gradient_map.as_ref());
         instance.observe_paint(node, &mut state)?;
         let mut repaints = instance.repaints.borrow_mut();
         repaints.commands.remove(&node);

@@ -157,8 +157,7 @@ fn opacity(style: &Style) -> Result<u8> {
         .as_deref()
         .and_then(|a| a.opacity)
         .unwrap_or(1.0);
-    anyhow::ensure!(value.is_finite(), "opacity must be finite");
-    Ok((value.clamp(0.0, 1.0) * 255.0).round() as u8)
+    opacity_alpha(value)
 }
 
 struct VisibilityObserver {

@@ -290,6 +290,11 @@ fn collect_contours(
     Ok(rings)
 }
 
+fn opacity_alpha(value: f32) -> Result<u8> {
+    anyhow::ensure!(value.is_finite(), "opacity must be finite");
+    Ok((value.clamp(0.0, 1.0) * 255.0).round() as u8)
+}
+
 fn validate_points(points: &[Origin]) -> Result<()> {
     anyhow::ensure!(
         points
@@ -326,6 +331,20 @@ impl<'paint> PaintContext<'paint> {
     /// Call on each paint while animation is active. Requests from siblings coalesce.
     pub fn request_animation_frame(&mut self) {
         self.next_frame = true;
+    }
+
+    /// Composites the callback's drawing as one layer at the given opacity.
+    /// Finite values are clamped to 0–1. Opacity zero still runs the callback.
+    pub fn with_opacity<R>(
+        &mut self,
+        opacity: f32,
+        draw: impl FnOnce(&mut PaintContext<'_>) -> Result<R>,
+    ) -> Result<R> {
+        let alpha = opacity_alpha(opacity)?;
+        let start = self.commands.len();
+        let value = self.scoped(self.origin, self.clip.clone(), draw)?;
+        crate::frame::wrap_group(self.commands, start, alpha, None);
+        Ok(value)
     }
 
     /// Draws relative to a translated origin. Nested offsets add together.
