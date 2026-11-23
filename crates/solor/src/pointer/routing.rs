@@ -247,6 +247,7 @@ impl Delivery<'_> {
         let Some(mut owner) = self.hit(sample, |r| r.scroll) else {
             return Ok(());
         };
+        let vertical_input = delta.x == crate::px(0.0);
         loop {
             let frame = self
                 .instance
@@ -255,10 +256,17 @@ impl Delivery<'_> {
                 .as_ref()
                 .expect("accepted scroll hit");
             let parent = frame.scroll_parent(owner);
-            if let Some(limit) = frame.scroll_limit(owner) {
+            if let Some(viewport) = frame.scroll_viewport(owner) {
+                let remap = vertical_input && viewport.vertical_wheel_as_horizontal;
+                if remap {
+                    std::mem::swap(&mut delta.x, &mut delta.y);
+                }
                 delta = self
                     .instance
-                    .scroll_children(owner, limit, delta, self.state)?;
+                    .scroll_children(owner, viewport.limit, delta, self.state)?;
+                if remap {
+                    std::mem::swap(&mut delta.x, &mut delta.y);
+                }
             } else {
                 let pointer = self.event(owner, sample, None)?;
                 let node = self

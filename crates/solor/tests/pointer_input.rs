@@ -1287,6 +1287,54 @@ fn tooltip_defaults_update_pending_and_visible_hints_and_preserve_local_override
 }
 
 #[test]
+fn horizontal_strip_returns_unused_wheel_distance_on_the_input_axis() -> Result<()> {
+    use solor::pointer::{PointerInput::Scroll, ScrollDelta};
+
+    let mut ui = Ui::new();
+    let remap = ui.context().signal(false);
+    let view = ui.mount(component(|_| {
+        div()
+            .overflow_y_scroll()
+            .child(
+                div()
+                    .size(px(40.0))
+                    .overflow_x_scroll()
+                    .vertical_wheel_as_horizontal(remap)
+                    .child(div().min_w(px(60.0)).h(px(40.0))),
+            )
+            .child(div().h(px(80.0)))
+    }))?;
+    accept(&mut ui, view, 60.0)?;
+    let page = ui.root(view)?;
+    let strip = ui.children(view, page)?.next().unwrap();
+    let wheel = |ui: &mut Ui, x, y| -> Result<()> {
+        ui.dispatch_pointer(
+            view,
+            Scroll(sample(1, 4.0, 4.0), ScrollDelta { x: px(x), y: px(y) }),
+        )?;
+        Ok(())
+    };
+    let offsets = |ui: &Ui| {
+        (
+            ui.scroll_metrics(view, strip).unwrap().offset.x,
+            ui.scroll_metrics(view, page).unwrap().offset.y,
+        )
+    };
+    ui.context().set(remap, true)?;
+    ui.flush()?;
+    wheel(&mut ui, 0.0, 2.0)?;
+    assert_eq!(offsets(&ui), (px(0.0), px(2.0)));
+    accept(&mut ui, view, 60.0)?;
+    wheel(&mut ui, 0.0, 28.5)?;
+    assert_eq!(offsets(&ui), (px(20.0), px(10.5)));
+    wheel(&mut ui, 0.0, -25.0)?;
+    assert_eq!(offsets(&ui), (px(0.0), px(5.5)));
+    wheel(&mut ui, 3.25, 4.0)?;
+    assert_eq!(offsets(&ui), (px(3.25), px(9.5)));
+    Ok(())
+}
+
+#[test]
 fn container_seek_shares_wheel_offsets_and_switches_hits_on_submission() -> Result<()> {
     use solor::{
         Draw, ScrollMetrics,

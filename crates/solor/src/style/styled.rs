@@ -41,6 +41,9 @@ macro_rules! affects_layout {
     (layout_mut.overflow_y) => {
         false
     };
+    (layout_mut.vertical_wheel_as_horizontal) => {
+        false
+    };
     (attributes_mut.text_background) => {
         false
     };
@@ -204,6 +207,7 @@ pub trait Styled: Sized {
     property_setters! { layout_mut;
         display => display: Display, position => position: Position, box_sizing => box_sizing: BoxSizing,
         overflow_x => overflow_x: Overflow, overflow_y => overflow_y: Overflow,
+        vertical_wheel_as_horizontal => vertical_wheel_as_horizontal: bool,
         aspect_ratio => aspect_ratio: f32, order => order: i32,
         flex_direction => flex_direction: FlexDirection, flex_wrapping => flex_wrap: FlexWrap,
         flex_grow => flex_grow: f32, flex_shrink => flex_shrink: f32,

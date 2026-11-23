@@ -123,6 +123,10 @@ reaches the viewport edge. Any remaining distance on either axis goes to the
 next scrollable ancestor or scroll listener. A resize or a shorter list clamps
 the offset to the new range. Clicks and hover follow the submitted frame.
 
+On a horizontal strip, `.vertical_wheel_as_horizontal(true)` lets a vertical
+wheel move the strip sideways. At either edge the unused distance continues
+vertically to the parent. Diagonal trackpad input retains both axes.
+
 Use `.on_scroll(|event, cx| ...)` to override a container's wheel behavior or
 to handle wheel or trackpad
 input. `event.delta.x` and `event.delta.y` are signed logical pixels, positive

@@ -330,6 +330,7 @@ impl Ui {
 pub(crate) struct ScrollAxes {
     x: bool,
     y: bool,
+    pub(super) vertical_wheel_as_horizontal: bool,
     pub(crate) gutter: Size,
 }
 
@@ -350,6 +351,9 @@ impl ScrollAxes {
         Ok(Self {
             x: scrolls(x),
             y: scrolls(y),
+            vertical_wheel_as_horizontal: scrolls(x)
+                && !scrolls(y)
+                && layout.and_then(|v| v.vertical_wheel_as_horizontal) == Some(true),
             gutter: Size {
                 width: if y == Some(Overflow::Scroll) {
                     width

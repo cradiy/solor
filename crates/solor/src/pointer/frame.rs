@@ -55,6 +55,12 @@ pub struct PointerFrame {
     geometry: Arc<HitGeometry>,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct ScrollViewport {
+    pub limit: Size,
+    pub vertical_wheel_as_horizontal: bool,
+}
+
 pub(super) struct HitGeometry {
     frame_listeners: Vec<NodeId>,
     entries: Vec<Entry>,
@@ -63,7 +69,7 @@ pub(super) struct HitGeometry {
     interactive: HashMap<NodeId, InteractiveBox>,
     hover_parents: HashMap<NodeId, Option<NodeId>>,
     scroll_parents: HashMap<NodeId, NodeId>,
-    scroll_limits: HashMap<NodeId, Size>,
+    scroll_viewports: HashMap<NodeId, ScrollViewport>,
     has_cursor: bool,
 }
 
@@ -129,8 +135,8 @@ impl PointerFrame {
         std::iter::successors(owner, |id| self.geometry.hover_parents[id])
     }
 
-    pub(super) fn scroll_limit(&self, owner: NodeId) -> Option<Size> {
-        self.geometry.scroll_limits.get(&owner).copied()
+    pub(super) fn scroll_viewport(&self, owner: NodeId) -> Option<ScrollViewport> {
+        self.geometry.scroll_viewports.get(&owner).copied()
     }
 
     pub(super) fn is_current(&self, router: &super::PointerRouter) -> bool {
@@ -202,7 +208,7 @@ impl HitGeometry {
             interactive: HashMap::new(),
             hover_parents: HashMap::new(),
             scroll_parents: HashMap::new(),
-            scroll_limits: HashMap::new(),
+            scroll_viewports: HashMap::new(),
             has_cursor: false,
         };
         let root = &instance.bodies[&instance.scene.root()];
@@ -298,7 +304,15 @@ impl HitGeometry {
                         child_origin.y = origin.y - offset.y.min(limit.height);
                     }
                     if !scroll_listener && body.hit_testable {
-                        frame.scroll_limits.insert(id, limit);
+                        frame.scroll_viewports.insert(
+                            id,
+                            ScrollViewport {
+                                limit,
+                                vertical_wheel_as_horizontal: body
+                                    .scroll_axes
+                                    .vertical_wheel_as_horizontal,
+                            },
+                        );
                         scroll_listener = true;
                     }
                 }
