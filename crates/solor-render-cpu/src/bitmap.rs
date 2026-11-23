@@ -69,6 +69,7 @@ enum RowSampling {
 pub(super) struct ImageSampler<'a> {
     rows: RowSampling,
     pixels: &'a [[u8; 4]],
+    stride: usize,
     x: Axis,
     y: Axis,
     half_pixel: f64,
@@ -77,12 +78,25 @@ pub(super) struct ImageSampler<'a> {
 impl<'a> ImageSampler<'a> {
     pub(super) fn new(fill: &'a ImageFill, target: Size, scale: RasterScale) -> Result<Self> {
         let (offset, size) = fill.bounds(target).map_err(Error::other)?;
-        let source = fill.asset().dimensions();
+        let source = fill.source_bounds();
+        let stride = fill.asset().dimensions().width as usize;
+        let first = source.top as usize * stride + source.left as usize;
         Ok(Self {
             rows: RowSampling::Scalar,
-            pixels: fill.asset().pixels(),
-            x: Axis::new(offset.x, size.width, target.width, source.width),
-            y: Axis::new(offset.y, size.height, target.height, source.height),
+            pixels: &fill.asset().pixels()[first..],
+            stride,
+            x: Axis::new(
+                offset.x,
+                size.width,
+                target.width,
+                (source.right - source.left) as u32,
+            ),
+            y: Axis::new(
+                offset.y,
+                size.height,
+                target.height,
+                (source.bottom - source.top) as u32,
+            ),
             half_pixel: 0.5 / scale.0,
         })
     }
@@ -177,9 +191,11 @@ impl<'a> ImageSampler<'a> {
 
     fn source_rows(&self, top: usize, bottom: usize) -> (&[[u8; 4]], &[[u8; 4]]) {
         let width = self.x.texels;
+        let top = top * self.stride;
+        let bottom = bottom * self.stride;
         (
-            &self.pixels[top * width..(top + 1) * width],
-            &self.pixels[bottom * width..(bottom + 1) * width],
+            &self.pixels[top..top + width],
+            &self.pixels[bottom..bottom + width],
         )
     }
 
@@ -190,7 +206,7 @@ impl<'a> ImageSampler<'a> {
         if left >= right || !(image.top..image.bottom).contains(&y) {
             return;
         }
-        let source = (y - image.top) as usize * self.x.texels + (left - image.left) as usize;
+        let source = (y - image.top) as usize * self.stride + (left - image.left) as usize;
         let count = (right - left) as usize;
         let output = &mut dst[(left - x) as usize..(right - x) as usize];
         for (pixel, &texel) in output.iter_mut().zip(&self.pixels[source..source + count]) {

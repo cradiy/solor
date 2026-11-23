@@ -9,7 +9,7 @@ use crate::{
     layout::{ComputedLength, Origin, Size},
     length::UnitResolver,
     px,
-    raster::DeviceSize,
+    raster::{Clip, DeviceSize},
     style::ObjectFit,
 };
 use anyhow::{Result, ensure};
@@ -57,6 +57,24 @@ impl ImageAsset {
         self.0.dimensions
     }
 
+    /// Selects a nonempty rectangle in source pixels, sharing the bitmap's storage.
+    /// The right and bottom edges are exclusive. Sampling stays within the rectangle.
+    pub fn region(&self, bounds: Clip) -> Result<ImageFill> {
+        ensure!(
+            !bounds.empty() && bounds.intersect(Clip::canvas(self.dimensions())) == bounds,
+            "image region must be inside the bitmap"
+        );
+        Ok(ImageFill {
+            asset: self.clone(),
+            origin: [bounds.left as u32, bounds.top as u32],
+            size: DeviceSize {
+                width: (bounds.right - bounds.left) as u32,
+                height: (bounds.bottom - bounds.top) as u32,
+            },
+            placement: Placement::centered(ObjectFit::Cover),
+        })
+    }
+
     /// Premultiplied sRGB RGBA8 pixels in top-to-bottom row order.
     pub fn pixels(&self) -> &[[u8; 4]] {
         self.0.rgba.as_chunks::<4>().0
@@ -76,31 +94,71 @@ impl PartialEq for ImageAsset {
     }
 }
 
-/// A shared bitmap with its fit and alignment in the painted box.
+/// A shared bitmap or source region with its fit and alignment in the painted box.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImageFill {
     asset: ImageAsset,
+    origin: [u32; 2],
+    size: DeviceSize,
     pub(crate) placement: Placement,
 }
 
 impl ImageFill {
     pub(crate) fn new(asset: ImageAsset, placement: Placement) -> Self {
-        Self { asset, placement }
+        Self {
+            size: asset.dimensions(),
+            origin: [0, 0],
+            asset,
+            placement,
+        }
     }
     /// Returns the shared source pixels.
     pub fn asset(&self) -> &ImageAsset {
         &self.asset
     }
+    /// Returns the selected half-open rectangle in the original bitmap's pixels.
+    pub fn source_bounds(&self) -> Clip {
+        let [left, top] = self.origin.map(i64::from);
+        Clip {
+            left,
+            top,
+            right: left + i64::from(self.size.width),
+            bottom: top + i64::from(self.size.height),
+        }
+    }
     /// Returns the fitted origin and extent relative to the painted box.
     pub fn bounds(&self, target: Size) -> Result<(Origin, Size)> {
-        self.placement
-            .bounds(self.asset.dimensions().at_unit_scale(), target)
+        self.placement.bounds(self.size.at_unit_scale(), target)
+    }
+}
+
+impl From<ImageAsset> for ImageFill {
+    fn from(asset: ImageAsset) -> Self {
+        Self::new(asset, Placement::centered(ObjectFit::Cover))
+    }
+}
+
+impl From<&ImageAsset> for ImageFill {
+    fn from(asset: &ImageAsset) -> Self {
+        asset.clone().into()
+    }
+}
+
+impl From<&ImageFill> for ImageFill {
+    fn from(image: &ImageFill) -> Self {
+        image.clone()
+    }
+}
+
+impl From<ImageFill> for Fill {
+    fn from(image: ImageFill) -> Self {
+        Self::Image(image)
     }
 }
 
 impl From<ImageAsset> for Fill {
     fn from(asset: ImageAsset) -> Self {
-        Self::Image(ImageFill::new(asset, Placement::centered(ObjectFit::Cover)))
+        Self::Image(asset.into())
     }
 }
 

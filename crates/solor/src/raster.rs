@@ -20,7 +20,7 @@ impl DeviceSize {
     }
 }
 
-/// Half-open destination coordinates, in device pixels.
+/// A half-open rectangle in pixel coordinates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Clip {
     /// Inclusive left edge.

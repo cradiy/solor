@@ -12,17 +12,18 @@ use crate::{
 use anyhow::{Context as _, Result};
 
 impl PaintContext<'_> {
-    /// Draws a decoded bitmap centered in a content-local rectangle using the given fit.
+    /// Draws a decoded bitmap or source region centered in a content-local rectangle using the given fit.
     /// The bitmap is clipped to the rectangle. Uncovered areas keep their previous pixels.
     pub fn paint_image(
         &mut self,
         offset: Origin,
         size: Size,
-        asset: &ImageAsset,
+        image: impl Into<ImageFill>,
         fit: ObjectFit,
     ) -> Result<()> {
-        let image = ImageFill::new(asset.clone(), Placement::centered(fit));
-        self.fill_rect(offset, size, Fill::Image(image))
+        let mut image = image.into();
+        image.placement = Placement::centered(fit);
+        self.fill_rect(offset, size, image)
     }
 }
 

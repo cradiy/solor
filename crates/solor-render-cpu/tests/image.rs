@@ -1,8 +1,12 @@
 //! Bitmap sizing, sampling and retained backgrounds on an offscreen CPU surface.
 use anyhow::Result;
 use solor::{
-    ImageAsset, Styled, Ui, component, div, image, layout::Size, percent, px, raster::RasterScale,
-    rgb, style::ObjectFit,
+    ImageAsset, Styled, Ui, component, div, image,
+    layout::Size,
+    percent, px,
+    raster::{Clip, RasterScale},
+    rgb,
+    style::ObjectFit,
 };
 use solor_render_cpu::pixels::Surface;
 
@@ -136,11 +140,22 @@ fn native_bitmap_rows_respect_crop_letterboxing_and_alpha() -> Result<()> {
     let bytes: Vec<_> = (0..24u8)
         .flat_map(|i| [i * 9, i * 3, 0, [0, 128, 255][usize::from(i % 3)]])
         .collect();
+    let mut atlas = [255, 0, 255, 255].repeat(8 * 5);
+    for (y, row) in bytes.as_chunks::<24>().0.iter().enumerate() {
+        let start = ((y + 1) * 8 + 2) * 4;
+        atlas[start..start + row.len()].copy_from_slice(row);
+    }
+    let atlas = ImageAsset::from_rgba8(8, 5, atlas)?;
+    let source = atlas.region(Clip {
+        left: 2,
+        top: 1,
+        right: 8,
+        bottom: 5,
+    })?;
     let asset = ImageAsset::from_rgba8(6, 4, bytes)?;
     let mut ui = Ui::new();
-    let source = asset.clone();
     let view = ui.mount(component(move |_| {
-        image(source).object_fit(ObjectFit::None)
+        div().paint(move |cx| cx.paint_image(Default::default(), cx.size, &source, ObjectFit::None))
     }))?;
     for (width, height, left, top) in [(10, 2, 2, -1), (4, 6, -1, 1)] {
         let extent = size(width as f32, height as f32);
@@ -171,14 +186,23 @@ fn canvas_bitmap_fit_matches_the_image_element_at_a_fractional_offset() -> Resul
     use solor::layout::Origin;
     let mut ui = Ui::new();
     let fit = ui.context().signal(ObjectFit::Contain);
-    let asset = ImageAsset::from_rgba8(3, 1, vec![255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 255])?;
+    let row = [[255, 0, 0, 255], [0, 255, 0, 128], [0, 0, 255, 255]];
+    let asset = ImageAsset::from_rgba8(3, 1, row.as_flattened().to_vec())?;
     let position = Origin {
         x: px(2.25),
         y: px(1.5),
     };
     let tile = size(4., 6.);
     let background = rgb(0x273851);
-    let source = asset.clone();
+    let mut pixels = [[255, 0, 255, 255]; 15];
+    pixels[6..9].copy_from_slice(&row);
+    let atlas = ImageAsset::from_rgba8(5, 3, pixels.as_flattened().to_vec())?;
+    let source = atlas.region(Clip {
+        left: 1,
+        top: 1,
+        right: 4,
+        bottom: 2,
+    })?;
     let canvas = ui.mount(component(move |_| {
         div()
             .bg(background)
