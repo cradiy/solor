@@ -158,8 +158,8 @@ pub struct TextStyleRefinement {
     pub attributes: Option<Rc<TextAttributes>>,
     /// Local font-size override.
     pub size: Option<AbsoluteLength>,
-    /// Local line-height override.
-    pub line_height: Option<AbsoluteLength>,
+    /// Line height, with percentages relative to this element's font size.
+    pub line_height: Option<Length>,
     /// Local foreground-color override.
     pub color: Option<Foreground>,
 }
@@ -330,13 +330,16 @@ impl Style {
         if let Some(size) = text.size {
             self.text.size = units.absolute(size);
         }
-        self.text.line_height = match (later.text.line_height, inherited.line_height) {
-            (Some(height), _) => units.absolute(height),
-            (None, Some(height)) => units.absolute(height).max(self.text.size),
-            (None, None) if text.size.is_some() => {
+        self.text.line_height = match text.line_height {
+            Some(Length::Percent(value)) => self.text.size * (value / 100.0),
+            Some(Length::Absolute(height)) if later.text.line_height.is_none() => {
+                units.absolute(height).max(self.text.size)
+            }
+            Some(Length::Absolute(height)) => units.absolute(height),
+            None if text.size.is_none() => self.text.line_height,
+            None | Some(Length::Auto) => {
                 crate::text::TextStyle::default_line_height(self.text.size)
             }
-            (None, None) => self.text.line_height,
         };
         if let Some(color) = &text.color {
             self.text.color = color.clone();

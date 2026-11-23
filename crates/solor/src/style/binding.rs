@@ -96,6 +96,12 @@ impl From<Property<Rgba>> for Property<crate::Ink> {
     }
 }
 
+impl From<Property<AbsoluteLength>> for Property<Length> {
+    fn from(length: Property<AbsoluteLength>) -> Self {
+        length.map(Length::Absolute)
+    }
+}
+
 impl From<std::num::NonZeroUsize> for Property<Option<std::num::NonZeroUsize>> {
     fn from(lines: std::num::NonZeroUsize) -> Self {
         Self(Source::Fixed(Some(lines)))

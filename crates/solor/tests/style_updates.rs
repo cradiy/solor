@@ -700,6 +700,63 @@ fn fractional_style_lengths_survive_cascade_text_shaping_and_paint() -> Result<(
 }
 
 #[test]
+fn inherited_percent_line_height_tracks_each_font_size_and_reflows_siblings() -> Result<()> {
+    use solor::{Length, percent};
+
+    let mut ui = Ui::with_font(FONT.to_vec())?;
+    let spacing = ui.context().signal(percent(150.0));
+    let title_size = ui.context().signal(px(20.0));
+    let view = ui.mount(component(|_| {
+        div()
+            .flex_col()
+            .line_height(spacing)
+            .child(text("A\nB").text_size(title_size))
+            .child(text("C").text_size(px(13.0)))
+            .child(text("D").text_size(px(13.0)).line_height(Length::Auto))
+    }))?;
+    let viewport = Size {
+        width: px(150.0),
+        height: px(200.0),
+    };
+    for (ratio, title, first_height, second_height) in [
+        (150.0, 20.0, 30.0, 19.5),
+        (125.0, 20.0, 25.0, 16.25),
+        (125.0, 24.0, 30.0, 16.25),
+    ] {
+        ui.context().set(spacing, percent(ratio))?;
+        ui.context().set(title_size, px(title))?;
+        ui.flush()?;
+        ui.layout(view, viewport)?;
+        let frame = ui.record_frame(view)?;
+        let [
+            Draw::Text {
+                paragraph: first, ..
+            },
+            Draw::Text {
+                paragraph: second,
+                origin,
+                ..
+            },
+            Draw::Text {
+                paragraph: third, ..
+            },
+        ] = frame.draws()
+        else {
+            panic!("expected three labels");
+        };
+        assert_eq!(first.lines.len(), 2);
+        assert_eq!(first.lines[1].top, first_height);
+        assert_eq!(origin.y, px(2.0 * first_height));
+        assert_eq!(second.lines[0].height, second_height);
+        assert_eq!(
+            third.style.line_height,
+            px(13.0) * std::f32::consts::GOLDEN_RATIO
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn percent_sizes_follow_the_parent_content_box_and_rem_uses_the_view_basis() -> Result<()> {
     use solor::{percent, rem};
     let mut ui = Ui::with_font(FONT.to_vec())?;

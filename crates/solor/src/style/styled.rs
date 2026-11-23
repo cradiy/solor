@@ -473,8 +473,10 @@ pub trait Styled: Sized {
         declare!(self.style(), size.into(), text.size);
         self
     }
-    /// Sets the inherited line height.
-    fn line_height(mut self, height: impl Into<Property<AbsoluteLength>>) -> Self {
+    /// Sets the inherited line height. Percentages use each label's resolved
+    /// font size, and automatic height uses its default line spacing.
+    /// Text accepts resolved heights from its font size through 256 logical pixels.
+    fn line_height(mut self, height: impl Into<Property<Length>>) -> Self {
         declare!(self.style(), height.into(), text.line_height);
         self
     }
