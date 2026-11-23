@@ -778,8 +778,8 @@ fn include_changes(
                 ..
             } = draw
             {
-                let f = &paint.fills;
-                for (fill, edge) in [&f.top, &f.right, &f.bottom, &f.left]
+                for (fill, edge) in paint
+                    .visible_fills()
                     .into_iter()
                     .zip(border::edge_clips(*origin, *size, paint, scale, bounds))
                 {

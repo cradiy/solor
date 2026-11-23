@@ -2,7 +2,7 @@
 use super::{ContentClip, Draw, Origin, Size, Style, UnitResolver};
 use crate::layout::{LayoutError, Result};
 use crate::style::{BorderPaint, BorderStyle, Corners};
-use crate::{Edges, Fill, Pixels, px};
+use crate::{Edges, Pixels, px};
 use std::{rc::Rc, sync::Arc};
 
 pub(super) struct MountedOutline {
@@ -32,20 +32,13 @@ impl MountedOutline {
         if width == px(0.) || pattern == BorderStyle::None {
             return Ok(None);
         }
-        let fill = || Some(Fill::Solid(color));
         Ok(Some(Box::new(Self {
             outset,
             base_radii: style.corner_radii,
             paint: Rc::new(BorderPaint {
-                widths: Edges::all(width),
                 styles: Edges::all(pattern),
-                fills: Edges {
-                    top: fill(),
-                    right: fill(),
-                    bottom: fill(),
-                    left: fill(),
-                },
                 radii: outer_radii(style.corner_radii, outset),
+                ..BorderPaint::solid(width, color)
             }),
         })))
     }

@@ -20,7 +20,7 @@ use super::{Attachment, Context, Repaints, Result, SharedString, ViewId};
 use crate::layout::{FlexDirection, FlexLayout};
 use crate::length::UnitResolver;
 use crate::pointer::Handlers;
-use crate::style::{Align, Background, Corners, Foreground, TextStyleRefinement};
+use crate::style::{Align, Background, BorderPaint, Corners, Foreground, TextStyleRefinement};
 use crate::style::{PointerEvents, Visibility};
 use crate::text::{Line, Paragraph, Text, TextStyle};
 use crate::{Fill, Pixels, Style, StyleRefinement, Styled, StyledBody, px};
@@ -633,6 +633,41 @@ impl<'paint> PaintContext<'paint> {
         self.fill_rounded_rect(offset, size, px(0.0), fill)
     }
 
+    /// Draws a border inside a content-local rectangle, leaving its interior untouched.
+    pub fn stroke_rect(
+        &mut self,
+        offset: Origin,
+        size: Size,
+        border: impl Into<Rc<BorderPaint>>,
+    ) -> Result<()> {
+        size.validate()?;
+        let origin = self
+            .origin
+            .checked_add(offset)
+            .context("invalid border origin")?;
+        let paint = border.into();
+        let w = paint.widths;
+        anyhow::ensure!(
+            [w.top, w.right, w.bottom, w.left]
+                .into_iter()
+                .all(Pixels::is_extent),
+            "invalid border width"
+        );
+        anyhow::ensure!(paint.radii.valid_radii(), "invalid corner radius");
+        if size.width > px(0.)
+            && size.height > px(0.)
+            && paint.visible_fills().iter().any(Option::is_some)
+        {
+            self.commands.push(Draw::Border {
+                origin,
+                size,
+                clip: self.clip.clone(),
+                paint,
+            });
+        }
+        Ok(())
+    }
+
     /// Fills a content-local rectangle with a shared radius or individual corner radii.
     /// Oversized radii shrink proportionally to fit the edges.
     pub fn fill_rounded_rect(
@@ -643,17 +678,7 @@ impl<'paint> PaintContext<'paint> {
         fill: impl Into<Fill>,
     ) -> Result<()> {
         let radii = radii.into();
-        anyhow::ensure!(
-            [
-                radii.top_left,
-                radii.top_right,
-                radii.bottom_right,
-                radii.bottom_left
-            ]
-            .into_iter()
-            .all(Pixels::is_extent),
-            "invalid corner radius"
-        );
+        anyhow::ensure!(radii.valid_radii(), "invalid corner radius");
         anyhow::ensure!(
             size.width.is_extent() && size.height.is_extent(),
             "invalid fill extent"

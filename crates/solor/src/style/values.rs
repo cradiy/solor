@@ -258,6 +258,17 @@ impl From<crate::Pixels> for Corners<crate::Pixels> {
 }
 
 impl Corners<crate::Pixels> {
+    pub(crate) fn valid_radii(self) -> bool {
+        [
+            self.top_left,
+            self.top_right,
+            self.bottom_right,
+            self.bottom_left,
+        ]
+        .into_iter()
+        .all(crate::Pixels::is_extent)
+    }
+
     /// Scales all radii proportionally until adjacent corners fit each edge.
     pub fn fit_to(self, size: crate::layout::Size) -> Self {
         let r = self.map(f64::from);

@@ -83,16 +83,29 @@ fn border_width_moves_content_and_anchors_while_ink_only_repaints() -> Result<()
 
 #[test]
 fn rounded_translucent_edges_meet_without_a_seam_at_fractional_scale() -> Result<()> {
+    use solor::style::{BorderPaint, BorderStyle};
+    use std::rc::Rc;
+
     let mut ui = Ui::new();
     let ramp = gradient_left_to_right([
         color_stop(rgba(0xff000080), 0.),
         color_stop(rgba(0x0000ff80), 1.),
     ])?;
+    let mut border = BorderPaint::solid(px(4.), rgba(0xff000080));
+    border.radii = px(6.).into();
+    border.fills.top = Some(ramp.clone().into());
+    border.fills.left = Some(rgba(0x0000ff80).into());
+    border.styles.right = BorderStyle::None;
+    let border = Rc::new(border);
+    let painted = ui.mount(component(move |_| {
+        div().paint(move |cx| cx.stroke_rect(Origin::default(), cx.size, border.clone()))
+    }))?;
     let view = ui.mount(component(move |_| {
         div()
             .border(px(4.))
             .rounded(px(6.))
             .border_color(rgba(0xff000080))
+            .border_right_style(BorderStyle::None)
             .border_top_fill(ramp.clone())
             .border_left_color(rgba(0x0000ff80))
     }))?;
@@ -103,6 +116,10 @@ fn rounded_translucent_edges_meet_without_a_seam_at_fractional_scale() -> Result
     ui.layout(view, size)?;
     let scale = RasterScale(1.5);
     let image = Surface::draw_view(&ui.record_frame(view)?, scale.buffer_size(size)?, scale)?;
+    ui.layout(painted, size)?;
+    let custom = Surface::draw_view(&ui.record_frame(painted)?, scale.buffer_size(size)?, scale)?;
+    assert_eq!(custom.rgba, image.rgba);
+    assert_eq!(pixel(&image, 58, 20), [255; 4]);
     assert_eq!(pixel(&image, 0, 0), [255; 4]);
     assert_eq!(pixel(&image, 9, 9), [255; 4]);
     assert_eq!(pixel(&image, 3, 20), [127, 127, 255, 255]);

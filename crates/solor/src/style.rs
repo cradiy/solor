@@ -27,6 +27,42 @@ pub struct BorderPaint {
     pub radii: Corners<Pixels>,
 }
 
+impl BorderPaint {
+    /// Creates a square-cornered border with one width and fill on all four sides.
+    pub fn solid(width: Pixels, fill: impl Into<Fill>) -> Self {
+        let fill = Some(fill.into());
+        Self {
+            widths: Edges::all(width),
+            styles: Edges::all(BorderStyle::Solid),
+            fills: Edges {
+                top: fill.clone(),
+                right: fill.clone(),
+                bottom: fill.clone(),
+                left: fill,
+            },
+            radii: Corners::default(),
+        }
+    }
+
+    /// Returns the painted sides in top, right, bottom, left order.
+    pub fn visible_fills(&self) -> [Option<&Fill>; 4] {
+        let widths = self.widths;
+        let styles = self.styles;
+        let fills = &self.fills;
+        [
+            visible_fill(widths.top, styles.top, &fills.top),
+            visible_fill(widths.right, styles.right, &fills.right),
+            visible_fill(widths.bottom, styles.bottom, &fills.bottom),
+            visible_fill(widths.left, styles.left, &fills.left),
+        ]
+    }
+}
+
+fn visible_fill(width: Pixels, style: BorderStyle, fill: &Option<Fill>) -> Option<&Fill> {
+    fill.as_ref()
+        .filter(|_| width > px(0.) && style != BorderStyle::None)
+}
+
 macro_rules! background_sources {
     ($($(#[$doc:meta])* $variant:ident($ty:ty)),+ $(,)?) => {
         /// Paint source used when recording a background.
@@ -269,18 +305,11 @@ impl Style {
             bottom: a.border_style.bottom.unwrap_or(BorderStyle::Solid),
             left: a.border_style.left.unwrap_or(BorderStyle::Solid),
         };
-        let fill = |w: Pixels, pattern: BorderStyle, fill: &Option<Fill>| {
-            if w.get() > 0.0 && pattern != BorderStyle::None {
-                fill.clone()
-            } else {
-                None
-            }
-        };
         let fills = Edges {
-            top: fill(widths.top, styles.top, &a.border_fill.top),
-            right: fill(widths.right, styles.right, &a.border_fill.right),
-            bottom: fill(widths.bottom, styles.bottom, &a.border_fill.bottom),
-            left: fill(widths.left, styles.left, &a.border_fill.left),
+            top: visible_fill(widths.top, styles.top, &a.border_fill.top).cloned(),
+            right: visible_fill(widths.right, styles.right, &a.border_fill.right).cloned(),
+            bottom: visible_fill(widths.bottom, styles.bottom, &a.border_fill.bottom).cloned(),
+            left: visible_fill(widths.left, styles.left, &a.border_fill.left).cloned(),
         };
         Ok((fills != Edges::default()).then(|| {
             Rc::new(BorderPaint {

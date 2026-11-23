@@ -215,8 +215,7 @@ impl Surface {
 
         let s = paint.styles;
         let styles = [s.top, s.right, s.bottom, s.left];
-        let fills = &paint.fills;
-        let fills = [&fills.top, &fills.right, &fills.bottom, &fills.left];
+        let fills = paint.visible_fills();
         let clips = edge_clips(origin, size, paint, scale, clip);
         // A straight, single-sided solid rule uses the ordinary rectangular fill rasterizer.
         if radii == [0.0; 4]
@@ -227,7 +226,7 @@ impl Surface {
                 == 1
             && let Some(i) = fills.iter().position(|f| f.is_some())
             && styles[i] == solor::style::BorderStyle::Solid
-            && let Some(fill @ Fill::Solid(_)) = &fills[i]
+            && let Some(fill @ Fill::Solid(_)) = fills[i]
         {
             let mut at = origin;
             let mut extent = size;
