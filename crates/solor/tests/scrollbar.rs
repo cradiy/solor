@@ -864,6 +864,44 @@ fn relative_motion_preserves_queued_axis_targets_and_clamps_each_component() -> 
 }
 
 #[test]
+fn revealing_a_child_uses_its_current_layout_and_the_scrollable_viewport() -> Result<()> {
+    let mut ui = Ui::new();
+    let spacer = ui.context().signal(px(70.0));
+    let scroll = solor::ScrollHandle::new();
+    let view = ui.mount(component(|_| {
+        div()
+            .overflow_scroll()
+            .scrollbar_width(px(5.0))
+            .track_scroll(&scroll)
+            .child(div().h(spacer))
+            .child(div().ml(px(110.5)).min_w(px(21.25)).h(px(16.5)))
+            .child(div().min_w(px(230.0)).h(px(80.0)))
+    }))?;
+    let target = ui.children(view, ui.root(view)?)?.nth(1).unwrap();
+    assert!(ui.scroll_child_into_view(view, target).is_err());
+    submit(&mut ui, view, 80.0)?;
+    assert!(ui.scroll_child_into_view(view, target)?);
+    let expected = Origin {
+        x: px(16.75),
+        y: px(11.5),
+    };
+    assert_eq!(scroll.metrics().unwrap().offset, expected);
+    assert!(!ui.scroll_child_into_view(view, target)?);
+
+    ui.context().set(spacer, px(96.5))?;
+    submit(&mut ui, view, 80.0)?;
+    assert!(ui.scroll_child_into_view(view, target)?);
+    assert_eq!(
+        scroll.metrics().unwrap().offset,
+        Origin {
+            y: px(38.0),
+            ..expected
+        }
+    );
+    Ok(())
+}
+
+#[test]
 fn revealing_a_content_rectangle_moves_each_axis_only_as_far_as_needed() -> Result<()> {
     use solor::ScrollHandle;
 

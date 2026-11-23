@@ -72,6 +72,19 @@ struct ScrollRequest {
 }
 
 impl ScrollRequest {
+    fn reveal(origin: Origin, size: Size) -> Self {
+        Self {
+            x: AxisTarget::Reveal {
+                start: origin.x,
+                extent: size.width,
+            },
+            y: AxisTarget::Reveal {
+                start: origin.y,
+                extent: size.height,
+            },
+        }
+    }
+
     fn offset(offset: Origin) -> Result<Self> {
         ensure!(
             offset.x.get().is_finite() && offset.y.get().is_finite(),
@@ -159,16 +172,9 @@ impl ScrollHandle {
             size.width.is_extent() && size.height.is_extent(),
             "invalid reveal extent"
         );
-        self.0.pending.set(Some(ScrollRequest {
-            x: AxisTarget::Reveal {
-                start: origin.x,
-                extent: size.width,
-            },
-            y: AxisTarget::Reveal {
-                start: origin.y,
-                extent: size.height,
-            },
-        }));
+        self.0
+            .pending
+            .set(Some(ScrollRequest::reveal(origin, size)));
         Ok(())
     }
 
@@ -287,6 +293,26 @@ impl Drop for TrackedScroll {
 }
 
 impl Ui {
+    /// Scrolls a child's direct parent just far enough to reveal the child's border box.
+    /// Requires a visible child in a laid-out scroll container. Returns whether the offset changed.
+    pub fn scroll_child_into_view(&mut self, view: ViewId, child: NodeId) -> Result<bool> {
+        let instance = self.instance(view)?;
+        let parent = instance
+            .scene
+            .parent(child)?
+            .context("expected a child of a scroll container")?;
+        let geometry = instance
+            .scene
+            .geometry(child)
+            .filter(|_| instance.bodies.get(&child).is_some_and(|body| body.visible))
+            .context("expected a visible, laid-out child")?;
+        self.apply_scroll_request(
+            view,
+            parent,
+            ScrollRequest::reveal(geometry.origin, geometry.metrics.size),
+        )
+    }
+
     /// Reads a visible container with scroll or auto overflow after layout.
     /// Returns none for an unknown node or view, a pending layout or a non-scrolling element.
     pub fn scroll_metrics(&self, view: ViewId, node: NodeId) -> Option<ScrollMetrics> {
@@ -302,7 +328,15 @@ impl Ui {
         node: NodeId,
         offset: Origin,
     ) -> Result<bool> {
-        let request = ScrollRequest::offset(offset)?;
+        self.apply_scroll_request(view, node, ScrollRequest::offset(offset)?)
+    }
+
+    fn apply_scroll_request(
+        &mut self,
+        view: ViewId,
+        node: NodeId,
+        request: ScrollRequest,
+    ) -> Result<bool> {
         let instance = self
             .instances
             .get_mut(&view)
