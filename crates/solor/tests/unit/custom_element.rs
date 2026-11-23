@@ -15,11 +15,11 @@ use crate::{Context, Result, Styled, component};
 impl crate::element::MountedNode {
     fn record(
         &self,
-        scene: &layout::Scene,
+        instance: &crate::Instance,
         state: &crate::state::Runtime<()>,
     ) -> Result<Vec<Draw>> {
         let mut commands = Vec::new();
-        self.paint(scene, state, &Default::default(), None, &mut commands)?;
+        self.paint(instance, state, None, &mut commands)?;
         Ok(commands)
     }
 }
@@ -126,7 +126,7 @@ fn custom_element_layout_paint_and_input_follow_the_mounted_instance() -> Result
     };
     let i = host.instances.get_mut(&root).unwrap();
     let node = &i.bodies[&i.nodes[&[][..]]];
-    assert!(node.record(&i.scene, &host.state.borrow()).is_err());
+    assert!(node.record(i, &host.state.borrow()).is_err());
     for width in [200, 120] {
         i.scene.run_assigned(
             Size {
@@ -136,7 +136,7 @@ fn custom_element_layout_paint_and_input_follow_the_mounted_instance() -> Result
             false,
         )?;
         assert_eq!(
-            node.record(&i.scene, &host.state.borrow())?,
+            node.record(i, &host.state.borrow())?,
             [Draw::Fill {
                 clip: None,
                 origin: Origin::default(),
@@ -151,7 +151,7 @@ fn custom_element_layout_paint_and_input_follow_the_mounted_instance() -> Result
     }
     let label = &i.bodies[&i.nodes[&[0][..]]];
     assert_eq!(i.scene.geometry(label.id).unwrap().origin.y, TRACK);
-    let held = label.record(&i.scene, &host.state.borrow())?;
+    let held = label.record(i, &host.state.borrow())?;
 
     let i = host.instances.get_mut(&group).unwrap();
     i.scene.run_assigned(size, false)?;

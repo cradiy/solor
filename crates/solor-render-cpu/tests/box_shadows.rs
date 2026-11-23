@@ -2,7 +2,7 @@
 use anyhow::Result;
 use solor::{
     Styled, Ui, component, div,
-    layout::Size,
+    layout::{Origin, Size},
     platform::{WindowEvent, WindowHandler},
     px,
     raster::RasterScale,
@@ -49,23 +49,34 @@ fn shadows_respect_transparent_interiors_and_layer_order() -> Result<()> {
 
 #[test]
 fn moving_a_soft_shadow_repairs_its_tail_through_an_ancestor_clip() -> Result<()> {
-    let shadows = |x| [BoxShadow::new(px(x), px(0.), rgb(0)).blur(px(6.))];
-    let scene = |initial| {
+    let shadows = |x| {
+        [
+            BoxShadow::new(px(x), px(0.), rgb(0)).blur(solor::rem(0.375)),
+            BoxShadow::new(px(2.), px(0.), rgb(0x114477)).inset(),
+        ]
+    };
+    let scene = |initial, custom| {
         component(move |cx| {
             let layers = cx.signal(shadows(initial));
+            let card = div().size(px(24.)).rounded(px(6.));
+            let card = if custom {
+                card.paint(move |cx| {
+                    let layers = *cx.read(layers)?;
+                    for shadow in layers {
+                        cx.paint_shadow(Origin::default(), cx.size, px(6.), shadow)?;
+                    }
+                    Ok(())
+                })
+            } else {
+                card.shadow(layers)
+            };
             div().p(px(8.)).child(
                 div()
                     .w(px(64.))
                     .h(px(40.))
                     .overflow_hidden()
                     .p(px(8.))
-                    .child(
-                        div()
-                            .size(px(24.))
-                            .rounded(px(6.))
-                            .shadow(layers)
-                            .on_frame(move |_, cx| cx.set(layers, shadows(-8.))),
-                    ),
+                    .child(card.on_frame(move |_, cx| cx.set(layers, shadows(-8.)))),
             )
         })
     };
@@ -74,21 +85,24 @@ fn moving_a_soft_shadow_repairs_its_tail_through_an_ancestor_clip() -> Result<()
         height: px(60.),
     };
     let scale = RasterScale(1.5);
-    let mut window = CpuWindow::mount(Ui::new(), scene(8.))?;
-    let frame = window.frame(size, scale)?;
-    let gray = |x: usize, y: usize| frame.rgba[4 * (y * frame.size.width as usize + x)];
-    assert_eq!(gray(56, 40), 255);
-    assert!(gray(66, 40) < gray(72, 40) && gray(72, 40) < gray(78, 40) && gray(78, 40) < 255);
-    assert!(gray(66, 24) > gray(66, 40));
-    window.frame_submitted()?;
-    window.event(WindowEvent::FrameReady(Duration::ZERO))?;
-    let changed = window.frame(size, scale)?;
-    let damage = changed.damage.bounds().unwrap();
-    assert!(damage.left >= 12 && damage.right < i64::from(changed.size.width));
-    let mut reference = CpuWindow::mount(Ui::new(), scene(-8.))?;
-    assert_eq!(changed.rgba, reference.frame(size, scale)?.rgba);
-    let gray = |x: usize, y: usize| changed.rgba[4 * (y * changed.size.width as usize + x)];
-    assert_eq!(gray(11, 40), 255);
-    assert!(gray(12, 40) < 255);
+    let mut reference = CpuWindow::mount(Ui::new(), scene(-8., false))?;
+    let reference = reference.frame(size, scale)?;
+    for custom in [false, true] {
+        let mut window = CpuWindow::mount(Ui::new(), scene(8., custom))?;
+        let frame = window.frame(size, scale)?;
+        let gray = |x: usize, y: usize| frame.rgba[4 * (y * frame.size.width as usize + x)];
+        assert_eq!(gray(56, 40), 255);
+        assert!(gray(66, 40) < gray(72, 40) && gray(72, 40) < gray(78, 40) && gray(78, 40) < 255);
+        assert!(gray(66, 24) > gray(66, 40));
+        window.frame_submitted()?;
+        window.event(WindowEvent::FrameReady(Duration::ZERO))?;
+        let changed = window.frame(size, scale)?;
+        let damage = changed.damage.bounds().unwrap();
+        assert!(damage.left >= 12 && damage.right < i64::from(changed.size.width));
+        assert_eq!(changed.rgba, reference.rgba);
+        let gray = |x: usize, y: usize| changed.rgba[4 * (y * changed.size.width as usize + x)];
+        assert_eq!(gray(11, 40), 255);
+        assert!(gray(12, 40) < 255);
+    }
     Ok(())
 }

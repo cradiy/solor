@@ -265,6 +265,7 @@ pub struct PaintContext<'a> {
     origin: Origin,
     // Position of this node's border box in the clip coordinate system.
     frame_offset: Origin,
+    units: UnitResolver,
     /// Assigned content area after removing padding.
     pub size: Size,
     text_color: &'a Foreground,
@@ -957,16 +958,16 @@ impl MountedNode {
 
     pub(super) fn paint(
         &self,
-        scene: &Scene,
+        instance: &crate::Instance,
         state: &Runtime<()>,
-        reads: &RefCell<Vec<SignalId>>,
         frame_clips: Option<(&NodeClips, Origin)>,
         commands: &mut Vec<Draw>,
     ) -> Result<bool> {
+        let scene = &instance.scene;
         if scene.is_pending() {
             anyhow::bail!("layout pending");
         }
-        reads.borrow_mut().clear();
+        instance.paint_reads.borrow_mut().clear();
         if !self.visible {
             return Ok(false);
         }
@@ -988,13 +989,14 @@ impl MountedNode {
         let mut cx = PaintContext {
             clip: clips.content.clone(),
             frame_offset,
+            units: instance.units,
             origin: Origin::default(),
             size,
             text_color: &self.text_color,
             commands,
             next_frame: false,
             state,
-            reads,
+            reads: &instance.paint_reads,
         };
         let mode = match self.paint_mode {
             RefreshPolicy::Fixed(mode) => mode,

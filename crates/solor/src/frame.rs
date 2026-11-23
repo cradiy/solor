@@ -236,13 +236,7 @@ impl MountedNode {
         draws: &mut Vec<Draw>,
     ) -> Result<bool> {
         let start = draws.len();
-        let next_frame = self.paint(
-            &instance.scene,
-            state,
-            &instance.paint_reads,
-            Some((clips, offset)),
-            draws,
-        )?;
+        let next_frame = self.paint(instance, state, Some((clips, offset)), draws)?;
         translate_draws(&mut draws[start..], offset)?;
         if !self.frame_paint.is_fixed_draw() {
             instance.observe_paint(self.id, state)?;
