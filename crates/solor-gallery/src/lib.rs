@@ -226,6 +226,7 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
             let geometry = Selection::new(cx, 0, false);
             let ramp = cx.signal(ramp);
             let overlay = Selection::new(cx, 0, false);
+            let preview = Selection::new(cx, 0, false);
             let alignment = Selection::new(cx, 1, false);
             let header = div()
                 .window_drag_region()
@@ -281,7 +282,7 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
                     specimens::typography(spacing)
                 })
                 .child_when(pages.choices[3].selected, move || {
-                    specimens::paint(geometry, overlay, ramp, &patterns)
+                    specimens::paint(geometry, overlay, preview, ramp, &patterns)
                 })
                 .child_when(pages.choices[4].selected, move || {
                     specimens::layout(alignment)

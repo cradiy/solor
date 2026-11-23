@@ -12,35 +12,37 @@ use solor::{
 
 use crate::path::{PathBounds, device};
 
-pub(super) struct Contour<'a> {
-    pub points: &'a [Origin],
+use std::rc::Rc;
+
+pub(super) struct StrokeContours<'a> {
+    pub rings: &'a [Rc<[Origin]>],
     pub closed: bool,
 }
 
 pub(super) fn bounds(
     origin: Origin,
-    points: &[Origin],
+    rings: &[Rc<[Origin]>],
     width: Pixels,
     scale: RasterScale,
 ) -> std::io::Result<Clip> {
-    PathBounds::new(origin, points, scale)?.clip(f64::from(width) * scale.0 * 0.5 + 0.5)
+    PathBounds::new(origin, rings, scale)?.clip(f64::from(width) * scale.0 * 0.5 + 0.5)
 }
 
 impl Surface {
     pub(super) fn stroke_polyline(
         &mut self,
         origin: Origin,
-        contour: Contour<'_>,
+        contours: StrokeContours<'_>,
         width: Pixels,
         ink: &Ink,
         scale: RasterScale,
         clip: Clip,
     ) -> std::io::Result<()> {
-        let points = contour.points;
+        let rings = contours.rings;
         let (at, size) = match ink {
             Ink::Solid(_) => (origin, Size::default()),
             Ink::Gradient(_) => {
-                let b = PathBounds::new(origin, points, RasterScale::ONE)?;
+                let b = PathBounds::new(origin, rings, RasterScale::ONE)?;
                 let width = f64::from(width);
                 (
                     Origin {
@@ -60,9 +62,13 @@ impl Surface {
         let reach = radius + 0.5;
         // A single mask composites joins, retraced segments and crossings exactly once.
         let mut mask = vec![0u8; pitch * (clip.bottom - clip.top) as usize];
-        let closing_vertex = points.first().filter(|_| contour.closed);
-        let ends = points.iter().skip(1).chain(closing_vertex);
-        for (&start, &end) in points.iter().zip(ends) {
+        let edges = rings.iter().flat_map(|points| {
+            let closing_vertex = points.first().filter(|_| contours.closed);
+            points
+                .iter()
+                .zip(points.iter().skip(1).chain(closing_vertex))
+        });
+        for (&start, &end) in edges {
             let (ax, ay) = device(start, origin, scale);
             let (bx, by) = device(end, origin, scale);
             let (dx, dy) = (bx - ax, by - ay);

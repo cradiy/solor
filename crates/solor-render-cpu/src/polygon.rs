@@ -14,18 +14,6 @@ use std::{
     rc::Rc,
 };
 
-pub(super) fn bounds(
-    origin: Origin,
-    contours: &[Rc<[Origin]>],
-    scale: RasterScale,
-) -> Result<PathBounds> {
-    PathBounds::new(
-        origin,
-        contours.iter().flat_map(|points| points.iter()),
-        scale,
-    )
-}
-
 struct Edge {
     x: f64,
     top: f64,
@@ -161,7 +149,7 @@ impl Surface {
                 },
             ),
             Fill::Checkerboard(pattern) => {
-                let bounds = bounds(origin, contours, scale)?;
+                let bounds = PathBounds::new(origin, contours, scale)?;
                 let brush = crate::checkerboard::CheckerBrush::new(
                     *pattern,
                     bounds.left,
@@ -181,7 +169,7 @@ impl Surface {
                 )
             }
             Fill::DiagonalStripes(pattern) => {
-                let bounds = bounds(origin, contours, scale)?;
+                let bounds = PathBounds::new(origin, contours, scale)?;
                 let brush =
                     crate::stripes::StripeBrush::new(*pattern, bounds.left, bounds.top, scale);
                 for_each_span(
@@ -197,7 +185,7 @@ impl Surface {
                 )
             }
             Fill::CustomImage(image) => {
-                let bounds = bounds(origin, contours, scale)?;
+                let bounds = PathBounds::new(origin, contours, scale)?;
                 let size = Size {
                     width: px(((bounds.right - bounds.left) / scale.0) as f32),
                     height: px(((bounds.bottom - bounds.top) / scale.0) as f32),
@@ -227,7 +215,7 @@ impl Surface {
                 )
             }
             Fill::Image(image) => {
-                let bounds = bounds(origin, contours, scale)?;
+                let bounds = PathBounds::new(origin, contours, scale)?;
                 let size = Size {
                     width: px(((bounds.right - bounds.left) / scale.0) as f32),
                     height: px(((bounds.bottom - bounds.top) / scale.0) as f32),
@@ -254,7 +242,7 @@ impl Surface {
                 )
             }
             Fill::Gradient(gradient) => {
-                let bounds = bounds(origin, contours, scale)?;
+                let bounds = PathBounds::new(origin, contours, scale)?;
                 if bounds.left == bounds.right || bounds.top == bounds.bottom {
                     return Ok(());
                 }

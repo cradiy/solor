@@ -223,9 +223,9 @@ pub enum Draw {
         clip: Option<Arc<ContentClip>>,
         /// Content origin for the local points.
         origin: Origin,
-        /// Ordered points in logical pixels relative to the origin.
-        points: Rc<[Origin]>,
-        /// Whether the last vertex connects to the first.
+        /// Ordered vertices of each contour in local logical pixels.
+        contours: smallvec::SmallVec<[Rc<[Origin]>; 1]>,
+        /// Whether each contour connects its last vertex to its first.
         closed: bool,
         /// Full stroke width in logical pixels.
         width: Pixels,
@@ -273,6 +273,21 @@ pub struct PaintContext<'a> {
     next_frame: bool,
     state: &'a Runtime<()>,
     reads: &'a RefCell<Vec<SignalId>>,
+}
+
+fn collect_contours(
+    contours: impl IntoIterator<Item = impl Into<Rc<[Origin]>>>,
+    minimum: usize,
+) -> Result<smallvec::SmallVec<[Rc<[Origin]>; 1]>> {
+    let mut rings = smallvec::SmallVec::new();
+    for contour in contours {
+        let points = contour.into();
+        validate_points(&points)?;
+        if points.len() >= minimum {
+            rings.push(points);
+        }
+    }
+    Ok(rings)
 }
 
 fn validate_points(points: &[Origin]) -> Result<()> {
@@ -484,14 +499,7 @@ impl<'paint> PaintContext<'paint> {
         fill: impl Into<Fill>,
         rule: FillRule,
     ) -> Result<()> {
-        let mut rings = smallvec::SmallVec::new();
-        for contour in contours {
-            let points = contour.into();
-            validate_points(&points)?;
-            if points.len() >= 3 {
-                rings.push(points);
-            }
-        }
+        let rings = collect_contours(contours, 3)?;
         if !rings.is_empty() {
             self.commands.push(Draw::Polygon {
                 origin: self.origin,
@@ -513,7 +521,7 @@ impl<'paint> PaintContext<'paint> {
         width: Pixels,
         ink: impl Into<crate::Ink>,
     ) -> Result<()> {
-        self.stroke_contour(points.into(), width, ink.into(), false)
+        self.record_stroke([points], width, ink.into(), false)
     }
 
     /// Strokes a polygon with round joins, connecting the final vertex to the first.
@@ -524,24 +532,34 @@ impl<'paint> PaintContext<'paint> {
         width: Pixels,
         ink: impl Into<crate::Ink>,
     ) -> Result<()> {
-        self.stroke_contour(points.into(), width, ink.into(), true)
+        self.stroke_contours([points], width, ink)
     }
 
-    fn stroke_contour(
+    /// Strokes independently closed contours with round joins and one shared ink.
+    /// Overlapping outlines composite once. Each contour needs at least three vertices.
+    pub fn stroke_contours(
         &mut self,
-        points: Rc<[Origin]>,
+        contours: impl IntoIterator<Item = impl Into<Rc<[Origin]>>>,
+        width: Pixels,
+        ink: impl Into<crate::Ink>,
+    ) -> Result<()> {
+        self.record_stroke(contours, width, ink.into(), true)
+    }
+
+    fn record_stroke(
+        &mut self,
+        contours: impl IntoIterator<Item = impl Into<Rc<[Origin]>>>,
         width: Pixels,
         ink: crate::Ink,
         closed: bool,
     ) -> Result<()> {
         anyhow::ensure!(width.is_extent(), "invalid stroke width");
-        validate_points(&points)?;
-        let minimum = if closed { 3 } else { 2 };
-        if points.len() >= minimum && width.get() > 0.0 && !ink.is_clear_solid() {
+        let contours = collect_contours(contours, if closed { 3 } else { 2 })?;
+        if !contours.is_empty() && width.get() > 0.0 && !ink.is_clear_solid() {
             self.commands.push(Draw::Polyline {
                 origin: self.origin,
                 clip: self.clip.clone(),
-                points,
+                contours,
                 closed,
                 width,
                 ink,

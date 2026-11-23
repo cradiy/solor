@@ -89,6 +89,19 @@ fn controls_change_the_specimen_and_choices_survive_navigation() -> Result<()> {
     assert!(striped_linear == specimen(&mut window)?);
     click(&mut window, 102.0, 188.0)?;
     assert!(linear == specimen(&mut window)?);
+
+    click(&mut window, 178., 225.)?;
+    let even_odd = specimen(&mut window)?;
+    click(&mut window, 250., 225.)?;
+    let nonzero = specimen(&mut window)?;
+    let at = |x: usize| ((335 - 240) * 800 + x) * 4;
+    let center = at(400)..at(400) + 4;
+    let left = at(326)..at(326) + 4;
+    assert_eq!(even_odd[center.clone()], [0x26, 0x23, 0x36, 255]);
+    assert_ne!(even_odd[center.clone()], nonzero[center]);
+    assert_eq!(even_odd[left.clone()], nonzero[left.clone()]);
+    click(&mut window, 167., 154.)?;
+    assert_ne!(nonzero[left.clone()], specimen(&mut window)?[left]);
     Ok(())
 }
 
@@ -645,7 +658,10 @@ fn market_zoom_passes_unused_scroll_to_its_container() -> Result<()> {
         .draws()
         .iter()
         .find_map(|draw| match draw {
-            solor::Draw::Polyline { origin, points, .. } => {
+            solor::Draw::Polyline {
+                origin, contours, ..
+            } => {
+                let points = contours.first()?;
                 let p = points[points.len() / 2];
                 Some(mouse_at((origin.x + p.x).get(), (origin.y + p.y).get()))
             }
@@ -687,7 +703,7 @@ fn market_zoom_passes_unused_scroll_to_its_container() -> Result<()> {
             .draws()
             .iter()
             .filter_map(|draw| match draw {
-                solor::Draw::Polyline { points, .. } => Some(points.len()),
+                solor::Draw::Polyline { contours, .. } => Some(contours.first()?.len()),
                 _ => None,
             })
             .collect();
@@ -728,14 +744,21 @@ fn resized_market_keeps_the_inspection_marker_under_a_stationary_mouse() -> Resu
         .draws()
         .iter()
         .find_map(|draw| {
-            let Draw::Polyline { origin, points, .. } = draw else {
+            let Draw::Polyline {
+                origin, contours, ..
+            } = draw
+            else {
                 return None;
             };
-            points.iter().map(|p| origin.x + p.x).min_by(|a, b| {
-                (a.get() - mouse.position.x.get())
-                    .abs()
-                    .total_cmp(&(b.get() - mouse.position.x.get()).abs())
-            })
+            contours
+                .first()?
+                .iter()
+                .map(|p| origin.x + p.x)
+                .min_by(|a, b| {
+                    (a.get() - mouse.position.x.get())
+                        .abs()
+                        .total_cmp(&(b.get() - mouse.position.x.get()).abs())
+                })
         })
         .expect("nearest market sample");
     let marker = frame
@@ -763,9 +786,13 @@ fn inspected_price_and_average_follow_the_sample_as_it_moves_through_history() -
         .draws()
         .iter()
         .find_map(|draw| {
-            let solor::Draw::Polyline { origin, points, .. } = draw else {
+            let solor::Draw::Polyline {
+                origin, contours, ..
+            } = draw
+            else {
                 return None;
             };
+            let points = contours.first()?;
             Some((origin.x + points.first()?.x, origin.x + points.last()?.x))
         })
         .expect("market price line");

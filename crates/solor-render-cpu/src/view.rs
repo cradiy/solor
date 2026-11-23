@@ -256,14 +256,14 @@ impl Surface {
                 }
                 Draw::Polyline {
                     origin,
-                    points,
+                    contours,
                     closed,
                     width,
                     ink,
                     ..
                 } => {
-                    let contour = crate::polyline::Contour {
-                        points,
+                    let contour = crate::polyline::StrokeContours {
+                        rings: contours,
                         closed: *closed,
                     };
                     self.stroke_polyline(*origin, contour, *width, ink, scale, bounds)?;
@@ -534,13 +534,13 @@ fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
         Draw::Group { draws, .. } => draw_bounds(draws, scale),
         Draw::Polygon {
             origin, contours, ..
-        } => crate::polygon::bounds(*origin, contours, scale)?.clip(0.0),
+        } => crate::path::PathBounds::new(*origin, contours, scale)?.clip(0.0),
         Draw::Polyline {
             origin,
-            points,
+            contours,
             width,
             ..
-        } => crate::polyline::bounds(*origin, points, *width, scale),
+        } => crate::polyline::bounds(*origin, contours, *width, scale),
         Draw::Shadow {
             origin,
             size,

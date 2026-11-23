@@ -6,6 +6,54 @@ fn point(x: f32, y: f32) -> Origin {
 }
 
 #[test]
+fn compound_stroke_uses_one_gradient_and_blends_intersections_once() -> anyhow::Result<()> {
+    use solor::{Ui, color_stop, component, div, gradient_left_to_right};
+
+    let gradient = gradient_left_to_right([
+        color_stop(rgba(0xff000080), 0.),
+        color_stop(rgba(0x0000ff80), 1.),
+    ])?;
+    let ink = Ink::from(gradient.clone());
+    let mut ui = Ui::new();
+    let view = ui.mount(component(move |_| {
+        div().paint(move |cx| {
+            let rect = |l, t, r, b| [point(l, t), point(r, t), point(r, b), point(l, b)];
+            cx.stroke_contours(
+                [
+                    rect(2., 4., 12., 12.),
+                    rect(8., 2., 15., 9.),
+                    rect(20., 4., 23., 10.),
+                ],
+                px(2.),
+                ink.clone(),
+            )
+        })
+    }))?;
+    let size = Size {
+        width: px(26.),
+        height: px(16.),
+    };
+    let scale = RasterScale(1.5);
+    ui.layout(view, size)?;
+    let physical = scale.buffer_size(size)?;
+    let image = Surface::draw_view(&ui.record_frame(view)?, physical, scale)?;
+    let pixel = |x: usize, y: usize| {
+        let i = (y * physical.width as usize + x) * 4;
+        &image.rgba[i..i + 4]
+    };
+    // The middle sample lies at the crossing of the first two outlines.
+    for (x, y) in [(3, 10), (12, 6), (30, 10)] {
+        let t = ((x as f32 + 0.5) / 1.5 - 1.) / 23.;
+        let color = gradient.sample(t)?;
+        let expected = [color.red, color.green, color.blue, 255]
+            .map(|c| ((u32::from(c) * 128 + 255 * 127 + 127) / 255) as u8);
+        assert_eq!(pixel(x, y), expected);
+    }
+    assert_eq!(pixel(26, 10), [255; 4]);
+    Ok(())
+}
+
+#[test]
 fn polygon_outline_closes_and_blends_the_seam_once() -> anyhow::Result<()> {
     use solor::{Ui, component, div};
 
@@ -110,6 +158,7 @@ fn retraced_translucent_stroke_blends_once_and_clipped_replay_preserves_coverage
         point(4.5, 0.5),
         point(4.5, 8.5),
     ];
+    let rings = [Rc::<[Origin]>::from(points)];
     let crop = Clip {
         left: 6,
         right: 13,
@@ -122,8 +171,8 @@ fn retraced_translucent_stroke_blends_once_and_clipped_replay_preserves_coverage
             let mut image = Surface::cleared(size, scale, 255)?;
             image.stroke_polyline(
                 origin,
-                Contour {
-                    points: &points,
+                StrokeContours {
+                    rings: &rings,
                     closed: false,
                 },
                 px(2.5),
@@ -141,7 +190,7 @@ fn retraced_translucent_stroke_blends_once_and_clipped_replay_preserves_coverage
             assert_eq!(pixel(10, 7), [255, 159, 159, 255]);
             assert_eq!(pixel(13, 6), [255; 4]);
         }
-        let bounds = bounds(origin, &points, px(2.5), scale)?;
+        let bounds = bounds(origin, &rings, px(2.5), scale)?;
         for (i, (a, b)) in full
             .rgba
             .as_chunks::<4>()

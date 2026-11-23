@@ -3,7 +3,10 @@ use solor::{
     layout::Origin,
     raster::{Clip, RasterScale},
 };
-use std::io::{Error, Result};
+use std::{
+    io::{Error, Result},
+    rc::Rc,
+};
 
 pub(super) fn device(point: Origin, origin: Origin, scale: RasterScale) -> (f64, f64) {
     (
@@ -20,18 +23,14 @@ pub(super) struct PathBounds {
 }
 
 impl PathBounds {
-    pub fn new<'a>(
-        origin: Origin,
-        points: impl IntoIterator<Item = &'a Origin>,
-        scale: RasterScale,
-    ) -> Result<Self> {
+    pub fn new(origin: Origin, contours: &[Rc<[Origin]>], scale: RasterScale) -> Result<Self> {
         let mut b = Self {
             left: f64::INFINITY,
             top: f64::INFINITY,
             right: f64::NEG_INFINITY,
             bottom: f64::NEG_INFINITY,
         };
-        for &point in points {
+        for &point in contours.iter().flat_map(|points| points.iter()) {
             let (x, y) = device(point, origin, scale);
             b.left = b.left.min(x);
             b.right = b.right.max(x);

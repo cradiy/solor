@@ -1,6 +1,8 @@
 use crate::{CITRON, INK, MUTED, Selection, control, details, label, page, stage};
 use solor::{
-    Div, Fill, Gradient, GradientKind, Rgba, Signal, Styled, div, px, rgb,
+    Div, Fill, FillRule, Gradient, GradientKind, PaintContext, Rgba, Signal, Styled, div,
+    layout::Origin,
+    px, rgb, rgba,
     style::{Distribution, FontFeature},
 };
 
@@ -96,10 +98,28 @@ pub(super) const STOPS: [(f32, Rgba, &str); 4] = [
 pub(super) fn paint(
     geometry: Selection<3>,
     overlay: Selection<3>,
+    preview: Selection<3>,
     ramp: Signal<Gradient>,
     patterns: &[Fill; 2],
 ) -> Div {
-    let mut specimen = stage(ramp);
+    let mut specimen = stage(rgb(0x262336))
+        .h(px(192.0))
+        .child_when(preview.flags()[0], move || {
+            div().absolute().inset(px(0.)).rounded(px(16.)).bg(ramp)
+        });
+    for (active, rule) in preview
+        .flags()
+        .into_iter()
+        .skip(1)
+        .zip([FillRule::EvenOdd, FillRule::NonZero])
+    {
+        specimen = specimen.child_when(active, move || {
+            div()
+                .absolute()
+                .inset(px(0.))
+                .paint(move |cx| paint_contours(cx, ramp, rule))
+        });
+    }
     for (active, fill) in overlay
         .flags()
         .into_iter()
@@ -140,10 +160,40 @@ pub(super) fn paint(
             .child(control(
                 "Overlay",
                 overlay.buttons(["None", "Checkerboard", "Stripes"]),
+            ))
+            .child(control(
+                "Preview",
+                preview.buttons(["Swatch", "Even-odd", "Nonzero"]),
             )),
         specimen,
         details("Color stops", stops),
     )
+}
+
+fn paint_contours(
+    cx: &mut PaintContext<'_>,
+    ramp: Signal<Gradient>,
+    rule: FillRule,
+) -> anyhow::Result<()> {
+    let center = (cx.size.width / 2., cx.size.height / 2.);
+    let radius = (cx.size.width / 3.6).min(cx.size.height / 2.5);
+    let hexagon = |dx: f32, dy: f32| {
+        [
+            (-1., 0.),
+            (-0.5, -0.866),
+            (0.5, -0.866),
+            (1., 0.),
+            (0.5, 0.866),
+            (-0.5, 0.866),
+        ]
+        .map(|(x, y)| Origin {
+            x: center.0 + radius * (x + dx),
+            y: center.1 + radius * (y + dy),
+        })
+    };
+    let contours = [hexagon(-0.56, -0.15), hexagon(0.56, 0.15)].map(std::rc::Rc::<[Origin]>::from);
+    cx.fill_contours(contours.iter().cloned(), cx.read(ramp)?.clone(), rule)?;
+    cx.stroke_contours(contours, px(1.5), rgba(0xfff7eaad))
 }
 
 pub(super) fn layout(alignment: Selection<3>) -> Div {
