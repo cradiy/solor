@@ -772,6 +772,7 @@ impl MountedBackground {
             Background::Fixed(Fill::Image(_) | Fill::CustomImage(_))
             | Background::Bound(_)
             | Background::Image(_)
+            | Background::ImageRegion(_)
             | Background::CustomImage(_) => Placement::resolve(style, units, ObjectFit::Cover)?,
             _ => Placement::centered(ObjectFit::Cover),
         };

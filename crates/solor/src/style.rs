@@ -108,6 +108,8 @@ background_sources! {
     DiagonalStripes(crate::DiagonalStripes),
     /// Shared bitmap sampled during paint.
     Image(crate::ImageAsset),
+    /// Selected region of a shared bitmap sampled during paint.
+    ImageRegion(crate::ImageFill),
     /// Application-rendered image sampled during paint.
     CustomImage(crate::CustomImage),
 }

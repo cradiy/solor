@@ -117,7 +117,19 @@ fn switching_atlas_regions_only_remeasures_when_the_region_size_changes() -> Res
     let mut ui = Ui::new();
     let tile = ui.context().signal(fixed.clone());
     let view = ui.mount(component(move |_| {
-        div().items_start().child(image(fixed)).child(image(tile))
+        div()
+            .items_start()
+            .child(image(fixed))
+            .child(image(tile))
+            .child(
+                div()
+                    .w(px(6.))
+                    .h(px(2.))
+                    .bg(tile)
+                    .object_fit(ObjectFit::None)
+                    .object_position_x(percent(100.))
+                    .object_position_y(percent(0.)),
+            )
     }))?;
     let viewport = size(6., 4.);
     ui.layout(view, viewport)?;
@@ -127,6 +139,16 @@ fn switching_atlas_regions_only_remeasures_when_the_region_size_changes() -> Res
         ui.geometry(view, children[0]).unwrap().metrics.size,
         size(2., 1.)
     );
+    let scale = RasterScale::ONE;
+    let physical = scale.buffer_size(viewport)?;
+    let draw = |ui: &Ui| -> Result<_> {
+        Ok(Surface::draw_view(
+            &ui.record_frame(view)?,
+            physical,
+            scale,
+        )?)
+    };
+    assert_eq!(pixel(&draw(&ui)?, 5, 2), red);
     for (left, right, relayout) in [(2, 4, false), (3, 4, true)] {
         ui.context().set(tile, region(left, right)?)?;
         ui.flush()?;
@@ -136,12 +158,14 @@ fn switching_atlas_regions_only_remeasures_when_the_region_size_changes() -> Res
             ui.geometry(view, children[1]).unwrap().metrics.size,
             size(width as f32, 1.)
         );
-        let scale = RasterScale::ONE;
-        let surface =
-            Surface::draw_view(&ui.record_frame(view)?, scale.buffer_size(viewport)?, scale)?;
+        let surface = draw(&ui)?;
         assert_eq!(pixel(&surface, 0, 0), red);
         assert_eq!(pixel(&surface, width - 1, 1), green);
         assert_eq!(pixel(&surface, width, 1), [255; 4]);
+        assert_eq!(pixel(&surface, 5, 2), green);
+        assert_eq!(pixel(&surface, 6 - width, 2), green);
+        assert_eq!(pixel(&surface, 5 - width, 2), [255; 4]);
+        assert_eq!(pixel(&surface, 5, 3), [255; 4]);
     }
     Ok(())
 }
