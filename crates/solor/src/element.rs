@@ -204,14 +204,14 @@ pub enum Draw {
         /// Per-edge widths and fills, with outer radii fitted at draw time.
         paint: Rc<crate::style::BorderPaint>,
     },
-    /// Fills a closed contour.
+    /// Fills closed contours as one shape.
     Polygon {
         /// Effective clip in view coordinates.
         clip: Option<Arc<ContentClip>>,
         /// Content origin for the local vertices.
         origin: Origin,
-        /// Vertices in contour order. The last vertex connects to the first.
-        points: Rc<[Origin]>,
+        /// Local vertices grouped into independently closed contours.
+        contours: smallvec::SmallVec<[Rc<[Origin]>; 1]>,
         /// Rule used to determine the interior.
         rule: FillRule,
         /// Paint mapped to the complete polygon bounds.
@@ -473,13 +473,30 @@ impl<'paint> PaintContext<'paint> {
         fill: impl Into<Fill>,
         rule: FillRule,
     ) -> Result<()> {
-        let points = points.into();
-        validate_points(&points)?;
-        if points.len() >= 3 {
+        self.fill_contours([points], fill, rule)
+    }
+
+    /// Fills straight-sided contours as one shape using a shared paint box.
+    /// Each contour closes independently. Contours with fewer than three vertices are skipped.
+    pub fn fill_contours(
+        &mut self,
+        contours: impl IntoIterator<Item = impl Into<Rc<[Origin]>>>,
+        fill: impl Into<Fill>,
+        rule: FillRule,
+    ) -> Result<()> {
+        let mut rings = smallvec::SmallVec::new();
+        for contour in contours {
+            let points = contour.into();
+            validate_points(&points)?;
+            if points.len() >= 3 {
+                rings.push(points);
+            }
+        }
+        if !rings.is_empty() {
             self.commands.push(Draw::Polygon {
                 origin: self.origin,
                 clip: self.clip.clone(),
-                points,
+                contours: rings,
                 rule,
                 fill: fill.into(),
             });

@@ -246,13 +246,13 @@ impl Surface {
                 }
                 Draw::Polygon {
                     origin,
-                    points,
+                    contours,
                     fill,
                     rule,
                     ..
                 } => {
                     let fill = replay.images.resolve(fill).map_err(Error::other)?;
-                    self.fill_polygon(*origin, points, &fill, *rule, scale, bounds)?;
+                    self.fill_polygon(*origin, contours, &fill, *rule, scale, bounds)?;
                 }
                 Draw::Polyline {
                     origin,
@@ -532,9 +532,9 @@ fn draw_bounds(draws: &[Draw], scale: RasterScale) -> Result<Clip> {
 fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     match draw {
         Draw::Group { draws, .. } => draw_bounds(draws, scale),
-        Draw::Polygon { origin, points, .. } => {
-            crate::path::PathBounds::new(*origin, points, scale)?.clip(0.0)
-        }
+        Draw::Polygon {
+            origin, contours, ..
+        } => crate::polygon::bounds(*origin, contours, scale)?.clip(0.0),
         Draw::Polyline {
             origin,
             points,

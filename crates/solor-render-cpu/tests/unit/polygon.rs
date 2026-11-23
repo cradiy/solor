@@ -14,7 +14,7 @@ fn render(points: &[Origin], fill: Fill, scale: RasterScale, clip: Clip) -> Resu
     let mut image = Surface::cleared(SIZE, scale, 255)?;
     image.fill_polygon(
         point(0.5, 1.0),
-        points,
+        &[Rc::from(points)],
         &fill,
         FillRule::EvenOdd,
         scale,
@@ -26,6 +26,56 @@ fn render(points: &[Origin], fill: Fill, scale: RasterScale, clip: Clip) -> Resu
 fn pixel(image: &Surface, x: usize, y: usize) -> &[u8] {
     let offset = (y * SIZE.width as usize + x) * 4;
     &image.rgba[offset..offset + 4]
+}
+
+#[test]
+fn compound_fill_respects_holes_and_shares_its_gradient_across_islands() -> anyhow::Result<()> {
+    use solor::{Ui, component, div};
+
+    let rect = |left, top, right, bottom| {
+        [
+            point(left, top),
+            point(right, top),
+            point(right, bottom),
+            point(left, bottom),
+        ]
+    };
+    let size = Size {
+        width: px(12.),
+        height: px(12.),
+    };
+    let scale = RasterScale(1.5);
+    let gradient =
+        gradient_left_to_right([color_stop(rgb(0xff0000), 0.), color_stop(rgb(0x0000ff), 1.)])?;
+    for (rule, reverse_inner, hole) in [
+        (FillRule::EvenOdd, false, true),
+        (FillRule::NonZero, false, false),
+        (FillRule::NonZero, true, true),
+    ] {
+        let mut inner = rect(2., 2., 6., 8.);
+        if reverse_inner {
+            inner.reverse();
+        }
+        let rings = [rect(1., 1., 7., 9.), inner, rect(9., 3., 11., 7.)];
+        let fill = gradient.clone();
+        let mut ui = Ui::new();
+        let view = ui.mount(component(move |_| {
+            div().paint(move |cx| cx.fill_contours(rings, fill.clone(), rule))
+        }))?;
+        ui.layout(view, size)?;
+        let image = Surface::draw_view(&ui.record_frame(view)?, SIZE, scale)?;
+        for (x, filled) in [(2, true), (5, !hole), (12, false), (15, true)] {
+            let expected = if filled {
+                let position = ((x as f32 + 0.5) / 1.5 - 1.) / 10.;
+                let color = gradient.sample(position)?;
+                [color.red, color.green, color.blue, 255]
+            } else {
+                [255; 4]
+            };
+            assert_eq!(pixel(&image, x, 7), expected);
+        }
+    }
+    Ok(())
 }
 
 #[test]

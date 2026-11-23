@@ -20,7 +20,11 @@ pub(super) struct PathBounds {
 }
 
 impl PathBounds {
-    pub fn new(origin: Origin, points: &[Origin], scale: RasterScale) -> Result<Self> {
+    pub fn new<'a>(
+        origin: Origin,
+        points: impl IntoIterator<Item = &'a Origin>,
+        scale: RasterScale,
+    ) -> Result<Self> {
         let mut b = Self {
             left: f64::INFINITY,
             top: f64::INFINITY,

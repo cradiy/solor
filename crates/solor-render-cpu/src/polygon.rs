@@ -9,7 +9,22 @@ use solor::{
     px,
     raster::{Clip, RasterScale},
 };
-use std::io::{Error, Result};
+use std::{
+    io::{Error, Result},
+    rc::Rc,
+};
+
+pub(super) fn bounds(
+    origin: Origin,
+    contours: &[Rc<[Origin]>],
+    scale: RasterScale,
+) -> Result<PathBounds> {
+    PathBounds::new(
+        origin,
+        contours.iter().flat_map(|points| points.iter()),
+        scale,
+    )
+}
 
 struct Edge {
     x: f64,
@@ -32,31 +47,34 @@ fn boundary(events: &mut Vec<(i64, i32)>, x: f64, sign: i32) {
 }
 
 fn for_each_span(
-    points: &[Origin],
+    contours: &[Rc<[Origin]>],
     rule: FillRule,
     origin: Origin,
     scale: RasterScale,
     clip: Clip,
     mut emit: impl FnMut(i64, i64, i64, u8) -> Result<()>,
 ) -> Result<()> {
-    let mut edges = Vec::with_capacity(points.len());
-    let mut previous = device(points[points.len() - 1], origin, scale);
-    for &point in points {
-        let current = device(point, origin, scale);
-        let (a, b, direction) = if previous.1 <= current.1 {
-            (previous, current, 1)
-        } else {
-            (current, previous, -1)
-        };
-        previous = current;
-        if a.1 < b.1 && a.1 < clip.bottom as f64 && b.1 > clip.top as f64 {
-            edges.push(Edge {
-                x: a.0,
-                top: a.1,
-                bottom: b.1,
-                dx: b.0 - a.0,
-                direction,
-            });
+    let mut edges = Vec::with_capacity(contours.iter().map(|ring| ring.len()).sum());
+    for points in contours {
+        let Some(&last) = points.last() else { continue };
+        let mut previous = device(last, origin, scale);
+        for &point in points.iter() {
+            let current = device(point, origin, scale);
+            let (a, b, direction) = if previous.1 <= current.1 {
+                (previous, current, 1)
+            } else {
+                (current, previous, -1)
+            };
+            previous = current;
+            if a.1 < b.1 && a.1 < clip.bottom as f64 && b.1 > clip.top as f64 {
+                edges.push(Edge {
+                    x: a.0,
+                    top: a.1,
+                    bottom: b.1,
+                    dx: b.0 - a.0,
+                    direction,
+                });
+            }
         }
     }
     edges.sort_unstable_by(|a, b| a.top.total_cmp(&b.top));
@@ -124,7 +142,7 @@ impl Surface {
     pub(super) fn fill_polygon(
         &mut self,
         origin: Origin,
-        points: &[Origin],
+        contours: &[Rc<[Origin]>],
         fill: &Fill,
         rule: FillRule,
         scale: RasterScale,
@@ -132,7 +150,7 @@ impl Surface {
     ) -> Result<()> {
         match fill {
             Fill::Solid(color) => for_each_span(
-                points,
+                contours,
                 rule,
                 origin,
                 scale,
@@ -143,7 +161,7 @@ impl Surface {
                 },
             ),
             Fill::Checkerboard(pattern) => {
-                let bounds = PathBounds::new(origin, points, scale)?;
+                let bounds = bounds(origin, contours, scale)?;
                 let brush = crate::checkerboard::CheckerBrush::new(
                     *pattern,
                     bounds.left,
@@ -151,7 +169,7 @@ impl Surface {
                     scale,
                 );
                 for_each_span(
-                    points,
+                    contours,
                     rule,
                     origin,
                     scale,
@@ -163,11 +181,11 @@ impl Surface {
                 )
             }
             Fill::DiagonalStripes(pattern) => {
-                let bounds = PathBounds::new(origin, points, scale)?;
+                let bounds = bounds(origin, contours, scale)?;
                 let brush =
                     crate::stripes::StripeBrush::new(*pattern, bounds.left, bounds.top, scale);
                 for_each_span(
-                    points,
+                    contours,
                     rule,
                     origin,
                     scale,
@@ -179,7 +197,7 @@ impl Surface {
                 )
             }
             Fill::CustomImage(image) => {
-                let bounds = PathBounds::new(origin, points, scale)?;
+                let bounds = bounds(origin, contours, scale)?;
                 let size = Size {
                     width: px(((bounds.right - bounds.left) / scale.0) as f32),
                     height: px(((bounds.bottom - bounds.top) / scale.0) as f32),
@@ -195,7 +213,7 @@ impl Surface {
                     return Ok(());
                 };
                 for_each_span(
-                    points,
+                    contours,
                     rule,
                     origin,
                     scale,
@@ -209,14 +227,14 @@ impl Surface {
                 )
             }
             Fill::Image(image) => {
-                let bounds = PathBounds::new(origin, points, scale)?;
+                let bounds = bounds(origin, contours, scale)?;
                 let size = Size {
                     width: px(((bounds.right - bounds.left) / scale.0) as f32),
                     height: px(((bounds.bottom - bounds.top) / scale.0) as f32),
                 };
                 let sampler = crate::bitmap::ImageSampler::new(image, size, scale)?;
                 for_each_span(
-                    points,
+                    contours,
                     rule,
                     origin,
                     scale,
@@ -236,7 +254,7 @@ impl Surface {
                 )
             }
             Fill::Gradient(gradient) => {
-                let bounds = PathBounds::new(origin, points, scale)?;
+                let bounds = bounds(origin, contours, scale)?;
                 if bounds.left == bounds.right || bounds.top == bounds.bottom {
                     return Ok(());
                 }
@@ -247,7 +265,7 @@ impl Surface {
                     })
                     .map_err(Error::other)?;
                 for_each_span(
-                    points,
+                    contours,
                     rule,
                     origin,
                     scale,
