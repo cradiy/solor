@@ -633,15 +633,27 @@ impl<'paint> PaintContext<'paint> {
         self.fill_rounded_rect(offset, size, px(0.0), fill)
     }
 
-    /// Fills a content-local rectangle with a uniform corner radius in logical pixels.
+    /// Fills a content-local rectangle with a shared radius or individual corner radii.
+    /// Oversized radii shrink proportionally to fit the edges.
     pub fn fill_rounded_rect(
         &mut self,
         offset: Origin,
         size: Size,
-        radius: Pixels,
+        radii: impl Into<Corners<Pixels>>,
         fill: impl Into<Fill>,
     ) -> Result<()> {
-        anyhow::ensure!(radius.is_extent(), "invalid corner radius");
+        let radii = radii.into();
+        anyhow::ensure!(
+            [
+                radii.top_left,
+                radii.top_right,
+                radii.bottom_right,
+                radii.bottom_left
+            ]
+            .into_iter()
+            .all(Pixels::is_extent),
+            "invalid corner radius"
+        );
         anyhow::ensure!(
             size.width.is_extent() && size.height.is_extent(),
             "invalid fill extent"
@@ -650,12 +662,7 @@ impl<'paint> PaintContext<'paint> {
             .origin
             .checked_add(offset)
             .context("invalid fill origin")?;
-        self.record_fill(
-            origin,
-            size,
-            fill.into(),
-            Corners::all(radius.min(size.width / 2.0).min(size.height / 2.0)),
-        );
+        self.record_fill(origin, size, fill.into(), radii.fit_to(size));
         Ok(())
     }
 

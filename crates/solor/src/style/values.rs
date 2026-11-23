@@ -251,6 +251,12 @@ impl<T> Corners<T> {
     }
 }
 
+impl From<crate::Pixels> for Corners<crate::Pixels> {
+    fn from(radius: crate::Pixels) -> Self {
+        Self::all(radius)
+    }
+}
+
 impl Corners<crate::Pixels> {
     /// Scales all radii proportionally until adjacent corners fit each edge.
     pub fn fit_to(self, size: crate::layout::Size) -> Self {

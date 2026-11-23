@@ -440,11 +440,16 @@ fn asymmetric_background_radii_fit_each_allocation_and_survive_replay() -> Resul
         bottom_right: px(4.0),
         bottom_left: px(0.0),
     };
+    let painted = ui.mount(component(move |_| {
+        div().paint(move |cx| cx.fill_rounded_rect(Origin::default(), cx.size, radii, rgb(0)))
+    }))?;
     let mut held = None;
     for (width, height, factor) in [(16, 24, 0.5), (32, 6, 0.25), (32, 24, 1.0)] {
         let size = DeviceSize { width, height }.at_unit_scale();
         ui.layout(view, size)?;
         let frame = ui.record_frame(view)?;
+        ui.layout(painted, size)?;
+        assert_eq!(ui.record_frame(painted)?.draws(), frame.draws());
         assert!(matches!(frame.draws(), [Draw::Fill { corner_radii, .. }]
             if *corner_radii == radii.map(|r| r * factor)));
         for _ in 0..2 {
