@@ -200,14 +200,14 @@ properties! {
         text_overflow: TextOverflow,
         /// Maximum visible lines. An explicit inner None removes the limit.
         line_clamp: Option<NonZeroUsize>,
-        /// Background color behind glyph runs.
-        text_background: Rgba,
+        /// Paint behind each visual line of text.
+        text_background: crate::Ink,
         /// Stroke beneath each visible text line.
         underline: UnderlineStyle,
         /// Draw a line through the text.
         strikethrough: bool,
-        /// Color for text decorations.
-        decoration_color: Rgba,
+        /// Paint for underline and strikethrough strokes.
+        decoration_color: crate::Ink,
         /// Stroke thickness for text decorations.
         decoration_thickness: AbsoluteLength,
     } edges {}

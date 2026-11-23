@@ -108,12 +108,11 @@ impl Element for Text {
         let paragraph = self.resolve(Query::Exact(cx.size.width))?;
         let color = cx.text_color()?;
         let decorations = self.decorations.as_deref();
-        let stroke_color = decorations.and_then(|d| d.color).map(crate::Ink::from);
-        let stroke_color = stroke_color.as_ref().unwrap_or(&color);
-        if let Some(background) = decorations.and_then(|d| d.background) {
-            cx.text_line_fills(&paragraph, &background.into(), |line| {
+        let stroke_color = decorations.and_then(|d| d.color.as_ref()).unwrap_or(&color);
+        if let Some(background) = decorations.and_then(|d| d.background.as_ref()) {
+            cx.text_line_fills(&paragraph, background, |line| {
                 (line.top, line.top + line.height)
-            });
+            })?;
         }
         if let Some(d) = decorations
             && let Some((stroke, kind)) = d.underline
@@ -121,7 +120,7 @@ impl Element for Text {
             if kind == crate::style::UnderlineStyle::Wavy {
                 cx.wavy_underline(&paragraph, stroke, d.thickness, stroke_color)?;
             } else {
-                cx.text_stroke(&paragraph, stroke, d.thickness, stroke_color);
+                cx.text_stroke(&paragraph, stroke, d.thickness, stroke_color)?;
             }
         }
         cx.commands.push(Draw::Text {
@@ -134,7 +133,7 @@ impl Element for Text {
         if let Some(d) = decorations
             && let Some(stroke) = d.strike
         {
-            cx.text_stroke(&paragraph, stroke, d.thickness, stroke_color);
+            cx.text_stroke(&paragraph, stroke, d.thickness, stroke_color)?;
         }
         Ok(())
     }
@@ -350,13 +349,13 @@ impl<'paint> PaintContext<'paint> {
         stroke: crate::text::Stroke,
         thickness: Option<Pixels>,
         color: &crate::Ink,
-    ) {
+    ) -> Result<()> {
         let em = paragraph.style.size.get();
         let height = thickness.map_or(stroke.thickness * em, Pixels::get);
         self.text_line_fills(paragraph, color, |line| {
             let center = line.baseline - stroke.position * em;
             (center - height * 0.5, center + height * 0.5)
-        });
+        })
     }
 
     fn wavy_underline(
@@ -366,7 +365,7 @@ impl<'paint> PaintContext<'paint> {
         thickness: Option<Pixels>,
         color: &crate::Ink,
     ) -> Result<()> {
-        if matches!(color, crate::Ink::Solid(c) if c.alpha == 0) {
+        if color.is_clear_solid() {
             return Ok(());
         }
         let em = paragraph.style.size.get();
@@ -406,32 +405,46 @@ impl<'paint> PaintContext<'paint> {
         paragraph: &Paragraph,
         color: &crate::Ink,
         vertical_bounds: impl Fn(&Line) -> (f32, f32),
-    ) {
-        if matches!(color, crate::Ink::Solid(c) if c.alpha == 0) {
-            return;
+    ) -> Result<()> {
+        if color.is_clear_solid() {
+            return Ok(());
         }
-        for line in &paragraph.lines {
-            let (top, bottom) = vertical_bounds(line);
-            let top = top.max(0.0);
-            let bottom = bottom.min(self.size.height.get());
-            let (left, right) = line.advance_bounds();
-            let left = left.max(0.0);
-            let right = right.min(self.size.width.get());
-            if right > left && bottom > top {
-                self.commands.push(Draw::Fill {
-                    origin: Origin {
-                        x: self.origin.x + px(left),
-                        y: self.origin.y + px(top),
+        let fill = Fill::from(color.clone());
+        let gradient = matches!(color, crate::Ink::Gradient(_));
+        let draw = |cx: &mut PaintContext<'_>| {
+            for line in &paragraph.lines {
+                let (left, right) = line.advance_bounds();
+                let (top, bottom) = vertical_bounds(line);
+                let (x0, x1) = (left.max(0.), right.min(cx.size.width.get()));
+                let (y0, y1) = (top.max(0.), bottom.min(cx.size.height.get()));
+                if x1 <= x0 || y1 <= y0 {
+                    continue;
+                }
+                // A gradient samples the full line even where the content clip cuts it off.
+                let (left, right, top, bottom) = if gradient {
+                    (left, right, top, bottom)
+                } else {
+                    (x0, x1, y0, y1)
+                };
+                cx.record_fill(
+                    Origin {
+                        x: cx.origin.x + px(left),
+                        y: cx.origin.y + px(top),
                     },
-                    size: Size {
+                    Size {
                         width: px(right - left),
                         height: px(bottom - top),
                     },
-                    fill: color.clone().into(),
-                    clip: self.clip.clone(),
-                    corner_radii: Corners::default(),
-                });
+                    fill.clone(),
+                    Corners::default(),
+                );
             }
+            Ok(())
+        };
+        if gradient {
+            self.with_clip(Origin::default(), self.size, draw)
+        } else {
+            draw(self)
         }
     }
 
@@ -728,7 +741,9 @@ impl MountedNode {
                 a.underline
                     .is_some_and(|s| s != crate::style::UnderlineStyle::None)
                     || a.strikethrough == Some(true)
-                    || a.text_background.is_some_and(|color| color.alpha != 0)
+                    || a.text_background
+                        .as_ref()
+                        .is_some_and(|ink| !ink.is_clear_solid())
             })
             && matches!(style.text.color, Foreground::Fixed(_))
         {

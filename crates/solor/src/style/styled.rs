@@ -246,8 +246,8 @@ pub trait Styled: Sized {
     }
     property_setters! { attributes_mut;
         font_features => font_features: Rc<[FontFeature]>, font_family => font_family: FontFamily, font_fallbacks => font_fallbacks: Rc<[FontFamily]>,
-        letter_spacing => letter_spacing: AbsoluteLength, text_bg => text_background: Rgba,
-        decoration_color => decoration_color: Rgba, decoration_thickness => decoration_thickness: AbsoluteLength
+        letter_spacing => letter_spacing: AbsoluteLength, text_bg => text_background: crate::Ink,
+        decoration_color => decoration_color: crate::Ink, decoration_thickness => decoration_thickness: AbsoluteLength
     }
     keyword_setters! {
         display { block: Display::Block, flex: Display::Flex, grid: Display::Grid, hidden: Display::None };

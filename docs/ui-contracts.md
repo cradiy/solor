@@ -453,7 +453,9 @@ visible line is decorated across its shaped advances inside the text content
 box. The face supplies the baseline offsets and natural thickness, with
 em-based defaults for missing metrics. Strokes follow the text foreground.
 Use `.decoration_color(color)` and `.decoration_thickness(px(1.5))` to override
-them. Thickness also accepts rem units. Children can disable an inherited
+them. Both `.text_bg(...)` and `.decoration_color(...)` accept a gradient or a
+reactive gradient. Each gradient spans the full decorated line before clipping.
+Thickness also accepts rem units. Children can disable an inherited
 stroke with `.text_underline(false)` or `.text_strikethrough(false)`.
 
 `.letter_spacing(px(0.75))` adds 0.75 logical pixels to each shaped

@@ -329,3 +329,85 @@ fn a_narrow_repair_under_a_wave_keeps_its_phase() -> Result<()> {
     assert_eq!(repaired.rgba, reference.frame(size, scale)?.rgba);
     Ok(())
 }
+
+#[test]
+fn gradient_decorations_keep_line_coordinates_when_the_label_is_clipped() -> Result<()> {
+    use solor::{Ink, color_stop, gradient_left_to_right};
+    use std::rc::Rc;
+
+    let ramp = |a, b| gradient_left_to_right([color_stop(rgb(a), 0.), color_stop(rgb(b), 1.)]);
+    let mut ui = Ui::with_font(FONT.to_vec())?;
+    let width = ui.context().signal(px(180.));
+    let highlight = ui.context().signal(ramp(0x203848, 0xbac390)?);
+    let stroke = ramp(0xff1030, 0x2060ff)?;
+    let view = ui.mount(component(|_| {
+        div()
+            .text_bg(highlight)
+            .decoration_color(stroke.clone())
+            .child(
+                text("Audio settings")
+                    .w(width)
+                    .whitespace_nowrap()
+                    .text_size(px(18.))
+                    .line_height(px(32.))
+                    .text_color(rgba(0))
+                    .underline_wavy()
+                    .line_through()
+                    .decoration_thickness(px(2.)),
+            )
+    }))?;
+    let size = DeviceSize {
+        width: 190,
+        height: 40,
+    }
+    .at_unit_scale();
+    ui.layout(view, size)?;
+    let first = ui.record_frame(view)?;
+    let next = ramp(0x41ba97, 0xf4d176)?;
+    ui.context().set(highlight, next.clone())?;
+    ui.flush()?;
+    assert_eq!(ui.layout(view, size)?, 0);
+    let full = ui.record_frame(view)?;
+    let [
+        Draw::Fill {
+            fill: Fill::Gradient(bg),
+            ..
+        },
+        Draw::WavyUnderline {
+            color: Ink::Gradient(wave),
+            ..
+        },
+        Draw::Text { paragraph, .. },
+        Draw::Fill {
+            fill: Fill::Gradient(strike),
+            ..
+        },
+    ] = full.draws()
+    else {
+        panic!("expected a highlighted line with two gradient strokes")
+    };
+    assert_eq!((bg, wave.as_ref(), strike), (&next, &stroke, &stroke));
+    assert!(
+        matches!(&first.draws()[2], Draw::Text {paragraph: old, ..} if Rc::ptr_eq(old, paragraph))
+    );
+
+    ui.context().set(width, px(38.))?;
+    ui.flush()?;
+    ui.layout(view, size)?;
+    let scale = RasterScale(1.5);
+    let physical = scale.buffer_size(size)?;
+    let cropped = Surface::draw_view(&ui.record_frame(view)?, physical, scale)?;
+    let reference = Surface::draw_view(&full, physical, scale)?;
+    let stride = physical.width as usize * 4;
+    let cut = 57 * 4;
+    for (a, b) in cropped
+        .rgba
+        .chunks_exact(stride)
+        .zip(reference.rgba.chunks_exact(stride))
+    {
+        assert_eq!(&a[..cut], &b[..cut]);
+        assert!(a[cut..].iter().all(|v| *v == 255));
+    }
+    assert!(reference.rgba[..stride][cut..].iter().any(|v| *v != 255));
+    Ok(())
+}

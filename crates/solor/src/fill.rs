@@ -486,6 +486,12 @@ pub enum Ink {
     Gradient(Arc<Gradient>),
 }
 
+impl Ink {
+    pub(crate) fn is_clear_solid(&self) -> bool {
+        matches!(self, Self::Solid(c) if c.alpha == 0)
+    }
+}
+
 impl<T: Into<Rgba>> From<T> for Ink {
     fn from(value: T) -> Self {
         Self::Solid(value.into())

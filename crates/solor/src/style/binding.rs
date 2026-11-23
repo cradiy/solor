@@ -55,6 +55,7 @@ converted!(
     Length,
     AbsoluteLength,
     Fill,
+    crate::Ink,
     Rgba,
     FontFamily,
     Rc<[FontFamily]>,
@@ -88,6 +89,12 @@ exact!(
     bool,
     Option<std::num::NonZeroUsize>
 );
+
+impl From<Property<Rgba>> for Property<crate::Ink> {
+    fn from(color: Property<Rgba>) -> Self {
+        color.map(crate::Ink::from)
+    }
+}
 
 impl From<std::num::NonZeroUsize> for Property<Option<std::num::NonZeroUsize>> {
     fn from(lines: std::num::NonZeroUsize) -> Self {

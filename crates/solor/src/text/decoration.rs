@@ -1,5 +1,5 @@
 use crate::{
-    Pixels, Rgba,
+    Ink, Pixels,
     layout::{LayoutError, Result},
     style::{Typography, UnderlineStyle},
 };
@@ -44,11 +44,11 @@ impl FontStrokes {
 }
 
 pub(crate) struct Decorations {
-    pub background: Option<Rgba>,
+    pub background: Option<Ink>,
     pub underline: Option<(Stroke, UnderlineStyle)>,
     pub strike: Option<Stroke>,
     pub thickness: Option<Pixels>,
-    pub color: Option<Rgba>,
+    pub color: Option<Ink>,
 }
 
 impl Text {
@@ -57,7 +57,11 @@ impl Text {
             return Err(LayoutError::InvalidSize);
         }
         self.decorations = text.attributes.as_deref().and_then(|attrs| {
-            let background = attrs.text_background.filter(|color| color.alpha != 0);
+            let background = attrs
+                .text_background
+                .as_ref()
+                .filter(|ink| !ink.is_clear_solid())
+                .cloned();
             let strokes_visible = !text.decoration_thickness.is_some_and(|v| v.get() == 0.0);
             let underline = attrs
                 .underline
@@ -96,7 +100,7 @@ impl Text {
                     .map(|(s, kind)| (s.underline, kind)),
                 strike: strokes.as_ref().filter(|_| strike).map(|s| s.strike),
                 thickness: text.decoration_thickness,
-                color: attrs.decoration_color,
+                color: attrs.decoration_color.clone(),
             }))
         });
         Ok(())
