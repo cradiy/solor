@@ -1,5 +1,6 @@
 use super::{KeyEvent, Modifiers, NamedKey};
 use crate::SharedString;
+use std::fmt;
 
 /// A logical key resolved by the active keyboard layout.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -93,6 +94,27 @@ pub enum Modifier {
 pub struct Shortcut {
     key: Key,
     modifiers: Modifiers,
+}
+
+impl fmt::Display for Shortcut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (active, prefix) in [
+            (self.modifiers.control, "Ctrl+"),
+            (self.modifiers.alt, "Alt+"),
+            (self.modifiers.shift, "Shift+"),
+            (self.modifiers.meta, "Meta+"),
+        ] {
+            if active {
+                f.write_str(prefix)?;
+            }
+        }
+        match &self.key {
+            Key::Named(key) => key.fmt(f),
+            Key::Character(' ') => f.write_str("Space"),
+            Key::Character(key) => key.to_ascii_uppercase().fmt(f),
+            Key::Text(text) => f.write_str(text),
+        }
+    }
 }
 
 impl From<Key> for Shortcut {

@@ -21,6 +21,7 @@ impl KeyBinding {
             action: BoundAction {
                 value: Box::new(action),
                 context: None,
+                sequence: 0,
             },
         }
     }
@@ -33,11 +34,29 @@ impl KeyBinding {
 }
 
 pub(crate) struct BoundAction {
-    value: Box<dyn Any>,
+    pub(super) value: Box<dyn Any>,
     context: Option<SharedString>,
+    sequence: u64,
 }
 
 impl Instance {
+    fn find_on_focus_path<T>(
+        &self,
+        find: impl Fn(&[ActionHandler]) -> Option<T>,
+    ) -> Result<Option<T>> {
+        let mut target = self.focused;
+        while let Some(id) = target {
+            let node = self.bodies.get(&id).ok_or(TreeError::InvalidNode(id))?;
+            if let Some(handlers) = node.handlers.as_deref()
+                && let Some(found) = find(&handlers.actions)
+            {
+                return Ok(Some(found));
+            }
+            target = self.scene.parent(id)?;
+        }
+        Ok(None)
+    }
+
     pub(super) fn route_action<'a>(
         &mut self,
         tasks: &Tasks,
@@ -93,17 +112,39 @@ impl Ui {
     /// Whether the focused element or one of its ancestors handles this action type.
     pub fn is_action_available(&self, view: ViewId, action: &dyn Any) -> Result<bool> {
         let instance = self.instance(view)?;
-        let mut target = instance.focused;
-        while let Some(id) = target {
-            let node = instance.bodies.get(&id).ok_or(TreeError::InvalidNode(id))?;
-            if let Some(handlers) = node.handlers.as_deref()
-                && ActionHandler::for_value(&handlers.actions, action).is_some()
+        Ok(instance
+            .find_on_focus_path(|handlers| ActionHandler::for_value(handlers, action).map(|_| ()))?
+            .is_some())
+    }
+
+    /// Returns the most recently registered shortcut that resolves to this action value
+    /// on the current focus path. Key-down handlers can still consume a press.
+    pub fn shortcut_for_action<A: Any + PartialEq>(
+        &self,
+        view: ViewId,
+        action: &A,
+    ) -> Result<Option<&Shortcut>> {
+        let instance = self.instance(view)?;
+        let mut latest = None;
+        for (shortcut, bindings) in &self.keymap {
+            if !bindings
+                .iter()
+                .any(|b| b.value.downcast_ref::<A>() == Some(action))
             {
-                return Ok(true);
+                continue;
             }
-            target = instance.scene.parent(id)?;
+            let contexts = instance.key_contexts(bindings)?;
+            let binding = instance.find_on_focus_path(|handlers| {
+                ActionHandler::find(handlers, bindings, &contexts).map(|(_, binding)| binding)
+            })?;
+            if let Some(binding) = binding
+                && binding.value.downcast_ref::<A>() == Some(action)
+                && latest.is_none_or(|(sequence, _)| binding.sequence > sequence)
+            {
+                latest = Some((binding.sequence, shortcut));
+            }
         }
-        Ok(false)
+        Ok(latest.map(|(_, shortcut)| shortcut))
     }
 
     /// Sends an action to the nearest matching handler on the view's focus path.
@@ -124,7 +165,13 @@ impl Ui {
     /// Registers bindings for this UI. Registering the same shortcut and action type
     /// again in the same context replaces its value.
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
-        for KeyBinding { shortcut, action } in bindings {
+        for KeyBinding {
+            shortcut,
+            mut action,
+        } in bindings
+        {
+            self.binding_sequence += 1;
+            action.sequence = self.binding_sequence;
             let actions = self.keymap.entry(shortcut).or_default();
             actions.retain(|old| {
                 old.context != action.context
@@ -155,7 +202,7 @@ impl ActionHandler {
         handlers: &'h [Self],
         actions: &'a [BoundAction],
         contexts: &[SharedString],
-    ) -> Option<(&'h Callback, &'a dyn Any)> {
+    ) -> Option<(&'h Callback, &'a BoundAction)> {
         if handlers.is_empty() {
             return None;
         }
@@ -166,8 +213,8 @@ impl ActionHandler {
                 .rev()
                 .filter(|b| b.context.as_ref() == context)
             {
-                if let Some(matched) = Self::for_value(handlers, binding.value.as_ref()) {
-                    return Some(matched);
+                if let Some((handler, _)) = Self::for_value(handlers, binding.value.as_ref()) {
+                    return Some((handler, binding));
                 }
             }
         }

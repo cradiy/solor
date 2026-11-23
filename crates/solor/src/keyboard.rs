@@ -276,7 +276,10 @@ impl Ui {
                 &self.tasks,
                 &self.engine,
                 self.state.get_mut(),
-                |handlers| ActionHandler::find(handlers, actions, &contexts),
+                |handlers| {
+                    ActionHandler::find(handlers, actions, &contexts)
+                        .map(|(handler, binding)| (handler, binding.value.as_ref()))
+                },
             )? {
                 return Ok(true);
             }

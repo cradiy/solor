@@ -640,6 +640,7 @@ pub struct Ui {
     tasks: Tasks,
     assets: assets::Resources,
     keymap: HashMap<keyboard::Shortcut, Vec<keyboard::BoundAction>>,
+    binding_sequence: u64,
     tooltip_style: TooltipStyle,
     state: tasks::UiState,
     engine: TextSystem,

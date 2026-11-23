@@ -5,6 +5,7 @@ use solor::{
     keyboard::{Key, KeyBinding, KeyEvent, KeyState, Modifier, Modifiers},
 };
 
+#[derive(PartialEq)]
 struct Select(u8);
 struct Save;
 
@@ -56,7 +57,9 @@ fn shortcut_resolves_against_focus_and_uses_the_latest_binding_value() -> Result
             )
     }))?;
     let shortcut = Key::S.with(Modifier::Ctrl).with(Modifier::Shift);
+    let alternate = Key::Space.with(Modifier::Alt);
     ui.bind_keys([
+        KeyBinding::new(alternate.clone(), Select(1)),
         KeyBinding::new(shortcut.clone(), Save),
         KeyBinding::new(shortcut.clone(), Select(1)),
     ]);
@@ -69,15 +72,20 @@ fn shortcut_resolves_against_focus_and_uses_the_latest_binding_value() -> Result
         state: KeyState::Down,
     };
     ui.focus_next(view)?;
+    assert_eq!(ui.shortcut_for_action(view, &Select(1))?, Some(&shortcut));
+    assert_eq!(shortcut.to_string(), "Ctrl+Shift+S");
     assert!(!ui.dispatch_key(view, &event)?);
     event.modifiers.shift = true;
     assert!(ui.dispatch_key(view, &event)?);
     assert_eq!(*ui.context().read(selected)?, 1);
 
-    ui.bind_keys([KeyBinding::new(shortcut, Select(2))]);
+    ui.bind_keys([KeyBinding::new(shortcut.clone(), Select(2))]);
+    assert_eq!(ui.shortcut_for_action(view, &Select(1))?, Some(&alternate));
+    assert_eq!(ui.shortcut_for_action(view, &Select(2))?, Some(&shortcut));
     assert!(ui.dispatch_key(view, &event)?);
     assert_eq!(*ui.context().read(selected)?, 2);
     ui.focus_next(view)?;
+    assert_eq!(ui.shortcut_for_action(view, &Select(2))?, None);
     assert!(ui.dispatch_key(view, &event)?);
     assert_eq!(*ui.context().read(selected)?, 99);
     Ok(())
@@ -140,6 +148,12 @@ fn one_handler_resolves_the_same_shortcut_across_nested_and_sibling_regions() ->
     };
     for expected in [1, 4, 3, 1] {
         ui.focus_next(view)?;
+        for value in [1, 2, 3, 4] {
+            assert_eq!(
+                ui.shortcut_for_action(view, &Select(value))?.is_some(),
+                value == expected
+            );
+        }
         assert!(ui.dispatch_key(view, &home)?);
         assert_eq!(*ui.context().read(selected)?, expected);
     }
