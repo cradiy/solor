@@ -27,6 +27,12 @@ pub(super) struct FixedDraws {
 struct FixedCommands {
     labels: Vec<FixedLabel>,
     backgrounds: Vec<(usize, Draw)>,
+    edges: Option<Rc<FixedEdges>>,
+}
+
+struct FixedEdges {
+    prefix: usize,
+    suffix: usize,
 }
 
 struct FixedLabel {
@@ -78,12 +84,36 @@ pub struct ViewFrame {
     draws: Vec<Draw>,
     pointer: PointerFrame,
     next_frame: bool,
+    fixed_edges: Option<Rc<FixedEdges>>,
+    has_overlay: bool,
 }
 
 impl ViewFrame {
     /// Returns commands in paint order, with each parent before its children.
     pub fn draws(&self) -> &[Draw] {
         &self.draws
+    }
+
+    /// Counts leading and trailing commands guaranteed identical in both recordings.
+    /// The two runs do not overlap. Commands between them may need comparison.
+    pub fn common_draw_edges(&self, other: &Self) -> (usize, usize) {
+        if let (Some(a), Some(b)) = (&self.fixed_edges, &other.fixed_edges)
+            && Rc::ptr_eq(a, b)
+        {
+            let suffix = if self.has_overlay || other.has_overlay {
+                0
+            } else {
+                a.suffix
+            };
+            (a.prefix, suffix)
+        } else {
+            (0, 0)
+        }
+    }
+
+    /// Returns the hit geometry for submission while retaining this recording.
+    pub fn pointer_frame(&self) -> &PointerFrame {
+        &self.pointer
     }
 
     /// Whether a painted element requested a subsequent host-paced frame.
@@ -284,6 +314,8 @@ impl Ui {
             }
         } else if previous_peak.is_some() {
             let mut fixed = FixedCommands::default();
+            let mut prefix = None;
+            let mut suffix = 0;
             for (index, (id, offset, clips)) in pointer.paint_order().enumerate() {
                 groups.advance(index, instance, &mut draws);
                 let start = draws.len();
@@ -293,10 +325,24 @@ impl Ui {
                     && let Some(label) = FixedLabel::from_commands(index, &draws[start..])
                 {
                     fixed.labels.push(label);
+                    suffix += 1;
                 } else if body.frame_paint == FramePaint::FixedBackground
                     && let [draw] = &draws[start..]
                 {
                     fixed.backgrounds.push((index, draw.clone()));
+                    suffix += 1;
+                } else {
+                    prefix.get_or_insert(index);
+                    suffix = 0;
+                }
+            }
+            if pointer.group_events().is_empty() {
+                let edges = FixedEdges {
+                    prefix: prefix.unwrap_or(suffix),
+                    suffix: if prefix.is_some() { suffix } else { 0 },
+                };
+                if edges.prefix != 0 || edges.suffix != 0 {
+                    fixed.edges = Some(Rc::new(edges));
                 }
             }
             cache.commands.get_or_init(|| fixed);
@@ -309,6 +355,7 @@ impl Ui {
             }
         }
         groups.advance(usize::MAX, instance, &mut draws);
+        let content_len = draws.len();
         instance
             .pointer
             .tooltips
@@ -316,6 +363,15 @@ impl Ui {
         cache.previous_peak.set(Some(groups.peak.max(draws.len())));
         instance.repaints.borrow_mut().dirty.clear();
         Ok(ViewFrame {
+            fixed_edges: if pointer.group_events().is_empty() {
+                cache
+                    .commands
+                    .get()
+                    .and_then(|commands| commands.edges.clone())
+            } else {
+                None
+            },
+            has_overlay: draws.len() != content_len,
             draws,
             pointer,
             next_frame,

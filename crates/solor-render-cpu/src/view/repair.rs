@@ -21,26 +21,32 @@ pub(crate) struct RepairIndex {
 impl RepairIndex {
     pub(crate) fn damage(
         &mut self,
-        old: &[Draw],
-        new: &[Draw],
+        previous: &solor::ViewFrame,
+        current: &solor::ViewFrame,
         scale: RasterScale,
         canvas: Clip,
     ) -> Result<Damage> {
+        let (old, new) = (previous.draws(), current.draws());
+        let (prefix, suffix) = current.common_draw_edges(previous);
+        let before = &old[prefix..old.len() - suffix];
+        let after = &new[prefix..new.len() - suffix];
         let mut damage = Damage::default();
         if old.len() != new.len() {
             self.blocks = Vec::new();
-            include_changes(old, new, scale, canvas, &mut damage)?;
+            include_changes(before, after, scale, canvas, &mut damage)?;
         } else if self.blocks.is_empty() {
-            include_changes(old, new, scale, canvas, &mut damage)?;
+            include_changes(before, after, scale, canvas, &mut damage)?;
             if new.len() >= 2 * BLOCK_SIZE && !damage.is_empty() {
                 self.blocks
                     .resize(new.len().div_ceil(BLOCK_SIZE) - 1, Block::Unmeasured);
             }
-        } else {
+        } else if !after.is_empty() {
             for (i, (before, after)) in old
                 .chunks(BLOCK_SIZE)
                 .zip(new.chunks(BLOCK_SIZE))
                 .enumerate()
+                .take((new.len() - suffix).div_ceil(BLOCK_SIZE))
+                .skip(prefix / BLOCK_SIZE)
             {
                 let changed = include_changes(before, after, scale, canvas, &mut damage)?;
                 if let Some(block) = self.blocks.get_mut(i) {

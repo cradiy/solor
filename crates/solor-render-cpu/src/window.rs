@@ -1,7 +1,7 @@
 //! Presentation of a mounted component on RGBA8 window targets.
 use anyhow::Result;
 use solor::{
-    Draw, Render, Ui, ViewId,
+    Render, Ui, ViewFrame, ViewId,
     layout::Size,
     platform::{EventResponse, WindowBackground, WindowEvent, WindowHandler},
     pointer::PointerFrame,
@@ -28,7 +28,7 @@ struct RetainedView {
     logical: Size,
     scale: RasterScale,
     surface: Surface,
-    draws: Vec<Draw>,
+    frame: ViewFrame,
     index: RepairIndex,
 }
 
@@ -111,7 +111,7 @@ impl WindowHandler<Rgba8> for CpuWindow {
         // Take ownership before mutating pixels. On a raster error, retry from a clean image.
         let (surface, damage, index) = match self.retained.take() {
             Some(mut old) if old.logical == size && old.scale == scale => {
-                let damage = old.index.damage(&old.draws, frame.draws(), scale, canvas)?;
+                let damage = old.index.damage(&old.frame, &frame, scale, canvas)?;
                 for &area in damage.rects() {
                     old.index.repair(
                         &mut old.surface,
@@ -141,13 +141,12 @@ impl WindowHandler<Rgba8> for CpuWindow {
             ),
         };
         let animate = frame.requests_animation_frame();
-        let (draws, pointer) = frame.into_parts();
-        self.prepared = Some((pointer, animate));
+        self.prepared = Some((frame.pointer_frame().clone(), animate));
         let retained = self.retained.insert(RetainedView {
             logical: size,
             scale,
             surface,
-            draws,
+            frame,
             index,
         });
         Ok(RasterFrame {

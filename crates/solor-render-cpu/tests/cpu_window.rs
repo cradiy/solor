@@ -432,3 +432,55 @@ fn translucent_layers_repair_to_transparent_without_a_full_repaint() -> Result<(
     assert!(repaired.rgba.iter().all(|&byte| byte == 0));
     Ok(())
 }
+
+#[test]
+fn variable_length_paint_between_fixed_siblings_matches_full_repaint() -> Result<()> {
+    fn scene(count: u32) -> impl solor::Render {
+        component(move |cx| {
+            let bars = cx.signal(count);
+            let fixed = || (0..80).map(|_| div().absolute().size(px(1.)).bg(rgb(0x224488)));
+            div()
+                .bg(rgb(0x102030))
+                .on_frame(move |t, cx| cx.set(bars, t.as_secs() as u32))
+                .children(fixed())
+                .child(div().size(px(8.)).paint(move |cx| {
+                    let count = *cx.read(bars)?;
+                    for i in 0..count {
+                        let origin = Origin {
+                            x: px(2. + i as f32),
+                            y: px(1.),
+                        };
+                        cx.fill_rect(
+                            origin,
+                            Size {
+                                width: px(1.),
+                                height: px(4.),
+                            },
+                            rgb(0xff8800),
+                        )?;
+                    }
+                    Ok(())
+                }))
+                .children(fixed())
+        })
+    }
+
+    let size = Size {
+        width: px(12.),
+        height: px(8.),
+    };
+    let mut window = CpuWindow::mount(Ui::new(), scene(0))?;
+    window.frame(size, RasterScale::ONE)?;
+    window.frame_submitted()?;
+    for count in [1, 4, 0, 3] {
+        window.event(WindowEvent::FrameReady(Duration::from_secs(count)))?;
+        let frame = window.frame(size, RasterScale::ONE)?;
+        let mut reference = CpuWindow::mount(Ui::new(), scene(count as u32))?;
+        let full = reference.frame(size, RasterScale::ONE)?;
+        assert!(!frame.damage.is_empty());
+        assert_ne!(frame.damage, full.damage);
+        assert_eq!(frame.rgba, full.rgba);
+        window.frame_submitted()?;
+    }
+    Ok(())
+}

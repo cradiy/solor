@@ -50,6 +50,7 @@ struct Entry {
 }
 
 /// Immutable input geometry prepared alongside a view's pending presentation.
+#[derive(Clone)]
 pub struct PointerFrame {
     pub(super) view: ViewId,
     geometry: Arc<HitGeometry>,
