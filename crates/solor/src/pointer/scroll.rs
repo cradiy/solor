@@ -327,10 +327,52 @@ impl Ui {
 }
 
 #[derive(Clone, Copy, Default, PartialEq)]
+pub(super) enum WheelPolicy {
+    #[default]
+    BothAxes,
+    VerticalAsHorizontal,
+    DominantAxis,
+}
+
+impl WheelPolicy {
+    fn advance(
+        self,
+        start: Origin,
+        limit: Size,
+        delta: ScrollDelta,
+        vertical_input: bool,
+    ) -> (Origin, ScrollDelta) {
+        let mut movement = delta;
+        let swap = self == Self::VerticalAsHorizontal && vertical_input;
+        if swap {
+            std::mem::swap(&mut movement.x, &mut movement.y);
+        } else if self == Self::DominantAxis && limit.width > px(0.) && limit.height > px(0.) {
+            if delta.x.get().abs() > delta.y.get().abs() {
+                movement.y = px(0.);
+            } else {
+                movement.x = px(0.);
+            }
+        }
+        let (next, consumed) = advance(start, limit, movement);
+        if consumed == ScrollDelta::default() {
+            return (next, delta);
+        }
+        let mut remaining = ScrollDelta {
+            x: movement.x - consumed.x,
+            y: movement.y - consumed.y,
+        };
+        if swap {
+            std::mem::swap(&mut remaining.x, &mut remaining.y);
+        }
+        (next, remaining)
+    }
+}
+
+#[derive(Clone, Copy, Default, PartialEq)]
 pub(crate) struct ScrollAxes {
     x: bool,
     y: bool,
-    pub(super) vertical_wheel_as_horizontal: bool,
+    pub(super) wheel: WheelPolicy,
     pub(crate) gutter: Size,
 }
 
@@ -351,9 +393,17 @@ impl ScrollAxes {
         Ok(Self {
             x: scrolls(x),
             y: scrolls(y),
-            vertical_wheel_as_horizontal: scrolls(x)
-                && !scrolls(y)
-                && layout.and_then(|v| v.vertical_wheel_as_horizontal) == Some(true),
+            wheel: match (scrolls(x), scrolls(y)) {
+                (true, false)
+                    if layout.and_then(|v| v.vertical_wheel_as_horizontal) == Some(true) =>
+                {
+                    WheelPolicy::VerticalAsHorizontal
+                }
+                (true, true) if layout.and_then(|v| v.dominant_scroll_axis) == Some(true) => {
+                    WheelPolicy::DominantAxis
+                }
+                _ => WheelPolicy::BothAxes,
+            },
             gutter: Size {
                 width: if y == Some(Overflow::Scroll) {
                     width
@@ -462,8 +512,9 @@ impl Instance {
     pub(super) fn scroll_children(
         &mut self,
         owner: NodeId,
-        accepted: Size,
+        viewport: super::frame::ScrollViewport,
         delta: ScrollDelta,
+        vertical_input: bool,
         state: &mut Runtime<()>,
     ) -> Result<ScrollDelta> {
         let geometry = self
@@ -473,8 +524,8 @@ impl Instance {
         let axes = self.bodies[&owner].scroll_axes;
         let live = axes.limit(geometry);
         let limit = Size {
-            width: live.width.min(accepted.width),
-            height: live.height.min(accepted.height),
+            width: live.width.min(viewport.limit.width),
+            height: live.height.min(viewport.limit.height),
         };
         let previous = self
             .pointer
@@ -493,15 +544,12 @@ impl Instance {
                     viewport: axes.viewport(geometry.metrics.size),
                 })
             });
-        let (next, consumed) = advance(start, limit, delta);
+        let (next, remaining) = viewport.wheel.advance(start, limit, delta, vertical_input);
         self.apply_scroll_offset(owner, previous, next)?;
         if let Some(tracked) = self.tracked_scroll.get(&owner) {
             tracked.handle.publish(self.scroll_metrics(owner), state);
         }
-        Ok(ScrollDelta {
-            x: delta.x - consumed.x,
-            y: delta.y - consumed.y,
-        })
+        Ok(remaining)
     }
 
     fn apply_scroll_offset(

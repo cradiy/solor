@@ -1287,6 +1287,63 @@ fn tooltip_defaults_update_pending_and_visible_hints_and_preserve_local_override
 }
 
 #[test]
+fn dominant_wheel_axis_uses_each_event_and_chains_at_the_viewport_edge() -> Result<()> {
+    use solor::pointer::{PointerInput::Scroll, ScrollDelta};
+    let mut ui = Ui::new();
+    let dominant = ui.context().signal(false);
+    let parent = Rc::new(Cell::new(ScrollDelta::default()));
+    let received = parent.clone();
+    let view = ui.mount(component(move |_| {
+        div()
+            .on_scroll(move |event, _| {
+                received.set(event.delta);
+                Ok(())
+            })
+            .child(
+                div()
+                    .size(px(40.0))
+                    .overflow_scroll()
+                    .dominant_scroll_axis(dominant)
+                    .child(div().min_w(px(60.0)).h(px(80.0))),
+            )
+    }))?;
+    accept(&mut ui, view, 60.0)?;
+    let pane = ui.children(view, ui.root(view)?)?.next().unwrap();
+    let delta = |x, y| ScrollDelta { x: px(x), y: px(y) };
+    let wheel = |ui: &mut Ui, x, y| -> Result<(ScrollDelta, ScrollDelta)> {
+        ui.dispatch_pointer(view, Scroll(sample(1, 4.0, 4.0), delta(x, y)))?;
+        let offset = ui.scroll_metrics(view, pane).unwrap().offset;
+        Ok((
+            ScrollDelta {
+                x: offset.x,
+                y: offset.y,
+            },
+            parent.take(),
+        ))
+    };
+    ui.context().set(dominant, true)?;
+    ui.flush()?;
+    assert_eq!(
+        wheel(&mut ui, 2.0, 3.0)?,
+        (delta(2.0, 3.0), delta(0.0, 0.0))
+    );
+    accept(&mut ui, view, 60.0)?;
+    for (input, offset, remainder) in [
+        ((8.5, 1.0), (10.5, 3.0), (0.0, 0.0)),
+        ((-2.5, 2.5), (10.5, 5.5), (0.0, 0.0)),
+        ((-0.5, -4.0), (10.5, 1.5), (0.0, 0.0)),
+        ((14.0, 3.0), (20.0, 1.5), (4.5, 0.0)),
+        ((5.0, 2.0), (20.0, 1.5), (5.0, 2.0)),
+    ] {
+        assert_eq!(
+            wheel(&mut ui, input.0, input.1)?,
+            (delta(offset.0, offset.1), delta(remainder.0, remainder.1))
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn horizontal_strip_returns_unused_wheel_distance_on_the_input_axis() -> Result<()> {
     use solor::pointer::{PointerInput::Scroll, ScrollDelta};
 

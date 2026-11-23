@@ -257,16 +257,13 @@ impl Delivery<'_> {
                 .expect("accepted scroll hit");
             let parent = frame.scroll_parent(owner);
             if let Some(viewport) = frame.scroll_viewport(owner) {
-                let remap = vertical_input && viewport.vertical_wheel_as_horizontal;
-                if remap {
-                    std::mem::swap(&mut delta.x, &mut delta.y);
-                }
-                delta = self
-                    .instance
-                    .scroll_children(owner, viewport.limit, delta, self.state)?;
-                if remap {
-                    std::mem::swap(&mut delta.x, &mut delta.y);
-                }
+                delta = self.instance.scroll_children(
+                    owner,
+                    viewport,
+                    delta,
+                    vertical_input,
+                    self.state,
+                )?;
             } else {
                 let pointer = self.event(owner, sample, None)?;
                 let node = self

@@ -58,7 +58,7 @@ pub struct PointerFrame {
 #[derive(Clone, Copy)]
 pub(super) struct ScrollViewport {
     pub limit: Size,
-    pub vertical_wheel_as_horizontal: bool,
+    pub wheel: super::scroll::WheelPolicy,
 }
 
 pub(super) struct HitGeometry {
@@ -308,9 +308,7 @@ impl HitGeometry {
                             id,
                             ScrollViewport {
                                 limit,
-                                vertical_wheel_as_horizontal: body
-                                    .scroll_axes
-                                    .vertical_wheel_as_horizontal,
+                                wheel: body.scroll_axes.wheel,
                             },
                         );
                         scroll_listener = true;

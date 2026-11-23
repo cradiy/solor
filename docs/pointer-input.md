@@ -127,6 +127,11 @@ On a horizontal strip, `.vertical_wheel_as_horizontal(true)` lets a vertical
 wheel move the strip sideways. At either edge the unused distance continues
 vertically to the parent. Diagonal trackpad input retains both axes.
 
+On a viewport with travel on both axes, `.dominant_scroll_axis(true)` uses the
+larger absolute delta of each wheel event. Ties use the vertical axis. If the
+viewport moves, only the unused distance on the chosen axis bubbles. If that
+axis is already at its edge, the parent receives both components.
+
 Use `.on_scroll(|event, cx| ...)` to override a container's wheel behavior or
 to handle wheel or trackpad
 input. `event.delta.x` and `event.delta.y` are signed logical pixels, positive

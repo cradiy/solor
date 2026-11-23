@@ -78,6 +78,8 @@ properties! {
         overflow_y: Overflow,
         /// Routes purely vertical wheel input along a horizontal-only scroll viewport.
         vertical_wheel_as_horizontal: bool,
+        /// Uses the larger wheel delta when both axes have scrollable content.
+        dominant_scroll_axis: bool,
         /// Space reserved on the trailing edge perpendicular to each explicit scroll axis.
         scrollbar_width: AbsoluteLength,
         /// Main axis of a flex container.
