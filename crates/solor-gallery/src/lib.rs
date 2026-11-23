@@ -202,6 +202,7 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
         KeyBinding::new(Key::Space, ActivateChoice),
     ]);
     lists::bind_keys(&mut ui);
+    markets::bind_keys(&mut ui);
     tone_sheet::bind_keys(&mut ui);
     ui.set_tooltip_style(TooltipStyle {
         background: INK.into(),

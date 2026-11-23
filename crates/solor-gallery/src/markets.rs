@@ -6,11 +6,35 @@ use std::{cell::Cell, time::Duration};
 
 use anyhow::Result;
 use solor::{
-    Context, Div, Fill, IntoElement, SharedString, Signal, Styled, component, div,
-    pointer::ScrollDelta, px, rgb, text, uniform_list,
+    Context, Div, Fill, IntoElement, ListScrollHandle, ScrollAlignment, SharedString, Signal,
+    Styled, component, div,
+    keyboard::{Key, KeyBinding},
+    pointer::ScrollDelta,
+    px, rgb, text, uniform_list,
 };
 
 use crate::{activation_button, label};
+
+const WATCHLIST: &str = "MarketWatchlist";
+
+enum SelectQuote {
+    Previous,
+    Next,
+    First,
+    Last,
+}
+
+pub(super) fn bind_keys(ui: &mut solor::Ui) {
+    ui.bind_keys(
+        [
+            (Key::ArrowUp, SelectQuote::Previous),
+            (Key::ArrowDown, SelectQuote::Next),
+            (Key::Home, SelectQuote::First),
+            (Key::End, SelectQuote::Last),
+        ]
+        .map(|(key, action)| KeyBinding::new(key, action).in_context(WATCHLIST)),
+    );
+}
 
 const SYMBOLS: [(&str, &str, i32); 6] = [
     ("ORBX", "Orbex Freight", 4895),
@@ -132,6 +156,21 @@ fn price(cents: i32) -> SharedString {
 }
 
 impl Quotes {
+    fn select(&self, cx: &mut Context<'_>, i: usize, tape: Signal<Tape>) -> Result<()> {
+        let previous = *cx.read(self.selected)?;
+        if previous == i {
+            return Ok(());
+        }
+        let (symbol, name, anchor) = SYMBOLS[i];
+        cx.set(self.highlight[previous], PANEL.into())?;
+        cx.set(self.highlight[i], ACTIVE.into())?;
+        cx.set(self.selected, i)?;
+        cx.set(self.symbol, symbol.into())?;
+        cx.set(self.name, name.into())?;
+        cx.set(self.reference, price(anchor))?;
+        self.detail(cx, i, tape)
+    }
+
     fn detail(&self, cx: &mut Context<'_>, i: usize, tape: Signal<Tape>) -> Result<()> {
         let (lo, hi) = cx.read(tape)?.range();
         cx.set(self.high, price(hi))?;
@@ -186,18 +225,25 @@ fn watchlist(quotes: Quotes, feed: Feed) -> Div {
                     ),
             )
             .cursor_pointer()
-            .on_click(move |cx| {
-                let previous = *cx.read(quotes.selected)?;
-                cx.set(quotes.highlight[previous], PANEL.into())?;
-                cx.set(quotes.highlight[i], ACTIVE.into())?;
-                cx.set(quotes.selected, i)?;
-                cx.set(quotes.symbol, symbol.into())?;
-                cx.set(quotes.name, name.into())?;
-                cx.set(quotes.reference, price(SYMBOLS[i].2))?;
-                quotes.detail(cx, i, tape)
-            })
+            .on_click(move |cx| quotes.select(cx, i, tape))
     });
-    list.child(rows.flex_1())
+    let scroll = ListScrollHandle::new();
+    list.key_context(WATCHLIST)
+        .focus_indicator(crate::viewport_focus_indicator)
+        .child(rows.scroll_handle(&scroll).flex_1())
+        .on_action(move |action: &SelectQuote, cx| {
+            let current = *cx.read(quotes.selected)?;
+            let last = SYMBOLS.len() - 1;
+            let index = match action {
+                SelectQuote::Previous => current.saturating_sub(1),
+                SelectQuote::Next => (current + 1).min(last),
+                SelectQuote::First => 0,
+                SelectQuote::Last => last,
+            };
+            quotes.select(cx, index, feed[index])?;
+            scroll.scroll_to(index, ScrollAlignment::Nearest);
+            Ok(())
+        })
 }
 
 fn live_updates(

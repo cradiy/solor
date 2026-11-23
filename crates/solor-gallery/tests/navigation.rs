@@ -824,23 +824,32 @@ fn compact_market_scrolls_the_watchlist_below_its_header() -> Result<()> {
         width: px(800.0),
         height: px(320.0),
     };
-    let submit = |ui: &mut solor::Ui| -> Result<_> {
+    let submit = |ui: &mut solor::Ui, detail: &str| -> Result<_> {
         ui.flush()?;
         ui.layout(view, viewport)?;
         let frame = ui.record_frame(view)?;
-        let label = |name| {
+        let label = |name, watchlist| {
             frame.draws().iter().find_map(|draw| match draw {
                 solor::Draw::Text {
                     origin, paragraph, ..
-                } if paragraph.text.as_str() == name => Some(*origin),
+                } if paragraph.text.as_str() == name && (origin.x < px(210.)) == watchlist => {
+                    Some(*origin)
+                }
                 _ => None,
             })
         };
-        let positions = (label("Watchlist").expect("fixed header"), label("QBFG"));
+        assert!(
+            label(detail, false).is_some(),
+            "detail should show {detail}"
+        );
+        let positions = (
+            label("Watchlist", true).expect("fixed header"),
+            label("QBFG", true),
+        );
         ui.accept_pointer_frame(frame.into_pointer_frame())?;
         Ok(positions)
     };
-    let (header, last) = submit(&mut ui)?;
+    let (header, last) = submit(&mut ui, "ORBX")?;
     assert!(last.is_none());
     ui.dispatch_pointer(
         view,
@@ -852,7 +861,7 @@ fn compact_market_scrolls_the_watchlist_below_its_header() -> Result<()> {
             },
         ),
     )?;
-    let (scrolled_header, scrolled_last) = submit(&mut ui)?;
+    let (scrolled_header, scrolled_last) = submit(&mut ui, "ORBX")?;
     let scrolled_last = scrolled_last.expect("last quote enters the viewport");
     assert_eq!(scrolled_header, header);
     assert!(scrolled_last.y < viewport.height && scrolled_last.y > header.y);
@@ -863,8 +872,30 @@ fn compact_market_scrolls_the_watchlist_below_its_header() -> Result<()> {
     ] {
         ui.dispatch_pointer(view, input)?;
     }
-    let labels = submit_labels(&mut ui, view)?;
-    assert_eq!(labels.iter().filter(|s| s.as_str() == "QBFG").count(), 2);
+    submit(&mut ui, "QBFG")?;
+    let press = |ui: &mut solor::Ui, key| -> Result<()> {
+        assert!(ui.dispatch_key(
+            view,
+            &KeyEvent {
+                key,
+                state: KeyState::Down,
+                modifiers: Default::default(),
+            }
+        )?);
+        Ok(())
+    };
+    press(&mut ui, Key::Home)?;
+    let (current_header, last) = submit(&mut ui, "ORBX")?;
+    assert_eq!(current_header, header);
+    assert!(last.is_none());
+    press(&mut ui, Key::ArrowDown)?;
+    submit(&mut ui, "KLPW")?;
+    press(&mut ui, Key::ArrowUp)?;
+    submit(&mut ui, "ORBX")?;
+    press(&mut ui, Key::End)?;
+    let (_, last) = submit(&mut ui, "QBFG")?;
+    let last = last.expect("keyboard selection reveals the final watchlist row");
+    assert!(last.y < viewport.height && last.y > header.y);
     Ok(())
 }
 
