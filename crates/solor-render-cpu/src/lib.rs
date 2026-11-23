@@ -13,6 +13,7 @@ mod path;
 pub mod pixels;
 mod polygon;
 mod polyline;
+mod stripes;
 mod svg;
 mod view;
 mod window;

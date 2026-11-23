@@ -136,6 +136,15 @@ impl Surface {
                     Ok(())
                 })
             }
+            Fill::DiagonalStripes(pattern) => {
+                let bounds = PathBounds::new(origin, points, scale)?;
+                let brush =
+                    crate::stripes::StripeBrush::new(*pattern, bounds.left, bounds.top, scale);
+                for_each_span(points, origin, scale, clip, |row, from, to, coverage| {
+                    brush.blend_span(self.span_pixels(row, from, to), from, row, coverage);
+                    Ok(())
+                })
+            }
             Fill::CustomImage(image) => {
                 let bounds = PathBounds::new(origin, points, scale)?;
                 let size = Size {

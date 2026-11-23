@@ -82,3 +82,54 @@ fn gradient_uses_unclipped_vertex_bounds_across_a_fractional_repair() -> anyhow:
     }
     Ok(())
 }
+
+#[test]
+fn diagonal_stripes_match_box_paint_across_a_clipped_polygon() -> anyhow::Result<()> {
+    use solor::{Styled, Ui, component, diagonal_stripes, div};
+
+    let scale = RasterScale(1.5);
+    let points = [
+        point(0.5, 0.),
+        point(10.5, 0.),
+        point(10.5, 10.),
+        point(0.5, 10.),
+    ];
+    let clip = Clip {
+        left: 4,
+        top: 4,
+        right: 14,
+        bottom: 12,
+    };
+    let logical = Size {
+        width: px(12.),
+        height: px(12.),
+    };
+    // Convert distances along a device-pixel row to perpendicular logical widths.
+    let width = |n| px(n / (1.5 * std::f32::consts::SQRT_2));
+    for (ink, gap, expected) in [(2., 2., [128u8, 255, 0]), (0.0625, 0.1875, [191; 3])] {
+        let stripes = diagonal_stripes(rgb(0), width(ink), width(gap))?;
+        let mut ui = Ui::new();
+        let view = ui.mount(component(move |_| {
+            div().child(
+                div()
+                    .absolute()
+                    .left(px(1.))
+                    .top(px(1.))
+                    .size(px(10.))
+                    .bg(stripes),
+            )
+        }))?;
+        ui.layout(view, logical)?;
+        let background = Surface::draw_view(&ui.record_frame(view)?, SIZE, scale)?;
+        let part = render(&points, stripes.into(), scale, clip)?;
+        for (x, gray) in [4, 5, 7].into_iter().zip(expected) {
+            assert!(pixel(&background, x, 4)[0].abs_diff(gray) <= 1);
+        }
+        for y in 4..12 {
+            for x in 4..14 {
+                assert_eq!(pixel(&background, x, y), pixel(&part, x, y));
+            }
+        }
+    }
+    Ok(())
+}

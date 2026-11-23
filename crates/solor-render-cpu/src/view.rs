@@ -38,6 +38,7 @@ struct Replay<'a> {
 enum Brush<'a, F> {
     Solid(solor::Rgba),
     Checkerboard(crate::checkerboard::CheckerBrush),
+    Stripes(crate::stripes::StripeBrush),
     Region(crate::bitmap::RegionSampler),
     Image(crate::bitmap::ImageSampler<'a>),
     Gradient(F, Option<OpaqueLinearGradient<'a>>),
@@ -71,6 +72,9 @@ impl<F: SampleGradient> Brush<'_, F> {
         let dy = (y as f64 - origin[1] + 0.5) / scale.0;
         match self {
             Self::Solid(c) => blend(pixel, *c, coverage),
+            Self::Stripes(pattern) => {
+                pattern.blend_span(std::slice::from_mut(pixel), x, y, coverage)
+            }
             Self::Checkerboard(pattern) => {
                 pattern.blend_span(std::slice::from_mut(pixel), x, y, coverage)
             }
@@ -97,6 +101,9 @@ fn brush(
     let top = f64::from(origin.y) * scale.0;
     Ok(Some(match fill {
         Fill::Solid(color) => Brush::Solid(*color),
+        Fill::DiagonalStripes(pattern) => {
+            Brush::Stripes(crate::stripes::StripeBrush::new(*pattern, left, top, scale))
+        }
         Fill::Checkerboard(pattern) => Brush::Checkerboard(crate::checkerboard::CheckerBrush::new(
             *pattern, left, top, scale,
         )),
@@ -422,6 +429,7 @@ impl Surface {
                     blend_solid_span(middle, *c, coverage);
                 }
                 Brush::Checkerboard(pattern) => pattern.blend_span(middle, from, y, 255),
+                Brush::Stripes(pattern) => pattern.blend_span(middle, from, y, 255),
                 Brush::Region(image) => {
                     for (x, pixel) in (from..to).zip(middle) {
                         image.blend(pixel, x, y, scale, 255);

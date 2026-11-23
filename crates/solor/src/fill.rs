@@ -537,6 +537,48 @@ impl From<Checkerboard> for Fill {
     }
 }
 
+/// Parallel stripes ascending from left to right, with transparent gaps.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DiagonalStripes {
+    /// Ink applied within each stripe.
+    pub color: Rgba,
+    width: crate::Pixels,
+    gap: crate::Pixels,
+}
+
+impl DiagonalStripes {
+    /// Thickness measured perpendicular to the stripe.
+    pub fn width(self) -> crate::Pixels {
+        self.width
+    }
+
+    /// Clear distance between neighboring stripes, measured perpendicular to them.
+    pub fn gap(self) -> crate::Pixels {
+        self.gap
+    }
+}
+
+/// Creates 45-degree stripes starting at the top-left corner of the fill.
+/// Width must be positive and gap nonnegative, both in finite logical pixels.
+pub fn diagonal_stripes(
+    color: Rgba,
+    width: crate::Pixels,
+    gap: crate::Pixels,
+) -> anyhow::Result<DiagonalStripes> {
+    anyhow::ensure!(
+        width.get().is_finite() && width.get() > 0.0,
+        "stripe width must be finite and positive"
+    );
+    anyhow::ensure!(gap.is_extent(), "stripe gap must be finite and nonnegative");
+    Ok(DiagonalStripes { color, width, gap })
+}
+
+impl From<DiagonalStripes> for Fill {
+    fn from(pattern: DiagonalStripes) -> Self {
+        Self::DiagonalStripes(pattern)
+    }
+}
+
 /// Paint for a bounded region, shared by backgrounds and local drawing.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
@@ -545,6 +587,8 @@ pub enum Fill {
     Solid(Rgba),
     /// Repeats colored and transparent squares at a fixed logical size.
     Checkerboard(Checkerboard),
+    /// Repeats parallel diagonal stripes at a fixed logical spacing.
+    DiagonalStripes(DiagonalStripes),
     /// Samples a gradient in the bounds of the region.
     Gradient(Gradient),
     /// Samples shared bitmap pixels within the painted bounds.
