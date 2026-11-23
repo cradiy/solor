@@ -19,8 +19,10 @@ Hiding its subtree or removing its mount clears focus during reconciliation.
 Showing it again starts it unfocused.
 
 Tab moves forward and Shift+Tab moves backward among visible, mounted
-`.focusable()` elements. Traversal visits a parent before its children and
-siblings in their current tree order. It wraps within the view. With no current
+`.focusable()` elements. Set `.tab_index(index)` to order stops by increasing
+index within the view. The default index is zero. Ties follow tree order,
+parent before children. A signal index takes effect on the next navigation.
+Traversal wraps within the view. With no current
 focus, Tab starts at the first stop and Shift+Tab at the last. Virtual lists
 participate through their currently mounted rows, including overscan.
 Use `.tab_stop(false)` for a control that should take click or programmatic focus

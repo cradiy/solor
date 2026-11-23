@@ -109,6 +109,10 @@ impl From<std::num::NonZeroUsize> for Property<Option<std::num::NonZeroUsize>> {
 }
 
 impl<T: 'static> Property<T> {
+    pub(crate) fn is_signal(&self) -> bool {
+        matches!(self.0, Source::Signal(..))
+    }
+
     pub(crate) fn read(&self, state: &Runtime<()>) -> Result<T>
     where
         T: Clone,

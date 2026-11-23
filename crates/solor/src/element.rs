@@ -1194,6 +1194,13 @@ impl<E: Element> Node<E> {
         self.focusable()
     }
 
+    /// Makes this element focusable and orders it within the view's Tab sequence.
+    /// Lower indices come first. The default is zero, with ties in tree order.
+    pub fn tab_index(mut self, index: impl Into<crate::style::Property<i32>>) -> Self {
+        self.handlers.get_or_insert_with(Default::default).tab_index = Some(index.into());
+        self.focusable()
+    }
+
     /// Makes this element focusable and paints its keyboard focus indicator over the
     /// background, before its content. The painter receives border-box coordinates.
     pub fn focus_indicator(

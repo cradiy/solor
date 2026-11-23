@@ -1,6 +1,8 @@
 //! Layout-resolved keyboard input delivered to a view's focused element.
 
-use crate::{Context, Instance, NodeId, Ui, ViewId, tree::TreeError};
+use crate::{
+    Context, Instance, NodeId, Ui, ViewId, state::Runtime, style::Property, tree::TreeError,
+};
 use anyhow::Result;
 
 pub use crate::pointer::Modifiers;
@@ -41,26 +43,50 @@ impl KeyDownContext<'_> {
 
 impl_event_context!(KeyDownContext);
 
-/// Built on first navigation after a topology or visibility change.
 pub(super) struct TabOrder {
     stops: Vec<NodeId>,
+    dynamic_indices: Vec<(Property<i32>, i32)>,
     cursor: usize,
 }
 
 impl TabOrder {
-    fn collect(instance: &Instance) -> Result<Self> {
+    fn collect(instance: &Instance, state: &Runtime<()>) -> Result<Self> {
         let mut pending = vec![instance.scene.root()];
         let mut stops = Vec::new();
+        let mut dynamic_indices = Vec::new();
         while let Some(id) = pending.pop() {
             let body = &instance.bodies[&id];
             if body.visible {
                 if body.focusable {
-                    stops.push(id);
+                    let mut index = 0;
+                    if let Some(property) =
+                        body.handlers.as_ref().and_then(|h| h.tab_index.as_ref())
+                    {
+                        index = property.read(state)?;
+                        if property.is_signal() {
+                            dynamic_indices.push((property.clone(), index));
+                        }
+                    }
+                    stops.push((index, id));
                 }
                 pending.extend(instance.scene.children(id)?.rev());
             }
         }
-        Ok(Self { stops, cursor: 0 })
+        stops.sort_by_key(|&(index, _)| index);
+        Ok(Self {
+            stops: stops.into_iter().map(|(_, id)| id).collect(),
+            dynamic_indices,
+            cursor: 0,
+        })
+    }
+
+    fn indices_changed(&self, state: &Runtime<()>) -> Result<bool> {
+        for (property, index) in &self.dynamic_indices {
+            if property.read(state)? != *index {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn step(
@@ -131,11 +157,14 @@ impl Ui {
             .instances
             .get_mut(&view)
             .ok_or(TreeError::InvalidNode(view.0))?;
-        if instance.tab_order.is_none() {
-            instance.tab_order = Some(TabOrder::collect(instance)?);
+        let state = self.state.get_mut();
+        if match &instance.tab_order {
+            Some(order) => order.indices_changed(state)?,
+            None => true,
+        } {
+            instance.tab_order = Some(TabOrder::collect(instance, state)?);
         }
         let order = instance.tab_order.as_mut().expect("collected tab order");
-        let state = self.state.get_mut();
         let next = order.step(instance.focused, backwards, |id| {
             match instance.bodies[&id]
                 .handlers

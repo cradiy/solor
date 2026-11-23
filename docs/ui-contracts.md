@@ -76,7 +76,7 @@ Window-system upload and display timing are outside this benchmark.
 | Fill | A straight-alpha sRGB color has named channels. Every gradient shares an ordered, variable-length stop sequence. Four geometries sample it in sRGB or Oklab. Backgrounds and custom fills carry the same fill value. Equal offsets describe hard edges. Rounded fills use the assigned dimensions. |
 | Paint scheduling | Each successful paint subscribes the element to the signals it read. Repeated writes coalesce. Elements default to on-demand recording. A fixed or signal-driven continuous mode samples every host frame. |
 | Pointer input | The host accepts a border-box snapshot for hit testing. Positioned events deliver local logical coordinates. A press can capture its pointer until release or cancellation. See [pointer input](pointer-input.md). |
-| Keyboard focus | Tab and Shift+Tab cycle through enabled Tab stops in visible tree order. A key-down handler can prevent default navigation for an individual press. |
+| Keyboard focus | Tab and Shift+Tab cycle through visible, enabled stops by Tab index, with ties in tree order. A key-down handler can prevent default navigation for an individual press. |
 | Platform boundary | `solor` owns the GUI and the platform traits. `solor-linux` owns the Wayland event loop and buffer submission. `solor-render-cpu` rasterizes shaped text. `solor-platform` selects the window system and its rendering backend. |
 
 ## Platform and renderer ownership

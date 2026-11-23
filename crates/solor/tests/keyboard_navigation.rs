@@ -64,6 +64,35 @@ fn navigation_wraps_in_tree_order_and_skips_hidden_and_removed_subtrees() -> Res
 }
 
 #[test]
+fn tab_indices_order_the_view_and_resume_from_focus_after_a_change() -> Result<()> {
+    let mut ui = Ui::new();
+    let priority = ui.context().signal(-1);
+    let view = ui.mount(component(|_| {
+        div()
+            .focusable()
+            .child(div().tab_stop(false).tab_index(-2))
+            .child(div().tab_index(priority).child(div().tab_index(0)))
+            .child(div().tab_index(2))
+    }))?;
+    let root = ui.root(view)?;
+    let ranked = ui.children(view, root)?.nth(1).unwrap();
+    let nested = ui.children(view, ranked)?.next().unwrap();
+    let last = ui.children(view, root)?.last().unwrap();
+
+    assert_eq!(ui.focus_next(view)?, Some(ranked));
+    assert_eq!(ui.focus_next(view)?, Some(root));
+    assert_eq!(ui.focus_next(view)?, Some(nested));
+    assert_eq!(ui.focus_next(view)?, Some(last));
+    assert_eq!(ui.focus_next(view)?, Some(ranked));
+    ui.context().set(priority, 1)?;
+    assert_eq!(ui.focus_previous(view)?, Some(nested));
+    assert_eq!(ui.focus_previous(view)?, Some(root));
+    assert_eq!(ui.focus_previous(view)?, Some(last));
+    assert_eq!(ui.focus_previous(view)?, Some(ranked));
+    Ok(())
+}
+
+#[test]
 fn key_callbacks_can_keep_tab_and_modified_tabs_and_releases_do_not_navigate() -> Result<()> {
     let mut ui = Ui::new();
     let capture = ui.context().signal(true);
