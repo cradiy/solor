@@ -128,7 +128,10 @@ impl ImageFill {
     }
     /// Returns the fitted origin and extent relative to the painted box.
     pub fn bounds(&self, target: Size) -> Result<(Origin, Size)> {
-        self.placement.bounds(self.size.at_unit_scale(), target)
+        self.placement.bounds(self.intrinsic_size(), target)
+    }
+    pub(crate) fn intrinsic_size(&self) -> Size {
+        self.size.at_unit_scale()
     }
 }
 

@@ -101,6 +101,52 @@ fn shared_image_remeasures_the_leaf_and_repaints_the_rounded_background() -> Res
 }
 
 #[test]
+fn switching_atlas_regions_only_remeasures_when_the_region_size_changes() -> Result<()> {
+    let red = [255, 0, 0, 255];
+    let green = [0, 255, 0, 255];
+    let atlas = ImageAsset::from_rgba8(4, 1, [red, red, green, green].as_flattened().to_vec())?;
+    let region = |left, right| {
+        atlas.region(Clip {
+            left,
+            right,
+            top: 0,
+            bottom: 1,
+        })
+    };
+    let fixed = region(0, 2)?;
+    let mut ui = Ui::new();
+    let tile = ui.context().signal(fixed.clone());
+    let view = ui.mount(component(move |_| {
+        div().items_start().child(image(fixed)).child(image(tile))
+    }))?;
+    let viewport = size(6., 4.);
+    ui.layout(view, viewport)?;
+    let root = ui.root(view)?;
+    let children: Vec<_> = ui.children(view, root)?.collect();
+    assert_eq!(
+        ui.geometry(view, children[0]).unwrap().metrics.size,
+        size(2., 1.)
+    );
+    for (left, right, relayout) in [(2, 4, false), (3, 4, true)] {
+        ui.context().set(tile, region(left, right)?)?;
+        ui.flush()?;
+        assert_eq!(ui.layout(view, viewport)? > 0, relayout);
+        let width = (right - left) as usize;
+        assert_eq!(
+            ui.geometry(view, children[1]).unwrap().metrics.size,
+            size(width as f32, 1.)
+        );
+        let scale = RasterScale::ONE;
+        let surface =
+            Surface::draw_view(&ui.record_frame(view)?, scale.buffer_size(viewport)?, scale)?;
+        assert_eq!(pixel(&surface, 0, 0), red);
+        assert_eq!(pixel(&surface, width - 1, 1), green);
+        assert_eq!(pixel(&surface, width, 1), [255; 4]);
+    }
+    Ok(())
+}
+
+#[test]
 fn bilinear_sampling_keeps_transparent_rgb_out_of_blended_edges() -> Result<()> {
     let asset = ImageAsset::from_rgba8(2, 1, vec![255, 0, 0, 0, 0, 0, 255, 255])?;
     let mut ui = Ui::new();

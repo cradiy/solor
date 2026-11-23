@@ -1,6 +1,6 @@
 use super::{AnyElement, Element, IntoElement, PaintContext, element};
 use crate::{
-    Fill, ImageAsset, ImageFill, Pixels, Style, StyleRefinement, Styled, SvgAsset,
+    ImageAsset, ImageFill, Pixels, Style, StyleRefinement, Styled, SvgAsset,
     bitmap::Placement,
     layout::{
         self, LayoutContext, LayoutNode, LayoutOutput, MeasureContext, Metrics, Origin, Query, Size,
@@ -39,6 +39,8 @@ pub fn image(asset: impl Into<ImageSource>) -> impl Styled + IntoElement {
 pub enum ImageSource {
     /// Draw the same decoded image throughout the attachment.
     Fixed(ImageAsset),
+    /// Draw a selected region of a shared bitmap.
+    Region(ImageFill),
     /// Render visible pixels using the application source.
     Custom(crate::CustomImage),
     /// Download an HTTP or HTTPS image when the element mounts.
@@ -54,6 +56,8 @@ pub enum ImageSource {
     File(crate::ImageFile),
     /// Update the painted pixels and remeasure if the intrinsic dimensions change.
     Bound(crate::Signal<ImageAsset>),
+    /// Follow the selected bitmap region throughout the attachment.
+    BoundRegion(crate::Signal<ImageFill>),
     /// Replace the rendered snapshot when its signal changes.
     BoundCustom(crate::Signal<crate::CustomImage>),
 }
@@ -77,6 +81,18 @@ impl From<crate::Signal<ImageAsset>> for ImageSource {
     }
 }
 
+impl From<ImageFill> for ImageSource {
+    fn from(region: ImageFill) -> Self {
+        Self::Region(region)
+    }
+}
+
+impl From<crate::Signal<ImageFill>> for ImageSource {
+    fn from(signal: crate::Signal<ImageFill>) -> Self {
+        Self::BoundRegion(signal)
+    }
+}
+
 struct Image {
     asset: ImageSource,
     style: StyleRefinement,
@@ -91,12 +107,13 @@ impl IntoElement for Image {
         AnyElement::new(false, move |cx, (units, assets)| {
             let (image, watch) = match self.asset {
                 ImageSource::Custom(image) => (ImageContent::Custom(image), None),
-                ImageSource::Fixed(asset) => (ImageContent::Bitmap(asset), None),
+                ImageSource::Fixed(asset) => (ImageContent::bitmap(asset), None),
+                ImageSource::Region(region) => (ImageContent::Bitmap(region), None),
                 #[cfg(feature = "image")]
                 ImageSource::File(file) => (ImageContent::file(file)?, None),
                 #[cfg(feature = "image")]
                 ImageSource::Bytes(bytes) => {
-                    (ImageContent::Bitmap(ImageAsset::from_bytes(&bytes)?), None)
+                    (ImageContent::bitmap(ImageAsset::from_bytes(&bytes)?), None)
                 }
                 #[cfg(feature = "network")]
                 ImageSource::Url(url) => {
@@ -120,17 +137,24 @@ impl IntoElement for Image {
                         }
                         #[cfg(feature = "image")]
                         crate::ImageResource::Bytes(bytes) => {
-                            ImageAsset::from_bytes(&bytes).map(ImageContent::Bitmap)
+                            ImageAsset::from_bytes(&bytes).map(ImageContent::bitmap)
                         }
                     }
                     .with_context(|| format!("opening image {name}"))?;
                     (image, None)
                 }
                 ImageSource::Bound(signal) => (
-                    ImageContent::Bitmap(cx.read(signal)?.clone()),
+                    ImageContent::bitmap(cx.read(signal)?),
                     Some(super::content_watch(
                         signal,
                         crate::ContentUpdate::Image(signal),
+                    )),
+                ),
+                ImageSource::BoundRegion(signal) => (
+                    ImageContent::Bitmap(cx.read(signal)?.clone()),
+                    Some(super::content_watch(
+                        signal,
+                        crate::ContentUpdate::ImageRegion(signal),
                     )),
                 ),
                 ImageSource::BoundCustom(signal) => (
@@ -154,13 +178,17 @@ impl IntoElement for Image {
 pub(super) enum ImageContent {
     #[cfg(feature = "network")]
     Empty,
-    Bitmap(ImageAsset),
+    Bitmap(ImageFill),
     Custom(crate::CustomImage),
     Svg(SvgAsset, bool),
     #[cfg(feature = "image")]
     File(crate::ImageFile, Size),
 }
 impl ImageContent {
+    fn bitmap(asset: impl Into<ImageFill>) -> Self {
+        Self::Bitmap(asset.into())
+    }
+
     #[cfg(feature = "image")]
     fn file(file: crate::ImageFile) -> Result<Self> {
         let size = file.dimensions()?.at_unit_scale();
@@ -172,7 +200,7 @@ impl ImageContent {
             #[cfg(feature = "network")]
             Self::Empty => Size::default(),
             Self::Custom(image) => image.dimensions().at_unit_scale(),
-            Self::Bitmap(asset) => asset.dimensions().at_unit_scale(),
+            Self::Bitmap(image) => image.intrinsic_size(),
             Self::Svg(asset, _) => asset.size(),
             #[cfg(feature = "image")]
             Self::File(_, size) => *size,
@@ -200,7 +228,7 @@ impl ImageBody {
         let content = cx
             .read(signal)?
             .clone()
-            .map_or(ImageContent::Empty, ImageContent::Bitmap);
+            .map_or(ImageContent::Empty, ImageContent::bitmap);
         let mut node = Self::node(content, style, units);
         node.body.remote = Some(Box::new(subscription));
         node.watches.push(super::content_watch(
@@ -229,8 +257,12 @@ impl ImageBody {
 }
 
 impl crate::Instance {
-    pub(crate) fn update_image(&mut self, id: crate::NodeId, asset: &ImageAsset) -> Result<()> {
-        self.replace_image_content(id, ImageContent::Bitmap(asset.clone()))
+    pub(crate) fn update_image(
+        &mut self,
+        id: crate::NodeId,
+        image: impl Into<ImageFill>,
+    ) -> Result<()> {
+        self.replace_image_content(id, ImageContent::bitmap(image))
     }
 
     pub(crate) fn update_svg(
@@ -333,25 +365,17 @@ impl Element for ImageBody {
                 cx.record_fill(cx.origin, cx.size, image.into(), self.radii.fit_to(cx.size));
                 Ok(())
             }
-            ImageContent::Bitmap(asset) => {
-                cx.record_fill(
-                    cx.origin,
-                    cx.size,
-                    Fill::Image(ImageFill::new(asset.clone(), self.placement)),
-                    self.radii.fit_to(cx.size),
-                );
+            ImageContent::Bitmap(image) => {
+                let mut image = image.clone();
+                image.placement = self.placement;
+                cx.record_fill(cx.origin, cx.size, image.into(), self.radii.fit_to(cx.size));
                 Ok(())
             }
             #[cfg(feature = "image")]
             ImageContent::File(file, _) => {
                 let mut file = file.clone();
                 file.placement = self.placement;
-                cx.record_fill(
-                    cx.origin,
-                    cx.size,
-                    Fill::ImageFile(file),
-                    self.radii.fit_to(cx.size),
-                );
+                cx.record_fill(cx.origin, cx.size, file.into(), self.radii.fit_to(cx.size));
                 Ok(())
             }
             ImageContent::Svg(asset, preserve_colors) => {

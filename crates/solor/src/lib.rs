@@ -239,6 +239,7 @@ type StyleUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), (Restyle, bool)>>>;
 enum ContentUpdate {
     Text(Signal<SharedString>),
     Image(Signal<ImageAsset>),
+    ImageRegion(Signal<ImageFill>),
     #[cfg(feature = "network")]
     RemoteImage(Signal<Option<ImageAsset>>),
     Svg(Signal<SvgAsset>, bool),
@@ -890,6 +891,10 @@ impl Ui {
                     .and_then(Option::as_ref)
                     .map(|value| instance.update_image(id, value)),
                 ContentUpdate::Image(source) => state
+                    .read(source)
+                    .ok()
+                    .map(|value| instance.update_image(id, value)),
+                ContentUpdate::ImageRegion(source) => state
                     .read(source)
                     .ok()
                     .map(|value| instance.update_image(id, value)),
