@@ -11,6 +11,21 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 
+impl PaintContext<'_> {
+    /// Draws a decoded bitmap centered in a content-local rectangle using the given fit.
+    /// The bitmap is clipped to the rectangle. Uncovered areas keep their previous pixels.
+    pub fn paint_image(
+        &mut self,
+        offset: Origin,
+        size: Size,
+        asset: &ImageAsset,
+        fit: ObjectFit,
+    ) -> Result<()> {
+        let image = ImageFill::new(asset.clone(), Placement::centered(fit));
+        self.fill_rect(offset, size, Fill::Image(image))
+    }
+}
+
 /// Draws a bitmap at its intrinsic size unless constrained by layout.
 pub fn image(asset: impl Into<ImageSource>) -> impl Styled + IntoElement {
     Image {

@@ -167,6 +167,57 @@ fn native_bitmap_rows_respect_crop_letterboxing_and_alpha() -> Result<()> {
 }
 
 #[test]
+fn canvas_bitmap_fit_matches_the_image_element_at_a_fractional_offset() -> Result<()> {
+    use solor::layout::Origin;
+    let mut ui = Ui::new();
+    let fit = ui.context().signal(ObjectFit::Contain);
+    let asset = ImageAsset::from_rgba8(3, 1, vec![255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 255])?;
+    let position = Origin {
+        x: px(2.25),
+        y: px(1.5),
+    };
+    let tile = size(4., 6.);
+    let background = rgb(0x273851);
+    let source = asset.clone();
+    let canvas = ui.mount(component(move |_| {
+        div()
+            .bg(background)
+            .paint(move |cx| cx.paint_image(position, tile, &source, *cx.read(fit)?))
+    }))?;
+    let element = ui.mount(component(move |_| {
+        div().bg(background).child(
+            image(asset)
+                .absolute()
+                .left(position.x)
+                .top(position.y)
+                .w(tile.width)
+                .h(tile.height)
+                .object_fit(fit),
+        )
+    }))?;
+    let viewport = size(10., 9.);
+    let scale = RasterScale(1.5);
+    let physical = scale.buffer_size(viewport)?;
+    for mode in [
+        ObjectFit::Contain,
+        ObjectFit::Cover,
+        ObjectFit::Fill,
+        ObjectFit::None,
+        ObjectFit::ScaleDown,
+    ] {
+        ui.context().set(fit, mode)?;
+        ui.flush()?;
+        ui.layout(canvas, viewport)?;
+        ui.layout(element, viewport)?;
+        let painted = Surface::draw_view(&ui.record_frame(canvas)?, physical, scale)?;
+        let styled = Surface::draw_view(&ui.record_frame(element)?, physical, scale)?;
+        assert_eq!(painted.rgba, styled.rgba, "{mode:?}");
+        assert_ne!(pixel(&painted, 6, 6), [0x27, 0x38, 0x51, 255]);
+    }
+    Ok(())
+}
+
+#[test]
 fn clipped_scaled_bitmap_matches_individual_scanlines() -> Result<()> {
     use solor::layout::Origin;
     let scale = RasterScale(1.5);
