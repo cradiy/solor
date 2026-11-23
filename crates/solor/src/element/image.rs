@@ -1,4 +1,4 @@
-use super::{AnyElement, Draw, Element, IntoElement, PaintContext, element};
+use super::{AnyElement, Element, IntoElement, PaintContext, element};
 use crate::{
     Fill, ImageAsset, ImageFill, Pixels, Style, StyleRefinement, Styled, SvgAsset,
     bitmap::Placement,
@@ -341,34 +341,24 @@ impl Element for ImageBody {
             ImageContent::Svg(asset, preserve_colors) => {
                 let (offset, size) = self.placement.bounds(asset.size(), cx.size)?;
                 cx.with_clip(Origin::default(), cx.size, |cx| {
-                    let origin = cx
-                        .origin
-                        .checked_add(offset)
-                        .context("invalid SVG position")?;
-                    cx.commands.push(Draw::Svg {
-                        origin,
-                        size,
-                        clip: cx.clip.clone(),
-                        rounded_clip: if self.radii != Corners::default() {
-                            Some(std::rc::Rc::new(crate::RoundedClip {
-                                origin: cx
-                                    .frame_offset
-                                    .checked_add(cx.origin)
-                                    .context("invalid SVG clip origin")?,
-                                size: cx.size,
-                                radii: self.radii.fit_to(cx.size),
-                            }))
-                        } else {
-                            None
-                        },
-                        asset: asset.clone(),
-                        tint: if *preserve_colors {
-                            None
-                        } else {
-                            Some(cx.text_color()?)
-                        },
-                    });
-                    Ok(())
+                    let rounded_clip = if self.radii != Corners::default() {
+                        Some(std::rc::Rc::new(crate::RoundedClip {
+                            origin: cx
+                                .frame_offset
+                                .checked_add(cx.origin)
+                                .context("invalid SVG clip origin")?,
+                            size: cx.size,
+                            radii: self.radii.fit_to(cx.size),
+                        }))
+                    } else {
+                        None
+                    };
+                    let tint = if *preserve_colors {
+                        None
+                    } else {
+                        Some(cx.text_color()?)
+                    };
+                    cx.record_svg(offset, size, asset, tint, rounded_clip)
                 })
             }
         }

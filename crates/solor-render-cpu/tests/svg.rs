@@ -1,8 +1,13 @@
 //! Pixel and layout contracts for retained SVG artwork.
 use anyhow::Result;
 use solor::{
-    Styled, SvgAsset, Ui, component, div, layout::Size, percent, px, raster::RasterScale, rem, rgb,
-    rgba, style::ObjectFit, svg,
+    Styled, SvgAsset, Ui, component, div,
+    layout::{Origin, Size},
+    percent, px,
+    raster::RasterScale,
+    rem, rgb, rgba,
+    style::ObjectFit,
+    svg,
 };
 use solor_render_cpu::pixels::Surface;
 
@@ -23,40 +28,70 @@ fn inherited_mask_and_source_colors_survive_repaint_and_unmount() -> Result<()> 
     let asset = SvgAsset::from_bytes(ART)?;
     let mut ui = Ui::new();
     let ink = ui.context().signal(rgba(0x0000ff80));
+    let custom_asset = asset.clone();
+    let canvas = ui.mount(component(move |_| {
+        div().text_color(ink).paint(move |cx| {
+            let tile = Size {
+                width: px(16.),
+                height: px(12.),
+            };
+            cx.paint_svg(Origin::default(), tile, &custom_asset, cx.text_color()?)?;
+            cx.paint_color_svg(
+                Origin {
+                    x: tile.width,
+                    y: px(0.),
+                },
+                tile,
+                &custom_asset,
+            )
+        })
+    }))?;
     let view = ui.mount(component(move |_| {
         div()
             .flex_row()
             .items_start()
             .text_color(ink)
-            .child(svg(asset.clone()))
-            .child(svg(asset).preserve_colors())
+            .child(svg(asset.clone()).w(px(16.)).h(px(12.)))
+            .child(svg(asset).preserve_colors().w(px(16.)).h(px(12.)))
     }))?;
     let size = Size {
         width: px(32.0),
         height: px(12.0),
     };
     ui.layout(view, size)?;
+    ui.layout(canvas, size)?;
     let before = ui.record_frame(view)?;
+    let canvas_before = ui.record_frame(canvas)?;
     ui.context().set(ink, rgb(0xff0000))?;
     ui.flush()?;
     let after = ui.record_frame(view)?;
+    let canvas_after = ui.record_frame(canvas)?;
     ui.unmount(view)?;
+    ui.unmount(canvas)?;
     for scale in [RasterScale::ONE, RasterScale(1.5), RasterScale(2.0)] {
         let physical = scale.buffer_size(size)?;
         let original = Surface::draw_view(&before, physical, scale)?;
         let changed = Surface::draw_view(&after, physical, scale)?;
-        let at = |v: usize| (v as f64 * scale.0) as usize;
-        assert_eq!(pixel(&original, at(2), at(4)), [127, 127, 255, 255]);
-        assert_eq!(pixel(&changed, at(2), at(4)), [255, 0, 0, 255]);
-        assert_eq!(pixel(&changed, at(12), at(4)), [255, 127, 127, 255]);
-        assert_eq!(pixel(&changed, at(12), at(1)), [255; 4]);
-        let red = pixel(&changed, at(17), at(4));
-        let blue = pixel(&changed, at(23), at(4));
-        assert!(red[0] > red[2] && blue[2] > blue[0]);
-        assert_eq!(pixel(&changed, at(29), at(4)), [127, 255, 127, 255]);
         assert_eq!(
-            pixel(&original, at(29), at(4)),
-            pixel(&changed, at(29), at(4))
+            Surface::draw_view(&canvas_before, physical, scale)?.rgba,
+            original.rgba
+        );
+        assert_eq!(
+            Surface::draw_view(&canvas_after, physical, scale)?.rgba,
+            changed.rgba
+        );
+        let at = |v: usize| (v as f64 * scale.0) as usize;
+        assert_eq!(pixel(&original, at(2), at(6)), [127, 127, 255, 255]);
+        assert_eq!(pixel(&changed, at(2), at(6)), [255, 0, 0, 255]);
+        assert_eq!(pixel(&changed, at(12), at(6)), [255, 127, 127, 255]);
+        assert_eq!(pixel(&changed, at(12), at(1)), [255; 4]);
+        let red = pixel(&changed, at(17), at(6));
+        let blue = pixel(&changed, at(23), at(6));
+        assert!(red[0] > red[2] && blue[2] > blue[0]);
+        assert_eq!(pixel(&changed, at(29), at(6)), [127, 255, 127, 255]);
+        assert_eq!(
+            pixel(&original, at(29), at(6)),
+            pixel(&changed, at(29), at(6))
         );
     }
     Ok(())

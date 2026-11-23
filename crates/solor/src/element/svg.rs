@@ -1,9 +1,15 @@
 //! Retained vector artwork.
 use super::{
-    AnyElement, IntoElement,
+    AnyElement, Draw, IntoElement, PaintContext,
     image::{ImageBody, ImageContent},
 };
-use crate::{StyleRefinement, Styled, layout::Size, px};
+use crate::{
+    Ink, RoundedClip, StyleRefinement, Styled,
+    bitmap::Placement,
+    layout::{Origin, Size},
+    px,
+    style::ObjectFit,
+};
 use anyhow::{Context as _, Result};
 use std::{path::PathBuf, rc::Rc};
 
@@ -51,6 +57,62 @@ impl SvgAsset {
 impl PartialEq for SvgAsset {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl PaintContext<'_> {
+    /// Centers the SVG's silhouette in a content-local box, preserving its aspect
+    /// ratio. The ink can be a solid color or a gradient.
+    pub fn paint_svg(
+        &mut self,
+        offset: Origin,
+        size: Size,
+        asset: &SvgAsset,
+        ink: impl Into<Ink>,
+    ) -> Result<()> {
+        self.paint_contained_svg(offset, size, asset, Some(ink.into()))
+    }
+
+    /// Centers the SVG in a content-local box, preserving its aspect ratio and source colors.
+    pub fn paint_color_svg(&mut self, offset: Origin, size: Size, asset: &SvgAsset) -> Result<()> {
+        self.paint_contained_svg(offset, size, asset, None)
+    }
+
+    fn paint_contained_svg(
+        &mut self,
+        offset: Origin,
+        size: Size,
+        asset: &SvgAsset,
+        tint: Option<Ink>,
+    ) -> Result<()> {
+        let (inset, fitted) = Placement::centered(ObjectFit::Contain).bounds(asset.size(), size)?;
+        let position = offset.checked_add(inset).context("invalid SVG position")?;
+        self.record_svg(position, fitted, asset, tint, None)
+    }
+
+    pub(super) fn record_svg(
+        &mut self,
+        offset: Origin,
+        size: Size,
+        asset: &SvgAsset,
+        tint: Option<Ink>,
+        rounded_clip: Option<Rc<RoundedClip>>,
+    ) -> Result<()> {
+        let origin = self
+            .origin
+            .checked_add(offset)
+            .context("invalid SVG position")?;
+        if size.width > px(0.) && size.height > px(0.) {
+            self.commands.push(Draw::Svg {
+                origin,
+                size,
+                clip: self.clip.clone(),
+                rounded_clip,
+                asset: asset.clone(),
+                tint,
+            });
+        }
+        Ok(())
     }
 }
 
