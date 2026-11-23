@@ -1,5 +1,8 @@
 use super::Shortcut;
-use crate::{Context, Element, Instance, Node, SharedString, Ui};
+use crate::{
+    Context, Element, Instance, Node, SharedString, Tasks, TextSystem, Ui, ViewId, state::Runtime,
+    tree::TreeError,
+};
 use anyhow::Result;
 use smallvec::SmallVec;
 use std::any::{Any, TypeId};
@@ -35,6 +38,35 @@ pub(crate) struct BoundAction {
 }
 
 impl Instance {
+    pub(super) fn route_action<'a>(
+        &mut self,
+        tasks: &Tasks,
+        engine: &TextSystem,
+        state: &mut Runtime<()>,
+        resolve: impl for<'h> Fn(&'h [ActionHandler]) -> Option<(&'h Callback, &'a dyn Any)>,
+    ) -> Result<bool> {
+        let mut target = self.focused;
+        while let Some(id) = target {
+            let node = self.bodies.get_mut(&id).ok_or(TreeError::InvalidNode(id))?;
+            if let Some(handlers) = node.handlers.as_deref()
+                && let Some((handler, action)) = resolve(&handlers.actions)
+            {
+                handler(
+                    action,
+                    &mut Context {
+                        tasks,
+                        engine,
+                        state,
+                        owned: Some(&mut node.owned),
+                    },
+                )?;
+                return Ok(true);
+            }
+            target = self.scene.parent(id)?;
+        }
+        Ok(false)
+    }
+
     pub(super) fn key_contexts(
         &self,
         bindings: &[BoundAction],
@@ -58,6 +90,21 @@ impl Instance {
 }
 
 impl Ui {
+    /// Sends an action to the nearest matching handler on the view's focus path.
+    /// Returns true if a handler ran.
+    pub fn dispatch_action(&mut self, view: ViewId, action: &dyn Any) -> Result<bool> {
+        let instance = self
+            .instances
+            .get_mut(&view)
+            .ok_or(TreeError::InvalidNode(view.0))?;
+        instance.route_action(
+            &self.tasks,
+            &self.engine,
+            self.state.get_mut(),
+            |handlers| ActionHandler::for_value(handlers, action),
+        )
+    }
+
     /// Registers bindings for this UI. Registering the same shortcut and action type
     /// again in the same context replaces its value.
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
@@ -80,11 +127,19 @@ pub(crate) struct ActionHandler {
 }
 
 impl ActionHandler {
-    pub(super) fn find<'a>(
-        handlers: &'a [Self],
+    fn for_value<'h, 'a>(
+        handlers: &'h [Self],
+        action: &'a dyn Any,
+    ) -> Option<(&'h Callback, &'a dyn Any)> {
+        let handler = handlers.iter().find(|h| h.action == action.type_id())?;
+        Some((&handler.callback, action))
+    }
+
+    pub(super) fn find<'h, 'a>(
+        handlers: &'h [Self],
         actions: &'a [BoundAction],
         contexts: &[SharedString],
-    ) -> Option<(&'a Callback, &'a dyn Any)> {
+    ) -> Option<(&'h Callback, &'a dyn Any)> {
         if handlers.is_empty() {
             return None;
         }
@@ -95,9 +150,8 @@ impl ActionHandler {
                 .rev()
                 .filter(|b| b.context.as_ref() == context)
             {
-                let value = binding.value.as_ref();
-                if let Some(handler) = handlers.iter().find(|h| h.action == value.type_id()) {
-                    return Some((&handler.callback, value));
+                if let Some(matched) = Self::for_value(handlers, binding.value.as_ref()) {
+                    return Some(matched);
                 }
             }
         }

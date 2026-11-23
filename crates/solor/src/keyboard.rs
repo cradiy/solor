@@ -272,28 +272,13 @@ impl Ui {
             && let Some(actions) = self.keymap.get(&Shortcut::from_event(event))
         {
             let contexts = instance.key_contexts(actions)?;
-            let mut target = instance.focused;
-            while let Some(id) = target {
-                let node = instance
-                    .bodies
-                    .get_mut(&id)
-                    .ok_or(TreeError::InvalidNode(id))?;
-                if let Some(handlers) = node.handlers.as_deref()
-                    && let Some((handler, action)) =
-                        ActionHandler::find(&handlers.actions, actions, &contexts)
-                {
-                    handler(
-                        action,
-                        &mut Context {
-                            tasks: &self.tasks,
-                            state: self.state.get_mut(),
-                            engine: &self.engine,
-                            owned: Some(&mut node.owned),
-                        },
-                    )?;
-                    return Ok(true);
-                }
-                target = instance.scene.parent(id)?;
+            if instance.route_action(
+                &self.tasks,
+                &self.engine,
+                self.state.get_mut(),
+                |handlers| ActionHandler::find(handlers, actions, &contexts),
+            )? {
+                return Ok(true);
             }
         }
         let mods = event.modifiers;

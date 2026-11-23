@@ -9,6 +9,33 @@ struct Select(u8);
 struct Save;
 
 #[test]
+fn direct_actions_follow_current_focus_and_deliver_the_supplied_value() -> Result<()> {
+    let mut ui = Ui::new();
+    let received = ui.context().signal(None);
+    let view = ui.mount(component(|_| {
+        div()
+            .on_action(move |choice: &Select, cx| cx.set(received, Some(("root", choice.0))))
+            .child(
+                div()
+                    .on_action(move |choice: &Select, cx| {
+                        cx.set(received, Some(("editor", choice.0)))
+                    })
+                    .child(div().focusable()),
+            )
+            .child(div().focusable())
+    }))?;
+    assert!(!ui.dispatch_action(view, &Select(1))?);
+    ui.focus_next(view)?;
+    assert!(ui.dispatch_action(view, &Select(2))?);
+    assert_eq!(*ui.context().read(received)?, Some(("editor", 2)));
+    ui.focus_next(view)?;
+    assert!(ui.dispatch_action(view, &Select(3))?);
+    assert_eq!(*ui.context().read(received)?, Some(("root", 3)));
+    assert!(!ui.dispatch_action(view, &Save)?);
+    Ok(())
+}
+
+#[test]
 fn shortcut_resolves_against_focus_and_uses_the_latest_binding_value() -> Result<()> {
     let mut ui = Ui::new();
     let selected = ui.context().signal(0);
