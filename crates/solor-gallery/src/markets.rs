@@ -1,6 +1,6 @@
 //! A deterministic quote feed driven by the window's frame opportunities.
 mod chart;
-use chart::{Inspection, chart};
+use chart::{InspectSample, Inspection, chart};
 
 use std::time::Duration;
 
@@ -43,6 +43,11 @@ pub(super) fn bind_keys(ui: &mut solor::Ui) {
     ui.bind_keys([
         KeyBinding::new(Key::ArrowUp, ZoomChart::In).in_context(PRICE_CHART),
         KeyBinding::new(Key::ArrowDown, ZoomChart::Out).in_context(PRICE_CHART),
+        KeyBinding::new(Key::ArrowLeft, InspectSample::Older).in_context(PRICE_CHART),
+        KeyBinding::new(Key::ArrowRight, InspectSample::Newer).in_context(PRICE_CHART),
+        KeyBinding::new(Key::Home, InspectSample::Oldest).in_context(PRICE_CHART),
+        KeyBinding::new(Key::End, InspectSample::Latest).in_context(PRICE_CHART),
+        KeyBinding::new(Key::Escape, InspectSample::Dismiss).in_context(PRICE_CHART),
     ]);
 }
 

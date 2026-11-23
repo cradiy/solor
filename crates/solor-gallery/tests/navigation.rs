@@ -783,7 +783,8 @@ fn inspected_price_and_average_follow_the_sample_as_it_moves_through_history() -
         ui.dispatch_frame(view, Duration::from_millis(tick * 8))?;
         submit_labels(&mut ui, view)?;
     }
-    assert_ne!(initial, readout(&mut ui)?);
+    let latest = readout(&mut ui)?;
+    assert_ne!(initial, latest);
     ui.dispatch_pointer(view, PointerInput::Move(left))?;
     ui.dispatch_pointer(
         view,
@@ -796,6 +797,41 @@ fn inspected_price_and_average_follow_the_sample_as_it_moves_through_history() -
         ),
     )?;
     assert_eq!(initial, readout(&mut ui)?);
+    ui.dispatch_pointer(view, PointerInput::Down(left, PointerButton::Primary))?;
+    ui.dispatch_pointer(view, PointerInput::Up(left, PointerButton::Primary))?;
+    let key = |ui: &mut solor::Ui, key| -> Result<()> {
+        assert!(ui.dispatch_key(
+            view,
+            &KeyEvent {
+                key,
+                state: KeyState::Down,
+                modifiers: Default::default(),
+            }
+        )?);
+        Ok(())
+    };
+    key(&mut ui, Key::ArrowRight)?;
+    let adjacent = readout(&mut ui)?;
+    let next = mouse_at(
+        left.position.x.get() + (right.position.x - left.position.x).get() / 11.,
+        330.,
+    );
+    ui.dispatch_pointer(view, PointerInput::Move(next))?;
+    assert_eq!(readout(&mut ui)?, adjacent);
+    key(&mut ui, Key::ArrowLeft)?;
+    assert_eq!(readout(&mut ui)?, initial);
+    key(&mut ui, Key::ArrowDown)?;
+    key(&mut ui, Key::Home)?;
+    key(&mut ui, Key::ArrowUp)?;
+    assert_eq!(readout(&mut ui)?, initial);
+    key(&mut ui, Key::End)?;
+    assert_eq!(readout(&mut ui)?, latest);
+    key(&mut ui, Key::Escape)?;
+    assert!(
+        submit_labels(&mut ui, view)?
+            .iter()
+            .any(|label| label.as_str() == "Hover or Left/Right to inspect")
+    );
     Ok(())
 }
 

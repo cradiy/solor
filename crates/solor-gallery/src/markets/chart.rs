@@ -6,7 +6,15 @@ use solor::{
 
 use super::{AVERAGE_INK, Feed, PERIODS, Tape, UP};
 
-const INSPECT_HINT: &str = "Hover to inspect";
+const INSPECT_HINT: &str = "Hover or Left/Right to inspect";
+
+pub(super) enum InspectSample {
+    Older,
+    Newer,
+    Oldest,
+    Latest,
+    Dismiss,
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct Inspection {
@@ -30,9 +38,20 @@ impl Inspection {
         count: usize,
         tape: Signal<Tape>,
     ) -> anyhow::Result<()> {
-        let age = cx
-            .read(self.fraction)?
-            .map(|fraction| count - 1 - (fraction * (count - 1) as f32).round() as usize);
+        let last = count - 1;
+        let age = match *cx.read(self.fraction)? {
+            Some(fraction) => Some(last - (fraction * last as f32).round() as usize),
+            None => cx.read(self.age)?.map(|age| age.min(last)),
+        };
+        self.set_age(cx, age, tape)
+    }
+
+    fn set_age(
+        self,
+        cx: &mut Context<'_>,
+        age: Option<usize>,
+        tape: Signal<Tape>,
+    ) -> anyhow::Result<()> {
         if age != *cx.read(self.age)? {
             cx.set(self.age, age)?;
             match age {
@@ -154,13 +173,34 @@ pub(super) fn chart(
         }
         Ok(())
     });
-    plot.on_hover_position(move |hover, cx| {
+    plot.on_action(move |action: &InspectSample, cx| {
+        let last = *cx.read(visible)? - 1;
+        let current = *cx.read(inspection.age)?;
+        let age = match action {
+            InspectSample::Older => Some(current.map_or(0, |age| (age + 1).min(last))),
+            InspectSample::Newer => Some(current.unwrap_or(0).saturating_sub(1)),
+            InspectSample::Oldest => Some(last),
+            InspectSample::Latest => Some(0),
+            InspectSample::Dismiss => None,
+        };
+        cx.set(inspection.fraction, None)?;
+        inspection.set_age(cx, age, feed[*cx.read(selected)?])
+    })
+    .on_hover_position(move |hover, cx| {
         let fraction = hover.and_then(|hover| {
             let inset = plot_inset(hover.size);
             let span = hover.size.width.get() - 2.0 * inset;
             (span > 0.0).then(|| ((hover.position.x.get() - inset) / span).clamp(0.0, 1.0))
         });
-        cx.set(inspection.fraction, fraction)?;
-        inspection.locate(cx, *cx.read(visible)?, feed[*cx.read(selected)?])
+        let tape = feed[*cx.read(selected)?];
+        if fraction.is_some() {
+            cx.set(inspection.fraction, fraction)?;
+            inspection.locate(cx, *cx.read(visible)?, tape)
+        } else if cx.read(inspection.fraction)?.is_some() {
+            cx.set(inspection.fraction, None)?;
+            inspection.set_age(cx, None, tape)
+        } else {
+            Ok(())
+        }
     })
 }
