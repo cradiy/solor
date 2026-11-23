@@ -12,13 +12,79 @@ const SIZE: DeviceSize = DeviceSize {
 
 fn render(points: &[Origin], fill: Fill, scale: RasterScale, clip: Clip) -> Result<Surface> {
     let mut image = Surface::cleared(SIZE, scale, 255)?;
-    image.fill_polygon(point(0.5, 1.0), points, &fill, scale, clip)?;
+    image.fill_polygon(
+        point(0.5, 1.0),
+        points,
+        &fill,
+        FillRule::EvenOdd,
+        scale,
+        clip,
+    )?;
     Ok(image)
 }
 
 fn pixel(image: &Surface, x: usize, y: usize) -> &[u8] {
     let offset = (y * SIZE.width as usize + x) * 4;
     &image.rgba[offset..offset + 4]
+}
+
+#[test]
+fn winding_rule_selects_the_star_center_during_full_and_clipped_replay() -> anyhow::Result<()> {
+    use solor::{Ui, component, div};
+
+    let scale = RasterScale(1.5);
+    let size = Size {
+        width: px(12.),
+        height: px(12.),
+    };
+    let crop = Clip {
+        left: 8,
+        top: 4,
+        right: 13,
+        bottom: 14,
+    };
+    for rule in [FillRule::EvenOdd, FillRule::NonZero] {
+        let mut ui = Ui::new();
+        let view = ui.mount(component(move |_| {
+            div().paint(move |cx| {
+                cx.fill_polygon_with_rule(
+                    [
+                        point(6., 0.),
+                        point(10., 11.),
+                        point(0.5, 4.),
+                        point(11.5, 4.),
+                        point(2., 11.),
+                    ],
+                    rgba(0xff000080),
+                    rule,
+                )
+            })
+        }))?;
+        ui.layout(view, size)?;
+        let frame = ui.record_frame(view)?;
+        let full = Surface::draw_view(&frame, SIZE, scale)?;
+        let red = [255, 127, 127, 255];
+        assert_eq!(pixel(&full, 9, 4), red);
+        assert_eq!(
+            pixel(&full, 9, 8),
+            if rule == FillRule::NonZero {
+                red
+            } else {
+                [255; 4]
+            }
+        );
+        let mut part = Surface::cleared(SIZE, scale, 255)?;
+        part.replay(frame.draws(), scale, crop, &mut Default::default())?;
+        for y in crop.top..crop.bottom {
+            for x in crop.left..crop.right {
+                assert_eq!(
+                    pixel(&part, x as usize, y as usize),
+                    pixel(&full, x as usize, y as usize)
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 #[test]

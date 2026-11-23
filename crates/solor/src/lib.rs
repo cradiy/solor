@@ -76,8 +76,8 @@ pub use bitmap::{CustomImage, ImageAsset, ImageCache, ImageFill, ImageRegion, Im
 pub use element::image::{ImageSource, image};
 pub use element::svg::{Svg, SvgAsset, SvgSource, svg};
 pub use element::{
-    AnyElement, Children, Div, Draw, Element, IntoElement, Node, PaintContext, ParentElement,
-    RefreshMode, RefreshPolicy, Render, TextContent, div, element, text,
+    AnyElement, Children, Div, Draw, Element, FillRule, IntoElement, Node, PaintContext,
+    ParentElement, RefreshMode, RefreshPolicy, Render, TextContent, div, element, text,
 };
 pub use fill::{
     Checkerboard, ColorSpace, ColorStop, DiagonalStripes, Fill, Gradient, GradientError,

@@ -1,10 +1,10 @@
-//! Even-odd polygon spans with four vertical samples and fractional horizontal coverage.
+//! Polygon spans with four vertical samples and fractional horizontal coverage.
 use crate::{
     path::{PathBounds, device},
     pixels::{Surface, blend, blend_solid_span},
 };
 use solor::{
-    Fill,
+    Fill, FillRule,
     layout::{Origin, Size},
     px,
     raster::{Clip, RasterScale},
@@ -16,6 +16,7 @@ struct Edge {
     top: f64,
     bottom: f64,
     dx: f64,
+    direction: i32,
 }
 
 // Convert a covered interval's endpoint into changes in pixel coverage.
@@ -32,6 +33,7 @@ fn boundary(events: &mut Vec<(i64, i32)>, x: f64, sign: i32) {
 
 fn for_each_span(
     points: &[Origin],
+    rule: FillRule,
     origin: Origin,
     scale: RasterScale,
     clip: Clip,
@@ -41,10 +43,10 @@ fn for_each_span(
     let mut previous = device(points[points.len() - 1], origin, scale);
     for &point in points {
         let current = device(point, origin, scale);
-        let (a, b) = if previous.1 <= current.1 {
-            (previous, current)
+        let (a, b, direction) = if previous.1 <= current.1 {
+            (previous, current, 1)
         } else {
-            (current, previous)
+            (current, previous, -1)
         };
         previous = current;
         if a.1 < b.1 && a.1 < clip.bottom as f64 && b.1 > clip.top as f64 {
@@ -53,6 +55,7 @@ fn for_each_span(
                 top: a.1,
                 bottom: b.1,
                 dx: b.0 - a.0,
+                direction,
             });
         }
     }
@@ -73,15 +76,25 @@ fn for_each_span(
             crossings.extend(
                 active
                     .iter()
-                    .map(|e| e.x + (y - e.top) / (e.bottom - e.top) * e.dx),
+                    .map(|e| (e.x + (y - e.top) / (e.bottom - e.top) * e.dx, e.direction)),
             );
-            crossings.sort_unstable_by(f64::total_cmp);
-            for &[left, right] in crossings.as_chunks::<2>().0 {
-                let left = left.max(clip.left as f64);
-                let right = right.min(clip.right as f64);
-                if left < right {
-                    boundary(&mut events, left, 1);
-                    boundary(&mut events, right, -1);
+            crossings.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+            let mut winding = 0;
+            let mut start = 0.0;
+            for &(x, direction) in &crossings {
+                if winding == 0 {
+                    start = x.max(clip.left as f64);
+                }
+                winding = match rule {
+                    FillRule::EvenOdd => winding ^ 1,
+                    FillRule::NonZero => winding + direction,
+                };
+                if winding == 0 {
+                    let end = x.min(clip.right as f64);
+                    if start < end {
+                        boundary(&mut events, start, 1);
+                        boundary(&mut events, end, -1);
+                    }
                 }
             }
         }
@@ -113,16 +126,22 @@ impl Surface {
         origin: Origin,
         points: &[Origin],
         fill: &Fill,
+        rule: FillRule,
         scale: RasterScale,
         clip: Clip,
     ) -> Result<()> {
         match fill {
-            Fill::Solid(color) => {
-                for_each_span(points, origin, scale, clip, |row, from, to, coverage| {
+            Fill::Solid(color) => for_each_span(
+                points,
+                rule,
+                origin,
+                scale,
+                clip,
+                |row, from, to, coverage| {
                     blend_solid_span(self.span_pixels(row, from, to), *color, coverage);
                     Ok(())
-                })
-            }
+                },
+            ),
             Fill::Checkerboard(pattern) => {
                 let bounds = PathBounds::new(origin, points, scale)?;
                 let brush = crate::checkerboard::CheckerBrush::new(
@@ -131,19 +150,33 @@ impl Surface {
                     bounds.top,
                     scale,
                 );
-                for_each_span(points, origin, scale, clip, |row, from, to, coverage| {
-                    brush.blend_span(self.span_pixels(row, from, to), from, row, coverage);
-                    Ok(())
-                })
+                for_each_span(
+                    points,
+                    rule,
+                    origin,
+                    scale,
+                    clip,
+                    |row, from, to, coverage| {
+                        brush.blend_span(self.span_pixels(row, from, to), from, row, coverage);
+                        Ok(())
+                    },
+                )
             }
             Fill::DiagonalStripes(pattern) => {
                 let bounds = PathBounds::new(origin, points, scale)?;
                 let brush =
                     crate::stripes::StripeBrush::new(*pattern, bounds.left, bounds.top, scale);
-                for_each_span(points, origin, scale, clip, |row, from, to, coverage| {
-                    brush.blend_span(self.span_pixels(row, from, to), from, row, coverage);
-                    Ok(())
-                })
+                for_each_span(
+                    points,
+                    rule,
+                    origin,
+                    scale,
+                    clip,
+                    |row, from, to, coverage| {
+                        brush.blend_span(self.span_pixels(row, from, to), from, row, coverage);
+                        Ok(())
+                    },
+                )
             }
             Fill::CustomImage(image) => {
                 let bounds = PathBounds::new(origin, points, scale)?;
@@ -161,12 +194,19 @@ impl Surface {
                 else {
                     return Ok(());
                 };
-                for_each_span(points, origin, scale, clip, |row, from, to, coverage| {
-                    for (x, pixel) in (from..to).zip(self.span_pixels(row, from, to)) {
-                        sampler.blend(pixel, x, row, scale, coverage);
-                    }
-                    Ok(())
-                })
+                for_each_span(
+                    points,
+                    rule,
+                    origin,
+                    scale,
+                    clip,
+                    |row, from, to, coverage| {
+                        for (x, pixel) in (from..to).zip(self.span_pixels(row, from, to)) {
+                            sampler.blend(pixel, x, row, scale, coverage);
+                        }
+                        Ok(())
+                    },
+                )
             }
             Fill::Image(image) => {
                 let bounds = PathBounds::new(origin, points, scale)?;
@@ -175,13 +215,25 @@ impl Surface {
                     height: px(((bounds.bottom - bounds.top) / scale.0) as f32),
                 };
                 let sampler = crate::bitmap::ImageSampler::new(image, size, scale)?;
-                for_each_span(points, origin, scale, clip, |row, from, to, coverage| {
-                    let y = (row as f64 + 0.5 - bounds.top) / scale.0;
-                    for (x, pixel) in (from..to).zip(self.span_pixels(row, from, to)) {
-                        sampler.blend(pixel, (x as f64 + 0.5 - bounds.left) / scale.0, y, coverage);
-                    }
-                    Ok(())
-                })
+                for_each_span(
+                    points,
+                    rule,
+                    origin,
+                    scale,
+                    clip,
+                    |row, from, to, coverage| {
+                        let y = (row as f64 + 0.5 - bounds.top) / scale.0;
+                        for (x, pixel) in (from..to).zip(self.span_pixels(row, from, to)) {
+                            sampler.blend(
+                                pixel,
+                                (x as f64 + 0.5 - bounds.left) / scale.0,
+                                y,
+                                coverage,
+                            );
+                        }
+                        Ok(())
+                    },
+                )
             }
             Fill::Gradient(gradient) => {
                 let bounds = PathBounds::new(origin, points, scale)?;
@@ -194,14 +246,21 @@ impl Surface {
                         height: px(((bounds.bottom - bounds.top) / scale.0) as f32),
                     })
                     .map_err(Error::other)?;
-                for_each_span(points, origin, scale, clip, |row, from, to, coverage| {
-                    let y = ((row as f64 + 0.5 - bounds.top) / scale.0) as f32;
-                    for (x, pixel) in (from..to).zip(self.span_pixels(row, from, to)) {
-                        let x = ((x as f64 + 0.5 - bounds.left) / scale.0) as f32;
-                        blend(pixel, sample(x, y).map_err(Error::other)?, coverage);
-                    }
-                    Ok(())
-                })
+                for_each_span(
+                    points,
+                    rule,
+                    origin,
+                    scale,
+                    clip,
+                    |row, from, to, coverage| {
+                        let y = ((row as f64 + 0.5 - bounds.top) / scale.0) as f32;
+                        for (x, pixel) in (from..to).zip(self.span_pixels(row, from, to)) {
+                            let x = ((x as f64 + 0.5 - bounds.left) / scale.0) as f32;
+                            blend(pixel, sample(x, y).map_err(Error::other)?, coverage);
+                        }
+                        Ok(())
+                    },
+                )
             }
             _ => Err(Error::new(
                 std::io::ErrorKind::Unsupported,

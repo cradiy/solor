@@ -248,10 +248,11 @@ impl Surface {
                     origin,
                     points,
                     fill,
+                    rule,
                     ..
                 } => {
                     let fill = replay.images.resolve(fill).map_err(Error::other)?;
-                    self.fill_polygon(*origin, points, &fill, scale, bounds)?;
+                    self.fill_polygon(*origin, points, &fill, *rule, scale, bounds)?;
                 }
                 Draw::Polyline {
                     origin,

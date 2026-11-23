@@ -134,6 +134,16 @@ impl Element for Text {
     }
 }
 
+/// Determines which regions of a closed contour are filled.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FillRule {
+    /// A point is inside when a ray from it crosses the contour an odd number of times.
+    #[default]
+    EvenOdd,
+    /// A point is inside when the net winding around it is nonzero.
+    NonZero,
+}
+
 /// A recorded drawing operation. Origins are local to the recording target.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Draw {
@@ -194,7 +204,7 @@ pub enum Draw {
         /// Per-edge widths and fills, with outer radii fitted at draw time.
         paint: Rc<crate::style::BorderPaint>,
     },
-    /// Fills a closed contour using the even-odd rule.
+    /// Fills a closed contour.
     Polygon {
         /// Effective clip in view coordinates.
         clip: Option<Arc<ContentClip>>,
@@ -202,6 +212,8 @@ pub enum Draw {
         origin: Origin,
         /// Vertices in contour order. The last vertex connects to the first.
         points: Rc<[Origin]>,
+        /// Rule used to determine the interior.
+        rule: FillRule,
         /// Paint mapped to the complete polygon bounds.
         fill: Fill,
     },
@@ -451,6 +463,16 @@ impl<'paint> PaintContext<'paint> {
         points: impl Into<Rc<[Origin]>>,
         fill: impl Into<Fill>,
     ) -> Result<()> {
+        self.fill_polygon_with_rule(points, fill, FillRule::EvenOdd)
+    }
+
+    /// Fills a closed polygon in local logical pixels using the given winding rule.
+    pub fn fill_polygon_with_rule(
+        &mut self,
+        points: impl Into<Rc<[Origin]>>,
+        fill: impl Into<Fill>,
+        rule: FillRule,
+    ) -> Result<()> {
         let points = points.into();
         validate_points(&points)?;
         if points.len() >= 3 {
@@ -458,6 +480,7 @@ impl<'paint> PaintContext<'paint> {
                 origin: self.origin,
                 clip: self.clip.clone(),
                 points,
+                rule,
                 fill: fill.into(),
             });
         }
