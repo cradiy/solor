@@ -477,12 +477,12 @@ impl Gradient {
     }
 }
 
-/// Paint applied through a glyph or monochrome SVG mask.
+/// Foreground paint for text, monochrome SVGs and polyline strokes.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Ink {
     /// Uniform foreground color.
     Solid(Rgba),
-    /// Gradient across the paragraph box or fitted SVG viewport.
+    /// Gradient across the primitive's paint bounds.
     Gradient(Arc<Gradient>),
 }
 

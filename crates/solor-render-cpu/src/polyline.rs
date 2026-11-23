@@ -1,8 +1,12 @@
-//! Device-space coverage for a solid stroke with round caps and joins.
-use crate::pixels::{Surface, blend};
+//! Device-space coverage for a stroke with round caps and joins.
+use crate::{
+    mask::{self, MaskPainter},
+    pixels::Surface,
+};
 use solor::{
-    Pixels, Rgba,
-    layout::Origin,
+    Ink, Pixels,
+    layout::{Origin, Size},
+    px,
     raster::{Clip, RasterScale},
 };
 
@@ -23,10 +27,28 @@ impl Surface {
         origin: Origin,
         points: &[Origin],
         width: Pixels,
-        color: Rgba,
+        ink: &Ink,
         scale: RasterScale,
         clip: Clip,
-    ) {
+    ) -> std::io::Result<()> {
+        let (at, size) = match ink {
+            Ink::Solid(_) => (origin, Size::default()),
+            Ink::Gradient(_) => {
+                let b = PathBounds::new(origin, points, RasterScale::ONE)?;
+                let width = f64::from(width);
+                (
+                    Origin {
+                        x: px((b.left - width * 0.5) as f32),
+                        y: px((b.top - width * 0.5) as f32),
+                    },
+                    Size {
+                        width: px((b.right - b.left + width) as f32),
+                        height: px((b.bottom - b.top + width) as f32),
+                    },
+                )
+            }
+        };
+        let mut painter = mask::painter(ink, at, size, scale, (0, 0))?;
         let pitch = (clip.right - clip.left) as usize;
         let radius = f64::from(width) * scale.0 * 0.5;
         let reach = radius + 0.5;
@@ -73,12 +95,14 @@ impl Surface {
         for (row, mask) in mask.chunks_exact(pitch).enumerate() {
             let start = (clip.top as usize + row) * stride + clip.left as usize * 4;
             let pixels = &mut self.rgba[start..start + pitch * 4];
-            for (pixel, &coverage) in pixels.as_chunks_mut::<4>().0.iter_mut().zip(mask) {
-                if coverage != 0 {
-                    blend(pixel, color, coverage);
-                }
-            }
+            painter.paint_row(
+                pixels.as_chunks_mut::<4>().0,
+                mask,
+                clip.left,
+                clip.top + row as i64,
+            )?;
         }
+        Ok(())
     }
 }
 

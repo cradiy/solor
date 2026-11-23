@@ -257,10 +257,10 @@ impl Surface {
                     origin,
                     points,
                     width,
-                    color,
+                    ink,
                     ..
                 } => {
-                    self.stroke_polyline(*origin, points, *width, *color, scale, bounds);
+                    self.stroke_polyline(*origin, points, *width, ink, scale, bounds)?;
                 }
                 Draw::Svg {
                     origin,

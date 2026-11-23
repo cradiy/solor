@@ -23,7 +23,7 @@ use crate::pointer::Handlers;
 use crate::style::{Align, Background, Corners, Foreground, TextStyleRefinement};
 use crate::style::{PointerEvents, Visibility};
 use crate::text::{Line, Paragraph, Text, TextStyle};
-use crate::{Fill, Pixels, Rgba, Style, StyleRefinement, Styled, StyledBody, px};
+use crate::{Fill, Pixels, Style, StyleRefinement, Styled, StyledBody, px};
 
 /// Builds an element declaration when a component is attached.
 pub trait Render {
@@ -215,8 +215,8 @@ pub enum Draw {
         points: Rc<[Origin]>,
         /// Full stroke width in logical pixels.
         width: Pixels,
-        /// Stroke color.
-        color: Rgba,
+        /// Foreground mapped to the full stroke bounds, including caps.
+        ink: crate::Ink,
     },
     /// Draws a fitted SVG viewport.
     Svg {
@@ -462,24 +462,26 @@ impl<'paint> PaintContext<'paint> {
         Ok(())
     }
 
-    /// Strokes consecutive local points with a solid color and round caps and joins.
+    /// Strokes consecutive local points with round caps and joins.
+    /// Gradients span the unclipped bounds of the stroke, including its width.
     /// Fewer than two points or a zero-width stroke produces no drawing.
     pub fn stroke_polyline(
         &mut self,
         points: impl Into<Rc<[Origin]>>,
         width: Pixels,
-        color: Rgba,
+        ink: impl Into<crate::Ink>,
     ) -> Result<()> {
         let points = points.into();
         anyhow::ensure!(width.is_extent(), "invalid stroke width");
         validate_points(&points)?;
-        if points.len() >= 2 && width.get() > 0.0 && color.alpha != 0 {
+        let ink = ink.into();
+        if points.len() >= 2 && width.get() > 0.0 && !ink.is_clear_solid() {
             self.commands.push(Draw::Polyline {
                 origin: self.origin,
                 clip: self.clip.clone(),
                 points,
                 width,
-                color,
+                ink,
             });
         }
         Ok(())

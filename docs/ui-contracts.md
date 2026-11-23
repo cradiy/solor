@@ -263,8 +263,9 @@ successful presentation, pass `frame.into_pointer_frame()` to
 geometry in place. This path records the whole view and rasterizes a fresh
 image on each call.
 
-`PaintContext::stroke_polyline(points, width, color)` draws connected points
-relative to the element's content origin. Width is in logical pixels. The CPU
+`PaintContext::stroke_polyline(points, width, ink)` draws connected points
+relative to the element's content origin. Width is in logical pixels. A gradient
+spans the full stroke bounds, including the caps. The CPU
 backend antialiases round caps and joins, clips the stroke to inherited overflow
 bounds and composites a translucent stroke once at self-intersections.
 

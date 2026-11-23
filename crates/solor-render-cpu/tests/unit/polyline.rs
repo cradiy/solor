@@ -6,6 +6,63 @@ fn point(x: f32, y: f32) -> Origin {
 }
 
 #[test]
+fn clipped_gradient_uses_the_full_retraced_stroke_box() -> anyhow::Result<()> {
+    use solor::{Ui, color_stop, component, div, gradient_left_to_right};
+
+    let ramp = gradient_left_to_right([
+        color_stop(rgba(0xff000080), 0.0),
+        color_stop(rgba(0x00ff0080), 0.5),
+        color_stop(rgba(0x0000ff80), 1.0),
+    ])?;
+    let ink = Ink::from(ramp.clone());
+    let mut ui = Ui::new();
+    let view = ui.mount(component(move |_| {
+        div().paint(move |cx| {
+            cx.stroke_polyline(
+                [point(4., 8.), point(20., 8.), point(4., 8.)],
+                px(4.),
+                ink.clone(),
+            )
+        })
+    }))?;
+    let size = Size {
+        width: px(24.),
+        height: px(16.),
+    };
+    ui.layout(view, size)?;
+    let frame = ui.record_frame(view)?;
+    let scale = RasterScale(1.5);
+    let physical = scale.buffer_size(size)?;
+    let full = Surface::draw_view(&frame, physical, scale)?;
+    let mut partial = Surface::cleared(physical, scale, 255)?;
+    let crop = Clip {
+        left: 6,
+        right: 29,
+        top: 8,
+        bottom: 16,
+    };
+    partial.replay(frame.draws(), scale, crop, &mut Default::default())?;
+    let stride = physical.width as usize * 4;
+    for y in crop.top..crop.bottom {
+        let row = y as usize * stride;
+        let span = row + crop.left as usize * 4..row + crop.right as usize * 4;
+        assert_eq!(partial.rgba[span.clone()], full.rgba[span]);
+    }
+    let stroke_box = Size {
+        width: px(20.),
+        height: px(4.),
+    };
+    for x in [6, 17, 28] {
+        let color = ramp.sample_at((x as f32 + 0.5) / 1.5 - 2., 2., stroke_box)?;
+        let expected = [color.red, color.green, color.blue, 255]
+            .map(|c| ((u32::from(c) * 128 + 255 * 127 + 127) / 255) as u8);
+        let i = 12 * stride + x * 4;
+        assert_eq!(partial.rgba[i..i + 4], expected);
+    }
+    Ok(())
+}
+
+#[test]
 fn retraced_translucent_stroke_blends_once_and_clipped_replay_preserves_coverage()
 -> std::io::Result<()> {
     let size = DeviceSize {
@@ -30,7 +87,14 @@ fn retraced_translucent_stroke_blends_once_and_clipped_replay_preserves_coverage
         let origin = point(3.0, 2.0);
         let render = |clip| -> std::io::Result<Surface> {
             let mut image = Surface::cleared(size, scale, 255)?;
-            image.stroke_polyline(origin, &points, px(2.5), rgba(0xff000080), scale, clip);
+            image.stroke_polyline(
+                origin,
+                &points,
+                px(2.5),
+                &rgba(0xff000080).into(),
+                scale,
+                clip,
+            )?;
             Ok(image)
         };
         let full = render(Clip::canvas(size))?;
