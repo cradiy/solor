@@ -92,6 +92,47 @@ fn shortcut_resolves_against_focus_and_uses_the_latest_binding_value() -> Result
 }
 
 #[test]
+fn reloading_bindings_moves_the_shortcut_and_releases_tab_for_navigation() -> Result<()> {
+    let mut ui = Ui::new();
+    let calls = ui.context().signal(0);
+    let view = ui.mount(component(|_| {
+        div()
+            .key_context("Editor")
+            .on_action(move |_: &Select, cx| cx.update(calls, |n| *n += 1))
+            .child(div().focusable())
+            .child(div().focusable())
+    }))?;
+    let first = ui.focus_next(view)?;
+    let tab = KeyEvent {
+        key: Key::Tab,
+        modifiers: Modifiers::default(),
+        state: KeyState::Down,
+    };
+    ui.bind_keys([KeyBinding::new(Key::Tab, Select(1)).in_context("Editor")]);
+    ui.dispatch_key(view, &tab)?;
+    assert_eq!(*ui.context().read(calls)?, 1);
+    assert_eq!(ui.focused(view)?, first);
+
+    ui.set_key_bindings([KeyBinding::new(Key::F2, Select(1)).in_context("Editor")]);
+    assert_eq!(
+        ui.shortcut_for_action(view, &Select(1))?,
+        Some(&Key::F2.into())
+    );
+    ui.dispatch_key(view, &tab)?;
+    let second = ui.children(view, ui.root(view)?)?.nth(1).unwrap();
+    assert_eq!(ui.focused(view)?, Some(second));
+    ui.dispatch_key(
+        view,
+        &KeyEvent {
+            key: Key::F2,
+            ..tab
+        },
+    )?;
+    assert_eq!(*ui.context().read(calls)?, 2);
+    Ok(())
+}
+
+#[test]
 fn focused_key_handler_can_consume_a_bound_press_before_action_dispatch() -> Result<()> {
     let mut ui = Ui::new();
     let value = ui.context().signal(0);

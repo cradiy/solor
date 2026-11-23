@@ -162,6 +162,13 @@ impl Ui {
         )
     }
 
+    /// Replaces all shortcut bindings for this UI in registration order.
+    pub fn set_key_bindings(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
+        self.keymap.clear();
+        self.binding_sequence = 0;
+        self.bind_keys(bindings);
+    }
+
     /// Registers bindings for this UI. Registering the same shortcut and action type
     /// again in the same context replaces its value.
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
