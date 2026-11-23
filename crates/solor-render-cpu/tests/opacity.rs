@@ -120,3 +120,60 @@ fn partial_repair_inside_a_translucent_container_preserves_the_backdrop() -> Res
     }
     Ok(())
 }
+
+#[test]
+fn moving_a_translucent_group_in_a_long_display_list_matches_full_repaint() -> Result<()> {
+    fn scene(phase: usize) -> impl solor::Render {
+        component(move |cx| {
+            let positions = [2., 2., 20., 2.];
+            let left = cx.signal(px(positions[phase]));
+            let tint = cx.signal(if phase == 0 { rgb(0) } else { rgb(0xff8800) });
+            let fillers = || (0..100).map(|_| div().absolute().size(px(1.)).bg(rgb(0x334455)));
+            div()
+                .bg(rgb(0x102030))
+                .on_frame(move |time, cx| {
+                    cx.set(tint, rgb(0xff8800))?;
+                    cx.set(left, px(positions[time.as_secs() as usize]))
+                })
+                .children(fillers())
+                .child(
+                    div()
+                        .absolute()
+                        .left(left)
+                        .size(px(4.))
+                        .opacity(0.5)
+                        .bg(tint)
+                        .child(div().size(px(2.)).bg(rgb(0x0088ff))),
+                )
+                .children(fillers())
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(21.))
+                        .size(px(2.))
+                        .bg(solor::rgba(0xff000080)),
+                )
+        })
+    }
+
+    let size = DeviceSize {
+        width: 30,
+        height: 6,
+    }
+    .at_unit_scale();
+    let scale = RasterScale(1.5);
+    let mut window = CpuWindow::mount(Ui::new(), scene(0))?;
+    window.frame(size, scale)?;
+    window.frame_submitted()?;
+    for phase in 1..=3 {
+        window.event(WindowEvent::FrameReady(Duration::from_secs(phase)))?;
+        let frame = window.frame(size, scale)?;
+        let mut reference = CpuWindow::mount(Ui::new(), scene(phase as usize))?;
+        let full = reference.frame(size, scale)?;
+        assert!(!frame.damage.is_empty());
+        assert_ne!(frame.damage, full.damage);
+        assert_eq!(frame.rgba, full.rgba, "phase {phase}");
+        window.frame_submitted()?;
+    }
+    Ok(())
+}

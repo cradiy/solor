@@ -35,6 +35,17 @@ struct Replay<'a> {
     text: Option<TextRaster<'a>>,
 }
 
+impl ViewCaches {
+    fn replay(&mut self) -> Replay<'_> {
+        Replay {
+            images: &mut self.images,
+            svgs: &mut self.svgs,
+            masks: Some(&mut self.glyphs),
+            text: None,
+        }
+    }
+}
+
 enum Brush<'a, F> {
     Solid(solor::Rgba),
     Checkerboard(crate::checkerboard::CheckerBrush),
@@ -45,9 +56,12 @@ enum Brush<'a, F> {
 }
 
 mod border;
+mod repair;
 mod rounded_box;
 mod shadow;
 mod underline;
+
+pub(super) use repair::RepairIndex;
 
 trait SampleGradient:
     FnMut(f32, f32) -> std::result::Result<solor::Rgba, solor::GradientError>
@@ -156,37 +170,6 @@ impl Surface {
         Ok(surface)
     }
 
-    pub(super) fn repair(
-        &mut self,
-        frame: &ViewFrame,
-        scale: RasterScale,
-        clip: Clip,
-        clear_byte: u8,
-        caches: &mut ViewCaches,
-    ) -> Result<()> {
-        let mut draws = frame.draws();
-        let mut background = [clear_byte; 4];
-        // Earlier commands cannot contribute once an opaque fill covers the repair.
-        for (index, draw) in draws.iter().enumerate().rev() {
-            if let Some(color) = opaque_cover(draw, scale, clip)? {
-                background = [color.red, color.green, color.blue, 255];
-                draws = &draws[index + 1..];
-                break;
-            }
-        }
-        let stride = self.size.width as usize * 4;
-        let start = clip.top as usize * stride + clip.left as usize * 4;
-        let row = start..start + (clip.right - clip.left) as usize * 4;
-        self.rgba[row.clone()]
-            .as_chunks_mut::<4>()
-            .0
-            .fill(background);
-        for y in 1..(clip.bottom - clip.top) as usize {
-            self.rgba.copy_within(row.clone(), start + y * stride);
-        }
-        self.replay(draws, scale, clip, caches)
-    }
-
     pub(super) fn replay(
         &mut self,
         draws: &[Draw],
@@ -194,13 +177,7 @@ impl Surface {
         clip: Clip,
         caches: &mut ViewCaches,
     ) -> Result<()> {
-        let mut replay = Replay {
-            images: &mut caches.images,
-            svgs: &mut caches.svgs,
-            masks: Some(&mut caches.glyphs),
-            text: None,
-        };
-        self.replay_commands(draws, scale, clip, &mut replay)
+        self.replay_commands(draws, scale, clip, &mut caches.replay())
     }
 
     fn replay_commands(
@@ -530,23 +507,25 @@ fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     Ok(bounds)
 }
 
+fn draw_bounds(draws: &[Draw], scale: RasterScale) -> Result<Clip> {
+    let mut total: Option<Clip> = None;
+    for draw in draws {
+        let bounds = device_bounds(draw, scale)?;
+        if !bounds.empty() {
+            total = Some(total.map_or(bounds, |old| old.union(bounds)));
+        }
+    }
+    Ok(total.unwrap_or(Clip {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    }))
+}
+
 fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     match draw {
-        Draw::Group { draws, .. } => {
-            let mut total: Option<Clip> = None;
-            for child in draws {
-                let bounds = device_bounds(child, scale)?;
-                if !bounds.empty() {
-                    total = Some(total.map_or(bounds, |old| old.union(bounds)));
-                }
-            }
-            Ok(total.unwrap_or(Clip {
-                left: 0,
-                right: 0,
-                top: 0,
-                bottom: 0,
-            }))
-        }
+        Draw::Group { draws, .. } => draw_bounds(draws, scale),
         Draw::Polygon { origin, points, .. } => {
             crate::path::PathBounds::new(*origin, points, scale)?.clip(0.0)
         }
@@ -734,24 +713,13 @@ fn include_image_change(
     Ok(true)
 }
 
-pub(super) fn damage(
-    old: &[Draw],
-    new: &[Draw],
-    scale: RasterScale,
-    canvas: Clip,
-) -> Result<Damage> {
-    let mut area = Damage::default();
-    include_changes(old, new, scale, canvas, &mut area)?;
-    Ok(area)
-}
-
 fn include_changes(
     old: &[Draw],
     new: &[Draw],
     scale: RasterScale,
     canvas: Clip,
     area: &mut Damage,
-) -> Result<()> {
+) -> Result<bool> {
     // An insertion or removal can shift identical trailing commands to new indices.
     // They still replay in paint order wherever the changed draws cause damage.
     let suffix = if old.len() != new.len() {
@@ -765,6 +733,7 @@ fn include_changes(
     };
     let old = &old[..old.len() - suffix];
     let new = &new[..new.len() - suffix];
+    let mut changed = old.len() != new.len();
     for i in 0..old.len().max(new.len()) {
         let (before, after) = (old.get(i), new.get(i));
         if let Some((a, b)) = before.zip(after) {
@@ -783,12 +752,13 @@ fn include_changes(
                 && alpha == other
                 && gradient_map == other_map
             {
-                include_changes(draws, children, scale, canvas, area)?;
+                changed |= include_changes(draws, children, scale, canvas, area)?;
                 continue;
             }
             if same_draw(a, b) {
                 continue;
             }
+            changed = true;
             if include_image_change(a, b, scale, canvas, area)? {
                 continue;
             }
@@ -816,7 +786,7 @@ fn include_changes(
             }
         }
     }
-    Ok(())
+    Ok(changed)
 }
 
 fn rectangle_coverage(x: f64, width: f64, row_height: f64) -> u8 {

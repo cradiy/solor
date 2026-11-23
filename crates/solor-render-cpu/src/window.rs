@@ -8,7 +8,10 @@ use solor::{
     raster::{Clip, Damage, RasterFrame, RasterScale, Rgba8},
 };
 
-use crate::{pixels::Surface, view::ViewCaches};
+use crate::{
+    pixels::Surface,
+    view::{RepairIndex, ViewCaches},
+};
 
 /// A CPU-rendered window that owns its UI and a single mounted root.
 pub struct CpuWindow {
@@ -26,6 +29,7 @@ struct RetainedView {
     scale: RasterScale,
     surface: Surface,
     draws: Vec<Draw>,
+    index: RepairIndex,
 }
 
 impl CpuWindow {
@@ -105,24 +109,35 @@ impl WindowHandler<Rgba8> for CpuWindow {
         let frame = self.ui.record_frame(self.view)?;
         let canvas = Clip::canvas(physical);
         // Take ownership before mutating pixels. On a raster error, retry from a clean image.
-        let (surface, damage) = match self.retained.take() {
+        let (surface, damage, index) = match self.retained.take() {
             Some(mut old) if old.logical == size && old.scale == scale => {
-                let damage = crate::view::damage(&old.draws, frame.draws(), scale, canvas)?;
+                let damage = old.index.damage(&old.draws, frame.draws(), scale, canvas)?;
                 for &area in damage.rects() {
-                    old.surface
-                        .repair(&frame, scale, area, self.clear_byte, &mut self.caches)?;
+                    old.index.repair(
+                        &mut old.surface,
+                        frame.draws(),
+                        scale,
+                        area,
+                        self.clear_byte,
+                        &mut self.caches,
+                    )?;
                 }
-                (old.surface, damage)
+                (old.surface, damage, old.index)
             }
             Some(mut old) => {
                 old.surface.reset(physical, scale, self.clear_byte)?;
                 old.surface
                     .replay(frame.draws(), scale, canvas, &mut self.caches)?;
-                (old.surface, Damage::from_rect(canvas))
+                (
+                    old.surface,
+                    Damage::from_rect(canvas),
+                    RepairIndex::default(),
+                )
             }
             None => (
                 Surface::raster_view(&frame, physical, scale, self.clear_byte, &mut self.caches)?,
                 Damage::from_rect(canvas),
+                RepairIndex::default(),
             ),
         };
         let animate = frame.requests_animation_frame();
@@ -133,6 +148,7 @@ impl WindowHandler<Rgba8> for CpuWindow {
             scale,
             surface,
             draws,
+            index,
         });
         Ok(RasterFrame {
             size: physical,
