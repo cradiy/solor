@@ -129,8 +129,10 @@ pub struct Typography {
     pub line_height: Pixels,
     /// Additional horizontal advance per shaped glyph, in logical pixels.
     pub letter_spacing: Pixels,
-    /// Resolved stroke thickness. The selected face supplies the default.
-    pub decoration_thickness: Option<Pixels>,
+    /// Underline thickness in logical pixels, defaulting to the font metric.
+    pub underline_thickness: Option<Pixels>,
+    /// Strikethrough thickness in logical pixels, defaulting to the font metric.
+    pub strikethrough_thickness: Option<Pixels>,
     /// Foreground used to record glyphs.
     pub color: Foreground,
 }
@@ -142,7 +144,8 @@ impl Default for Typography {
             size: metrics.size,
             line_height: metrics.line_height,
             letter_spacing: px(0.0),
-            decoration_thickness: None,
+            underline_thickness: None,
+            strikethrough_thickness: None,
             color: Rgba::new(0, 0, 0, 255).into(),
         }
     }
@@ -339,21 +342,16 @@ impl Style {
             self.text.color = color.clone();
         }
         overlay_group(&mut self.text.attributes, &text.attributes);
-        if let Some(spacing) = self
-            .text
-            .attributes
-            .as_deref()
-            .and_then(|a| a.letter_spacing)
-        {
-            self.text.letter_spacing = units.absolute(spacing);
-        }
-        if let Some(thickness) = self
-            .text
-            .attributes
-            .as_deref()
-            .and_then(|a| a.decoration_thickness)
-        {
-            self.text.decoration_thickness = Some(units.absolute(thickness));
+        if let Some(attrs) = self.text.attributes.as_deref() {
+            if let Some(spacing) = attrs.letter_spacing {
+                self.text.letter_spacing = units.absolute(spacing);
+            }
+            if let Some(width) = attrs.underline_thickness {
+                self.text.underline_thickness = Some(units.absolute(width));
+            }
+            if let Some(width) = attrs.strikethrough_thickness {
+                self.text.strikethrough_thickness = Some(units.absolute(width));
+            }
         }
         text
     }

@@ -50,10 +50,16 @@ macro_rules! affects_layout {
     (attributes_mut.strikethrough) => {
         false
     };
-    (attributes_mut.decoration_color) => {
+    (attributes_mut.underline_color) => {
         false
     };
-    (attributes_mut.decoration_thickness) => {
+    (attributes_mut.strikethrough_color) => {
+        false
+    };
+    (attributes_mut.underline_thickness) => {
+        false
+    };
+    (attributes_mut.strikethrough_thickness) => {
         false
     };
     ($($field:ident).+) => {
@@ -247,7 +253,20 @@ pub trait Styled: Sized {
     property_setters! { attributes_mut;
         font_features => font_features: Rc<[FontFeature]>, font_family => font_family: FontFamily, font_fallbacks => font_fallbacks: Rc<[FontFamily]>,
         letter_spacing => letter_spacing: AbsoluteLength, text_bg => text_background: crate::Ink,
-        decoration_color => decoration_color: crate::Ink, decoration_thickness => decoration_thickness: AbsoluteLength
+        underline_color => underline_color: crate::Ink, strikethrough_color => strikethrough_color: crate::Ink,
+        underline_thickness => underline_thickness: AbsoluteLength, strikethrough_thickness => strikethrough_thickness: AbsoluteLength
+    }
+    /// Sets the paint for both underline and strikethrough.
+    fn decoration_color(self, color: impl Into<Property<crate::Ink>>) -> Self {
+        let color = color.into();
+        self.underline_color(color.clone())
+            .strikethrough_color(color)
+    }
+    /// Sets the thickness of both underline and strikethrough.
+    fn decoration_thickness(self, thickness: impl Into<Property<AbsoluteLength>>) -> Self {
+        let thickness = thickness.into();
+        self.underline_thickness(thickness.clone())
+            .strikethrough_thickness(thickness)
     }
     keyword_setters! {
         display { block: Display::Block, flex: Display::Flex, grid: Display::Grid, hidden: Display::None };

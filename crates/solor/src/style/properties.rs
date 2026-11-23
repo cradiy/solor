@@ -206,9 +206,13 @@ properties! {
         underline: UnderlineStyle,
         /// Draw a line through the text.
         strikethrough: bool,
-        /// Paint for underline and strikethrough strokes.
-        decoration_color: crate::Ink,
-        /// Stroke thickness for text decorations.
-        decoration_thickness: AbsoluteLength,
+        /// Paint for the underline.
+        underline_color: crate::Ink,
+        /// Paint for the strikethrough.
+        strikethrough_color: crate::Ink,
+        /// Thickness of the underline.
+        underline_thickness: AbsoluteLength,
+        /// Thickness of the strikethrough.
+        strikethrough_thickness: AbsoluteLength,
     } edges {}
 }

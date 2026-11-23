@@ -108,19 +108,16 @@ impl Element for Text {
         let paragraph = self.resolve(Query::Exact(cx.size.width))?;
         let color = cx.text_color()?;
         let decorations = self.decorations.as_deref();
-        let stroke_color = decorations.and_then(|d| d.color.as_ref()).unwrap_or(&color);
         if let Some(background) = decorations.and_then(|d| d.background.as_ref()) {
             cx.text_line_fills(&paragraph, background, |line| {
                 (line.top, line.top + line.height)
             })?;
         }
-        if let Some(d) = decorations
-            && let Some((stroke, kind)) = d.underline
-        {
-            if kind == crate::style::UnderlineStyle::Wavy {
-                cx.wavy_underline(&paragraph, stroke, d.thickness, stroke_color)?;
+        if let Some((stroke, kind)) = decorations.and_then(|d| d.underline.as_ref()) {
+            if *kind == crate::style::UnderlineStyle::Wavy {
+                cx.wavy_underline(&paragraph, stroke, &color)?;
             } else {
-                cx.text_stroke(&paragraph, stroke, d.thickness, stroke_color)?;
+                cx.text_stroke(&paragraph, stroke, &color)?;
             }
         }
         cx.commands.push(Draw::Text {
@@ -130,10 +127,8 @@ impl Element for Text {
             paragraph: Rc::clone(&paragraph),
             color: color.clone(),
         });
-        if let Some(d) = decorations
-            && let Some(stroke) = d.strike
-        {
-            cx.text_stroke(&paragraph, stroke, d.thickness, stroke_color)?;
+        if let Some(stroke) = decorations.and_then(|d| d.strike.as_ref()) {
+            cx.text_stroke(&paragraph, stroke, &color)?;
         }
         Ok(())
     }
@@ -346,14 +341,13 @@ impl<'paint> PaintContext<'paint> {
     fn text_stroke(
         &mut self,
         paragraph: &Paragraph,
-        stroke: crate::text::Stroke,
-        thickness: Option<Pixels>,
-        color: &crate::Ink,
+        stroke: &crate::text::Stroke,
+        foreground: &crate::Ink,
     ) -> Result<()> {
-        let em = paragraph.style.size.get();
-        let height = thickness.map_or(stroke.thickness * em, Pixels::get);
+        let color = stroke.color.as_ref().unwrap_or(foreground);
+        let height = stroke.thickness.get();
         self.text_line_fills(paragraph, color, |line| {
-            let center = line.baseline - stroke.position * em;
+            let center = line.baseline - stroke.position.get();
             (center - height * 0.5, center + height * 0.5)
         })
     }
@@ -361,20 +355,19 @@ impl<'paint> PaintContext<'paint> {
     fn wavy_underline(
         &mut self,
         paragraph: &Paragraph,
-        stroke: crate::text::Stroke,
-        thickness: Option<Pixels>,
-        color: &crate::Ink,
+        stroke: &crate::text::Stroke,
+        foreground: &crate::Ink,
     ) -> Result<()> {
+        let color = stroke.color.as_ref().unwrap_or(foreground);
         if color.is_clear_solid() {
             return Ok(());
         }
-        let em = paragraph.style.size.get();
-        let height = thickness.unwrap_or(px(stroke.thickness * em)) * 3.0;
+        let height = stroke.thickness * 3.0;
         anyhow::ensure!(height.is_extent(), "invalid underline extent");
         self.with_clip(Origin::default(), self.size, |cx| {
             for line in &paragraph.lines {
                 let (left, right) = line.advance_bounds();
-                let center = px(line.baseline - stroke.position * em);
+                let center = px(line.baseline) - stroke.position;
                 let top = center - height * 0.5;
                 if right > left
                     && right > 0.

@@ -411,3 +411,61 @@ fn gradient_decorations_keep_line_coordinates_when_the_label_is_clipped() -> Res
     assert!(reference.rgba[..stride][cut..].iter().any(|v| *v != 255));
     Ok(())
 }
+
+#[test]
+fn independent_strokes_inherit_and_repaint_without_reshaping() -> Result<()> {
+    let mut ui = Ui::with_font(FONT.to_vec())?;
+    let shared = ui.context().signal(rgb(0xa04010));
+    let width = ui.context().signal(px(1.0));
+    let blue = rgb(0x3070cf);
+    let view = ui.mount(component(|_| {
+        div()
+            .underline()
+            .line_through()
+            .underline_thickness(px(7.0))
+            .decoration_thickness(rem(0.125))
+            .decoration_color(shared)
+            .child(
+                text("Price")
+                    .underline_color(blue)
+                    .strikethrough_thickness(width),
+            )
+    }))?;
+    let size = DeviceSize {
+        width: 100,
+        height: 40,
+    }
+    .at_unit_scale();
+    ui.layout(view, size)?;
+    let mut previous = None;
+    for (color, thickness) in [(rgb(0xa04010), px(1.0)), (rgb(0x205030), px(3.0))] {
+        ui.context().set(shared, color)?;
+        ui.context().set(width, thickness)?;
+        ui.flush()?;
+        assert_eq!(ui.layout(view, size)?, 0);
+        let frame = ui.record_frame(view)?;
+        let [
+            Draw::Fill {
+                fill: under,
+                size: a,
+                ..
+            },
+            Draw::Text { paragraph, .. },
+            Draw::Fill {
+                fill: strike,
+                size: b,
+                ..
+            },
+        ] = frame.draws()
+        else {
+            panic!("expected both strokes");
+        };
+        assert_eq!((under, a.height), (&Fill::Solid(blue), px(2.0)));
+        assert_eq!(strike, &Fill::Solid(color));
+        assert!((b.height - thickness).get().abs() < 1e-5);
+        if let Some(before) = previous.replace(paragraph.clone()) {
+            assert!(std::rc::Rc::ptr_eq(&before, paragraph));
+        }
+    }
+    Ok(())
+}

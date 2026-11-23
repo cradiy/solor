@@ -452,9 +452,11 @@ to switch between a straight line, a wave and no underline. Each
 visible line is decorated across its shaped advances inside the text content
 box. The face supplies the baseline offsets and natural thickness, with
 em-based defaults for missing metrics. Strokes follow the text foreground.
-Use `.decoration_color(color)` and `.decoration_thickness(px(1.5))` to override
-them. Both `.text_bg(...)` and `.decoration_color(...)` accept a gradient or a
-reactive gradient. Each gradient spans the full decorated line before clipping.
+Use `.decoration_color(color)` and `.decoration_thickness(px(1.5))` for both
+strokes. Set either stroke independently with `.underline_color(...)`,
+`.underline_thickness(...)`, `.strikethrough_color(...)` or
+`.strikethrough_thickness(...)`. Highlight and stroke paints accept solid colors,
+gradients and signals. Each gradient spans the full decorated line before clipping.
 Thickness also accepts rem units. Children can disable an inherited
 stroke with `.text_underline(false)` or `.text_strikethrough(false)`.
 
