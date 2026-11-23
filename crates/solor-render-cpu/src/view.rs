@@ -256,11 +256,16 @@ impl Surface {
                 Draw::Polyline {
                     origin,
                     points,
+                    closed,
                     width,
                     ink,
                     ..
                 } => {
-                    self.stroke_polyline(*origin, points, *width, ink, scale, bounds)?;
+                    let contour = crate::polyline::Contour {
+                        points,
+                        closed: *closed,
+                    };
+                    self.stroke_polyline(*origin, contour, *width, ink, scale, bounds)?;
                 }
                 Draw::Svg {
                     origin,

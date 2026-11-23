@@ -12,6 +12,11 @@ use solor::{
 
 use crate::path::{PathBounds, device};
 
+pub(super) struct Contour<'a> {
+    pub points: &'a [Origin],
+    pub closed: bool,
+}
+
 pub(super) fn bounds(
     origin: Origin,
     points: &[Origin],
@@ -25,12 +30,13 @@ impl Surface {
     pub(super) fn stroke_polyline(
         &mut self,
         origin: Origin,
-        points: &[Origin],
+        contour: Contour<'_>,
         width: Pixels,
         ink: &Ink,
         scale: RasterScale,
         clip: Clip,
     ) -> std::io::Result<()> {
+        let points = contour.points;
         let (at, size) = match ink {
             Ink::Solid(_) => (origin, Size::default()),
             Ink::Gradient(_) => {
@@ -54,9 +60,11 @@ impl Surface {
         let reach = radius + 0.5;
         // A single mask composites joins, retraced segments and crossings exactly once.
         let mut mask = vec![0u8; pitch * (clip.bottom - clip.top) as usize];
-        for edge in points.windows(2) {
-            let (ax, ay) = device(edge[0], origin, scale);
-            let (bx, by) = device(edge[1], origin, scale);
+        let closing_vertex = points.first().filter(|_| contour.closed);
+        let ends = points.iter().skip(1).chain(closing_vertex);
+        for (&start, &end) in points.iter().zip(ends) {
+            let (ax, ay) = device(start, origin, scale);
+            let (bx, by) = device(end, origin, scale);
             let (dx, dy) = (bx - ax, by - ay);
             let length = dx.hypot(dy);
             let (ux, uy) = if length > 0.0 {

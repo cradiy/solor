@@ -6,6 +6,39 @@ fn point(x: f32, y: f32) -> Origin {
 }
 
 #[test]
+fn polygon_outline_closes_and_blends_the_seam_once() -> anyhow::Result<()> {
+    use solor::{Ui, component, div};
+
+    let mut ui = Ui::new();
+    let view = ui.mount(component(|_| {
+        div().paint(|cx| {
+            cx.stroke_polygon(
+                [point(4., 4.), point(16., 4.), point(4., 16.)],
+                px(3.),
+                rgba(0xff000080),
+            )
+        })
+    }))?;
+    let size = Size {
+        width: px(20.),
+        height: px(20.),
+    };
+    ui.layout(view, size)?;
+    let frame = ui.record_frame(view)?;
+    let scale = RasterScale(1.5);
+    let physical = scale.buffer_size(size)?;
+    let image = Surface::draw_view(&frame, physical, scale)?;
+    let pixel = |x: usize, y: usize| {
+        let i = (y * physical.width as usize + x) * 4;
+        &image.rgba[i..i + 4]
+    };
+    assert_eq!(pixel(6, 15), [255, 127, 127, 255]); // Closing edge.
+    assert_eq!(pixel(6, 6), [255, 127, 127, 255]); // First vertex.
+    assert_eq!(pixel(12, 12), [255; 4]); // Interior.
+    Ok(())
+}
+
+#[test]
 fn clipped_gradient_uses_the_full_retraced_stroke_box() -> anyhow::Result<()> {
     use solor::{Ui, color_stop, component, div, gradient_left_to_right};
 
@@ -89,7 +122,10 @@ fn retraced_translucent_stroke_blends_once_and_clipped_replay_preserves_coverage
             let mut image = Surface::cleared(size, scale, 255)?;
             image.stroke_polyline(
                 origin,
-                &points,
+                Contour {
+                    points: &points,
+                    closed: false,
+                },
                 px(2.5),
                 &rgba(0xff000080).into(),
                 scale,

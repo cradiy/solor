@@ -205,7 +205,7 @@ pub enum Draw {
         /// Paint mapped to the complete polygon bounds.
         fill: Fill,
     },
-    /// Strokes an open polyline with round caps and joins.
+    /// Strokes connected segments with round joins and round ends.
     Polyline {
         /// Effective clip in view coordinates.
         clip: Option<Arc<ContentClip>>,
@@ -213,6 +213,8 @@ pub enum Draw {
         origin: Origin,
         /// Ordered points in logical pixels relative to the origin.
         points: Rc<[Origin]>,
+        /// Whether the last vertex connects to the first.
+        closed: bool,
         /// Full stroke width in logical pixels.
         width: Pixels,
         /// Foreground mapped to the full stroke bounds, including caps.
@@ -471,15 +473,36 @@ impl<'paint> PaintContext<'paint> {
         width: Pixels,
         ink: impl Into<crate::Ink>,
     ) -> Result<()> {
-        let points = points.into();
+        self.stroke_contour(points.into(), width, ink.into(), false)
+    }
+
+    /// Strokes a polygon with round joins, connecting the final vertex to the first.
+    /// At least three vertices are required to draw the outline.
+    pub fn stroke_polygon(
+        &mut self,
+        points: impl Into<Rc<[Origin]>>,
+        width: Pixels,
+        ink: impl Into<crate::Ink>,
+    ) -> Result<()> {
+        self.stroke_contour(points.into(), width, ink.into(), true)
+    }
+
+    fn stroke_contour(
+        &mut self,
+        points: Rc<[Origin]>,
+        width: Pixels,
+        ink: crate::Ink,
+        closed: bool,
+    ) -> Result<()> {
         anyhow::ensure!(width.is_extent(), "invalid stroke width");
         validate_points(&points)?;
-        let ink = ink.into();
-        if points.len() >= 2 && width.get() > 0.0 && !ink.is_clear_solid() {
+        let minimum = if closed { 3 } else { 2 };
+        if points.len() >= minimum && width.get() > 0.0 && !ink.is_clear_solid() {
             self.commands.push(Draw::Polyline {
                 origin: self.origin,
                 clip: self.clip.clone(),
                 points,
+                closed,
                 width,
                 ink,
             });
