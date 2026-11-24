@@ -198,6 +198,7 @@ fn header_button(title: &'static str, hint: &'static str, cx: &mut Context<'_>) 
 
 /// Configures the supplied UI and creates the gallery's unmounted root component.
 pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
+    let clipboard = ui.clipboard();
     ui.bind_keys([
         KeyBinding::new(Key::Enter, ActivateChoice),
         KeyBinding::new(Key::Space, ActivateChoice),
@@ -282,7 +283,7 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
                 .child_when(pages.choices[0].selected, lists::palette)
                 .child_when(pages.choices[1].selected, markets::market)
                 .child_when(pages.choices[2].selected, move || {
-                    specimens::typography(spacing, sample_text)
+                    specimens::typography(spacing, sample_text, &clipboard)
                 })
                 .child_when(pages.choices[3].selected, move || {
                     specimens::paint(geometry, overlay, preview, ramp, &patterns, map.clone())

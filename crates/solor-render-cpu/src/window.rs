@@ -64,6 +64,10 @@ impl CpuWindow {
 }
 
 impl WindowHandler<Rgba8> for CpuWindow {
+    fn set_clipboard(&mut self, clipboard: std::rc::Rc<dyn solor::clipboard::PlatformClipboard>) {
+        self.ui.set_clipboard(clipboard);
+    }
+
     fn text_input_session(&self) -> Option<u64> {
         self.ui
             .text_input_session(self.view)

@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+log.workspace = true
 solor = { workspace = true, default-features = true }
 solor-platform.workspace = true
 

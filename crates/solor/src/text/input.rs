@@ -44,7 +44,7 @@ impl Ui {
         let instance = self.instance(view)?;
         Ok(instance
             .text_input_signal()
-            .map(|_| instance.focus_generation))
+            .map(|_| instance.focus_generation.get()))
     }
 
     /// Borrows the current editing state for a synchronous host query.

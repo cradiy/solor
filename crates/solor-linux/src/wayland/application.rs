@@ -34,6 +34,7 @@ use wayland_protocols::wp::{
 
 #[derive(Default)]
 pub(super) struct Desktop {
+    pub(super) clipboard: Option<Rc<super::clipboard::Clipboard>>,
     pub(super) text_inputs: Option<super::text_input::Manager>,
     pub(super) activation: Option<Rc<Activation>>,
     pub(super) popup_only: bool,
@@ -209,6 +210,7 @@ struct EventLoop {
 }
 
 struct WindowFactory {
+    clipboard: Option<Rc<super::clipboard::Clipboard>>,
     toplevels: Toplevels,
     activation: Option<Rc<Activation>>,
     qh: QueueHandle<Desktop>,
@@ -272,6 +274,11 @@ impl EventLoop {
         let qh = queue.handle();
         let mut desktop = Desktop {
             popup_only: guest,
+            clipboard: if guest {
+                None
+            } else {
+                super::clipboard::Clipboard::bind(&globals, &qh)
+            },
             text_inputs: if guest {
                 None
             } else {
@@ -291,6 +298,7 @@ impl EventLoop {
             }
         }
         let windows = WindowFactory {
+            clipboard: desktop.clipboard.clone(),
             toplevels: Toplevels::default(),
             activation: desktop.activation.clone(),
             compositor: globals.bind(&qh, 4..=4, ())?,
@@ -398,6 +406,9 @@ impl WindowFactory {
             Role::Layer(..) | Role::Popup { .. } => None,
         };
         let mut view = build(handle.clone())?;
+        if let Some(hub) = &self.clipboard {
+            view.set_clipboard(hub.window(surface.id()));
+        }
         view.set_window_resizable(matches!(
             &role,
             Role::Toplevel {
@@ -667,7 +678,7 @@ fn dispatch_until(
     control: Option<&Binding<'_>>,
 ) -> anyhow::Result<()> {
     if desktop.popup_only {
-        wait_for_events(queue, write_interest, deadline, wake, control)?;
+        wait_for_events(queue, write_interest, deadline, wake, control, None)?;
         return Ok(());
     }
     if queue.dispatch_pending(desktop)? != 0 {
@@ -680,6 +691,7 @@ fn dispatch_until(
             deadline,
             wake,
             control,
+            desktop.clipboard.as_deref(),
         )?
     {
         match guard.read() {
@@ -698,14 +710,23 @@ fn wait_for_events(
     deadline: Option<Instant>,
     wake: &super::wake::EventWake,
     control: Option<&Binding<'_>>,
+    clipboard: Option<&super::clipboard::Clipboard>,
 ) -> anyhow::Result<bool> {
     use rustix::event::{PollFd, Timespec, poll};
+    let mut transfers = clipboard.map(|c| c.transfers.borrow_mut());
+    if let Some(transfers) = &mut transfers {
+        transfers.discard_cancelled();
+    }
     let mut fds: smallvec::SmallVec<[_; 3]> = smallvec::smallvec![
         PollFd::new(queue, interest),
         PollFd::new(&wake.0, PollFlags::IN)
     ];
     if let Some(control) = control {
         fds.push(PollFd::new(control.fd(), PollFlags::IN));
+    }
+    let clipboard_start = fds.len();
+    if let Some(transfers) = &transfers {
+        fds.extend(transfers.poll_fds());
     }
     let timeout = deadline
         .map(|t| Timespec::try_from(t.saturating_duration_since(Instant::now())))
@@ -725,6 +746,15 @@ fn wait_for_events(
     }
 
     let ready = fds[0].revents();
+    let clipboard_ready: smallvec::SmallVec<[usize; 4]> = fds[clipboard_start..]
+        .iter()
+        .enumerate()
+        .filter_map(|(i, fd)| (!fd.revents().is_empty()).then_some(i))
+        .collect();
+    drop(fds);
+    if let Some(transfers) = &mut transfers {
+        transfers.progress(&clipboard_ready);
+    }
     anyhow::ensure!(
         !ready.intersects(PollFlags::HUP | PollFlags::ERR | PollFlags::NVAL),
         "Wayland connection closed"

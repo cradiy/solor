@@ -204,6 +204,9 @@ impl Desktop {
     ) {
         if !self.seats.iter().any(|s| s.name == name) {
             let seat = registry.bind(name, version.min(5), qh, name);
+            if let Some(c) = &self.clipboard {
+                c.add_seat(name, &seat);
+            }
             self.seats.push(Seat {
                 name,
                 text_input: self.text_inputs.as_ref().map(|manager| {
@@ -241,6 +244,9 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Desktop {
             wl_registry::Event::GlobalRemove { name } => {
                 if let Some(index) = state.seats.iter().position(|s| s.name == name) {
                     let seat = state.seats.swap_remove(index);
+                    if let Some(c) = &state.clipboard {
+                        c.remove_seat(name);
+                    }
                     if let Some(input) = &seat.text_input {
                         input.cancel(&mut state.windows);
                     }
@@ -279,6 +285,9 @@ impl Dispatch<wl_seat::WlSeat, u32> for Desktop {
                     .keyboard
                     .get_or_insert_with(|| Keyboard::new(seat.get_keyboard(qh, *name)));
             } else {
+                if let Some(c) = &state.clipboard {
+                    c.focus(*name, None);
+                }
                 input.keyboard = None;
             }
             if caps.contains(wl_seat::Capability::Pointer) {
@@ -411,6 +420,9 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
                         Err(_) => return,
                     },
                 };
+                if let Some(c) = &state.clipboard {
+                    c.input(*name, &target, serial);
+                }
                 input = state
                     .activation
                     .as_ref()

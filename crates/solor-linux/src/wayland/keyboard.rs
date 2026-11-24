@@ -210,7 +210,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
         desktop: &mut Self,
         device: &wl_keyboard::WlKeyboard,
         event: wl_keyboard::Event,
-        _: &u32,
+        name: &u32,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
@@ -238,11 +238,19 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
             wl_keyboard::Event::Enter { surface, .. } => {
                 keyboard.repeat.held = None;
                 keyboard.focus = Some(surface.id());
+                if let Some(c) = &desktop.clipboard {
+                    c.focus(*name, Some(surface.id()));
+                }
             }
             wl_keyboard::Event::RepeatInfo { rate, delay } => {
                 keyboard.repeat.configure(rate, delay, Instant::now());
             }
-            wl_keyboard::Event::Leave { surface, .. } => keyboard.leave(&surface.id()),
+            wl_keyboard::Event::Leave { surface, .. } => {
+                keyboard.leave(&surface.id());
+                if let Some(c) = &desktop.clipboard {
+                    c.focus(*name, None);
+                }
+            }
             wl_keyboard::Event::Modifiers {
                 mods_depressed,
                 mods_latched,
@@ -304,6 +312,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
                     repeat: false,
                     modifiers: keyboard.modifiers,
                 };
+                if let Some(c) = &desktop.clipboard {
+                    c.input(*name, &window.surface.id(), serial);
+                }
                 let _input = desktop
                     .activation
                     .as_ref()

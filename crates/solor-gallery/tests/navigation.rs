@@ -182,6 +182,56 @@ fn keyboard_selection_highlights_and_replaces_complete_graphemes() -> Result<()>
     Ok(())
 }
 
+#[test]
+fn paste_requires_the_original_text_focus_even_after_returning_to_the_field() -> Result<()> {
+    use solor::clipboard::{ClipboardRead, PlatformClipboard};
+    use std::{rc::Rc, task::Waker};
+    struct Source;
+    impl PlatformClipboard for Source {
+        fn write_text(&self, _: String) -> Result<()> {
+            unreachable!()
+        }
+        fn read_text(&self, _: Option<usize>) -> Result<ClipboardRead> {
+            Ok(Box::pin(async { Ok(Some("中".into())) }))
+        }
+    }
+    let (ui, root) = gallery()?;
+    let mut window = CpuWindow::mount(ui, root)?;
+    window.set_clipboard(Rc::new(Source));
+    let size = Size {
+        width: px(800.),
+        height: px(560.),
+    };
+    window.frame(size, RasterScale::ONE)?;
+    window.frame_submitted()?;
+    click(&mut window, 120., 275.)?;
+    let paste = || {
+        WindowEvent::Key(KeyEvent {
+            key: Key::Character('v'),
+            state: KeyState::Down,
+            repeat: false,
+            modifiers: solor::keyboard::Modifiers {
+                control: true,
+                ..Default::default()
+            },
+        })
+    };
+    window.event(paste())?;
+    window.event(WindowEvent::Key(KeyEvent {
+        key: Key::Tab,
+        state: KeyState::Down,
+        repeat: false,
+        modifiers: Default::default(),
+    }))?;
+    click(&mut window, 120., 275.)?;
+    window.poll_tasks(Waker::noop())?;
+    assert_eq!(window.surrounding_text(32).unwrap().text(), "Aa");
+    window.event(paste())?;
+    window.poll_tasks(Waker::noop())?;
+    assert_eq!(window.surrounding_text(32).unwrap().text(), "Aa中");
+    Ok(())
+}
+
 fn click(window: &mut CpuWindow, x: f32, y: f32) -> Result<()> {
     let point = mouse_at(x, y);
     for input in [

@@ -1,8 +1,10 @@
 use crate::{CITRON, INK, MUTED, Selection, control, details, label, page, stage};
 use solor::{
     Div, Fill, FillRule, Gradient, GradientKind, GradientMap, PaintContext, Rgba, Signal, Styled,
-    Transition, TransitionProperty, component, div,
-    keyboard::Key,
+    Transition, TransitionProperty,
+    clipboard::Clipboard,
+    component, div,
+    keyboard::{Key, KeyDownContext},
     layout::Origin,
     px, rgb, rgba,
     style::{Distribution, FontFeature},
@@ -10,10 +12,49 @@ use solor::{
     text::{CaretMove, TextInputState},
 };
 
-pub(super) fn typography(spacing: Selection<3>, input: Signal<TextInputState>) -> Div {
+fn edit_clipboard(
+    clipboard: &Clipboard,
+    key: &Key,
+    input: Signal<TextInputState>,
+    cx: &mut KeyDownContext<'_>,
+) -> anyhow::Result<()> {
+    if *key == Key::Character('c') {
+        let state = cx.read(input)?;
+        let selected = &state.text()[state.selection().range()];
+        if !selected.is_empty() {
+            clipboard.write_text(selected)?;
+        }
+    } else {
+        let read = clipboard.read_text();
+        let focus = cx.focus_session();
+        cx.spawn(move |cx| async move {
+            match read.await {
+                Ok(Some(text))
+                    if focus.is_current()
+                        && !text.is_empty()
+                        && cx.read(input, |s| s.preedit().is_none())? =>
+                {
+                    cx.update_in_place(input, |s| s.commit(&text))?;
+                }
+                Err(e) => log::warn!("Could not paste text: {e}"),
+                _ => {}
+            }
+            Ok(())
+        });
+    }
+    Ok(())
+}
+
+pub(super) fn typography(
+    spacing: Selection<3>,
+    input: Signal<TextInputState>,
+    clipboard: &Clipboard,
+) -> Div {
     let mut specimen = div().items_stretch();
     for (flag, tracking) in spacing.flags().into_iter().zip([-1.5, 0.0, 3.0]) {
+        let clipboard = clipboard.clone();
         specimen = specimen.child_when(flag, move || {
+            let clipboard = clipboard.clone();
             let field = div()
                 .items_stretch()
                 .px(px(12.))
@@ -29,11 +70,18 @@ pub(super) fn typography(spacing: Selection<3>, input: Signal<TextInputState>) -
                 .focus_indicator(crate::viewport_focus_indicator)
                 .on_key_down(move |key, cx| {
                     let mods = key.modifiers;
-                    if mods.alt
-                        || mods.meta
-                        || cx.read(input)?.preedit().is_some()
-                        || (mods.control && !matches!(key.key, Key::ArrowLeft | Key::ArrowRight))
-                    {
+                    if mods.alt || mods.meta || cx.read(input)?.preedit().is_some() {
+                        return Ok(());
+                    }
+                    if mods.control && !matches!(key.key, Key::ArrowLeft | Key::ArrowRight) {
+                        if !mods.shift
+                            && let Key::Character('c' | 'v') = key.key
+                        {
+                            if let Err(e) = edit_clipboard(&clipboard, &key.key, input, cx) {
+                                log::warn!("Clipboard unavailable: {e}");
+                            }
+                            cx.prevent_default();
+                        }
                         return Ok(());
                     }
                     match &key.key {

@@ -2,6 +2,7 @@ use solor::px;
 mod activation;
 mod application;
 mod buffer;
+mod clipboard;
 mod decorations;
 mod floating;
 mod input_region;

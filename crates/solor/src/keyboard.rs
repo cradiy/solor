@@ -34,9 +34,33 @@ pub(crate) type KeyDownHandler = Box<dyn Fn(&KeyEvent, &mut KeyDownContext<'_>) 
 pub struct KeyDownContext<'a> {
     context: Context<'a>,
     prevented: bool,
+    focus: &'a std::rc::Rc<std::cell::Cell<u64>>,
+}
+
+/// Identifies an uninterrupted element focus session. It expires when focus moves or the view closes.
+pub struct FocusSession {
+    generation: std::rc::Weak<std::cell::Cell<u64>>,
+    expected: u64,
+}
+
+impl FocusSession {
+    /// Returns whether the same element still holds focus in this view.
+    pub fn is_current(&self) -> bool {
+        self.generation
+            .upgrade()
+            .is_some_and(|generation| generation.get() == self.expected)
+    }
 }
 
 impl KeyDownContext<'_> {
+    /// Captures the focused element before starting asynchronous work.
+    pub fn focus_session(&self) -> FocusSession {
+        FocusSession {
+            generation: std::rc::Rc::downgrade(self.focus),
+            expected: self.focus.get(),
+        }
+    }
+
     /// Consumes this press before shortcut lookup and Tab navigation.
     pub fn prevent_default(&mut self) {
         self.prevented = true;
@@ -180,7 +204,8 @@ impl Instance {
                     self.repaints.borrow_mut().invalidate(id);
                 }
             }
-            self.focus_generation = self.focus_generation.wrapping_add(1);
+            self.focus_generation
+                .set(self.focus_generation.get().wrapping_add(1));
             if let Some(previous) = self.focused {
                 self.cancel_focused_preedit(state);
                 self.set_focus_indicator(previous, false);
@@ -270,6 +295,7 @@ impl Ui {
                         let mut cx = KeyDownContext {
                             context,
                             prevented: false,
+                            focus: &instance.focus_generation,
                         };
                         handler(event, &mut cx)?;
                         if cx.prevented {

@@ -15,7 +15,8 @@ solor.workspace = true
 smallvec.workspace = true
 anyhow.workspace = true
 log.workspace = true
-rustix = { version = "1", features = ["fs", "time", "event"] }
+rustix = { version = "1", features = ["fs", "time", "event", "pipe"] }
+futures-channel = "0.3"
 bitflags = "2"
 wayland-scanner = "0.31"
 wayland-client = "0.31"

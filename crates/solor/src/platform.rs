@@ -293,6 +293,9 @@ pub trait WindowHandler<T: Presentation> {
         Ok(())
     }
 
+    /// Supplies the system clipboard for this window.
+    fn set_clipboard(&mut self, _clipboard: std::rc::Rc<dyn crate::clipboard::PlatformClipboard>) {}
+
     /// Polls foreground work before checking redraw deadlines. The waker interrupts
     /// the event loop when a pending task becomes ready.
     fn poll_tasks(&mut self, _waker: &std::task::Waker) -> Result<()> {

@@ -35,6 +35,7 @@ pub use url::Url;
 mod assets;
 pub use assets::{AssetSource, Assets, ImageResource};
 mod clip;
+pub mod clipboard;
 pub use clip::{ContentClip, RoundedClip};
 mod column;
 mod debounce;
@@ -308,7 +309,7 @@ type ContentUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), ContentUpdate>>>;
 
 struct Instance {
     focused: Option<NodeId>,
-    focus_generation: u64,
+    focus_generation: Rc<std::cell::Cell<u64>>,
     tab_order: Option<keyboard::TabOrder>,
     transitions: transition::Transitions,
     frame_handlers: HashMap<NodeId, element::FrameHandler>,
@@ -755,6 +756,7 @@ pub struct ViewId(NodeId);
 /// Owns the application signals and its mounted component trees.
 #[derive(Default)]
 pub struct Ui {
+    clipboard: clipboard::Clipboard,
     tasks: Tasks,
     assets: assets::Resources,
     keymap: HashMap<keyboard::Shortcut, Vec<keyboard::BoundAction>>,
@@ -827,7 +829,7 @@ impl Ui {
         let root = scene.root();
         let mut instance = Instance {
             focused: None,
-            focus_generation: 0,
+            focus_generation: Rc::default(),
             tab_order: None,
             transitions: Default::default(),
             frame_handlers: on_frame
