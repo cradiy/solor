@@ -1,6 +1,6 @@
 use anyhow::{Result, ensure};
 use std::ops::Range;
-use unicode_segmentation::GraphemeCursor;
+use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
 
 /// Destination for moving a logical insertion point in committed text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9,6 +9,10 @@ pub enum CaretMove {
     Previous,
     /// One extended grapheme towards the end.
     Next,
+    /// Start of the nearest Unicode word to the left of the caret.
+    PreviousWord,
+    /// End of the nearest Unicode word to the right of the caret.
+    NextWord,
     /// Beginning of the buffer.
     Start,
     /// End of the buffer.
@@ -65,15 +69,15 @@ pub struct TextInputState {
 }
 
 impl TextInputState {
-    /// Moves the insertion point by a grapheme or to a buffer edge and collapses the selection.
+    /// Moves the caret. A directional move collapses an existing selection to that edge.
     pub fn move_caret(&mut self, movement: CaretMove) {
         if self.preedit.is_some() {
             return;
         }
         let range = self.selection.range();
         let offset = match movement {
-            CaretMove::Previous if !range.is_empty() => range.start,
-            CaretMove::Next if !range.is_empty() => range.end,
+            CaretMove::Previous | CaretMove::PreviousWord if !range.is_empty() => range.start,
+            CaretMove::Next | CaretMove::NextWord if !range.is_empty() => range.end,
             _ => self.destination(movement),
         };
         self.selection = TextSelection::caret(offset);
@@ -87,11 +91,31 @@ impl TextInputState {
     }
 
     fn destination(&self, movement: CaretMove) -> usize {
+        let head = self.selection.head;
+        // Keep the whole word around the caret for Unicode boundary decisions.
+        const SEPARATORS: [char; 4] = [' ', '\t', '\r', '\n'];
         match movement {
             CaretMove::Start => 0,
             CaretMove::End => self.text.len(),
-            CaretMove::Previous => self.previous_boundary(self.selection.head),
-            CaretMove::Next => self.next_boundary(self.selection.head),
+            CaretMove::Previous => self.previous_boundary(head),
+            CaretMove::Next => self.next_boundary(head),
+            CaretMove::PreviousWord => {
+                let end = self.text[head..]
+                    .find(SEPARATORS)
+                    .map_or(self.text.len(), |i| head + i);
+                self.text[..end]
+                    .unicode_word_indices()
+                    .rfind(|(start, _)| *start < head)
+                    .map_or(0, |(start, _)| start)
+            }
+            CaretMove::NextWord => {
+                let start = self.text[..head].rfind(SEPARATORS).unwrap_or(0);
+                self.text[start..]
+                    .unicode_word_indices()
+                    .map(|(i, word)| start + i + word.len())
+                    .find(|end| *end > head)
+                    .unwrap_or(self.text.len())
+            }
         }
     }
 

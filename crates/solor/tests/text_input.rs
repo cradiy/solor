@@ -2,8 +2,36 @@
 use anyhow::Result;
 use solor::{
     Ui, component, div,
-    text::{Preedit, TextInputEvent, TextInputState, TextSelection},
+    text::{CaretMove, Preedit, TextInputEvent, TextInputState, TextSelection},
 };
+
+#[test]
+fn word_navigation_preserves_unicode_boundaries_and_selection_direction() -> Result<()> {
+    let mut input = TextInputState::new("cafe\u{301},  isn't 中");
+    input.select(TextSelection::caret("cafe".len()))?;
+    input.move_caret(CaretMove::NextWord);
+    let first_end = "cafe\u{301}".len();
+    assert_eq!(input.selection(), TextSelection::caret(first_end));
+    input.extend_selection(CaretMove::NextWord);
+    let second_end = "cafe\u{301},  isn't".len();
+    assert_eq!(
+        input.selection(),
+        TextSelection {
+            anchor: first_end,
+            head: second_end
+        }
+    );
+    input.move_caret(CaretMove::NextWord);
+    input.extend_selection(CaretMove::PreviousWord);
+    assert_eq!(
+        input.selection(),
+        TextSelection {
+            anchor: second_end,
+            head: "cafe\u{301},  ".len()
+        }
+    );
+    Ok(())
+}
 
 #[test]
 fn surrounding_deletion_preserves_the_selected_text_across_composition() -> Result<()> {

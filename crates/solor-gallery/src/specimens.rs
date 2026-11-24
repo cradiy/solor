@@ -29,7 +29,10 @@ pub(super) fn typography(spacing: Selection<3>, input: Signal<TextInputState>) -
                 .focus_indicator(crate::viewport_focus_indicator)
                 .on_key_down(move |key, cx| {
                     let mods = key.modifiers;
-                    if mods.control || mods.alt || mods.meta || cx.read(input)?.preedit().is_some()
+                    if mods.alt
+                        || mods.meta
+                        || cx.read(input)?.preedit().is_some()
+                        || (mods.control && !matches!(key.key, Key::ArrowLeft | Key::ArrowRight))
                     {
                         return Ok(());
                     }
@@ -44,6 +47,8 @@ pub(super) fn typography(spacing: Selection<3>, input: Signal<TextInputState>) -
                         }
                         &Key::ArrowLeft | &Key::ArrowRight | &Key::Home | &Key::End => {
                             let movement = match key.key {
+                                Key::ArrowLeft if mods.control => CaretMove::PreviousWord,
+                                Key::ArrowRight if mods.control => CaretMove::NextWord,
                                 Key::ArrowLeft => CaretMove::Previous,
                                 Key::ArrowRight => CaretMove::Next,
                                 Key::Home => CaretMove::Start,
