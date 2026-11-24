@@ -41,6 +41,10 @@ pub enum Op {
     Abs(Reg),
     /// Square root.
     Sqrt(Reg),
+    /// Sine of an angle in radians.
+    Sin(Reg),
+    /// Cosine of an angle in radians.
+    Cos(Reg),
     /// Linear interpolation.
     Mix(Reg, Reg, Reg),
     /// Smooth Hermite interpolation.
@@ -48,7 +52,12 @@ pub enum Op {
 }
 
 #[derive(Debug)]
-struct CoordinateAxes(u8);
+struct CoordinateAxes {
+    output: u8,
+    masks: Vec<u8>,
+    column: Vec<usize>,
+    row: Vec<usize>,
+}
 
 impl CoordinateAxes {
     const X: u8 = 1;
@@ -61,7 +70,7 @@ impl CoordinateAxes {
                 Op::U => Self::X,
                 Op::V => Self::Y,
                 Op::Size(_) | Op::Param(_) | Op::Constant(_) => 0,
-                Op::Neg(a) | Op::Abs(a) | Op::Sqrt(a) => axes[a],
+                Op::Neg(a) | Op::Abs(a) | Op::Sqrt(a) | Op::Sin(a) | Op::Cos(a) => axes[a],
                 Op::Add(a, b)
                 | Op::Sub(a, b)
                 | Op::Mul(a, b)
@@ -74,7 +83,13 @@ impl CoordinateAxes {
             };
             axes.push(mask);
         }
-        Self(rgba.into_iter().fold(0, |mask, r| mask | axes[r]))
+        let (column, row) = (0..ops.len()).partition(|&i| axes[i] & Self::Y == 0);
+        Self {
+            output: rgba.into_iter().fold(0, |mask, r| mask | axes[r]),
+            masks: axes,
+            column,
+            row,
+        }
     }
 }
 
@@ -183,6 +198,16 @@ impl Program {
         &self.ops
     }
 
+    /// Instruction indices reusable down a column, followed by those evaluated for each row.
+    pub fn column_plan(&self) -> (&[usize], &[usize]) {
+        (&self.axes.column, &self.axes.row)
+    }
+
+    /// Whether this result can vary across a horizontal batch of samples.
+    pub fn varies_across_row(&self, register: usize) -> bool {
+        self.axes.masks[register] & CoordinateAxes::X != 0
+    }
+
     /// Registers containing straight-alpha RGBA output.
     pub fn outputs(&self) -> [usize; 4] {
         self.rgba
@@ -191,12 +216,12 @@ impl Program {
     /// Independent sample counts along each axis for an output of this size.
     pub fn sample_extent(&self, width: u32, height: u32) -> [u32; 2] {
         [
-            if self.axes.0 & CoordinateAxes::X == 0 {
+            if self.axes.output & CoordinateAxes::X == 0 {
                 1
             } else {
                 width
             },
-            if self.axes.0 & CoordinateAxes::Y == 0 {
+            if self.axes.output & CoordinateAxes::Y == 0 {
                 1
             } else {
                 height
@@ -357,10 +382,19 @@ impl Lowerer<'_> {
                         }
                     }
                     Expr::Math {
-                        fun: Math::Abs,
+                        fun,
                         arg,
+                        arg1: None,
                         ..
-                    } => Op::Abs(lane(arg, i)),
+                    } => {
+                        let a = lane(arg, i);
+                        match fun {
+                            Math::Abs => Op::Abs(a),
+                            Math::Sin => Op::Sin(a),
+                            Math::Cos => Op::Cos(a),
+                            _ => return Err(unsupported()),
+                        }
+                    }
                     Expr::Math {
                         fun: fun @ (Math::Min | Math::Max),
                         arg,

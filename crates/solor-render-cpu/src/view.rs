@@ -226,6 +226,22 @@ impl Surface {
                     ..
                 } => {
                     let fill = replay.images.resolve(fill).map_err(Error::other)?;
+                    #[cfg(feature = "shader")]
+                    if matches!(&*fill, Fill::Shader(_)) {
+                        // Consume large shader images in bands so only one temporary is live.
+                        let width = (bounds.right - bounds.left) as usize;
+                        const BAND_PIXELS: usize = 256 * 1024;
+                        let rows = (BAND_PIXELS / width).max(1);
+                        for top in (bounds.top..bounds.bottom).step_by(rows) {
+                            let band = Clip {
+                                top,
+                                bottom: (top + rows as i64).min(bounds.bottom),
+                                ..bounds
+                            };
+                            self.fill_box(*origin, *size, &fill, *corner_radii, scale, band)?;
+                        }
+                        continue;
+                    }
                     self.fill_box(*origin, *size, &fill, *corner_radii, scale, bounds)?;
                 }
                 Draw::BackdropBlur {

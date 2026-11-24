@@ -18,9 +18,10 @@ fn reference(size: DeviceSize, region: ImageRegion, position: f32) -> Result<Ima
     rasterize(
         normalized(size, region),
         region.output,
-        || (),
-        |_, u, v, pixels| {
-            for (pixel, x) in pixels.iter_mut().zip(u) {
+        || [0.; super::LANES],
+        |column, u| *column = u,
+        |column, v, pixels| {
+            for (pixel, &x) in pixels.iter_mut().zip(column.iter()) {
                 let t = ((x + (v - 0.5) * 0.12 - position).abs() / 0.16).clamp(0., 1.);
                 let light = 1. - t * t * (3. - 2. * t);
                 let mix = |a, b| unorm(a * (1. - light) + b * light);
@@ -62,6 +63,60 @@ fn wgsl_matches_native_for_full_and_fractional_damage() -> Result<()> {
                 normalized(size, region),
             )?;
             assert_eq!(expected.pixels(), actual.pixels());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn interference_matches_native_at_fractional_sample_positions() -> Result<()> {
+    let source = include_str!("../../../solor-gallery/examples/shaders/interference.wgsl");
+    let shader = EffectShader::wgsl(source)?;
+    let size = DeviceSize {
+        width: 160,
+        height: 80,
+    };
+    let region = normalized(
+        size,
+        ImageRegion {
+            output: DeviceSize {
+                width: 67,
+                height: 19,
+            },
+            source_origin: [13.25, 9.75],
+            source_step: [0.8, 0.8],
+        },
+    );
+    for phase in [0., 0.35, 0.92] {
+        let image = render(
+            &shader.with_params([phase, 0., 0., 0.]),
+            size.at_unit_scale(),
+            region,
+        )?;
+        let angle = phase * std::f32::consts::TAU;
+        for (y, row) in image
+            .pixels()
+            .chunks_exact(region.output.width as usize)
+            .enumerate()
+        {
+            let coord = |axis: usize, i: usize| {
+                (region.source_origin[axis] + (i as f64 + 0.5) * region.source_step[axis]) as f32
+            };
+            let py = (coord(1, y) - 0.5) * 6.;
+            for (x, pixel) in row.iter().enumerate() {
+                let px = (coord(0, x) - 0.5) * 10.;
+                let a = (px + (py - angle).cos() + angle).sin();
+                let b = (py + (px - angle).cos() + angle).sin();
+                let light = 0.5 + 0.5 * (a + b + angle).cos();
+                let mix = |dark, bright| unorm(dark * (1. - light) + bright * light);
+                let expected = [mix(0.08, 0.33), mix(0.13, 0.88), mix(0.30, 0.78), 255];
+                for (&actual, expected) in pixel.iter().zip(expected) {
+                    assert!(
+                        actual.abs_diff(expected) <= 1,
+                        "phase {phase}, pixel ({x}, {y})"
+                    );
+                }
+            }
         }
     }
     Ok(())
