@@ -229,20 +229,26 @@ impl Surface {
                 } => {
                     let fill = replay.images.resolve(fill).map_err(Error::other)?;
                     #[cfg(feature = "shader")]
-                    if matches!(&*fill, Fill::Shader(_)) {
+                    if let Fill::Shader(shader) = &*fill {
                         // Consume large shader images in bands so only one temporary is live.
-                        let width = (bounds.right - bounds.left) as usize;
+                        let [width, height] = solor::raster::shader_program(&shader.shader)
+                            .sample_extent(
+                                (bounds.right - bounds.left) as u32,
+                                (bounds.bottom - bounds.top) as u32,
+                            );
                         const BAND_PIXELS: usize = 256 * 1024;
-                        let rows = (BAND_PIXELS / width).max(1);
-                        for top in (bounds.top..bounds.bottom).step_by(rows) {
-                            let band = Clip {
-                                top,
-                                bottom: (top + rows as i64).min(bounds.bottom),
-                                ..bounds
-                            };
-                            self.fill_box(*origin, *size, &fill, *corner_radii, scale, band)?;
+                        let rows = (BAND_PIXELS / width as usize).max(1);
+                        if height as usize > rows {
+                            for top in (bounds.top..bounds.bottom).step_by(rows) {
+                                let band = Clip {
+                                    top,
+                                    bottom: (top + rows as i64).min(bounds.bottom),
+                                    ..bounds
+                                };
+                                self.fill_box(*origin, *size, &fill, *corner_radii, scale, band)?;
+                            }
+                            continue;
                         }
-                        continue;
                     }
                     self.fill_box(*origin, *size, &fill, *corner_radii, scale, bounds)?;
                 }

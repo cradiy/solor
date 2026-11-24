@@ -397,6 +397,14 @@ impl RegionSampler {
         }))
     }
 
+    // A shader that varies along only one axis stores one row or one column.
+    fn sample_row(&self, y: i64) -> &[[u8; 4]] {
+        let size = self.pixels.dimensions();
+        let row = ((y - self.bounds.top) as usize).min(size.height as usize - 1);
+        let width = size.width as usize;
+        &self.pixels.pixels()[row * width..(row + 1) * width]
+    }
+
     pub(super) fn blend_span(&self, dst: &mut [[u8; 4]], x: i64, y: i64, scale: RasterScale) {
         if self.x.start > 0.0
             || self.x.end < self.x.target
@@ -414,9 +422,19 @@ impl RegionSampler {
             return;
         }
         let dst = &mut dst[(left - x) as usize..(right - x) as usize];
-        let first = (y - self.bounds.top) as usize * self.pixels.dimensions().width as usize
-            + (left - self.bounds.left) as usize;
-        let src = &self.pixels.pixels()[first..first + dst.len()];
+        let row = self.sample_row(y);
+        if let &[color] = row {
+            if color[3] == 255 {
+                dst.fill(color);
+            } else {
+                for pixel in dst {
+                    crate::pixels::blend_premultiplied(pixel, color);
+                }
+            }
+            return;
+        }
+        let first = (left - self.bounds.left) as usize;
+        let src = &row[first..first + dst.len()];
         if src.iter().fold(255, |alpha, p| alpha & p[3]) == 255 {
             dst.copy_from_slice(src);
         } else {
@@ -448,9 +466,8 @@ impl RegionSampler {
                 .coverage((x as f64 + 0.5 - self.left) / scale.0, half)
             * self.y.coverage((y as f64 + 0.5 - self.top) / scale.0, half))
         .round() as u8;
-        let index = (y - self.bounds.top) as usize * self.pixels.dimensions().width as usize
-            + (x - self.bounds.left) as usize;
-        let src = self.pixels.pixels()[index];
+        let row = self.sample_row(y);
+        let src = row[((x - self.bounds.left) as usize).min(row.len() - 1)];
         let src = if coverage == 255 {
             src
         } else {

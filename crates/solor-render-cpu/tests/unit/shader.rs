@@ -227,14 +227,17 @@ fn single_axis_alpha_uses_the_requested_pixel_centers() -> Result<()> {
         width: 151,
         height: 73,
     };
-    let region = ImageRegion {
-        output: DeviceSize {
-            width: 67,
-            height: 19,
-        },
-        source_origin: [13.25, 9.75],
-        source_step: [0.8, 0.8],
+    let scale = solor::raster::RasterScale(1.25);
+    let clip = solor::raster::Clip {
+        left: 17,
+        top: 13,
+        right: 84,
+        bottom: 32,
     };
+    let origin = [
+        clip.left as f64 - 13.25 * scale.0,
+        clip.top as f64 - 9.75 * scale.0,
+    ];
     for (axis, expression) in ["uv.x", "uv.y", "0.25"].into_iter().enumerate() {
         let source = format!(
             "fn effect(uv: vec2<f32>, p: f32) -> vec4<f32> {{
@@ -243,16 +246,18 @@ fn single_axis_alpha_uses_the_requested_pixel_centers() -> Result<()> {
         );
         let program = EffectShader::wgsl(&source)?;
         for position in [0.1, 0.3] {
-            let image = render(
+            let sampler = crate::bitmap::RegionSampler::shader(
                 &program.with_params([position, 0., 0., 0.]),
+                origin,
                 size.at_unit_scale(),
-                normalized(size, region),
-            )?;
-            for (y, row) in image
-                .pixels()
-                .chunks_exact(region.output.width as usize)
-                .enumerate()
-            {
+                scale,
+                clip,
+            )?
+            .unwrap();
+            let mut row = vec![[0; 4]; (clip.right - clip.left) as usize];
+            for (y, device_y) in (clip.top..clip.bottom).enumerate() {
+                row.fill([0; 4]);
+                sampler.blend_span(&mut row, clip.left, device_y, scale);
                 for (x, pixel) in row.iter().enumerate() {
                     let coordinate = match axis {
                         0 => (13.25 + (x as f64 + 0.5) * 0.8) / 151.0,
@@ -261,6 +266,9 @@ fn single_axis_alpha_uses_the_requested_pixel_centers() -> Result<()> {
                     };
                     let alpha = ((coordinate as f32 * 0.5 + position) * 255.).round() as u8;
                     assert_eq!(*pixel, [alpha; 4]);
+                    let mut masked = [0; 4];
+                    sampler.blend(&mut masked, clip.left + x as i64, device_y, scale, 128);
+                    assert_eq!(masked, [((u16::from(alpha) * 128 + 127) / 255) as u8; 4]);
                 }
             }
         }

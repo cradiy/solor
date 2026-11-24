@@ -140,22 +140,7 @@ fn rasterize<S>(
         render_rows(0, &mut bytes);
     }
 
-    let output = region.output;
-    if width < output.width {
-        let mut expanded = vec![0; output.width as usize * height as usize * 4];
-        let rows = expanded
-            .as_chunks_mut::<4>()
-            .0
-            .chunks_exact_mut(output.width as usize);
-        for (row, &color) in rows.zip(bytes.as_chunks::<4>().0) {
-            row.fill(color);
-        }
-        bytes = expanded;
-    }
-    if height < output.height {
-        bytes = bytes.repeat(output.height as usize);
-    }
-    ImageAsset::from_rgba8(output.width, output.height, bytes)
+    ImageAsset::from_rgba8(width, height, bytes)
 }
 
 #[cfg(test)]
