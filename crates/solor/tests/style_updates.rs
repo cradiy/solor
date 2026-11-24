@@ -1228,3 +1228,84 @@ fn changing_flex_direction_retargets_spacing_from_the_displayed_gap() -> Result<
     }
     Ok(())
 }
+
+#[test]
+fn animated_min_and_max_constraints_follow_the_content_box_and_parent() -> Result<()> {
+    use solor::{
+        Length, Transition,
+        TransitionProperty::{MaxHeight, MaxWidth, MinHeight, MinWidth},
+        percent, rem,
+        style::BoxSizing,
+    };
+    use std::time::Duration;
+
+    let mut ui = Ui::new();
+    let width = ui.context().signal(Length::from(rem(2.)));
+    let height = ui.context().signal(Length::from(px(20.)));
+    let view = ui.mount_with_rem_size(
+        component(move |_| {
+            let card = || div().p(px(2.)).box_sizing(BoxSizing::ContentBox);
+            let timing = Transition::new(Duration::from_millis(100));
+            div()
+                .items_start()
+                .child(
+                    card()
+                        .w(px(200.))
+                        .h(px(1.))
+                        .max_w(width)
+                        .min_h(height)
+                        .transition([MaxWidth, MinHeight], timing),
+                )
+                .child(
+                    card()
+                        .w(px(1.))
+                        .h(px(200.))
+                        .min_w(width)
+                        .max_h(height)
+                        .transition([MinWidth, MaxHeight], timing),
+                )
+        }),
+        px(20.),
+    )?;
+    let cards: Vec<_> = ui.children(view, ui.root(view)?)?.collect();
+    let viewport = |w, h| Size {
+        width: px(w),
+        height: px(h),
+    };
+    ui.layout(view, viewport(240., 160.))?;
+    ui.context().set(width, percent(50.))?;
+    ui.context().set(height, percent(25.))?;
+    for (ms, parent, card) in [
+        (0, viewport(240., 160.), viewport(44., 24.)),
+        (50, viewport(240., 160.), viewport(84., 34.)),
+        (50, viewport(320., 240.), viewport(104., 44.)),
+        (100, viewport(320., 240.), viewport(164., 64.)),
+    ] {
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        ui.layout(view, parent)?;
+        let first = ui.geometry(view, cards[0]).unwrap();
+        let second = ui.geometry(view, cards[1]).unwrap();
+        assert_eq!(first.metrics.size, card);
+        assert_eq!(second.metrics.size, card);
+        assert_eq!(second.origin.y, card.height);
+        assert_eq!(ui.record_frame(view)?.requests_animation_frame(), ms < 100);
+    }
+    ui.context().set(width, Length::from(px(20.)))?;
+    ui.context().set(height, Length::from(px(10.)))?;
+    ui.dispatch_frame(view, Duration::from_millis(120))?;
+    ui.dispatch_frame(view, Duration::from_millis(150))?;
+    ui.context().set(width, Length::Auto)?;
+    ui.context().set(height, Length::Auto)?;
+    ui.dispatch_frame(view, Duration::from_millis(160))?;
+    ui.layout(view, viewport(320., 240.))?;
+    assert_eq!(
+        ui.geometry(view, cards[0]).unwrap().metrics.size,
+        viewport(204., 5.)
+    );
+    assert_eq!(
+        ui.geometry(view, cards[1]).unwrap().metrics.size,
+        viewport(5., 204.)
+    );
+    assert!(!ui.record_frame(view)?.requests_animation_frame());
+    Ok(())
+}

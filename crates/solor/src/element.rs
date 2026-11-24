@@ -1340,7 +1340,9 @@ impl AnyElement {
                 handlers.padding = body.bounds.content_insets();
             }
             let id = match target {
-                Target::Root(slot) => slot.insert(Scene::with_root_style(body, item)).root(),
+                Target::Root(slot) => slot
+                    .insert(Scene::with_root_style(body, item, item_sizing))
+                    .root(),
                 Target::Child {
                     scene,
                     parent,

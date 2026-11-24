@@ -332,23 +332,28 @@ impl crate::Instance {
         {
             let bounds =
                 crate::styled_body::BoxModel::resolve(&style, self.units, scroll_axes.gutter)?;
-            let current = self.scene.preferred_size(id)?;
-            for axis in crate::layout::Dimension::BOTH {
-                let key = (id, axis);
-                if let (Some(from), Some(target)) = (current.axis(axis), item.preferred.axis(axis))
-                {
-                    let value = self.transitions.dimensions.retarget(
-                        key,
-                        from,
-                        target,
-                        timing(axis.property()),
-                    );
-                    *item.preferred.axis_mut(axis) = Some(value);
-                } else {
-                    self.transitions.dimensions.remove(key);
+            let mut sizing = bounds.item_sizing(&style, self.units)?;
+            if let Some(rules) = rules {
+                for (&property, &timing) in rules {
+                    let Some(dimension) = property.dimension() else {
+                        continue;
+                    };
+                    let key = (id, dimension);
+                    let target = dimension.value_mut(&mut item.preferred, sizing.as_mut());
+                    if let (Some(current), Some(target)) =
+                        (self.scene.dimension(id, dimension)?, target)
+                    {
+                        *target = self.transitions.dimensions.retarget(
+                            key,
+                            current,
+                            *target,
+                            Some(timing),
+                        );
+                    } else {
+                        self.transitions.dimensions.remove(key);
+                    }
                 }
             }
-            let sizing = bounds.item_sizing(&style, self.units)?;
             let padding = bounds.content_insets();
             let mut prepared = Ok(());
             self.scene.edit_layout::<StyledBody<E>>(id, |body| {

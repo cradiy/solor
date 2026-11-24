@@ -435,7 +435,28 @@ fn paint_contours(
     })
 }
 
-pub(super) fn layout(alignment: Selection<3>) -> Div {
+pub(super) fn layout(alignment: Selection<3>) -> impl solor::Render {
+    component(move |cx| {
+        let sections = Selection::new(cx, 0, false);
+        let [flex, transitions] = sections.flags();
+        div()
+            .items_stretch()
+            .p(px(22.))
+            .gap(px(14.))
+            .child(
+                div()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .child(label("Layout", 33., 44.).letter_spacing(px(-1.3)))
+                    .child(sections.buttons(["Flex", "Transitions"])),
+            )
+            .child_when(flex, move || flex_layout(alignment))
+            .child_when(transitions, crate::transitions::specimens)
+    })
+}
+
+fn flex_layout(alignment: Selection<3>) -> Div {
     let mut specimen = stage(rgb(0xe3e2f1)).px(px(18.0));
     for (active, distribution) in alignment.flags().into_iter().zip([
         Distribution::Start,
@@ -486,10 +507,13 @@ pub(super) fn layout(alignment: Selection<3>) -> Div {
                 .child(label(name, 19.0, 26.0).text_color(INK))
         }),
     );
-    page(
-        "Flex layout",
-        control("Justify", alignment.buttons(["Start", "Center", "Between"])),
-        specimen,
-        details("Flex grow", weights),
-    )
+    div()
+        .items_stretch()
+        .gap(px(14.))
+        .child(control(
+            "Justify",
+            alignment.buttons(["Start", "Center", "Between"]),
+        ))
+        .child(specimen)
+        .child(details("Flex grow", weights))
 }

@@ -1329,12 +1329,16 @@ pub struct Scene {
 impl Scene {
     /// Create a scene with a three-query measurement cache and a maximum callback depth of 64.
     pub fn new(root: impl LayoutNode) -> Self {
-        Self::with_root_style(root, FlexItemStyle::default())
+        Self::with_root_style(root, FlexItemStyle::default(), None)
     }
 
-    pub(crate) fn with_root_style(root: impl LayoutNode, style: FlexItemStyle) -> Self {
+    pub(crate) fn with_root_style(
+        root: impl LayoutNode,
+        style: FlexItemStyle,
+        sizing: Option<ItemSizing>,
+    ) -> Self {
         let store = NodeStore::new(
-            Box::new(Entry::new(root, style, None)),
+            Box::new(Entry::new(root, style, sizing)),
             NonZeroUsize::new(64).unwrap(),
         );
         let nodes = vec![store.root()];
@@ -1576,20 +1580,31 @@ impl Scene {
         self.invalidate(node)
     }
 
-    pub(crate) fn preferred_size(&self, node: NodeId) -> Result<PreferredSize> {
-        Ok(self.store.get(node)?.item_style.preferred)
+    pub(crate) fn dimension(
+        &self,
+        node: NodeId,
+        dimension: Dimension,
+    ) -> Result<Option<ComputedLength>> {
+        let entry = self.store.get(node)?;
+        Ok(dimension.value(entry.item_style.preferred, entry.item_sizing.as_deref()))
     }
 
     pub(crate) fn set_dimension(
         &mut self,
         node: NodeId,
-        axis: Dimension,
+        dimension: Dimension,
         value: ComputedLength,
     ) -> Result<()> {
-        if self.preferred_size(node)?.axis(axis) != Some(value) {
+        if self.dimension(node, dimension)? != Some(value) {
             self.invalidate_input(node)?;
-            let preferred = &mut self.store.get_mut(node)?.item_style.preferred;
-            *preferred.axis_mut(axis) = Some(value);
+            let entry = self.store.get_mut(node)?;
+            let slot = dimension
+                .value_mut(
+                    &mut entry.item_style.preferred,
+                    entry.item_sizing.as_deref_mut(),
+                )
+                .expect("active transition has a declared dimension");
+            *slot = value;
         }
         Ok(())
     }

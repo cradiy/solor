@@ -48,32 +48,58 @@ pub(crate) fn border_extent(
 pub(crate) enum Dimension {
     Width,
     Height,
+    MinWidth,
+    MaxWidth,
+    MinHeight,
+    MaxHeight,
 }
 
 impl Dimension {
-    pub(crate) const BOTH: [Self; 2] = [Self::Width, Self::Height];
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Width,
+        Self::Height,
+        Self::MinWidth,
+        Self::MaxWidth,
+        Self::MinHeight,
+        Self::MaxHeight,
+    ];
+
+    pub(crate) fn value(
+        self,
+        preferred: PreferredSize,
+        sizing: Option<&ItemSizing>,
+    ) -> Option<ComputedLength> {
+        match self {
+            Self::Width => preferred.width,
+            Self::Height => preferred.height,
+            Self::MinWidth => sizing?.width?.min,
+            Self::MaxWidth => sizing?.width?.max,
+            Self::MinHeight => sizing?.height?.min,
+            Self::MaxHeight => sizing?.height?.max,
+        }
+    }
+
+    pub(crate) fn value_mut<'a>(
+        self,
+        preferred: &'a mut PreferredSize,
+        sizing: Option<&'a mut ItemSizing>,
+    ) -> Option<&'a mut ComputedLength> {
+        match self {
+            Self::Width => &mut preferred.width,
+            Self::Height => &mut preferred.height,
+            Self::MinWidth => &mut sizing?.width.as_mut()?.min,
+            Self::MaxWidth => &mut sizing?.width.as_mut()?.max,
+            Self::MinHeight => &mut sizing?.height.as_mut()?.min,
+            Self::MaxHeight => &mut sizing?.height.as_mut()?.max,
+        }
+        .as_mut()
+    }
 }
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct PreferredSize {
     pub(crate) width: Option<ComputedLength>,
     pub(crate) height: Option<ComputedLength>,
-}
-
-impl PreferredSize {
-    pub(crate) fn axis(self, axis: Dimension) -> Option<ComputedLength> {
-        match axis {
-            Dimension::Width => self.width,
-            Dimension::Height => self.height,
-        }
-    }
-
-    pub(crate) fn axis_mut(&mut self, axis: Dimension) -> &mut Option<ComputedLength> {
-        match axis {
-            Dimension::Width => &mut self.width,
-            Dimension::Height => &mut self.height,
-        }
-    }
 }
 
 impl AxisLimits {

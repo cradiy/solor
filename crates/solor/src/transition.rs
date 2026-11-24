@@ -16,6 +16,14 @@ pub enum TransitionProperty {
     Width,
     /// Preferred height. Changes to or from automatic sizing apply immediately.
     Height,
+    /// Lower bound on the element's width.
+    MinWidth,
+    /// Upper bound on the element's width.
+    MaxWidth,
+    /// Lower bound on the element's height.
+    MinHeight,
+    /// Upper bound on the element's height.
+    MaxHeight,
     /// Spacing between adjacent children along a flex container's main axis.
     Gap,
     /// The four radii of the border box.
@@ -156,8 +164,8 @@ impl Transitions {
         self.opacity.remove(id);
         self.gaps.remove(id);
         self.radii.remove(id);
-        for axis in Dimension::BOTH {
-            self.dimensions.remove((id, axis));
+        for dimension in Dimension::ALL {
+            self.dimensions.remove((id, dimension));
         }
         for property in TransitionProperty::COLORS {
             self.colors.remove((id, property));
@@ -200,12 +208,17 @@ impl Interpolate for Pixels {
     }
 }
 
-impl Dimension {
-    pub(crate) fn property(self) -> TransitionProperty {
-        match self {
-            Self::Width => TransitionProperty::Width,
-            Self::Height => TransitionProperty::Height,
-        }
+impl TransitionProperty {
+    pub(crate) fn dimension(self) -> Option<Dimension> {
+        Some(match self {
+            Self::Width => Dimension::Width,
+            Self::Height => Dimension::Height,
+            Self::MinWidth => Dimension::MinWidth,
+            Self::MaxWidth => Dimension::MaxWidth,
+            Self::MinHeight => Dimension::MinHeight,
+            Self::MaxHeight => Dimension::MaxHeight,
+            _ => return None,
+        })
     }
 }
 

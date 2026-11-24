@@ -385,9 +385,9 @@ impl Instance {
                     self.visible_nodes += 1;
                 } else {
                     self.visible_nodes -= 1;
-                    for axis in layout::Dimension::BOTH {
-                        if let Some(value) = self.transitions.dimensions.remove((id, axis)) {
-                            self.scene.set_dimension(id, axis, value)?;
+                    for dimension in layout::Dimension::ALL {
+                        if let Some(value) = self.transitions.dimensions.remove((id, dimension)) {
+                            self.scene.set_dimension(id, dimension, value)?;
                         }
                     }
                     if let Some(gap) = self.transitions.gaps.remove(id) {

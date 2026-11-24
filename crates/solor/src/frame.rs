@@ -272,8 +272,8 @@ impl Ui {
         instance
             .transitions
             .dimensions
-            .advance(now, |(id, axis), value| {
-                Ok(instance.scene.set_dimension(id, axis, value)?)
+            .advance(now, |(id, dimension), value| {
+                Ok(instance.scene.set_dimension(id, dimension, value)?)
             })?;
         instance
             .transitions
