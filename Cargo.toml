@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/solor", "crates/solor-gallery", "crates/solor-linux", "crates/solor-platform", "crates/solor-render-cpu"]
+members = ["crates/solor", "crates/solor-gallery", "crates/solor-linux", "crates/solor-platform", "crates/solor-render-cpu", "crates/solor-shader"]
 resolver = "3"
 
 [workspace.package]
@@ -11,6 +11,7 @@ solor = { path = "crates/solor", default-features = false }
 solor-linux = { path = "crates/solor-linux" }
 solor-platform = { path = "crates/solor-platform" }
 solor-render-cpu = { path = "crates/solor-render-cpu" }
+solor-shader = { path = "crates/solor-shader" }
 anyhow = "1"
 log = "0.4"
 slotmap = "1.1.1"

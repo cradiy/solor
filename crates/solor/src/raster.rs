@@ -1,5 +1,11 @@
 //! Device pixel coordinates shared by renderers and presentation targets.
 pub use crate::fill::OpaqueLinearGradient;
+
+/// Returns the immutable fragment program for a renderer drawing this effect.
+#[cfg(feature = "shader")]
+pub fn shader_program(shader: &crate::EffectShader) -> &solor_shader::Program {
+    &shader.0
+}
 use std::io::{Error, Result};
 /// Integer extent of a raster buffer in device pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

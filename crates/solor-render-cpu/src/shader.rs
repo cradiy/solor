@@ -1,0 +1,136 @@
+use anyhow::Result;
+use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
+use solor::{ImageAsset, ImageRegion, ShaderFill, raster::DeviceSize};
+use solor_shader::Op;
+use std::sync::OnceLock;
+
+const LANES: usize = 32;
+type Batch = [f32; LANES];
+
+pub(super) fn render(fill: &ShaderFill, region: ImageRegion) -> Result<ImageAsset> {
+    let program = solor::raster::shader_program(&fill.shader);
+    let params = fill.params;
+    let [width, height] = program.sample_extent(region.output.width, region.output.height);
+    rasterize(
+        region,
+        DeviceSize { width, height },
+        || vec![[0.; LANES]; program.instructions().len()],
+        |registers, u, v, out| {
+            for (dst, &op) in program.instructions().iter().enumerate() {
+                let r = &*registers;
+                registers[dst] = match op {
+                    Op::U => u,
+                    Op::V => [v; LANES],
+                    Op::Param(index) => [params[index]; LANES],
+                    Op::Constant(value) => [value; LANES],
+                    Op::Abs(a) => r[a].map(f32::abs),
+                    Op::Neg(a) => r[a].map(|x| -x),
+                    Op::Add(a, b) => std::array::from_fn(|i| r[a][i] + r[b][i]),
+                    Op::Sub(a, b) => std::array::from_fn(|i| r[a][i] - r[b][i]),
+                    Op::Mul(a, b) => std::array::from_fn(|i| r[a][i] * r[b][i]),
+                    Op::Div(a, b) => std::array::from_fn(|i| r[a][i] / r[b][i]),
+                    Op::Mix(a, b, c) => {
+                        std::array::from_fn(|i| r[a][i] * (1. - r[c][i]) + r[b][i] * r[c][i])
+                    }
+                    Op::SmoothStep(a, b, c) => std::array::from_fn(|i| {
+                        let t = ((r[c][i] - r[a][i]) / (r[b][i] - r[a][i])).clamp(0., 1.);
+                        t * t * (3. - 2. * t)
+                    }),
+                };
+            }
+            let channels = program.outputs().map(|r| registers[r].map(unorm));
+            for (i, pixel) in out.iter_mut().enumerate() {
+                *pixel = [
+                    channels[0][i],
+                    channels[1][i],
+                    channels[2][i],
+                    channels[3][i],
+                ];
+            }
+        },
+    )
+}
+
+fn unorm(value: f32) -> u8 {
+    // Integer half-up rounding also preserves values immediately below half a byte.
+    (((value.clamp(0., 1.) * 510.) as u16 + 1) >> 1) as u8
+}
+
+fn rasterize<S>(
+    region: ImageRegion,
+    samples: DeviceSize,
+    scratch: impl Fn() -> S + Sync,
+    shade: impl Fn(&mut S, Batch, f32, &mut [[u8; 4]]) + Sync,
+) -> Result<ImageAsset> {
+    let DeviceSize { width, height } = samples;
+    let mut bytes = vec![0; width as usize * height as usize * 4];
+    let columns: Vec<Batch> = (0..(width as usize).div_ceil(LANES))
+        .map(|block| {
+            std::array::from_fn(|i| {
+                (region.source_origin[0]
+                    + ((block * LANES + i) as f64 + 0.5) * region.source_step[0])
+                    as f32
+            })
+        })
+        .collect();
+    let stride = width as usize * 4;
+    let render_rows = |first: usize, rows: &mut [u8]| {
+        let mut scratch = scratch();
+        for (index, row) in rows.chunks_exact_mut(stride).enumerate() {
+            let v = (region.source_origin[1]
+                + ((first + index) as f64 + 0.5) * region.source_step[1])
+                as f32;
+            for (&u, pixels) in columns
+                .iter()
+                .zip(row.as_chunks_mut::<4>().0.chunks_mut(LANES))
+            {
+                shade(&mut scratch, u, v, pixels);
+            }
+        }
+    };
+    static POOL: OnceLock<Option<ThreadPool>> = OnceLock::new();
+    let pool = if bytes.len() >= 512 * 1024 && height > 1 {
+        POOL.get_or_init(|| {
+            let threads = std::thread::available_parallelism().ok()?.get().min(4);
+            if threads < 2 {
+                return None;
+            }
+            ThreadPoolBuilder::new().num_threads(threads).build().ok()
+        })
+        .as_ref()
+    } else {
+        None
+    };
+    if let Some(pool) = pool {
+        let rows = (height as usize).div_ceil(pool.current_num_threads());
+        pool.install(|| {
+            bytes
+                .par_chunks_mut(rows * stride)
+                .enumerate()
+                .for_each(|(i, band)| render_rows(i * rows, band))
+        });
+    } else {
+        render_rows(0, &mut bytes);
+    }
+
+    let output = region.output;
+    if width < output.width {
+        let mut expanded = vec![0; output.width as usize * height as usize * 4];
+        let rows = expanded
+            .as_chunks_mut::<4>()
+            .0
+            .chunks_exact_mut(output.width as usize);
+        for (row, &color) in rows.zip(bytes.as_chunks::<4>().0) {
+            row.fill(color);
+        }
+        bytes = expanded;
+    }
+    if height < output.height {
+        bytes = bytes.repeat(output.height as usize);
+    }
+    ImageAsset::from_rgba8(output.width, output.height, bytes)
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/shader.rs"]
+mod tests;

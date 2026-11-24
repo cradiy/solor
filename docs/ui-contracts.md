@@ -620,8 +620,9 @@ this table are declarations pending engine support.
 Linux is the first presentation target. Geometry, semantic actions, text ranges
 and frame requests need platform-independent meanings for Web, macOS, Windows,
 Android and iOS. Native handles, buffer formats and backend resource indices
-belong in adapters. Vector paths, custom shaders and 3D
-need concrete workloads before their public signatures are chosen.
+belong in adapters. Enable `solor-platform/shader` to draw procedural WGSL fills. Compile the
+effect once with `EffectShader::wgsl` and pass `shader.with_params(value)` to
+a background or paint operation. A background also accepts a signal as the parameter.
 
 
 ## Image fills, image elements and SVG

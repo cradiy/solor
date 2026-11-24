@@ -42,6 +42,10 @@ mod debounce;
 pub use debounce::{Debounce, debounce};
 mod element;
 mod fill;
+#[cfg(feature = "shader")]
+mod shader;
+#[cfg(feature = "shader")]
+pub use shader::{EffectShader, ShaderFill};
 mod frame;
 pub use frame::ViewFrame;
 pub mod keyboard;

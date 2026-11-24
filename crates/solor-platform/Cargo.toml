@@ -8,6 +8,9 @@ description = "System platform selection and window hosting for Solor"
 [lints]
 workspace = true
 
+[features]
+shader = ["solor/shader", "solor-render-cpu/shader"]
+
 [dependencies]
 anyhow.workspace = true
 solor.workspace = true
@@ -23,3 +26,14 @@ required-features = ["solor/webp"]
 [[example]]
 name = "gradient_map"
 required-features = ["solor/webp"]
+
+[dev-dependencies]
+clap = { version = "4", default-features = false, features = ["std", "help", "usage"] }
+
+[[example]]
+name = "cpu_shader"
+required-features = ["shader"]
+
+[[test]]
+name = "cpu_shader"
+required-features = ["shader"]

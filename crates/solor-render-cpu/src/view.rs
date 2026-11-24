@@ -122,6 +122,15 @@ fn brush(
         Fill::Checkerboard(pattern) => Brush::Checkerboard(crate::checkerboard::CheckerBrush::new(
             *pattern, left, top, scale,
         )),
+        #[cfg(feature = "shader")]
+        Fill::Shader(fill) => {
+            let Some(sampler) =
+                crate::bitmap::RegionSampler::shader(fill, [left, top], size, scale, clip)?
+            else {
+                return Ok(None);
+            };
+            Brush::Region(sampler)
+        }
         Fill::CustomImage(image) => {
             let Some(sampler) =
                 crate::bitmap::RegionSampler::new(image, [left, top], size, scale, clip)?
@@ -441,11 +450,7 @@ impl Surface {
                 }
                 Brush::Checkerboard(pattern) => pattern.blend_span(middle, from, y, 255),
                 Brush::Stripes(pattern) => pattern.blend_span(middle, from, y, 255),
-                Brush::Region(image) => {
-                    for (x, pixel) in (from..to).zip(middle) {
-                        image.blend(pixel, x, y, scale, 255);
-                    }
-                }
+                Brush::Region(image) => image.blend_span(middle, from, y, scale),
                 Brush::Image(image) => image.blend_span(middle, from, y, [left, top], scale),
                 Brush::Gradient(_, Some(linear)) => linear
                     .write_span(from as u32, y as u32, middle)
@@ -714,7 +719,7 @@ fn same_draw(a: &Draw, b: &Draw) -> bool {
     }
 }
 
-fn include_image_change(
+fn include_fill_change(
     before: &Draw,
     after: &Draw,
     scale: RasterScale,
@@ -725,14 +730,14 @@ fn include_image_change(
         Draw::Fill {
             origin,
             size,
-            fill: Fill::CustomImage(previous),
+            fill: old_fill,
             corner_radii,
             clip,
         },
         Draw::Fill {
             origin: at,
             size: extent,
-            fill: Fill::CustomImage(next),
+            fill: new_fill,
             corner_radii: radii,
             clip: next_clip,
         },
@@ -743,6 +748,41 @@ fn include_image_change(
     if origin != at || size != extent || corner_radii != radii || clip != next_clip {
         return Ok(false);
     }
+    #[cfg(feature = "shader")]
+    if let (Fill::Shader(old), Fill::Shader(new)) = (old_fill, new_fill) {
+        let (Some(a), Some(b)) = (old.region(), new.region()) else {
+            return Ok(false);
+        };
+        if old.shader != new.shader {
+            return Ok(false);
+        }
+        let visible = device_bounds(after, scale)?.intersect(canvas);
+        for region in [a, b] {
+            if !(0..2).all(|i| {
+                region.start[i].is_finite()
+                    && region.end[i].is_finite()
+                    && region.start[i] <= region.end[i]
+            }) {
+                return Ok(false);
+            }
+            let x = |u: f32| (f64::from(origin.x) + f64::from(size.width) * f64::from(u)) * scale.0;
+            let y =
+                |v: f32| (f64::from(origin.y) + f64::from(size.height) * f64::from(v)) * scale.0;
+            damage.include(
+                Clip {
+                    left: x(region.start[0]).floor() as i64,
+                    right: x(region.end[0]).ceil() as i64,
+                    top: y(region.start[1]).floor() as i64,
+                    bottom: y(region.end[1]).ceil() as i64,
+                }
+                .intersect(visible),
+            );
+        }
+        return Ok(true);
+    }
+    let (Fill::CustomImage(previous), Fill::CustomImage(next)) = (old_fill, new_fill) else {
+        return Ok(false);
+    };
     let Some(regions) = next.changed_regions_since(previous) else {
         return Ok(false);
     };
@@ -805,7 +845,7 @@ fn include_changes(
             }
             changed = true;
             on_change(i, b)?;
-            if include_image_change(a, b, scale, canvas, area)? {
+            if include_fill_change(a, b, scale, canvas, area)? {
                 continue;
             }
         }

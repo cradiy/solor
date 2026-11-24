@@ -184,36 +184,6 @@ impl Surface {
                     },
                 )
             }
-            Fill::CustomImage(image) => {
-                let bounds = PathBounds::new(origin, contours, scale)?;
-                let size = Size {
-                    width: px(((bounds.right - bounds.left) / scale.0) as f32),
-                    height: px(((bounds.bottom - bounds.top) / scale.0) as f32),
-                };
-                let Some(sampler) = crate::bitmap::RegionSampler::new(
-                    image,
-                    [bounds.left, bounds.top],
-                    size,
-                    scale,
-                    clip,
-                )?
-                else {
-                    return Ok(());
-                };
-                for_each_span(
-                    contours,
-                    rule,
-                    origin,
-                    scale,
-                    clip,
-                    |row, from, to, coverage| {
-                        for (x, pixel) in (from..to).zip(self.span_pixels(row, from, to)) {
-                            sampler.blend(pixel, x, row, scale, coverage);
-                        }
-                        Ok(())
-                    },
-                )
-            }
             Fill::Image(image) => {
                 let bounds = PathBounds::new(origin, contours, scale)?;
                 let size = Size {
@@ -268,10 +238,49 @@ impl Surface {
                     },
                 )
             }
-            _ => Err(Error::new(
-                std::io::ErrorKind::Unsupported,
-                "unsupported CPU fill",
-            )),
+            _ => {
+                let bounds = PathBounds::new(origin, contours, scale)?;
+                let size = Size {
+                    width: px(((bounds.right - bounds.left) / scale.0) as f32),
+                    height: px(((bounds.bottom - bounds.top) / scale.0) as f32),
+                };
+                let origin_device = [bounds.left, bounds.top];
+                let sampler = match fill {
+                    Fill::CustomImage(image) => {
+                        crate::bitmap::RegionSampler::new(image, origin_device, size, scale, clip)?
+                    }
+                    #[cfg(feature = "shader")]
+                    Fill::Shader(shader) => crate::bitmap::RegionSampler::shader(
+                        shader,
+                        origin_device,
+                        size,
+                        scale,
+                        clip,
+                    )?,
+                    _ => {
+                        return Err(Error::new(
+                            std::io::ErrorKind::Unsupported,
+                            "unsupported CPU fill",
+                        ));
+                    }
+                };
+                let Some(sampler) = sampler else {
+                    return Ok(());
+                };
+                for_each_span(
+                    contours,
+                    rule,
+                    origin,
+                    scale,
+                    clip,
+                    |row, from, to, coverage| {
+                        for (x, pixel) in (from..to).zip(self.span_pixels(row, from, to)) {
+                            sampler.blend(pixel, x, row, scale, coverage);
+                        }
+                        Ok(())
+                    },
+                )
+            }
         }
     }
 }

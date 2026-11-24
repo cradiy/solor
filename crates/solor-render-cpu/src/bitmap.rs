@@ -2,7 +2,7 @@
 use solor::{
     ImageFill, ImageSampling, Pixels,
     layout::Size,
-    raster::{Clip, RasterScale},
+    raster::{Clip, DeviceSize, RasterScale},
 };
 use std::io::{Error, Result};
 
@@ -312,7 +312,49 @@ impl RegionSampler {
         scale: RasterScale,
         clip: solor::raster::Clip,
     ) -> Result<Option<Self>> {
-        let (offset, fitted) = image.bounds(target).map_err(Error::other)?;
+        Self::sample(
+            origin,
+            target,
+            scale,
+            clip,
+            image.bounds(target).map_err(Error::other)?,
+            image.dimensions(),
+            |region| image.render(region),
+        )
+    }
+
+    #[cfg(feature = "shader")]
+    pub(super) fn shader(
+        fill: &solor::ShaderFill,
+        origin: [f64; 2],
+        target: Size,
+        scale: RasterScale,
+        clip: Clip,
+    ) -> Result<Option<Self>> {
+        Self::sample(
+            origin,
+            target,
+            scale,
+            clip,
+            (solor::layout::Origin::default(), target),
+            DeviceSize {
+                width: 1,
+                height: 1,
+            },
+            |region| crate::shader::render(fill, region),
+        )
+    }
+
+    fn sample(
+        origin: [f64; 2],
+        target: Size,
+        scale: RasterScale,
+        clip: Clip,
+        placement: (solor::layout::Origin, Size),
+        intrinsic: DeviceSize,
+        render: impl FnOnce(solor::ImageRegion) -> anyhow::Result<solor::ImageAsset>,
+    ) -> Result<Option<Self>> {
+        let (offset, fitted) = placement;
         let width = f64::from(fitted.width) * scale.0;
         let height = f64::from(fitted.height) * scale.0;
         if width <= 0.0 || height <= 0.0 {
@@ -330,7 +372,6 @@ impl RegionSampler {
         if bounds.empty() {
             return Ok(None);
         }
-        let intrinsic = image.dimensions();
         let step = [
             f64::from(intrinsic.width) / width,
             f64::from(intrinsic.height) / height,
@@ -347,13 +388,42 @@ impl RegionSampler {
             source_step: step,
         };
         Ok(Some(Self {
-            pixels: image.render(region).map_err(Error::other)?,
+            pixels: render(region).map_err(Error::other)?,
             bounds,
             left,
             top,
             x: Axis::new(offset.x, fitted.width, target.width, intrinsic.width),
             y: Axis::new(offset.y, fitted.height, target.height, intrinsic.height),
         }))
+    }
+
+    pub(super) fn blend_span(&self, dst: &mut [[u8; 4]], x: i64, y: i64, scale: RasterScale) {
+        if self.x.start > 0.0
+            || self.x.end < self.x.target
+            || self.y.start > 0.0
+            || self.y.end < self.y.target
+        {
+            for (x, pixel) in (x..).zip(dst) {
+                self.blend(pixel, x, y, scale, 255);
+            }
+            return;
+        }
+        let left = x.max(self.bounds.left);
+        let right = (x + dst.len() as i64).min(self.bounds.right);
+        if left >= right || !(self.bounds.top..self.bounds.bottom).contains(&y) {
+            return;
+        }
+        let dst = &mut dst[(left - x) as usize..(right - x) as usize];
+        let first = (y - self.bounds.top) as usize * self.pixels.dimensions().width as usize
+            + (left - self.bounds.left) as usize;
+        let src = &self.pixels.pixels()[first..first + dst.len()];
+        if src.iter().fold(255, |alpha, p| alpha & p[3]) == 255 {
+            dst.copy_from_slice(src);
+        } else {
+            for (pixel, &color) in dst.iter_mut().zip(src) {
+                crate::pixels::blend_premultiplied(pixel, color);
+            }
+        }
     }
 
     pub(super) fn blend(

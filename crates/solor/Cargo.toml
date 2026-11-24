@@ -6,6 +6,7 @@ publish.workspace = true
 description = "Platform-independent Solor GUI framework"
 
 [features]
+shader = ["dep:solor-shader"]
 default = ["png", "jpeg"]
 image-full = ["png", "jpeg", "webp", "gif", "bmp", "ico", "tiff"]
 png = ["image/png"]
@@ -19,6 +20,7 @@ network = ["url", "dep:ureq", "dep:event-listener", "image"]
 layout-audit = []
 
 [dependencies]
+solor-shader = { workspace = true, optional = true }
 event-listener = { version = "5.4", optional = true }
 url = { version = "2.5", optional = true }
 ureq = { version = "3.5", default-features = false, features = ["rustls"], optional = true }

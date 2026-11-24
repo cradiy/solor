@@ -90,6 +90,9 @@ exact!(
     Option<std::num::NonZeroUsize>
 );
 
+#[cfg(feature = "shader")]
+exact!([f32; 4]);
+
 impl<T: Into<Background>> From<T> for Property<Background> {
     fn from(source: T) -> Self {
         Self(Source::Fixed(source.into()))
@@ -141,7 +144,7 @@ impl<T: 'static> Property<T> {
         }
     }
 
-    pub(super) fn map<U: 'static>(self, convert: impl Fn(T) -> U + 'static) -> Property<U> {
+    pub(crate) fn map<U: 'static>(self, convert: impl Fn(T) -> U + 'static) -> Property<U> {
         Property(match self.0 {
             Source::Fixed(value) => Source::Fixed(convert(value)),
             Source::Signal(id, read) => {

@@ -604,6 +604,9 @@ impl From<DiagonalStripes> for Fill {
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Fill {
+    /// Runs a fragment effect with the parameters of this draw.
+    #[cfg(feature = "shader")]
+    Shader(crate::ShaderFill),
     /// Fills the region with a single color.
     Solid(Rgba),
     /// Repeats colored and transparent squares at a fixed logical size.

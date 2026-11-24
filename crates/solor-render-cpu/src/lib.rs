@@ -13,6 +13,8 @@ mod path;
 pub mod pixels;
 mod polygon;
 mod polyline;
+#[cfg(feature = "shader")]
+mod shader;
 mod stripes;
 mod svg;
 mod view;
