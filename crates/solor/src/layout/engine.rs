@@ -442,6 +442,23 @@ impl DependencyRecords {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum FlexFactor {
+    Grow,
+    Shrink,
+}
+
+impl FlexFactor {
+    pub(crate) const ALL: [Self; 2] = [Self::Grow, Self::Shrink];
+
+    pub(crate) fn slot(self, style: &mut FlexItemStyle) -> &mut f32 {
+        match self {
+            Self::Grow => &mut style.grow,
+            Self::Shrink => &mut style.shrink,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct FlexItemStyle {
     pub(crate) display_none: bool,
@@ -1605,6 +1622,48 @@ impl Scene {
                 )
                 .expect("active transition has a declared dimension");
             *slot = value;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn flex_factor(&self, node: NodeId, factor: FlexFactor) -> Result<f32> {
+        let style = &self.store.get(node)?.item_style;
+        Ok(match factor {
+            FlexFactor::Grow => style.grow,
+            FlexFactor::Shrink => style.shrink,
+        })
+    }
+
+    pub(crate) fn set_flex_factor(
+        &mut self,
+        node: NodeId,
+        factor: FlexFactor,
+        value: f32,
+    ) -> Result<()> {
+        if self.flex_factor(node, factor)? != value {
+            self.invalidate_input(node)?;
+            *factor.slot(&mut self.store.get_mut(node)?.item_style) = value;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn set_item_insets(
+        &mut self,
+        node: NodeId,
+        insets: Size,
+        extra: Size,
+    ) -> Result<()> {
+        if let Some(sizing) = self.store.get_mut(node)?.item_sizing.as_deref_mut() {
+            sizing.shrink_inset = insets;
+            if let Some(basis) = &mut sizing.basis {
+                basis.extra = extra;
+            }
+            if let Some(width) = &mut sizing.width {
+                width.extra = extra.width;
+            }
+            if let Some(height) = &mut sizing.height {
+                height.extra = extra.height;
+            }
         }
         Ok(())
     }

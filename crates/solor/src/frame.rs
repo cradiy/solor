@@ -279,6 +279,29 @@ impl Ui {
             .transitions
             .gaps
             .advance(now, |id, value| instance.scene.set_flex_gap(id, value))?;
+        instance
+            .transitions
+            .flex_factors
+            .advance(now, |(id, factor), value| {
+                Ok(instance.scene.set_flex_factor(id, factor, value)?)
+            })?;
+        instance
+            .transitions
+            .padding
+            .advance_with_data(now, |id, padding, apply| {
+                if let Some(insets) = apply(&mut instance.scene, id, padding)? {
+                    let node = instance
+                        .bodies
+                        .get_mut(&id)
+                        .expect("mounted transition owner");
+                    if let Some(handlers) = node.handlers.as_mut() {
+                        handlers.padding = insets;
+                        instance.pointer.invalidate_geometry();
+                    }
+                    instance.repaints.borrow_mut().invalidate(id);
+                }
+                Ok(())
+            })?;
         instance.transitions.radii.advance(now, |id, radii| {
             let node = instance
                 .bodies

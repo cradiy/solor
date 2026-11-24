@@ -226,3 +226,60 @@ fn a_padded_item_keeps_its_insets_when_the_line_runs_out_of_space() -> Result<()
     );
     Ok(())
 }
+
+#[test]
+fn resizing_during_transitions_uses_the_current_grow_or_shrink_factor() -> Result<()> {
+    use solor::{Transition, TransitionProperty};
+    use std::time::Duration;
+
+    let mut ui = Ui::new();
+    let grow = ui.context().signal(0.0_f32);
+    let shrink = ui.context().signal(0.0_f32);
+    let view = ui.mount(component(move |_| {
+        div()
+            .flex_row()
+            .child(
+                div()
+                    .flex_basis(px(80.))
+                    .min_w(px(60.))
+                    .flex_grow(grow)
+                    .flex_shrink(shrink)
+                    .transition(
+                        TransitionProperty::FlexGrow,
+                        Transition::new(Duration::from_millis(100)),
+                    )
+                    .transition(
+                        TransitionProperty::FlexShrink,
+                        Transition::new(Duration::from_millis(200)),
+                    ),
+            )
+            .child(div().flex_basis(px(80.)).flex_grow(1.).flex_shrink(1.))
+    }))?;
+    let items: Vec<_> = ui.children(view, ui.root(view)?)?.collect();
+    ui.context().set(grow, 1.0_f32)?;
+    ui.context().set(shrink, 4.0_f32)?;
+    for (ms, wide, narrow) in [
+        (0, 80., 80.),
+        (50, 112., 64.),
+        (100, 128., 60.),
+        (200, 128., 60.),
+    ] {
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        for (width, first) in [(256., wide), (128., narrow)] {
+            ui.layout(
+                view,
+                Size {
+                    width: px(width),
+                    height: px(20.),
+                },
+            )?;
+            let a = ui.geometry(view, items[0]).unwrap();
+            let b = ui.geometry(view, items[1]).unwrap();
+            assert_eq!(a.metrics.size.width, px(first));
+            assert_eq!(b.origin.x, px(first));
+            assert_eq!(b.metrics.size.width, px(width - first));
+        }
+        assert_eq!(ui.record_frame(view)?.requests_animation_frame(), ms < 200);
+    }
+    Ok(())
+}

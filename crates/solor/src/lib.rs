@@ -393,6 +393,17 @@ impl Instance {
                     if let Some(gap) = self.transitions.gaps.remove(id) {
                         self.scene.set_flex_gap(id, gap)?;
                     }
+                    for factor in layout::FlexFactor::ALL {
+                        if let Some(value) = self.transitions.flex_factors.remove((id, factor)) {
+                            self.scene.set_flex_factor(id, factor, value)?;
+                        }
+                    }
+                    if let Some((padding, apply)) = self.transitions.padding.remove_with_data(id)
+                        && let Some(insets) = apply(&mut self.scene, id, padding)?
+                        && let Some(handlers) = body.handlers.as_mut()
+                    {
+                        handlers.padding = insets;
+                    }
                     if let Some(radii) = self.transitions.radii.remove(id) {
                         body.set_corner_radii(radii);
                     }

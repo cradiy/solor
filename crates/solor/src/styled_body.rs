@@ -15,9 +15,8 @@ pub(crate) struct StyledBody<E> {
 
 pub(crate) struct BoxModel {
     padding_box_insets: ContentInsets,
-    padding_and_border: Size,
-    origin: Origin,
-    inset: Size,
+    pub(crate) padding: Edges,
+    border: Size,
     margins: Option<Box<Edges<Option<ComputedLength>>>>,
     box_sizing: BoxSizing,
     aspect_ratio: Option<f32>,
@@ -60,34 +59,51 @@ impl<E> StyledBody<E> {
     }
 
     pub fn origin(&self) -> Origin {
-        self.bounds.origin
+        self.bounds.content_insets().origin
     }
     pub fn content_size(&self, size: Size) -> Size {
         self.bounds.content_insets().content_size(size)
     }
     fn baseline(&self, baseline: Option<Pixels>) -> Result<Option<Pixels>> {
-        baseline.map(|v| add(v, self.bounds.origin.y)).transpose()
+        baseline.map(|v| add(v, self.origin().y)).transpose()
     }
 }
 
 impl BoxModel {
     pub(crate) fn content_insets(&self) -> ContentInsets {
         ContentInsets {
-            origin: self.origin,
-            total: self.inset,
+            origin: Origin {
+                x: self.padding_box_insets.origin.x + self.padding.left,
+                y: self.padding_box_insets.origin.y + self.padding.top,
+            },
+            total: self.with_padding(self.padding_box_insets.total),
         }
+    }
+
+    fn with_padding(&self, size: Size) -> Size {
+        Size {
+            width: self.padding.left + self.padding.right + size.width,
+            height: self.padding.top + self.padding.bottom + size.height,
+        }
+    }
+
+    pub(crate) fn set_padding(&mut self, padding: Edges) -> Result<()> {
+        if [padding.top, padding.right, padding.bottom, padding.left]
+            .iter()
+            .any(|value| !value.is_extent())
+        {
+            return Err(LayoutError::InvalidSize);
+        }
+        let totals = self.padding_box_insets.total;
+        add(add(padding.left, padding.right)?, totals.width)?;
+        add(add(padding.top, padding.bottom)?, totals.height)?;
+        self.padding = padding;
+        Ok(())
     }
 
     pub(crate) fn resolve(style: &Style, units: UnitResolver, gutter: Size) -> Result<Self> {
         let aspect_ratio = style.layout.as_ref().and_then(|layout| layout.aspect_ratio);
         if aspect_ratio.is_some_and(|ratio| !ratio.is_finite() || ratio <= 0.0) {
-            return Err(LayoutError::InvalidSize);
-        }
-        let p = style.padding;
-        if [p.top, p.right, p.bottom, p.left]
-            .iter()
-            .any(|v| !v.is_extent())
-        {
             return Err(LayoutError::InvalidSize);
         }
         let margins = style
@@ -101,10 +117,6 @@ impl BoxModel {
         let b = style.border_widths(units)?;
         let border_width = add(b.left, b.right)?;
         let border_height = add(b.top, b.bottom)?;
-        let padding_and_border = Size {
-            width: add(add(p.left, p.right)?, border_width)?,
-            height: add(add(p.top, p.bottom)?, border_height)?,
-        };
         let padding_box_insets = ContentInsets {
             origin: Origin {
                 x: b.left,
@@ -115,25 +127,23 @@ impl BoxModel {
                 height: add(border_height, gutter.height)?,
             },
         };
-        Ok(Self {
+        let mut bounds = Self {
             padding_box_insets,
-            padding_and_border,
+            padding: Edges::default(),
+            border: Size {
+                width: border_width,
+                height: border_height,
+            },
             margins,
             aspect_ratio,
-            origin: Origin {
-                x: add(p.left, b.left)?,
-                y: add(p.top, b.top)?,
-            },
-            inset: Size {
-                width: add(padding_and_border.width, gutter.width)?,
-                height: add(padding_and_border.height, gutter.height)?,
-            },
             box_sizing: style
                 .layout
                 .as_ref()
                 .and_then(|layout| layout.box_sizing)
                 .unwrap_or(BoxSizing::BorderBox),
-        })
+        };
+        bounds.set_padding(style.padding)?;
+        Ok(bounds)
     }
 
     fn sizing_extra(&self, inset: Pixels) -> Pixels {
@@ -147,6 +157,7 @@ impl BoxModel {
         &self,
         style: &Style,
         units: UnitResolver,
+        reserve_shrink: bool,
     ) -> Result<Option<ItemSizing>> {
         let Some(layout) = &style.layout else {
             return Ok(None);
@@ -160,19 +171,20 @@ impl BoxModel {
                 extra: self.sizing_extra(inset),
             }))
         };
-        let width = bounds(layout.min_width, layout.max_width, self.inset.width)?;
-        let height = bounds(layout.min_height, layout.max_height, self.inset.height)?;
+        let inset = self.content_insets().total;
+        let width = bounds(layout.min_width, layout.max_width, inset.width)?;
+        let height = bounds(layout.min_height, layout.max_height, inset.height)?;
         let basis = units
             .dimension(layout.flex_basis.unwrap_or_default())?
             .map(|length| FlexBasis {
                 length,
                 extra: Size {
-                    width: self.sizing_extra(self.inset.width),
-                    height: self.sizing_extra(self.inset.height),
+                    width: self.sizing_extra(inset.width),
+                    height: self.sizing_extra(inset.height),
                 },
             });
-        let shrink_inset = if layout.flex_shrink.unwrap_or_default() > 0.0 {
-            self.inset
+        let shrink_inset = if reserve_shrink || layout.flex_shrink.unwrap_or_default() > 0.0 {
+            inset
         } else {
             Size::default()
         };
@@ -187,6 +199,7 @@ impl BoxModel {
             || width.is_some()
             || height.is_some()
             || basis.is_some()
+            || reserve_shrink
             || shrink_inset != Size::default())
         .then_some(ItemSizing {
             position,
@@ -216,14 +229,15 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
         })
     }
     fn measure(&mut self, cx: &mut MeasureContext<'_, '_>, query: Query) -> Result<Metrics> {
-        let inner = |w: Pixels| w.saturating_sub(self.bounds.inset.width);
+        let inset = self.bounds.content_insets().total;
+        let inner = |w: Pixels| w.saturating_sub(inset.width);
         let basis = cx.containing_block();
         let mut width = match cx.item_basis {
             ItemBasis::Width(width) => width,
             _ => border_extent(
                 cx.preferred_size.width,
                 basis.width,
-                self.bounds.sizing_extra(self.bounds.inset.width),
+                self.bounds.sizing_extra(inset.width),
             )?,
         };
         let range = cx.height_range;
@@ -232,7 +246,7 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
             _ => border_extent(
                 cx.preferred_size.height,
                 basis.height,
-                self.bounds.sizing_extra(self.bounds.inset.height),
+                self.bounds.sizing_extra(inset.height),
             )?,
         }
         .map(|h| range.clamp(h))
@@ -242,8 +256,8 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
                 Query::Exact(w) => Some(w),
                 _ => width.map(|w| query.resolve(w)),
             };
-            let inset_x = self.bounds.sizing_extra(self.bounds.inset.width);
-            let inset_y = self.bounds.sizing_extra(self.bounds.inset.height);
+            let inset_x = self.bounds.sizing_extra(inset.width);
+            let inset_y = self.bounds.sizing_extra(inset.height);
             match (used_width, height) {
                 (Some(w), None) => {
                     let derived = add(w.saturating_sub(inset_x) / ratio, inset_y)?;
@@ -267,7 +281,7 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
                     Query::Exact(w) => Some(w),
                     _ => None,
                 },
-                height: height.map(|h| h.saturating_sub(self.bounds.inset.height)),
+                height: height.map(|h| h.saturating_sub(inset.height)),
             });
             self.content
                 .measure(cx, content_query)?
@@ -277,7 +291,7 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
         let height = match height {
             Some(h) => h,
             None => {
-                let natural = add(metrics.size.height, self.bounds.inset.height)?;
+                let natural = add(metrics.size.height, inset.height)?;
                 let used = range.clamp(natural);
                 if range.reaches_limit(natural) && cx.child_count() > 0 {
                     metrics = measure(cx, Some(used))?;
@@ -287,7 +301,7 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
         };
         let width = match width {
             Some(w) => w,
-            None => add(metrics.size.width, self.bounds.inset.width)?,
+            None => add(metrics.size.width, inset.width)?,
         };
         Ok(Metrics {
             size: Size {
@@ -309,14 +323,39 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
         if origin != Origin::default() {
             cx.offset_children(origin)?;
         }
+        let outer = self.bounds.with_padding(self.bounds.border);
         Ok(LayoutOutput {
             content: Size {
-                width: add(out.content.width, self.bounds.padding_and_border.width)?,
-                height: add(out.content.height, self.bounds.padding_and_border.height)?,
+                width: add(out.content.width, outer.width)?,
+                height: add(out.content.height, outer.height)?,
             },
             baseline: self
                 .baseline(out.baseline)?
                 .filter(|&b| b <= assigned.height),
         })
     }
+}
+
+pub(crate) type ApplyPadding =
+    fn(&mut crate::layout::Scene, crate::NodeId, Edges) -> Result<Option<ContentInsets>>;
+
+pub(crate) fn apply_padding<E: LayoutNode>(
+    scene: &mut crate::layout::Scene,
+    id: crate::NodeId,
+    padding: Edges,
+) -> Result<Option<ContentInsets>> {
+    if scene.body::<StyledBody<E>>(id)?.bounds.padding == padding {
+        return Ok(None);
+    }
+    let mut updated = Ok(());
+    scene.edit_layout::<StyledBody<E>>(id, |body| updated = body.bounds.set_padding(padding))?;
+    updated?;
+    let bounds = &scene.body::<StyledBody<E>>(id)?.bounds;
+    let insets = bounds.content_insets();
+    let extra = Size {
+        width: bounds.sizing_extra(insets.total.width),
+        height: bounds.sizing_extra(insets.total.height),
+    };
+    scene.set_item_insets(id, insets.total, extra)?;
+    Ok(Some(insets))
 }

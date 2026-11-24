@@ -202,3 +202,50 @@ fn animated_basis_uses_the_current_main_axis_before_distributing_space() -> Resu
     }
     Ok(())
 }
+
+#[test]
+fn animated_content_box_padding_contributes_to_flex_basis_and_minimum_width() -> Result<()> {
+    use solor::{Transition, TransitionProperty, style::BoxSizing};
+    use std::time::Duration;
+
+    let mut ui = Ui::new();
+    let padding = ui.context().signal(px(4.));
+    let view = ui.mount(component(move |_| {
+        div()
+            .flex_row()
+            .child(
+                div()
+                    .box_sizing(BoxSizing::ContentBox)
+                    .px(padding)
+                    .flex_basis(px(36.))
+                    .min_w(px(24.))
+                    .flex_shrink(1.)
+                    .transition(
+                        TransitionProperty::Padding,
+                        Transition::new(Duration::from_millis(100)),
+                    ),
+            )
+            .child(div().flex_basis(px(36.)).flex_shrink(1.))
+    }))?;
+    let items: Vec<_> = ui.children(view, ui.root(view)?)?.collect();
+    ui.context().set(padding, px(12.))?;
+    for (ms, pad) in [(0, 4.), (50, 8.), (100, 12.)] {
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        for (width, content) in [(130., 36.), (52., 24.)] {
+            ui.layout(
+                view,
+                Size {
+                    width: px(width),
+                    height: px(20.),
+                },
+            )?;
+            let first = px(content + 2. * pad);
+            assert_eq!(
+                ui.geometry(view, items[0]).unwrap().metrics.size.width,
+                first
+            );
+            assert_eq!(ui.geometry(view, items[1]).unwrap().origin.x, first);
+        }
+    }
+    Ok(())
+}

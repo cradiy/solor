@@ -1335,7 +1335,7 @@ impl AnyElement {
             }
             node.body.prepare_content(style)?;
             let body = StyledBody::new(node.body, style, units, mounted.scroll_axes.gutter)?;
-            let item_sizing = body.bounds.item_sizing(style, units)?;
+            let item_sizing = body.bounds.item_sizing(style, units, false)?;
             if let Some(handlers) = node.handlers.as_mut() {
                 handlers.padding = body.bounds.content_insets();
             }

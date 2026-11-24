@@ -2,8 +2,8 @@
 use std::{collections::HashMap, hash::Hash, time::Duration};
 
 use crate::{
-    NodeId, Pixels, Rgba,
-    layout::{ComputedLength, Dimension},
+    Edges, NodeId, Pixels, Rgba,
+    layout::{ComputedLength, Dimension, FlexFactor},
     px,
     style::Corners,
 };
@@ -26,8 +26,14 @@ pub enum TransitionProperty {
     MaxHeight,
     /// Initial size on the flex main axis, before free space is distributed.
     FlexBasis,
+    /// Relative share of surplus space on the flex main axis.
+    FlexGrow,
+    /// Flex shrink factor, weighted by the item's inner base size when space is scarce.
+    FlexShrink,
     /// Spacing between adjacent children along a flex container's main axis.
     Gap,
+    /// Space between each border edge and the element content.
+    Padding,
     /// The four radii of the border box.
     BorderRadius,
     /// Opacity of the composited subtree.
@@ -133,7 +139,8 @@ impl Transition {
     }
 }
 
-struct Track<T> {
+struct Track<T, D> {
+    data: D,
     timing: Transition,
     start: Option<Duration>,
     from: T,
@@ -144,7 +151,9 @@ struct Track<T> {
 pub(crate) struct Transitions {
     pub(crate) opacity: Tracks<f32>,
     pub(crate) dimensions: Tracks<ComputedLength, (NodeId, Dimension)>,
+    pub(crate) flex_factors: Tracks<f32, (NodeId, FlexFactor)>,
     pub(crate) gaps: Tracks<Pixels>,
+    pub(crate) padding: Tracks<Edges, NodeId, crate::styled_body::ApplyPadding>,
     pub(crate) radii: Tracks<Corners<Pixels>>,
     pub(crate) lengths: Tracks<Pixels, (NodeId, TransitionProperty)>,
     pub(crate) colors: Tracks<Rgba, (NodeId, TransitionProperty)>,
@@ -155,7 +164,9 @@ impl Transitions {
     pub(crate) fn is_active(&self) -> bool {
         !self.opacity.active.is_empty()
             || !self.dimensions.active.is_empty()
+            || !self.flex_factors.active.is_empty()
             || !self.gaps.active.is_empty()
+            || !self.padding.active.is_empty()
             || !self.radii.active.is_empty()
             || !self.lengths.active.is_empty()
             || !self.colors.active.is_empty()
@@ -165,6 +176,10 @@ impl Transitions {
     pub(crate) fn remove(&mut self, id: NodeId) {
         self.opacity.remove(id);
         self.gaps.remove(id);
+        self.padding.remove_with_data(id);
+        for factor in FlexFactor::ALL {
+            self.flex_factors.remove((id, factor));
+        }
         self.radii.remove(id);
         for dimension in Dimension::ALL {
             self.dimensions.remove((id, dimension));
@@ -179,12 +194,12 @@ impl Transitions {
     }
 }
 
-pub(crate) struct Tracks<T, K = NodeId> {
-    active: HashMap<K, Track<T>>,
+pub(crate) struct Tracks<T, K = NodeId, D = ()> {
+    active: HashMap<K, Track<T, D>>,
     last_frame: Duration,
 }
 
-impl<T, K> Default for Tracks<T, K> {
+impl<T, K, D> Default for Tracks<T, K, D> {
     fn default() -> Self {
         Self {
             active: HashMap::new(),
@@ -211,6 +226,14 @@ impl Interpolate for Pixels {
 }
 
 impl TransitionProperty {
+    pub(crate) fn flex_factor(self) -> Option<FlexFactor> {
+        match self {
+            Self::FlexGrow => Some(FlexFactor::Grow),
+            Self::FlexShrink => Some(FlexFactor::Shrink),
+            _ => None,
+        }
+    }
+
     pub(crate) fn dimension(self) -> Option<Dimension> {
         Some(match self {
             Self::FlexBasis => Dimension::FlexBasis,
@@ -239,6 +262,17 @@ impl Interpolate for ComputedLength {
     }
 }
 
+impl Interpolate for Edges {
+    fn interpolate(self, target: Self, t: f32) -> Self {
+        Self {
+            top: self.top.interpolate(target.top, t),
+            right: self.right.interpolate(target.right, t),
+            bottom: self.bottom.interpolate(target.bottom, t),
+            left: self.left.interpolate(target.left, t),
+        }
+    }
+}
+
 impl Interpolate for Corners<Pixels> {
     fn interpolate(self, target: Self, t: f32) -> Self {
         Self {
@@ -261,7 +295,7 @@ impl Interpolate for Rgba {
 
 impl<T: Interpolate, K: Copy + Eq + Hash> Tracks<T, K> {
     pub(crate) fn remove(&mut self, key: K) -> Option<T> {
-        self.active.remove(&key).map(|track| track.target)
+        self.remove_with_data(key).map(|(target, ())| target)
     }
 
     pub(crate) fn retarget(
@@ -271,8 +305,35 @@ impl<T: Interpolate, K: Copy + Eq + Hash> Tracks<T, K> {
         target: T,
         timing: Option<Transition>,
     ) -> T {
+        self.retarget_with_data(key, current, target, timing, ())
+    }
+
+    pub(crate) fn advance(
+        &mut self,
+        now: Duration,
+        mut apply: impl FnMut(K, T) -> crate::Result<()>,
+    ) -> crate::Result<()> {
+        self.advance_with_data(now, |key, value, ()| apply(key, value))
+    }
+}
+
+impl<T: Interpolate, K: Copy + Eq + Hash, D: Copy> Tracks<T, K, D> {
+    pub(crate) fn remove_with_data(&mut self, key: K) -> Option<(T, D)> {
+        self.active
+            .remove(&key)
+            .map(|track| (track.target, track.data))
+    }
+
+    pub(crate) fn retarget_with_data(
+        &mut self,
+        key: K,
+        current: T,
+        target: T,
+        timing: Option<Transition>,
+        data: D,
+    ) -> T {
         let Some(timing) = timing.filter(|t| !t.duration.is_zero() && current != target) else {
-            self.remove(key);
+            self.remove_with_data(key);
             return target;
         };
         let previous = self.active.get(&key);
@@ -284,6 +345,7 @@ impl<T: Interpolate, K: Copy + Eq + Hash> Tracks<T, K> {
         self.active.insert(
             key,
             Track {
+                data,
                 timing,
                 start,
                 from: current,
@@ -293,10 +355,10 @@ impl<T: Interpolate, K: Copy + Eq + Hash> Tracks<T, K> {
         current
     }
 
-    pub(crate) fn advance(
+    pub(crate) fn advance_with_data(
         &mut self,
         now: Duration,
-        mut apply: impl FnMut(K, T) -> crate::Result<()>,
+        mut apply: impl FnMut(K, T, D) -> crate::Result<()>,
     ) -> crate::Result<()> {
         self.last_frame = now;
         let mut result = Ok(());
@@ -318,7 +380,7 @@ impl<T: Interpolate, K: Copy + Eq + Hash> Tracks<T, K> {
                 };
                 track.from.interpolate(track.target, t)
             };
-            result = apply(key, value);
+            result = apply(key, value, track.data);
             !finished || result.is_err()
         });
         result

@@ -1,10 +1,10 @@
 use std::time::Duration;
 
-use crate::{INK, MUTED, Selection, label};
+use crate::{INK, MUTED, Selection, control, label};
 use solor::{
     Context, Div, Length, Render, Styled, Transition,
     TransitionProperty::{
-        BorderRadius, Gap, Height, MaxHeight, MaxWidth, MinHeight, MinWidth, Width,
+        BorderRadius, Gap, Height, MaxHeight, MaxWidth, MinHeight, MinWidth, Padding, Width,
     },
     component, div, percent, px, rgb,
 };
@@ -80,26 +80,39 @@ fn spacing(cx: &mut Context<'_>, timing: Transition) -> Div {
     let controls = Selection::new(cx, 0, false).buttons_with(["4 px", "24 px"], move |i, cx| {
         cx.set(gap, px([4., 24.][i]))
     });
+    let padding = cx.signal(px(2.));
+    let insets = Selection::new(cx, 0, false).buttons_with(["2 px", "14 px"], move |i, cx| {
+        cx.set(padding, px([2., 14.][i]))
+    });
+    let bars = div()
+        .flex_row()
+        .items_center()
+        .gap(gap)
+        .p(padding)
+        .bg(rgb(0xc7dbd0))
+        .rounded(px(10.))
+        .transition([Gap, Padding], timing)
+        .children(
+            [
+                (32., 0x679c90),
+                (50., 0x448277),
+                (68., 0x285f57),
+                (50., 0x448277),
+                (32., 0x679c90),
+            ]
+            .map(|(height, tint)| div().w(px(18.)).h(px(height)).rounded(px(9.)).bg(rgb(tint))),
+        );
     specimen(
-        "Flex gap",
-        controls,
+        "Spacing",
         div()
-            .flex_row()
+            .gap(px(6.))
+            .child(control("Gap", controls))
+            .child(control("Padding", insets)),
+        div()
             .items_center()
             .justify_center()
             .bg(rgb(0xe4ede7))
-            .gap(gap)
-            .transition(Gap, timing)
-            .children(
-                [
-                    (32., 0x679c90),
-                    (50., 0x448277),
-                    (68., 0x285f57),
-                    (50., 0x448277),
-                    (32., 0x679c90),
-                ]
-                .map(|(height, tint)| div().w(px(18.)).h(px(height)).rounded(px(9.)).bg(rgb(tint))),
-            ),
+            .child(bars),
     )
 }
 

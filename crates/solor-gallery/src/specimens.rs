@@ -501,13 +501,26 @@ fn flex_layout(alignment: Selection<3>) -> Div {
 }
 
 fn flex_allocation(cx: &mut solor::Context<'_>) -> Div {
-    let basis = cx.signal(solor::Length::from(px(0.)));
-    let controls = Selection::new(cx, 0, false).buttons_with(["0 px", "50%"], move |index, cx| {
-        cx.set(basis, [px(0.).into(), solor::percent(50.)][index])
-    });
-    let tile = |weight, name, tint| {
+    let zero = solor::Length::from(px(0.));
+    let half = solor::percent(50.);
+    let middle_basis = cx.signal(zero);
+    let side_basis = cx.signal(zero);
+    let controls = Selection::new(cx, 0, false).buttons_with(
+        ["Zero", "Middle 50%", "All 50%"],
+        move |index, cx| {
+            let (middle, side) = [(zero, zero), (half, zero), (half, half)][index];
+            cx.set(middle_basis, middle)?;
+            cx.set(side_basis, side)
+        },
+    );
+    let weight = cx.signal(2.0_f32);
+    let weights = Selection::new(cx, 1, false)
+        .buttons_with(["1:1:1", "1:2:1", "1:4:1"], move |index, cx| {
+            cx.set(weight, [1.0_f32, 2., 4.][index])
+        });
+    let timing = Transition::new(std::time::Duration::from_millis(750)).ease_out();
+    let tile = |name, tint| {
         div()
-            .flex_grow(weight)
             .h(px(50.))
             .rounded(px(8.))
             .items_center()
@@ -515,13 +528,27 @@ fn flex_allocation(cx: &mut solor::Context<'_>) -> Div {
             .bg(rgb(tint))
             .child(label(name, 19., 26.).text_color(INK))
     };
-    let side = || tile(1., "1", 0xc8dbbe).flex_basis(px(0.));
-    let middle = tile(2., "2", 0xa5cbb0).flex_basis(basis).transition(
-        TransitionProperty::FlexBasis,
-        Transition::new(std::time::Duration::from_millis(750)).ease_out(),
-    );
+    let side = |name| {
+        tile(name, 0xc8dbbe)
+            .flex_grow(1.)
+            .flex_shrink(1.)
+            .flex_basis(side_basis)
+            .transition(TransitionProperty::FlexBasis, timing)
+    };
+    let middle = tile("Middle", 0xa5cbb0)
+        .flex_grow(weight)
+        .flex_shrink(weight)
+        .flex_basis(middle_basis)
+        .transition(
+            [
+                TransitionProperty::FlexBasis,
+                TransitionProperty::FlexGrow,
+                TransitionProperty::FlexShrink,
+            ],
+            timing,
+        );
     details(
-        "Flex grow",
+        "Flex allocation",
         div()
             .items_stretch()
             .gap(px(6.))
@@ -529,8 +556,15 @@ fn flex_allocation(cx: &mut solor::Context<'_>) -> Div {
                 div()
                     .flex_row()
                     .gap(px(6.))
-                    .children([side(), middle, side()]),
+                    .children([side("Left"), middle, side("Right")]),
             )
-            .child(control("Middle item basis", controls)),
+            .child(
+                div()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap(px(18.))
+                    .child(control("Basis", controls))
+                    .child(control("Weights", weights)),
+            ),
     )
 }

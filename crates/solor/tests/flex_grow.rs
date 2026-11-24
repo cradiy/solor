@@ -184,3 +184,55 @@ fn column_growth_sets_the_percentage_basis_for_nested_content() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn animated_growth_redistributes_space_when_retargeted_at_a_width_limit() -> Result<()> {
+    use solor::{Transition, TransitionProperty};
+    use std::time::Duration;
+
+    let mut ui = Ui::new();
+    let grow = ui.context().signal(0.0_f32);
+    let view = ui.mount(component(move |_| {
+        div()
+            .flex_row()
+            .child(
+                div()
+                    .max_w(px(72.))
+                    .flex_basis(px(0.))
+                    .flex_grow(grow)
+                    .transition(
+                        TransitionProperty::FlexGrow,
+                        Transition::new(Duration::from_millis(100)),
+                    ),
+            )
+            .child(div().flex_1())
+    }))?;
+    let size = Size {
+        width: px(120.),
+        height: px(20.),
+    };
+    ui.layout(view, size)?;
+    let nodes: Vec<_> = ui.children(view, ui.root(view)?)?.collect();
+    ui.context().set(grow, 4.0_f32)?;
+    for (ms, expected, reverse) in [
+        (0, 0., false),
+        (25, 60., false),
+        (50, 72., false),
+        (50, 72., true),
+        (100, 60., false),
+        (150, 0., false),
+    ] {
+        if reverse {
+            ui.context().set(grow, 0.0_f32)?;
+        }
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        ui.layout(view, size)?;
+        let first = ui.geometry(view, nodes[0]).unwrap();
+        let second = ui.geometry(view, nodes[1]).unwrap();
+        assert_eq!(first.metrics.size.width, px(expected));
+        assert_eq!(second.origin.x, px(expected));
+        assert_eq!(second.metrics.size.width, size.width - px(expected));
+        assert_eq!(ui.record_frame(view)?.requests_animation_frame(), ms < 150);
+    }
+    Ok(())
+}

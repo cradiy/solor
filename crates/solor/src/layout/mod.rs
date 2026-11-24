@@ -11,7 +11,7 @@ pub(crate) use engine::sizing::{
     AxisLimits, ComputedLength, Dimension, FlexBasis, ItemBasis, ItemSizing, Positioning,
     PreferredSize, RelativeOffset, border_extent,
 };
-pub(crate) use engine::{FlexItemStyle, OverflowClip};
+pub(crate) use engine::{FlexFactor, FlexItemStyle, OverflowClip};
 mod flex;
 pub use flex::{FlexDirection, FlexLayout};
 mod margin;

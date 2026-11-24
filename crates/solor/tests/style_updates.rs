@@ -1309,3 +1309,65 @@ fn animated_min_and_max_constraints_follow_the_content_box_and_parent() -> Resul
     assert!(!ui.record_frame(view)?.requests_animation_frame());
     Ok(())
 }
+
+#[test]
+fn animated_padding_reflows_text_at_the_presented_content_width() -> Result<()> {
+    use solor::{Transition, TransitionProperty};
+    use std::time::Duration;
+
+    let mut ui = Ui::with_font(FONT.to_vec())?;
+    let left = ui.context().signal(px(2.));
+    let top = ui.context().signal(px(4.));
+    let view = ui.mount(component(|_| {
+        div().items_start().child(
+            text("Audio settings and output device selection")
+                .w(px(160.))
+                .line_height(px(20.))
+                .pl(left)
+                .pr(px(8.))
+                .pt(top)
+                .pb(px(3.))
+                .transition(
+                    TransitionProperty::Padding,
+                    Transition::new(Duration::from_millis(100)),
+                ),
+        )
+    }))?;
+    let label = ui.children(view, ui.root(view)?)?.next().unwrap();
+    ui.context().set(left, px(86.))?;
+    ui.context().set(top, px(12.))?;
+    let mut rows = Vec::new();
+    for (ms, x, y) in [(0, 2., 4.), (50, 44., 8.), (100, 86., 12.)] {
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        ui.layout(
+            view,
+            Size {
+                width: px(180.),
+                height: px(400.),
+            },
+        )?;
+        let frame = ui.record_frame(view)?;
+        let [
+            Draw::Text {
+                origin,
+                size,
+                paragraph,
+                ..
+            },
+        ] = frame.draws()
+        else {
+            panic!("expected label")
+        };
+        assert_eq!(*origin, Origin { x: px(x), y: px(y) });
+        assert_eq!(size.width, px(160. - x - 8.));
+        let lines = paragraph.lines.len();
+        assert_eq!(
+            ui.geometry(view, label).unwrap().metrics.size.height,
+            px(y + lines as f32 * 20. + 3.)
+        );
+        assert_eq!(frame.requests_animation_frame(), ms < 100);
+        rows.push(lines);
+    }
+    assert!(rows[0] < rows[2]);
+    Ok(())
+}

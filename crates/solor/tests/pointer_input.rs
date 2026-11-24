@@ -166,6 +166,8 @@ fn label_hits_button_up_precedes_click_and_bindings_wait_for_flush() -> Result<(
 
 #[test]
 fn captured_content_coordinates_follow_the_presented_paint_box() -> Result<()> {
+    use solor::{Transition, TransitionProperty};
+    use std::time::Duration;
     let mut ui = Ui::new();
     let left = ui.context().signal(px(2.5));
     let last_move = Rc::new(Cell::new(None));
@@ -176,6 +178,10 @@ fn captured_content_coordinates_follow_the_presented_paint_box() -> Result<()> {
                 .w(px(20.0))
                 .h(px(12.0))
                 .pl(left)
+                .transition(
+                    TransitionProperty::Padding,
+                    Transition::new(Duration::from_millis(100)),
+                )
                 .pr(px(3.0))
                 .pt(px(1.25))
                 .pb(px(2.75))
@@ -234,8 +240,9 @@ fn captured_content_coordinates_follow_the_presented_paint_box() -> Result<()> {
         Ok(())
     };
     assert_eq!(presented.1.width, px(14.5));
-    for (padding, expected_width) in [(7.5, 9.5), (18.0, 0.0)] {
-        ui.context().set(left, px(padding))?;
+    ui.context().set(left, px(18.0))?;
+    for (ms, expected_width) in [(0, 14.5), (50, 6.75), (100, 0.0)] {
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
         let (next, painted) = record(&mut ui)?;
         assert_eq!(painted.1.width, px(expected_width));
         check(&mut ui, presented)?;

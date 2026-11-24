@@ -330,11 +330,46 @@ impl crate::Instance {
             || clip != node.overflow_clip
             || scroll_axes.gutter != node.scroll_axes.gutter
         {
-            let bounds =
+            let mut bounds =
                 crate::styled_body::BoxModel::resolve(&style, self.units, scroll_axes.gutter)?;
-            let mut sizing = bounds.item_sizing(&style, self.units)?;
+            let mut padding_changes = false;
+            if let Some(timing) = timing(crate::TransitionProperty::Padding) {
+                let current = self.scene.body::<StyledBody<E>>(id)?.bounds.padding;
+                let displayed = self.transitions.padding.retarget_with_data(
+                    id,
+                    current,
+                    style.padding,
+                    Some(timing),
+                    crate::styled_body::apply_padding::<E>,
+                );
+                padding_changes = displayed != style.padding;
+                if padding_changes {
+                    bounds.set_padding(displayed)?;
+                }
+            }
+            let shrinking_to_zero = item.shrink == 0.0
+                && timing(crate::TransitionProperty::FlexShrink).is_some()
+                && self
+                    .scene
+                    .flex_factor(id, crate::layout::FlexFactor::Shrink)?
+                    > 0.0;
+            let mut sizing = bounds.item_sizing(
+                &style,
+                self.units,
+                shrinking_to_zero || (padding_changes && item.shrink > 0.0),
+            )?;
             if let Some(rules) = rules {
                 for (&property, &timing) in rules {
+                    if let Some(factor) = property.flex_factor() {
+                        let slot = factor.slot(&mut item);
+                        *slot = self.transitions.flex_factors.retarget(
+                            (id, factor),
+                            self.scene.flex_factor(id, factor)?,
+                            *slot,
+                            Some(timing),
+                        );
+                        continue;
+                    }
                     let Some(dimension) = property.dimension() else {
                         continue;
                     };
