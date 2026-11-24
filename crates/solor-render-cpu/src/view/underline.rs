@@ -16,7 +16,7 @@ pub(super) fn draw(
     scale: RasterScale,
     clip: Clip,
 ) -> Result<()> {
-    let mut brush = painter(color, at, size, scale, (0, 0))?;
+    let mut brush = painter(color, at, size, scale, (0, 0), clip)?;
     let left = f64::from(at.x) * scale.0;
     let right = left + f64::from(size.width) * scale.0;
     let height = f64::from(size.height) * scale.0;

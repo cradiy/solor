@@ -158,6 +158,26 @@ pub struct Context<'a> {
 }
 
 impl Context<'_> {
+    /// Shapes text using this UI's fonts for drawing a retained paragraph.
+    pub fn shape_text(
+        &self,
+        content: impl Into<SharedString>,
+        typography: &style::Typography,
+        query: layout::Query,
+    ) -> Result<Rc<text::Paragraph>> {
+        let mut text = text::Text::new(
+            self.engine.engine().clone(),
+            content.into(),
+            text::TextStyle {
+                size: typography.size,
+                line_height: typography.line_height,
+            },
+            false,
+        )?;
+        text.set_paragraph_style(typography.attributes.as_deref(), typography.letter_spacing);
+        Ok(text.resolve(query)?)
+    }
+
     /// Creates a typed signal owned by the active mount or application.
     pub fn signal<T: 'static>(&mut self, initial: T) -> Signal<T> {
         let signal = self.state.create_signal(initial);

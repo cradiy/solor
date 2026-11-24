@@ -1,4 +1,4 @@
-//! A FIFO of grayscale outline masks keyed by resolved face, device size and glyph.
+//! A FIFO of grayscale outline masks keyed by face, device size, glyph and vertical subpixel position.
 use std::collections::VecDeque;
 use std::io::Result;
 
@@ -8,6 +8,7 @@ struct Entry {
     face: u64,
     size_bits: u32,
     glyph: u16,
+    y_phase: u8,
     mask: Image,
 }
 
@@ -53,14 +54,13 @@ impl GlyphMasks {
         face: u64,
         size_bits: u32,
         glyph: u16,
+        y_phase: u8,
         scratch: &'a mut Image,
         render: impl FnOnce(&mut Image) -> Result<()>,
     ) -> Result<&'a Image> {
-        if let Some(index) = self
-            .entries
-            .iter()
-            .position(|e| e.face == face && e.size_bits == size_bits && e.glyph == glyph)
-        {
+        if let Some(index) = self.entries.iter().position(|e| {
+            e.face == face && e.size_bits == size_bits && e.glyph == glyph && e.y_phase == y_phase
+        }) {
             self.hits = self.hits.saturating_add(1);
             return Ok(&self.entries[index].mask);
         }
@@ -90,6 +90,7 @@ impl GlyphMasks {
             face,
             size_bits,
             glyph,
+            y_phase,
             mask: std::mem::take(scratch),
         });
         Ok(&self.entries.back().unwrap().mask)

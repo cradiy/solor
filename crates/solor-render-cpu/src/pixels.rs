@@ -255,14 +255,17 @@ impl<'a> TextRaster<'a> {
         if bounds.empty() || matches!(color, solor::Ink::Solid(c) if c.alpha == 0) {
             return Ok(());
         }
-        let mut paint = crate::mask::painter(color, at, allocated, scale, origin)?;
-        let renderer = Render::new(&[Source::Outline]);
+        let mut paint = crate::mask::painter(color, at, allocated, scale, origin, bounds)?;
+        let mut renderer = Render::new(&[Source::Outline]);
         let em = paragraph.style.size.get();
         let factor = scale.0 as f32;
         let device_em = em * factor;
         for line in &paragraph.lines {
             for run in line.glyphs.chunk_by(|a, b| a.face == b.face) {
-                let face = &paragraph.faces[run[0].face];
+                let face = paragraph
+                    .faces
+                    .get(run[0].face)
+                    .ok_or_else(|| Error::other("invalid glyph face index"))?;
                 let font = FontRef::from_index(face.data(), face.index() as usize)
                     .ok_or_else(|| Error::other("invalid paragraph font"))?;
                 let mut scaler = self
@@ -295,8 +298,19 @@ impl<'a> TextRaster<'a> {
                     {
                         continue;
                     }
+                    const Y_PHASES: i64 = 32;
+                    let baseline =
+                        f64::from(at.y) + f64::from(line.baseline + glyph.y - em * glyph.y_offset);
+                    let fixed_y = (baseline * scale.0 * Y_PHASES as f64).round() as i64;
+                    let baseline_y = fixed_y.div_euclid(Y_PHASES);
+                    let y_phase = fixed_y.rem_euclid(Y_PHASES) as u8;
                     let mut rasterize = |mask: &mut Image| {
                         mask.clear();
+                        // Outline coordinates grow upward from the baseline.
+                        renderer.offset(swash::zeno::Vector::new(
+                            0.,
+                            -f32::from(y_phase) / Y_PHASES as f32,
+                        ));
                         if renderer.render_into(&mut scaler, glyph.id, mask) {
                             Ok(())
                         } else {
@@ -308,6 +322,7 @@ impl<'a> TextRaster<'a> {
                             face.cache_key(),
                             device_em.to_bits(),
                             glyph.id,
+                            y_phase,
                             &mut self.scratch,
                             rasterize,
                         )?,
@@ -317,11 +332,7 @@ impl<'a> TextRaster<'a> {
                         }
                     };
                     let x = glyph_x.saturating_add(i64::from(mask.placement.left));
-                    let y = scale
-                        .edge(
-                            f64::from(at.y)
-                                + f64::from(line.baseline + glyph.y - em * glyph.y_offset),
-                        )
+                    let y = baseline_y
                         .saturating_sub(origin.1)
                         .saturating_sub(i64::from(mask.placement.top));
                     surface.composite(mask, x, y, bounds, &mut paint)?;

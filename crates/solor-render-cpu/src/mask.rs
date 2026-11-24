@@ -13,12 +13,24 @@ pub(super) trait MaskPainter {
 enum Brush<F> {
     Solid(Rgba),
     Gradient(F),
+    #[cfg(feature = "shader")]
+    Shader(Option<crate::bitmap::RegionSampler>, RasterScale),
 }
 
 impl<F: FnMut(i64, i64) -> Result<Rgba>> MaskPainter for Brush<F> {
     fn paint_row(&mut self, pixels: &mut [[u8; 4]], mask: &[u8], x: i64, y: i64) -> Result<()> {
         match self {
             Self::Solid(color) => tint_row(pixels, mask, *color),
+            #[cfg(feature = "shader")]
+            Self::Shader(shader, scale) => {
+                if let Some(shader) = shader {
+                    for (i, (dst, &coverage)) in pixels.iter_mut().zip(mask).enumerate() {
+                        if coverage != 0 {
+                            shader.blend(dst, x + i as i64, y, *scale, coverage);
+                        }
+                    }
+                }
+            }
             Self::Gradient(sample) => {
                 for (i, (dst, &coverage)) in pixels.iter_mut().zip(mask).enumerate() {
                     if coverage != 0 {
@@ -38,9 +50,21 @@ pub(super) fn painter(
     size: Size,
     scale: RasterScale,
     offset: (i64, i64),
+    _clip: solor::raster::Clip,
 ) -> Result<impl MaskPainter + '_> {
     match ink {
         Ink::Solid(color) => Ok(Brush::Solid(*color)),
+        #[cfg(feature = "shader")]
+        Ink::Shader(fill) => {
+            let origin = [
+                f64::from(at.x) * scale.0 - offset.0 as f64,
+                f64::from(at.y) * scale.0 - offset.1 as f64,
+            ];
+            Ok(Brush::Shader(
+                crate::bitmap::RegionSampler::shader(fill, origin, size, scale, _clip)?,
+                scale,
+            ))
+        }
         Ink::Gradient(g) => {
             let mut sample = g.sampler(size).map_err(Error::other)?;
             let local = move |device: i64, crop: i64, origin: solor::Pixels| {
@@ -50,6 +74,7 @@ pub(super) fn painter(
                 sample(local(x, offset.0, at.x), local(y, offset.1, at.y)).map_err(Error::other)
             }))
         }
+        _ => Err(Error::other("unsupported CPU foreground")),
     }
 }
 

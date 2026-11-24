@@ -8,6 +8,9 @@ description = "An interactive gallery of Solor interface primitives"
 [lints]
 workspace = true
 
+[features]
+shader = ["solor-platform/shader"]
+
 [dependencies]
 anyhow.workspace = true
 log.workspace = true
@@ -16,3 +19,7 @@ solor-platform.workspace = true
 
 [dev-dependencies]
 solor-render-cpu.workspace = true
+
+[[example]]
+name = "timed_text"
+required-features = ["shader"]

@@ -307,7 +307,7 @@ impl Surface {
                     let visible = visible.intersect(Clip::canvas(self.size));
                     let tint = tint
                         .as_ref()
-                        .map(|ink| crate::mask::painter(ink, *origin, *size, scale, (0, 0)))
+                        .map(|ink| crate::mask::painter(ink, *origin, *size, scale, (0, 0), bounds))
                         .transpose()?;
                     let region = crate::svg::Viewport {
                         bounds: viewport,

@@ -41,7 +41,7 @@ impl Surface {
         let rings = contours.rings;
         let (at, size) = match ink {
             Ink::Solid(_) => (origin, Size::default()),
-            Ink::Gradient(_) => {
+            _ => {
                 let b = PathBounds::new(origin, rings, RasterScale::ONE)?;
                 let width = f64::from(width);
                 (
@@ -56,7 +56,7 @@ impl Surface {
                 )
             }
         };
-        let mut painter = mask::painter(ink, at, size, scale, (0, 0))?;
+        let mut painter = mask::painter(ink, at, size, scale, (0, 0), clip)?;
         let pitch = (clip.right - clip.left) as usize;
         let radius = f64::from(width) * scale.0 * 0.5;
         let reach = radius + 0.5;

@@ -494,7 +494,11 @@ impl Gradient {
 
 /// Foreground paint for text, monochrome SVGs and polyline strokes.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Ink {
+    /// Fragment effect sampled through the primitive's coverage mask.
+    #[cfg(feature = "shader")]
+    Shader(crate::ShaderFill),
     /// Uniform foreground color.
     Solid(Rgba),
     /// Gradient across the primitive's paint bounds.
@@ -524,6 +528,8 @@ impl From<Ink> for Fill {
         match ink {
             Ink::Solid(c) => Self::Solid(c),
             Ink::Gradient(g) => Self::Gradient((*g).clone()),
+            #[cfg(feature = "shader")]
+            Ink::Shader(shader) => Self::Shader(shader),
         }
     }
 }

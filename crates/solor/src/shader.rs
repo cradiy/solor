@@ -57,6 +57,12 @@ impl<P> ShaderFill<P> {
     }
 }
 
+impl From<ShaderFill> for crate::Ink {
+    fn from(fill: ShaderFill) -> Self {
+        Self::Shader(fill)
+    }
+}
+
 impl From<ShaderFill> for crate::Fill {
     fn from(fill: ShaderFill) -> Self {
         Self::Shader(fill)

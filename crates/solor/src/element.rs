@@ -148,13 +148,7 @@ impl Text {
                 cx.text_stroke(&paragraph, stroke, &color)?;
             }
         }
-        cx.commands.push(Draw::Text {
-            clip: cx.clip.clone(),
-            origin: cx.origin,
-            size: cx.size,
-            paragraph: Rc::clone(&paragraph),
-            color: color.clone(),
-        });
+        cx.draw_paragraph(paragraph.clone(), cx.size, color.clone());
         if let Some(stroke) = decorations.and_then(|d| d.strike.as_ref()) {
             cx.text_stroke(&paragraph, stroke, &color)?;
         }
@@ -355,6 +349,22 @@ fn validate_points(points: &[Origin]) -> Result<()> {
 }
 
 impl<'paint> PaintContext<'paint> {
+    /// Draws shaped glyphs at the local origin. The size bounds the ink and clips the glyphs.
+    pub fn draw_paragraph(
+        &mut self,
+        paragraph: Rc<Paragraph>,
+        size: Size,
+        color: impl Into<crate::Ink>,
+    ) {
+        self.commands.push(Draw::Text {
+            clip: self.clip.clone(),
+            origin: self.origin,
+            size,
+            paragraph,
+            color: color.into(),
+        });
+    }
+
     /// The element's current corner radii fitted to the local drawing size.
     pub fn corner_radii(&self) -> Corners<Pixels> {
         self.corner_radii.fit_to(self.size)
@@ -546,7 +556,7 @@ impl<'paint> PaintContext<'paint> {
             return Ok(());
         }
         let fill = Fill::from(color.clone());
-        let gradient = matches!(color, crate::Ink::Gradient(_));
+        let spatial = !matches!(color, crate::Ink::Solid(_));
         let draw = |cx: &mut PaintContext<'_>| {
             for line in &paragraph.lines {
                 let (left, right) = line.advance_bounds();
@@ -556,8 +566,8 @@ impl<'paint> PaintContext<'paint> {
                 if x1 <= x0 || y1 <= y0 {
                     continue;
                 }
-                // A gradient samples the full line even where the content clip cuts it off.
-                let (left, right, top, bottom) = if gradient {
+                // Spatial ink samples the full line even where the content clip cuts it off.
+                let (left, right, top, bottom) = if spatial {
                     (left, right, top, bottom)
                 } else {
                     (x0, x1, y0, y1)
@@ -577,7 +587,7 @@ impl<'paint> PaintContext<'paint> {
             }
             Ok(())
         };
-        if gradient {
+        if spatial {
             self.with_clip(Origin::default(), self.size, draw)
         } else {
             draw(self)
