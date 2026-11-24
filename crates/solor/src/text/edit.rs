@@ -218,6 +218,21 @@ impl TextInputState {
         self.selection
     }
 
+    /// Borrows the selected committed text in document order.
+    pub fn selected_text(&self) -> &str {
+        &self.text[self.selection.range()]
+    }
+
+    /// Selects the entire buffer unless the input method is composing.
+    pub fn select_all(&mut self) {
+        if self.preedit.is_none() {
+            self.selection = TextSelection {
+                anchor: 0,
+                head: self.text.len(),
+            };
+        }
+    }
+
     /// Selects a range in the committed value and ends any active composition.
     pub fn select(&mut self, selection: TextSelection) -> Result<()> {
         selection.validate(&self.text)?;

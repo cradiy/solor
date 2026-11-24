@@ -1,5 +1,6 @@
 //! Pointer navigation through the same mounted window used by the native launcher.
 use anyhow::Result;
+use solor::clipboard::{ClipboardRead, PlatformClipboard};
 use solor::{
     WindowControl,
     keyboard::{Key, KeyEvent, KeyState, NamedKey},
@@ -10,7 +11,7 @@ use solor::{
     raster::RasterScale,
 };
 use solor_render_cpu::CpuWindow;
-use std::time::Duration;
+use std::{cell::RefCell, rc::Rc, time::Duration};
 
 fn gallery() -> Result<(solor::Ui, impl solor::Render)> {
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
@@ -182,22 +183,70 @@ fn keyboard_selection_highlights_and_replaces_complete_graphemes() -> Result<()>
     Ok(())
 }
 
+#[derive(Default)]
+struct TextClipboard(RefCell<String>);
+
+impl PlatformClipboard for TextClipboard {
+    fn write_text(&self, text: String) -> Result<()> {
+        self.0.replace(text);
+        Ok(())
+    }
+    fn read_text(&self, _: Option<usize>) -> Result<ClipboardRead> {
+        let text = self.0.borrow().clone();
+        Ok(Box::pin(async move { Ok(Some(text)) }))
+    }
+}
+
+#[test]
+fn cut_keeps_the_selection_until_the_clipboard_accepts_it() -> Result<()> {
+    let (ui, root) = gallery()?;
+    let clipboard = ui.clipboard();
+    let contents = Rc::new(TextClipboard::default());
+    let mut window = CpuWindow::mount(ui, root)?;
+    window.set_clipboard(contents.clone());
+    window.frame(
+        Size {
+            width: px(800.),
+            height: px(560.),
+        },
+        RasterScale::ONE,
+    )?;
+    window.frame_submitted()?;
+    click(&mut window, 120., 275.)?;
+    window.event(WindowEvent::TextInput(solor::text::TextInputEvent::Commit(
+        "中".into(),
+    )))?;
+    let ctrl = |ch| {
+        WindowEvent::Key(KeyEvent {
+            key: Key::Character(ch),
+            state: KeyState::Down,
+            repeat: false,
+            modifiers: solor::keyboard::Modifiers {
+                control: true,
+                ..Default::default()
+            },
+        })
+    };
+    window.event(ctrl('a'))?;
+    clipboard.set_text_limit(Some(4));
+    window.event(ctrl('x'))?;
+    let selected = window.surrounding_text(32).unwrap();
+    assert_eq!(selected.text(), "Aa中");
+    assert_eq!(selected.selection().range(), 0.."Aa中".len());
+
+    clipboard.set_text_limit(Some(5));
+    window.event(ctrl('x'))?;
+    assert_eq!(window.surrounding_text(32).unwrap().text(), "");
+    assert_eq!(*contents.0.borrow(), "Aa中");
+    Ok(())
+}
+
 #[test]
 fn paste_requires_the_original_text_focus_even_after_returning_to_the_field() -> Result<()> {
-    use solor::clipboard::{ClipboardRead, PlatformClipboard};
-    use std::{rc::Rc, task::Waker};
-    struct Source;
-    impl PlatformClipboard for Source {
-        fn write_text(&self, _: String) -> Result<()> {
-            unreachable!()
-        }
-        fn read_text(&self, _: Option<usize>) -> Result<ClipboardRead> {
-            Ok(Box::pin(async { Ok(Some("中".into())) }))
-        }
-    }
+    use std::task::Waker;
     let (ui, root) = gallery()?;
     let mut window = CpuWindow::mount(ui, root)?;
-    window.set_clipboard(Rc::new(Source));
+    window.set_clipboard(Rc::new(TextClipboard(RefCell::new("中".into()))));
     let size = Size {
         width: px(800.),
         height: px(560.),

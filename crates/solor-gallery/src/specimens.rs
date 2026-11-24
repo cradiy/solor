@@ -12,37 +12,23 @@ use solor::{
     text::{CaretMove, TextInputState},
 };
 
-fn edit_clipboard(
-    clipboard: &Clipboard,
-    key: &Key,
-    input: Signal<TextInputState>,
-    cx: &mut KeyDownContext<'_>,
-) -> anyhow::Result<()> {
-    if *key == Key::Character('c') {
-        let state = cx.read(input)?;
-        let selected = &state.text()[state.selection().range()];
-        if !selected.is_empty() {
-            clipboard.write_text(selected)?;
-        }
-    } else {
-        let read = clipboard.read_text();
-        let focus = cx.focus_session();
-        cx.spawn(move |cx| async move {
-            match read.await {
-                Ok(Some(text))
-                    if focus.is_current()
-                        && !text.is_empty()
-                        && cx.read(input, |s| s.preedit().is_none())? =>
-                {
-                    cx.update_in_place(input, |s| s.commit(&text))?;
-                }
-                Err(e) => log::warn!("Could not paste text: {e}"),
-                _ => {}
+fn paste(clipboard: &Clipboard, input: Signal<TextInputState>, cx: &mut KeyDownContext<'_>) {
+    let read = clipboard.read_text();
+    let focus = cx.focus_session();
+    cx.spawn(move |cx| async move {
+        match read.await {
+            Ok(Some(text))
+                if focus.is_current()
+                    && !text.is_empty()
+                    && cx.read(input, |s| s.preedit().is_none())? =>
+            {
+                cx.update_in_place(input, |s| s.commit(&text))?;
             }
-            Ok(())
-        });
-    }
-    Ok(())
+            Err(e) => log::warn!("Could not paste text: {e}"),
+            _ => {}
+        }
+        Ok(())
+    });
 }
 
 pub(super) fn typography(
@@ -74,14 +60,29 @@ pub(super) fn typography(
                         return Ok(());
                     }
                     if mods.control && !matches!(key.key, Key::ArrowLeft | Key::ArrowRight) {
-                        if !mods.shift
-                            && let Key::Character('c' | 'v') = key.key
-                        {
-                            if let Err(e) = edit_clipboard(&clipboard, &key.key, input, cx) {
-                                log::warn!("Clipboard unavailable: {e}");
-                            }
-                            cx.prevent_default();
+                        if mods.shift {
+                            return Ok(());
                         }
+                        match key.key {
+                            Key::Character('a') => {
+                                cx.update_in_place(input, TextInputState::select_all)?
+                            }
+                            Key::Character(ch @ ('c' | 'x')) => {
+                                let selected = cx.read(input)?.selected_text();
+                                if !selected.is_empty() {
+                                    match clipboard.write_text(selected) {
+                                        Ok(()) if ch == 'x' => {
+                                            cx.update_in_place(input, |s| s.commit(""))?
+                                        }
+                                        Err(e) => log::warn!("Could not copy selection: {e}"),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            Key::Character('v') => paste(&clipboard, input, cx),
+                            _ => return Ok(()),
+                        }
+                        cx.prevent_default();
                         return Ok(());
                     }
                     match &key.key {
