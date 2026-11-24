@@ -222,7 +222,9 @@ pub type TransitionRules = std::collections::BTreeMap<crate::TransitionProperty,
 
 impl properties::Overlay for TransitionRules {
     fn overlay(&mut self, later: &Self) {
-        self.extend(later);
+        for (&property, &timing) in later {
+            property.declare(self, timing);
+        }
     }
 }
 

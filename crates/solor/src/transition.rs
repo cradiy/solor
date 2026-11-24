@@ -13,10 +13,60 @@ pub enum TransitionProperty {
     BackgroundColor,
     /// Color of the outline surrounding the element.
     OutlineColor,
+    /// Solid border colors on all four sides.
+    BorderColor,
+    /// Solid color of the top border.
+    BorderTopColor,
+    /// Solid color of the right border.
+    BorderRightColor,
+    /// Solid color of the bottom border.
+    BorderBottomColor,
+    /// Solid color of the left border.
+    BorderLeftColor,
 }
 
 impl TransitionProperty {
-    pub(crate) const COLORS: [Self; 2] = [Self::BackgroundColor, Self::OutlineColor];
+    const BORDER_EDGES: [Self; 4] = [
+        Self::BorderTopColor,
+        Self::BorderRightColor,
+        Self::BorderBottomColor,
+        Self::BorderLeftColor,
+    ];
+
+    pub(crate) const COLORS: [Self; 6] = {
+        let [top, right, bottom, left] = Self::BORDER_EDGES;
+        [
+            Self::BackgroundColor,
+            Self::OutlineColor,
+            top,
+            right,
+            bottom,
+            left,
+        ]
+    };
+
+    pub(crate) fn border_edge(self) -> Option<usize> {
+        Self::BORDER_EDGES.iter().position(|edge| *edge == self)
+    }
+
+    pub(crate) fn declare(self, rules: &mut crate::style::TransitionRules, timing: Transition) {
+        if self == Self::BorderColor {
+            for edge in Self::BORDER_EDGES {
+                rules.remove(&edge);
+            }
+        }
+        rules.insert(self, timing);
+    }
+
+    pub(crate) fn timing(self, rules: &crate::style::TransitionRules) -> Option<Transition> {
+        rules
+            .get(&self)
+            .or_else(|| {
+                self.border_edge()
+                    .and_then(|_| rules.get(&Self::BorderColor))
+            })
+            .copied()
+    }
 }
 
 impl AsRef<[TransitionProperty]> for TransitionProperty {

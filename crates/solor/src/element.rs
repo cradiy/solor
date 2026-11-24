@@ -921,7 +921,13 @@ impl MountedNode {
                 _ => None,
             },
             crate::TransitionProperty::OutlineColor => self.outline.as_ref()?.color(),
-            crate::TransitionProperty::Opacity => None,
+            edge => {
+                let side = edge.border_edge()?;
+                let Fill::Solid(color) = self.border.as_ref()?.visible_fills()[side]? else {
+                    return None;
+                };
+                Some(*color)
+            }
         }
     }
 
@@ -951,7 +957,25 @@ impl MountedNode {
                 }
                 outline.set_color(color);
             }
-            crate::TransitionProperty::Opacity => return false,
+            edge => {
+                let Some(side) = edge.border_edge() else {
+                    return false;
+                };
+                let Some(border) = &mut self.border else {
+                    return false;
+                };
+                if !matches!(border.visible_fills()[side], Some(Fill::Solid(current)) if *current != color)
+                {
+                    return false;
+                }
+                let fills = &mut Rc::make_mut(border).fills;
+                *[
+                    &mut fills.top,
+                    &mut fills.right,
+                    &mut fills.bottom,
+                    &mut fills.left,
+                ][side] = Some(Fill::Solid(color));
+            }
         }
         true
     }

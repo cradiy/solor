@@ -217,7 +217,9 @@ pub trait Styled: Sized {
                     .transitions
                     .get_or_insert_with(Default::default),
             );
-            rules.extend(properties.iter().map(|&property| (property, timing)));
+            for property in properties {
+                property.declare(rules, timing);
+            }
         }
         self
     }

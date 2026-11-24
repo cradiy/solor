@@ -326,3 +326,79 @@ fn moving_an_outline_repaints_both_rings_inside_the_ancestor_clip() -> Result<()
     assert_eq!((ink(24, 13), ink(24, 18), ink(24, 21)), (255, 0x44, 0));
     Ok(())
 }
+
+#[test]
+fn border_color_transitions_retarget_each_solid_edge_independently() -> Result<()> {
+    use solor::{
+        Draw, Fill, Transition,
+        TransitionProperty::{BorderColor, BorderLeftColor, BorderTopColor},
+    };
+    use std::time::Duration;
+
+    let mut ui = Ui::new();
+    let ink = ui.context().signal(rgb(0));
+    let left = ui.context().signal(rgb(0));
+    let right = ui.context().signal(Fill::from(rgb(0)));
+    let gradient = Fill::from(gradient_left_to_right([
+        color_stop(rgb(0x005577), 0.),
+        color_stop(rgb(0x559977), 1.),
+    ])?);
+    let fast = Transition::new(Duration::from_millis(100));
+    let slow = Transition::new(Duration::from_millis(200));
+    let border_rules = div()
+        .transition(BorderColor, fast)
+        .transition(BorderTopColor, slow)
+        .style()
+        .clone();
+    let view = ui.mount(component(move |_| {
+        div()
+            .border(px(2.))
+            .border_color(ink)
+            .border_left_color(left)
+            .border_right_fill(right)
+            .transition(BorderLeftColor, slow)
+            .with_style(&border_rules)
+    }))?;
+    let size = Size {
+        width: px(24.),
+        height: px(24.),
+    };
+    ui.flush()?;
+    ui.layout(view, size)?;
+    ui.context().set(ink, rgb(0xffffff))?;
+    ui.context().set(left, rgb(0xffffff))?;
+    ui.context().set(right, Fill::from(rgb(0xffffff)))?;
+
+    for (ms, top, bottom, left_color) in [
+        (0, 0x000000, 0x000000, 0x000000),
+        (50, 0x404040, 0x808080, 0x808080),
+        (100, 0x808080, 0xffffff, 0xc04040),
+        (150, 0xbfbfbf, 0xffffff, 0xff0000),
+        (200, 0xffffff, 0xffffff, 0xff0000),
+    ] {
+        if ms == 100 {
+            ui.context().set(left, rgb(0xff0000))?;
+            ui.context().set(right, gradient.clone())?;
+        }
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        assert_eq!(ui.layout(view, size)?, 0);
+        let frame = ui.record_frame(view)?;
+        assert_eq!(frame.requests_animation_frame(), ms < 200);
+        let [Draw::Border { paint, .. }] = frame.draws() else {
+            panic!("expected one border")
+        };
+        let right_fill = if ms < 100 {
+            Fill::from(rgb(bottom))
+        } else {
+            gradient.clone()
+        };
+        let expected = [
+            rgb(top).into(),
+            right_fill,
+            rgb(bottom).into(),
+            rgb(left_color).into(),
+        ];
+        assert_eq!(paint.visible_fills(), expected.each_ref().map(Some));
+    }
+    Ok(())
+}

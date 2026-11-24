@@ -344,7 +344,8 @@ impl crate::Instance {
         let was_group = node.is_group();
         node.gradient_map = gradient_map(&style);
         let rules = style.transitions.as_deref().filter(|_| node.visible);
-        let timing = |property| rules.and_then(|rules| rules.get(&property)).copied();
+        let timing =
+            |property: crate::TransitionProperty| rules.and_then(|rules| property.timing(rules));
         node.opacity = self.transitions.opacity.retarget(
             id,
             node.opacity,
@@ -374,16 +375,15 @@ impl crate::Instance {
         } else {
             self.transitions.palette_position.remove(id);
         }
-        let colors = crate::TransitionProperty::COLORS
-            .map(|property| (property, node.transition_color(property)));
+        let colors = crate::TransitionProperty::COLORS.map(|property| {
+            timing(property).map(|timing| (property, timing, node.transition_color(property)))
+        });
         node.background = background;
         node.border = border;
         node.outline = outline;
-        for (property, current) in colors {
+        for (property, timing, current) in colors.into_iter().flatten() {
             let key = (id, property);
-            if let (Some(timing), Some(current), Some(target)) =
-                (timing(property), current, node.transition_color(property))
-            {
+            if let (Some(current), Some(target)) = (current, node.transition_color(property)) {
                 let value = self
                     .transitions
                     .colors
