@@ -532,3 +532,64 @@ fn shader_parameters_repaint_inherited_text_decorations() -> Result<()> {
     assert!(pixels == render(&expected)?.rgba);
     Ok(())
 }
+
+#[cfg(feature = "shader")]
+#[test]
+fn moving_ink_repairs_only_the_band_across_glyphs_waves_and_svg() -> Result<()> {
+    use solor::{
+        EffectShader, Ink, SvgAsset,
+        platform::{WindowEvent, WindowHandler},
+        svg,
+    };
+    use solor_render_cpu::CpuWindow;
+    use std::time::Duration;
+
+    let shader = EffectShader::wgsl(
+        "fn effect(uv: vec2<f32>, p: f32) -> vec4<f32> {
+            let band = 1.0 - smoothstep(0.0, 0.08, abs(uv.x - p));
+            return vec4<f32>(1.0, band, 0.0, 1.0);
+        }",
+    )?;
+    let icon = SvgAsset::from_bytes(
+        br#"<svg xmlns="http://www.w3.org/2000/svg" width="120" height="12"><rect width="120" height="12"/></svg>"#,
+    )?;
+    let ink = |p: f32| {
+        Ink::from(
+            shader
+                .with_params(p)
+                .changing_region([p - 0.08, 0.]..[p + 0.08, 1.]),
+        )
+    };
+    let scene = |initial| {
+        let initial = ink(initial);
+        let next = ink(0.42);
+        let icon = icon.clone();
+        component(move |cx| {
+            let color = cx.signal(initial);
+            div()
+                .p(px(2.5))
+                .items_start()
+                .text_color(color)
+                .child(text("Audio settings").w(px(120.)).underline_wavy())
+                .child(svg(icon).rounded_sm())
+                .on_frame(move |_, cx| cx.set(color, next.clone()))
+        })
+    };
+    let scale = RasterScale(1.25);
+    let size = DeviceSize {
+        width: 130,
+        height: 60,
+    }
+    .at_unit_scale();
+    let mut window = CpuWindow::mount(Ui::with_font(FONT.to_vec())?, scene(0.28))?;
+    let first = window.frame(size, scale)?.rgba.to_vec();
+    window.frame_submitted()?;
+    window.event(WindowEvent::FrameReady(Duration::ZERO))?;
+    let repaired = window.frame(size, scale)?;
+    let bounds = repaired.damage.bounds().unwrap();
+    assert!(bounds.left > 10 && bounds.right < 90, "{bounds:?}");
+    assert_ne!(repaired.rgba, first);
+    let mut reference = CpuWindow::mount(Ui::with_font(FONT.to_vec())?, scene(0.42))?;
+    assert!(repaired.rgba == reference.frame(size, scale)?.rgba);
+    Ok(())
+}

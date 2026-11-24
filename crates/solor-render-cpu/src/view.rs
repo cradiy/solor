@@ -59,6 +59,8 @@ mod backdrop;
 mod border;
 mod repair;
 mod rounded_box;
+#[cfg(feature = "shader")]
+mod shader_damage;
 mod shadow;
 mod underline;
 
@@ -764,38 +766,6 @@ fn include_fill_change(
     if origin != at || size != extent || corner_radii != radii || clip != next_clip {
         return Ok(false);
     }
-    #[cfg(feature = "shader")]
-    if let (Fill::Shader(old), Fill::Shader(new)) = (old_fill, new_fill) {
-        let (Some(a), Some(b)) = (old.region(), new.region()) else {
-            return Ok(false);
-        };
-        if old.shader != new.shader {
-            return Ok(false);
-        }
-        let visible = device_bounds(after, scale)?.intersect(canvas);
-        for region in [a, b] {
-            if !(0..2).all(|i| {
-                region.start[i].is_finite()
-                    && region.end[i].is_finite()
-                    && region.start[i] <= region.end[i]
-            }) {
-                return Ok(false);
-            }
-            let x = |u: f32| (f64::from(origin.x) + f64::from(size.width) * f64::from(u)) * scale.0;
-            let y =
-                |v: f32| (f64::from(origin.y) + f64::from(size.height) * f64::from(v)) * scale.0;
-            damage.include(
-                Clip {
-                    left: x(region.start[0]).floor() as i64,
-                    right: x(region.end[0]).ceil() as i64,
-                    top: y(region.start[1]).floor() as i64,
-                    bottom: y(region.end[1]).ceil() as i64,
-                }
-                .intersect(visible),
-            );
-        }
-        return Ok(true);
-    }
     let (Fill::CustomImage(previous), Fill::CustomImage(next)) = (old_fill, new_fill) else {
         return Ok(false);
     };
@@ -861,6 +831,10 @@ fn include_changes(
             }
             changed = true;
             on_change(i, b)?;
+            #[cfg(feature = "shader")]
+            if shader_damage::include(a, b, scale, canvas, area)? {
+                continue;
+            }
             if include_fill_change(a, b, scale, canvas, area)? {
                 continue;
             }
