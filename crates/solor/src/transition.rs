@@ -24,6 +24,8 @@ pub enum TransitionProperty {
     MinHeight,
     /// Upper bound on the element's height.
     MaxHeight,
+    /// Initial size on the flex main axis, before free space is distributed.
+    FlexBasis,
     /// Spacing between adjacent children along a flex container's main axis.
     Gap,
     /// The four radii of the border box.
@@ -211,6 +213,7 @@ impl Interpolate for Pixels {
 impl TransitionProperty {
     pub(crate) fn dimension(self) -> Option<Dimension> {
         Some(match self {
+            Self::FlexBasis => Dimension::FlexBasis,
             Self::Width => Dimension::Width,
             Self::Height => Dimension::Height,
             Self::MinWidth => Dimension::MinWidth,

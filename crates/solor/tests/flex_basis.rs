@@ -139,3 +139,66 @@ fn column_basis_precedes_height_and_resolves_inside_padding_before_justification
     }
     Ok(())
 }
+
+#[test]
+fn animated_basis_uses_the_current_main_axis_before_distributing_space() -> Result<()> {
+    use solor::{Transition, TransitionProperty};
+    use std::time::Duration;
+
+    let mut ui = Ui::new();
+    let basis = ui.context().signal(Length::from(px(20.)));
+    let direction = ui.context().signal(Row);
+    let view = ui.mount(component(move |_| {
+        div()
+            .flex_direction(direction)
+            .child(div().size(px(8.)).flex_basis(basis).transition(
+                TransitionProperty::FlexBasis,
+                Transition::new(Duration::from_millis(100)),
+            ))
+            .child(div().flex_1())
+    }))?;
+    let items: Vec<_> = ui.children(view, ui.root(view)?)?.collect();
+    let size = Size {
+        width: px(120.),
+        height: px(200.),
+    };
+    ui.layout(view, size)?;
+    ui.context().set(basis, percent(50.))?;
+    for (ms, axis, expected, auto) in [
+        (0, Row, 20., false),
+        (50, Row, 40., false),
+        (50, Column, 60., false),
+        (75, Column, 80., false),
+        (75, Column, 8., true),
+    ] {
+        ui.context().set(direction, axis)?;
+        if auto {
+            ui.context().set(basis, Length::Auto)?;
+        }
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        ui.layout(view, size)?;
+        let basis_size = ui.geometry(view, items[0]).unwrap().metrics.size;
+        let rest = ui.geometry(view, items[1]).unwrap();
+        let (actual, offset, remaining, total) = if axis == Row {
+            (
+                basis_size.width,
+                rest.origin.x,
+                rest.metrics.size.width,
+                size.width,
+            )
+        } else {
+            (
+                basis_size.height,
+                rest.origin.y,
+                rest.metrics.size.height,
+                size.height,
+            )
+        };
+        assert_eq!(
+            (actual, offset, remaining),
+            (px(expected), px(expected), total - px(expected))
+        );
+        assert_eq!(ui.record_frame(view)?.requests_animation_frame(), !auto);
+    }
+    Ok(())
+}

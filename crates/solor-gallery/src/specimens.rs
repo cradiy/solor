@@ -489,24 +489,6 @@ fn flex_layout(alignment: Selection<3>) -> Div {
                 )
         });
     }
-    let weights = div().flex_row().gap(px(6.0)).children(
-        [
-            (1.0, "1", 0xc8dbbe),
-            (2.0, "2", 0xa5cbb0),
-            (1.0, "1", 0xc8dbbe),
-        ]
-        .map(|(weight, name, tint)| {
-            div()
-                .flex_grow(weight)
-                .flex_basis(px(0.0))
-                .h(px(50.0))
-                .rounded(px(8.0))
-                .items_center()
-                .justify_center()
-                .bg(rgb(tint))
-                .child(label(name, 19.0, 26.0).text_color(INK))
-        }),
-    );
     div()
         .items_stretch()
         .gap(px(14.))
@@ -515,5 +497,40 @@ fn flex_layout(alignment: Selection<3>) -> Div {
             alignment.buttons(["Start", "Center", "Between"]),
         ))
         .child(specimen)
-        .child(details("Flex grow", weights))
+        .child(component(flex_allocation))
+}
+
+fn flex_allocation(cx: &mut solor::Context<'_>) -> Div {
+    let basis = cx.signal(solor::Length::from(px(0.)));
+    let controls = Selection::new(cx, 0, false).buttons_with(["0 px", "50%"], move |index, cx| {
+        cx.set(basis, [px(0.).into(), solor::percent(50.)][index])
+    });
+    let tile = |weight, name, tint| {
+        div()
+            .flex_grow(weight)
+            .h(px(50.))
+            .rounded(px(8.))
+            .items_center()
+            .justify_center()
+            .bg(rgb(tint))
+            .child(label(name, 19., 26.).text_color(INK))
+    };
+    let side = || tile(1., "1", 0xc8dbbe).flex_basis(px(0.));
+    let middle = tile(2., "2", 0xa5cbb0).flex_basis(basis).transition(
+        TransitionProperty::FlexBasis,
+        Transition::new(std::time::Duration::from_millis(750)).ease_out(),
+    );
+    details(
+        "Flex grow",
+        div()
+            .items_stretch()
+            .gap(px(6.))
+            .child(
+                div()
+                    .flex_row()
+                    .gap(px(6.))
+                    .children([side(), middle, side()]),
+            )
+            .child(control("Middle item basis", controls)),
+    )
 }

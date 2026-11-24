@@ -52,16 +52,18 @@ pub(crate) enum Dimension {
     MaxWidth,
     MinHeight,
     MaxHeight,
+    FlexBasis,
 }
 
 impl Dimension {
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::Width,
         Self::Height,
         Self::MinWidth,
         Self::MaxWidth,
         Self::MinHeight,
         Self::MaxHeight,
+        Self::FlexBasis,
     ];
 
     pub(crate) fn value(
@@ -76,6 +78,7 @@ impl Dimension {
             Self::MaxWidth => sizing?.width?.max,
             Self::MinHeight => sizing?.height?.min,
             Self::MaxHeight => sizing?.height?.max,
+            Self::FlexBasis => Some(sizing?.basis.as_ref()?.length),
         }
     }
 
@@ -91,6 +94,7 @@ impl Dimension {
             Self::MaxWidth => &mut sizing?.width.as_mut()?.max,
             Self::MinHeight => &mut sizing?.height.as_mut()?.min,
             Self::MaxHeight => &mut sizing?.height.as_mut()?.max,
+            Self::FlexBasis => return Some(&mut sizing?.basis.as_mut()?.length),
         }
         .as_mut()
     }
