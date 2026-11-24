@@ -3,14 +3,66 @@ mod surface;
 
 use anyhow::{Context, Result};
 use clap::{Arg, Command, value_parser};
-use solor::EffectShader;
-use solor::{SharedString, Styled, Ui, component, div, pointer::PointerEvent, px, rgb, text};
+use solor::{
+    EffectShader, Pixels, SharedString, Styled, Ui, component, div,
+    pointer::{PointerEvent, PointerId},
+    px, rgb, text,
+};
 use solor_platform::{WindowOptions, current_platform};
-use std::{cell::Cell, path::PathBuf, rc::Rc};
+use std::{cell::Cell, path::PathBuf, rc::Rc, time::Duration};
 
-fn pointer_position(event: &PointerEvent) -> f32 {
+#[derive(Clone, Copy)]
+struct Playback {
+    last: Duration,
+    phase: f64,
+    interval: Option<f64>,
+}
+
+impl Playback {
+    fn advance(&mut self, now: Duration) -> f32 {
+        let delta = now.saturating_sub(self.last);
+        self.last = now;
+        if delta > Duration::from_millis(250) {
+            self.interval = None;
+        } else {
+            let seconds = delta.as_secs_f64();
+            // Spread a missed refresh over several steps of this free-running motion.
+            let interval = self.interval.get_or_insert(seconds);
+            *interval += (seconds - *interval) * 0.2;
+            self.phase = (self.phase + *interval * 0.9) % std::f64::consts::TAU;
+        }
+        (0.5 - 0.5 * self.phase.cos()) as f32
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct Grab {
+    pointer: PointerId,
+    offset: Pixels,
+}
+
+fn grab_offset(
+    event: &PointerEvent,
+    footprint: Option<surface::Footprint>,
+    center: f32,
+) -> Option<Pixels> {
+    let surface::Footprint::Centered {
+        half_width,
+        half_height,
+    } = footprint?
+    else {
+        return None;
+    };
+    let size = event.content_size();
+    let point = event.content_position();
+    let dx = point.x - size.width * center;
+    let dy = point.y - size.height * 0.5;
+    (dx.get().abs() <= half_width && dy.get().abs() <= half_height).then_some(dx)
+}
+
+fn pointer_position(event: &PointerEvent, offset: Pixels) -> f32 {
     let width = event.content_size().width.get();
-    (event.content_position().x.get() / width.max(f32::EPSILON)).clamp(0., 1.)
+    ((event.content_position().x - offset).get() / width.max(f32::EPSILON)).clamp(0., 1.)
 }
 
 fn main() -> Result<()> {
@@ -35,39 +87,55 @@ fn main() -> Result<()> {
     let source = source.as_deref().unwrap_or(surface::SWEEP);
     let shader = EffectShader::wgsl(source)?;
     let footprint = surface::Footprint::for_source(source);
+    let samples_motion = source == surface::ROUNDED_RECT;
     let view = component(move |cx| {
-        let position = cx.signal(0.4);
+        let params = cx.signal([0.4, 0., 0., 0.]);
         let playing = cx.signal(false);
         let label = cx.signal(SharedString::from("Play"));
-        let owner = cx.signal(None);
-        let clock = Rc::new(Cell::new(None));
+        let grab = cx.signal(None::<Grab>);
+        let clock = Rc::new(Cell::new(None::<Playback>));
         let reset_clock = clock.clone();
-        let surface = surface::shader_surface(shader, position, footprint)
+        let surface = surface::shader_surface(shader, params, footprint)
             .on_pointer_down(move |event, cx| {
-                if event.is_primary_action() && cx.read(owner)?.is_none() {
+                if event.is_primary_action() && cx.read(grab)?.is_none() {
+                    let center = cx.read(params)?[0];
+                    let offset = grab_offset(event, footprint, center);
+                    let center = offset.map_or_else(|| pointer_position(event, px(0.)), |_| center);
+                    cx.set(params, [center, 0., 0., 0.])?;
                     cx.capture_pointer();
-                    cx.set(owner, Some(event.pointer_id()))?;
+                    cx.set(
+                        grab,
+                        Some(Grab {
+                            pointer: event.pointer_id(),
+                            offset: offset.unwrap_or_default(),
+                        }),
+                    )?;
                     cx.set(playing, false)?;
                     cx.set(label, "Play".into())?;
-                    cx.set(position, pointer_position(event))?;
                 }
                 Ok(())
             })
             .on_pointer_move(move |event, cx| {
-                if *cx.read(owner)? == Some(event.pointer_id()) {
-                    cx.set(position, pointer_position(event))?;
+                if let Some(active) = *cx.read(grab)?
+                    && active.pointer == event.pointer_id()
+                {
+                    cx.set(params, [pointer_position(event, active.offset), 0., 0., 0.])?;
                 }
                 Ok(())
             })
             .on_pointer_up(move |event, cx| {
-                if event.is_primary_action() && *cx.read(owner)? == Some(event.pointer_id()) {
-                    cx.set(owner, None)?;
+                if event.is_primary_action()
+                    && cx
+                        .read(grab)?
+                        .is_some_and(|g| g.pointer == event.pointer_id())
+                {
+                    cx.set(grab, None)?;
                 }
                 Ok(())
             })
             .on_pointer_cancel(move |id, cx| {
-                if *cx.read(owner)? == Some(id) {
-                    cx.set(owner, None)?;
+                if cx.read(grab)?.is_some_and(|g| g.pointer == id) {
+                    cx.set(grab, None)?;
                 }
                 Ok(())
             });
@@ -94,6 +162,8 @@ fn main() -> Result<()> {
                             .on_click(move |cx| {
                                 let next = !*cx.read(playing)?;
                                 reset_clock.set(None);
+                                let center = cx.read(params)?[0];
+                                cx.set(params, [center, 0., 0., 0.])?;
                                 cx.set(playing, next)?;
                                 cx.set(label, if next { "Pause" } else { "Play" }.into())
                             }),
@@ -101,16 +171,22 @@ fn main() -> Result<()> {
             )
             .child(surface)
             .on_frame_when(playing, move |now, cx| {
-                let (start, phase) = match clock.get() {
-                    Some(anchor) => anchor,
-                    None => {
-                        let phase = (1.0_f32 - 2. * *cx.read(position)?).acos();
-                        clock.set(Some((now, phase)));
-                        return Ok(());
-                    }
-                };
-                let elapsed = now.saturating_sub(start).as_secs_f32();
-                cx.set(position, 0.5 - 0.5 * (phase + elapsed * 0.9).cos())?;
+                if let Some(mut playback) = clock.get() {
+                    let center = playback.advance(now);
+                    let travel = if samples_motion {
+                        center - cx.read(params)?[0]
+                    } else {
+                        0.
+                    };
+                    cx.set(params, [center, travel, 0., 0.])?;
+                    clock.set(Some(playback));
+                } else {
+                    clock.set(Some(Playback {
+                        last: now,
+                        phase: (1. - 2. * f64::from(cx.read(params)?[0])).acos(),
+                        interval: None,
+                    }));
+                }
                 Ok(())
             })
     });

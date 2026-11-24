@@ -152,30 +152,128 @@ impl Program {
                     .is_some_and(|r| module.types[r.ty].inner == color),
             "expected effect(uv: vec2<f32>, params: f32 or vec4<f32>[, size: vec2<f32>]) -> vec4<f32>"
         );
+        let mut lowerer = Lowerer {
+            module: &module,
+            info: &info,
+            source,
+            ops: Vec::new(),
+            helper_expressions: 0,
+        };
+        let rgba = lowerer
+            .function(id, None, 0)?
+            .try_into()
+            .map_err(|_| anyhow!("expected RGBA output"))?;
+        let ops = lowerer.ops;
+        let axes = CoordinateAxes::for_output(&ops, rgba);
+        Ok(Self {
+            source: source.into(),
+            ops,
+            axes,
+            rgba,
+        })
+    }
+
+    /// Canonical WGSL source.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Scalar operations in dependency order.
+    pub fn instructions(&self) -> &[Op] {
+        &self.ops
+    }
+
+    /// Registers containing straight-alpha RGBA output.
+    pub fn outputs(&self) -> [usize; 4] {
+        self.rgba
+    }
+
+    /// Independent sample counts along each axis for an output of this size.
+    pub fn sample_extent(&self, width: u32, height: u32) -> [u32; 2] {
+        [
+            if self.axes.0 & CoordinateAxes::X == 0 {
+                1
+            } else {
+                width
+            },
+            if self.axes.0 & CoordinateAxes::Y == 0 {
+                1
+            } else {
+                height
+            },
+        ]
+    }
+}
+
+struct Lowerer<'a> {
+    module: &'a naga::Module,
+    info: &'a naga::valid::ModuleInfo,
+    source: &'a str,
+    ops: Vec<Op>,
+    helper_expressions: usize,
+}
+
+impl Lowerer<'_> {
+    fn function(
+        &mut self,
+        id: Handle<naga::Function>,
+        args: Option<&[&[Reg]]>,
+        depth: usize,
+    ) -> Result<Vec<Reg>> {
+        let module = self.module;
+        let function = &module.functions[id];
+        // A short call graph can expand exponentially when helpers call each other repeatedly.
+        if args.is_some() {
+            self.helper_expressions += function.expressions.len().max(1);
+            let line = || {
+                module
+                    .functions
+                    .get_span(id)
+                    .location(self.source)
+                    .line_number
+            };
+            ensure!(
+                depth <= 64,
+                "line {}: helper calls exceed 64 levels",
+                line()
+            );
+            ensure!(
+                self.helper_expressions <= 65_536,
+                "line {}: inlined helpers exceed 65536 expressions",
+                line()
+            );
+        }
+        let mut calls = std::collections::HashMap::new();
         let mut result = None;
         for (statement, span) in function.body.span_iter() {
             match statement {
                 Statement::Emit(_) => (),
+                Statement::Call {
+                    arguments,
+                    result: Some(output),
+                    ..
+                } => {
+                    calls.insert(*output, arguments);
+                }
                 Statement::Return { value: Some(value) } => result = Some(*value),
                 _ => bail!(
                     "line {}: effect requires straight-line expressions",
-                    span.location(source).line_number
+                    span.location(self.source).line_number
                 ),
             }
         }
 
-        let mut ops = Vec::new();
-        let mut values: Vec<Vec<Reg>> = Vec::new();
+        let mut values: Vec<Vec<Reg>> = Vec::with_capacity(function.expressions.len());
         for (handle, expr) in function.expressions.iter() {
-            let loc = function.expressions.get_span(handle).location(source);
             let unsupported = || {
+                let loc = function.expressions.get_span(handle).location(self.source);
                 anyhow!(
                     "{}:{}: unsupported effect expression {expr:?}",
                     loc.line_number,
                     loc.line_position
                 )
             };
-            let width = match info[id][handle].ty.inner_with(&module.types) {
+            let width = match self.info[id][handle].ty.inner_with(&module.types) {
                 TypeInner::Scalar(Scalar::F32) => 1,
                 TypeInner::Vector {
                     size,
@@ -185,13 +283,22 @@ impl Program {
             };
             let registers = |h: Handle<Expr>| &values[h.index()];
             let lowered = match *expr {
+                Expr::FunctionArgument(index) => {
+                    args.map(|bindings| bindings[index as usize].to_vec())
+                }
+                Expr::CallResult(callee) => {
+                    let arguments = calls.get(&handle).context("missing call arguments")?;
+                    let bindings: Vec<_> =
+                        arguments.iter().map(|&h| registers(h).as_slice()).collect();
+                    Some(self.function(callee, Some(&bindings), depth + 1)?)
+                }
                 Expr::Math {
                     fun: Math::Length | Math::Distance,
                     arg,
                     arg1,
                     ..
                 } => Some(vec![magnitude(
-                    &mut ops,
+                    &mut self.ops,
                     registers(arg),
                     arg1.map(|handle| registers(handle).as_slice()),
                 )]),
@@ -284,53 +391,12 @@ impl Program {
                     }
                     _ => return Err(unsupported()),
                 };
-                output.push(ops.len());
-                ops.push(op);
+                output.push(self.ops.len());
+                self.ops.push(op);
             }
             values.push(output);
         }
         let result = result.context("missing effect return value")?;
-        let rgba = values[result.index()]
-            .as_slice()
-            .try_into()
-            .context("expected RGBA output")?;
-        let axes = CoordinateAxes::for_output(&ops, rgba);
-        Ok(Self {
-            source: source.into(),
-            ops,
-            axes,
-            rgba,
-        })
-    }
-
-    /// Canonical WGSL source.
-    pub fn source(&self) -> &str {
-        &self.source
-    }
-
-    /// Scalar operations in dependency order.
-    pub fn instructions(&self) -> &[Op] {
-        &self.ops
-    }
-
-    /// Registers containing straight-alpha RGBA output.
-    pub fn outputs(&self) -> [usize; 4] {
-        self.rgba
-    }
-
-    /// Independent sample counts along each axis for an output of this size.
-    pub fn sample_extent(&self, width: u32, height: u32) -> [u32; 2] {
-        [
-            if self.axes.0 & CoordinateAxes::X == 0 {
-                1
-            } else {
-                width
-            },
-            if self.axes.0 & CoordinateAxes::Y == 0 {
-                1
-            } else {
-                height
-            },
-        ]
+        Ok(std::mem::take(&mut values[result.index()]))
     }
 }

@@ -18,6 +18,7 @@ fn shader_window(
 ) -> Result<solor_render_cpu::CpuWindow> {
     use solor::{Ui, component};
     let program = EffectShader::wgsl(source)?;
+    let samples_motion = source == ROUNDED_RECT;
     let footprint = if regional {
         Footprint::for_source(source)
     } else {
@@ -26,11 +27,16 @@ fn shader_window(
     solor_render_cpu::CpuWindow::mount(
         Ui::new(),
         component(move |cx| {
-            let position = cx.signal(0.4);
+            let params = cx.signal([0.4, 0., 0., 0.]);
             let mut positions = positions;
-            surface::shader_surface(program, position, footprint).on_frame(move |_, cx| {
+            surface::shader_surface(program, params, footprint).on_frame(move |_, cx| {
                 if let Some(next) = positions.next() {
-                    cx.set(position, next)?;
+                    let travel = if samples_motion {
+                        next - cx.read(params)?[0]
+                    } else {
+                        0.
+                    };
+                    cx.set(params, [next, travel, 0., 0.])?;
                 }
                 Ok(())
             })
@@ -174,7 +180,7 @@ fn moving_light_repairs_match_full_frames() -> Result<()> {
         raster::RasterScale,
     };
     for source in [SWEEP, SPOTLIGHT, ROUNDED_RECT] {
-        let positions = [0.41, 0.02, 0.98, 0.01];
+        let positions = [0.41, 0.41, 0.02, 0.98, 0.01];
         let mut partial = shader_window(source, true, positions.into_iter())?;
         let mut full = shader_window(source, false, positions.into_iter())?;
         let logical = DeviceSize {

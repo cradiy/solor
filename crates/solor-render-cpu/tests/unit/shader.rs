@@ -68,6 +68,38 @@ fn wgsl_matches_native_for_full_and_fractional_damage() -> Result<()> {
 }
 
 #[test]
+fn nested_helpers_bind_each_calls_own_arguments() -> Result<()> {
+    let body = "fn effect(uv: vec2<f32>, p: vec4<f32>) -> vec4<f32>";
+    let helper = EffectShader::wgsl(&format!(
+        "fn add_pair(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {{ return a + b; }}
+         fn tint(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {{ return add_pair(a.yx, b); }}
+         {body} {{ return vec4<f32>(tint(uv, p.xy), tint(p.zw, uv)); }}"
+    ))?;
+    let flat = EffectShader::wgsl(&format!(
+        "{body} {{ return vec4<f32>(uv.yx + p.xy, p.wz + uv); }}"
+    ))?;
+    let size = DeviceSize {
+        width: 47,
+        height: 29,
+    };
+    let region = normalized(size, full(size));
+    let parameters = [0.125, 0.05, 0.17, 0.25];
+    let draw = |shader: &EffectShader| {
+        render(
+            &shader.with_params(parameters),
+            size.at_unit_scale(),
+            region,
+        )
+    };
+    assert_eq!(draw(&helper)?.pixels(), draw(&flat)?.pixels());
+    assert_eq!(
+        solor::raster::shader_program(&helper).instructions().len(),
+        solor::raster::shader_program(&flat).instructions().len()
+    );
+    Ok(())
+}
+
+#[test]
 fn single_axis_alpha_uses_the_requested_pixel_centers() -> Result<()> {
     let size = DeviceSize {
         width: 151,
