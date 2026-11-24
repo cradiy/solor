@@ -1090,3 +1090,82 @@ fn visibility_bindings_retire_with_branches_and_refresh_cached_text_order() -> R
     assert!(!ui.has_pending_bindings());
     Ok(())
 }
+
+#[test]
+fn animated_box_tracks_the_parent_size_and_reflows_its_sibling() -> Result<()> {
+    use solor::{
+        Length, Transition,
+        TransitionProperty::{BorderRadius, Height, Width},
+        percent, rem,
+    };
+    use std::time::Duration;
+    let mut ui = Ui::new();
+    let width = ui.context().signal(Length::from(px(40.)));
+    let height = ui.context().signal(rem(1.));
+    let radius = ui.context().signal(px(0.));
+    let view = ui.mount_with_rem_size(
+        component(move |_| {
+            div()
+                .flex_row()
+                .items_start()
+                .child(
+                    div()
+                        .w(width)
+                        .max_w(px(180.))
+                        .h(height)
+                        .rounded_tl(radius)
+                        .bg(INK)
+                        .border(px(1.))
+                        .border_color(ACCENT)
+                        .transition(
+                            [Width, Height, BorderRadius],
+                            Transition::new(Duration::from_millis(100)),
+                        ),
+                )
+                .child(div().size(px(4.)))
+        }),
+        px(12.),
+    )?;
+    let root = ui.root(view)?;
+    let children: Vec<_> = ui.children(view, root)?.collect();
+    let size = |w| Size {
+        width: px(w),
+        height: px(100.),
+    };
+    ui.layout(view, size(240.))?;
+    ui.context().set(width, percent(50.))?;
+    ui.context().set(height, rem(3.))?;
+    ui.context().set(radius, px(8.))?;
+    for (ms, parent, w, h, r) in [
+        (0, 240., 40., 12., 0.),
+        (50, 240., 80., 24., 4.),
+        (50, 320., 100., 24., 4.),
+        (100, 320., 160., 36., 8.),
+        (100, 400., 180., 36., 8.),
+    ] {
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        ui.layout(view, size(parent))?;
+        assert_eq!(
+            ui.geometry(view, children[0]).unwrap().metrics.size,
+            Size {
+                width: px(w),
+                height: px(h)
+            }
+        );
+        assert_eq!(ui.geometry(view, children[1]).unwrap().origin.x, px(w));
+        let frame = ui.record_frame(view)?;
+        let [Draw::Fill { corner_radii, .. }, Draw::Border { paint, .. }] = frame.draws() else {
+            panic!("expected a filled box with a border")
+        };
+        assert_eq!(
+            *corner_radii,
+            Corners {
+                top_left: px(r),
+                ..Default::default()
+            }
+        );
+        assert_eq!(paint.radii, *corner_radii);
+        assert_eq!(frame.requests_animation_frame(), ms < 100);
+    }
+    Ok(())
+}

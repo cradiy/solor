@@ -298,6 +298,7 @@ pub struct PaintContext<'a> {
     units: UnitResolver,
     /// Assigned content area after removing padding.
     pub size: Size,
+    corner_radii: Corners<Pixels>,
     text_color: &'a Foreground,
     commands: &'a mut Vec<Draw>,
     clip: Option<Arc<ContentClip>>,
@@ -341,6 +342,11 @@ fn validate_points(points: &[Origin]) -> Result<()> {
 }
 
 impl<'paint> PaintContext<'paint> {
+    /// The element's current corner radii fitted to the local drawing size.
+    pub fn corner_radii(&self) -> Corners<Pixels> {
+        self.corner_radii.fit_to(self.size)
+    }
+
     /// Reads the inherited foreground and tracks a bound color for repaint.
     pub fn text_color(&self) -> Result<crate::Ink> {
         match self.text_color {
@@ -787,7 +793,6 @@ pub(super) type Click = Box<dyn Fn(&mut Context<'_>) -> Result<()>>;
 struct MountedBackground {
     placement: crate::bitmap::Placement,
     source: Background,
-    corner_radii: Corners<Pixels>,
 }
 
 impl MountedBackground {
@@ -815,7 +820,6 @@ impl MountedBackground {
         };
         Ok(Some(Box::new(Self {
             source: source.clone(),
-            corner_radii: style.corner_radii,
             placement,
         })))
     }
@@ -896,6 +900,7 @@ pub(super) struct MountedNode {
     paint_mode: RefreshPolicy,
     pub(super) text_style: InheritedText,
     text_color: Foreground,
+    corner_radii: Corners<Pixels>,
     background: Option<Box<MountedBackground>>,
     border: Option<Rc<crate::style::BorderPaint>>,
     outline: Option<Box<outline::MountedOutline>>,
@@ -914,6 +919,20 @@ pub(super) struct MountedNode {
 }
 
 impl MountedNode {
+    pub(super) fn set_corner_radii(&mut self, radii: Corners<Pixels>) -> bool {
+        if self.corner_radii == radii {
+            return false;
+        }
+        self.corner_radii = radii;
+        if let Some(border) = &mut self.border {
+            Rc::make_mut(border).radii = radii;
+        }
+        if let Some(outline) = &mut self.outline {
+            outline.set_radii(radii);
+        }
+        true
+    }
+
     fn transition_color(&self, property: crate::TransitionProperty) -> Option<crate::Rgba> {
         match property {
             crate::TransitionProperty::BackgroundColor => match &self.background.as_ref()?.source {
@@ -978,6 +997,16 @@ impl MountedNode {
             }
         }
         true
+    }
+
+    pub(super) fn set_transition_length(
+        &mut self,
+        property: crate::TransitionProperty,
+        value: Pixels,
+    ) -> bool {
+        self.outline
+            .as_deref_mut()
+            .is_some_and(|outline| outline.set_length(property, value))
     }
 
     pub(super) fn set_palette_position(&mut self, value: f32) -> bool {
@@ -1070,6 +1099,7 @@ impl MountedNode {
                 != Some(PointerEvents::None),
             text_style: mounted.text,
             text_color: style.text.color,
+            corner_radii: style.corner_radii,
             background: mounted.background,
             border: mounted.border,
             outline: mounted.outline,
@@ -1116,6 +1146,7 @@ impl MountedNode {
             origin: Origin::default(),
             size,
             text_color: &self.text_color,
+            corner_radii: self.corner_radii,
             commands,
             next_frame: false,
             state,
@@ -1127,7 +1158,13 @@ impl MountedNode {
         };
         cx.next_frame = mode == RefreshMode::Continuous;
         if let Some(shadows) = &self.shadows {
-            shadows.record(false, size, &clips.inherited, cx.commands);
+            shadows.record(
+                false,
+                self.corner_radii,
+                size,
+                &clips.inherited,
+                cx.commands,
+            );
         }
         if let Some(paint) = &self.background {
             let mut fill = paint.source.sample(&cx)?;
@@ -1146,11 +1183,11 @@ impl MountedNode {
                 origin: Origin::default(),
                 size,
                 fill,
-                corner_radii: paint.corner_radii.fit_to(size),
+                corner_radii: self.corner_radii.fit_to(size),
             });
         }
         if let Some(shadows) = &self.shadows {
-            shadows.record(true, size, &clips.inherited, cx.commands);
+            shadows.record(true, self.corner_radii, size, &clips.inherited, cx.commands);
         }
         if let Some(paint) = &self.border {
             cx.commands.push(Draw::Border {
@@ -1287,7 +1324,7 @@ impl AnyElement {
             };
             let mounted = style_binding::prepare(&mut node, inherited, cx, units)?;
             let style = &mounted.style;
-            let item = style_binding::item_style(style, mounted.scroll_axes.gutter)?;
+            let item = style_binding::item_style(style, mounted.scroll_axes.gutter, units)?;
             if let Some(tip) = node
                 .handlers
                 .as_deref()

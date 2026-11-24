@@ -2,7 +2,7 @@
 use crate::layout::{
     AxisLimits, ComputedLength, ContainingBlock, FlexBasis, ItemBasis, ItemSizing, LayoutContext,
     LayoutError, LayoutNode, LayoutOutput, Margin, Margins, MeasureContext, Metrics, Origin,
-    Positioning, Query, RelativeOffset, Result, Size, WidthLimits, border_extent,
+    Positioning, Query, RelativeOffset, Result, Size, border_extent,
 };
 use crate::length::UnitResolver;
 use crate::style::{BoxSizing, Position};
@@ -21,8 +21,6 @@ pub(crate) struct BoxModel {
     margins: Option<Box<Edges<Option<ComputedLength>>>>,
     box_sizing: BoxSizing,
     aspect_ratio: Option<f32>,
-    width: Option<ComputedLength>,
-    height: Option<ComputedLength>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -135,8 +133,6 @@ impl BoxModel {
                 .as_ref()
                 .and_then(|layout| layout.box_sizing)
                 .unwrap_or(BoxSizing::BorderBox),
-            width: units.dimension(style.width)?,
-            height: units.dimension(style.height)?,
         })
     }
 
@@ -164,12 +160,7 @@ impl BoxModel {
                 extra: self.sizing_extra(inset),
             }))
         };
-        let width = bounds(layout.min_width, layout.max_width, self.inset.width)?.map(|bounds| {
-            WidthLimits {
-                preferred: self.width,
-                bounds,
-            }
-        });
+        let width = bounds(layout.min_width, layout.max_width, self.inset.width)?;
         let height = bounds(layout.min_height, layout.max_height, self.inset.height)?;
         let basis = units
             .dimension(layout.flex_basis.unwrap_or_default())?
@@ -230,7 +221,7 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
         let mut width = match cx.item_basis {
             ItemBasis::Width(width) => width,
             _ => border_extent(
-                self.bounds.width,
+                cx.preferred_size.width,
                 basis.width,
                 self.bounds.sizing_extra(self.bounds.inset.width),
             )?,
@@ -239,7 +230,7 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
         let mut height = match cx.item_basis {
             ItemBasis::Height(height) => height,
             _ => border_extent(
-                self.bounds.height,
+                cx.preferred_size.height,
                 basis.height,
                 self.bounds.sizing_extra(self.bounds.inset.height),
             )?,

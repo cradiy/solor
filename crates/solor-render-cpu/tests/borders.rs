@@ -402,3 +402,79 @@ fn border_color_transitions_retarget_each_solid_edge_independently() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn animated_outline_geometry_repairs_the_previous_ring() -> Result<()> {
+    use solor::{
+        Render, Transition,
+        TransitionProperty::{OutlineOffset, OutlineWidth},
+        platform::{WindowEvent, WindowHandler},
+    };
+    use solor_render_cpu::CpuWindow;
+    use std::time::Duration;
+
+    fn scene(width: f32, offset: f32, drive: bool) -> impl Render {
+        component(move |cx| {
+            let width = cx.signal(px(width));
+            let offset = cx.signal(px(offset));
+            let drive = cx.signal(drive);
+            div().p(px(12.)).child(
+                div()
+                    .size(px(24.))
+                    .rounded(px(5.5))
+                    .bg(rgb(0x446688))
+                    .outline_width(width)
+                    .outline_offset(offset)
+                    .outline_color(rgb(0x101010))
+                    .transition(OutlineWidth, Transition::new(Duration::from_millis(100)))
+                    .transition(OutlineOffset, Transition::new(Duration::from_millis(200)))
+                    .on_frame_when(drive, move |now, cx| {
+                        if now.is_zero() {
+                            cx.set(width, px(6.))?;
+                            cx.set(offset, px(-2.))?;
+                        } else if now == Duration::from_millis(60) {
+                            cx.set(offset, px(-7.))?;
+                            cx.set(drive, false)?;
+                        }
+                        Ok(())
+                    }),
+            )
+        })
+    }
+
+    let size = Size {
+        width: px(96.),
+        height: px(56.),
+    };
+    let scale = RasterScale(1.5);
+    let mut window = CpuWindow::mount(Ui::new(), scene(0., 2., true))?;
+    window.frame(size, scale)?;
+    window.frame_submitted()?;
+    for (ms, width, offset) in [
+        (0, 0., 2.),
+        (10, 0., 2.),
+        (60, 3., 1.),
+        (110, 6., -1.),
+        (160, 6., -3.),
+        (260, 6., -7.),
+    ] {
+        assert!(
+            window
+                .event(WindowEvent::FrameReady(Duration::from_millis(ms)))?
+                .redraw
+        );
+        let frame = window.frame(size, scale)?;
+        let mut reference = CpuWindow::mount(Ui::new(), scene(width, offset, false))?;
+        assert_eq!(frame.rgba, reference.frame(size, scale)?.rgba, "at {ms} ms");
+        if ms >= 60 {
+            assert!(frame.damage.bounds().unwrap().right < i64::from(frame.size.width));
+        }
+        window.frame_submitted()?;
+    }
+    assert!(
+        !window
+            .event(WindowEvent::FrameReady(Duration::from_millis(270)))?
+            .redraw
+    );
+    Ok(())
+}

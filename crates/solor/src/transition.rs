@@ -1,18 +1,33 @@
 //! Host-paced transitions for retained element styles.
 use std::{collections::HashMap, hash::Hash, time::Duration};
 
-use crate::{NodeId, Rgba};
+use crate::{
+    NodeId, Pixels, Rgba,
+    layout::{ComputedLength, Dimension},
+    px,
+    style::Corners,
+};
 
 /// Element style properties with interpolated display values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum TransitionProperty {
+    /// Preferred width. Changes to or from automatic sizing apply immediately.
+    Width,
+    /// Preferred height. Changes to or from automatic sizing apply immediately.
+    Height,
+    /// The four radii of the border box.
+    BorderRadius,
     /// Opacity of the composited subtree.
     Opacity,
     /// Solid background color or position along a background color palette.
     BackgroundColor,
     /// Color of the outline surrounding the element.
     OutlineColor,
+    /// Thickness of the outline stroke.
+    OutlineWidth,
+    /// Distance from the border box to the outline's inner edge.
+    OutlineOffset,
     /// Solid border colors on all four sides.
     BorderColor,
     /// Solid color of the top border.
@@ -26,6 +41,8 @@ pub enum TransitionProperty {
 }
 
 impl TransitionProperty {
+    pub(crate) const OUTLINE_LENGTHS: [Self; 2] = [Self::OutlineWidth, Self::OutlineOffset];
+
     const BORDER_EDGES: [Self; 4] = [
         Self::BorderTopColor,
         Self::BorderRightColor,
@@ -114,6 +131,9 @@ struct Track<T> {
 #[derive(Default)]
 pub(crate) struct Transitions {
     pub(crate) opacity: Tracks<f32>,
+    pub(crate) dimensions: Tracks<ComputedLength, (NodeId, Dimension)>,
+    pub(crate) radii: Tracks<Corners<Pixels>>,
+    pub(crate) lengths: Tracks<Pixels, (NodeId, TransitionProperty)>,
     pub(crate) colors: Tracks<Rgba, (NodeId, TransitionProperty)>,
     pub(crate) palette_position: Tracks<f32>,
 }
@@ -121,14 +141,24 @@ pub(crate) struct Transitions {
 impl Transitions {
     pub(crate) fn is_active(&self) -> bool {
         !self.opacity.active.is_empty()
+            || !self.dimensions.active.is_empty()
+            || !self.radii.active.is_empty()
+            || !self.lengths.active.is_empty()
             || !self.colors.active.is_empty()
             || !self.palette_position.active.is_empty()
     }
 
     pub(crate) fn remove(&mut self, id: NodeId) {
         self.opacity.remove(id);
+        self.radii.remove(id);
+        for axis in Dimension::BOTH {
+            self.dimensions.remove((id, axis));
+        }
         for property in TransitionProperty::COLORS {
             self.colors.remove((id, property));
+        }
+        for property in TransitionProperty::OUTLINE_LENGTHS {
+            self.lengths.remove((id, property));
         }
         self.palette_position.remove(id);
     }
@@ -155,6 +185,47 @@ pub(crate) trait Interpolate: Copy + PartialEq {
 impl Interpolate for f32 {
     fn interpolate(self, target: Self, t: f32) -> Self {
         self + (target - self) * t
+    }
+}
+
+impl Interpolate for Pixels {
+    fn interpolate(self, target: Self, t: f32) -> Self {
+        let start = f64::from(self);
+        px((start + (f64::from(target) - start) * f64::from(t)) as f32)
+    }
+}
+
+impl Dimension {
+    pub(crate) fn property(self) -> TransitionProperty {
+        match self {
+            Self::Width => TransitionProperty::Width,
+            Self::Height => TransitionProperty::Height,
+        }
+    }
+}
+
+impl Interpolate for ComputedLength {
+    fn interpolate(self, target: Self, t: f32) -> Self {
+        match (self, target) {
+            (Self::Pixels(a), Self::Pixels(b)) => Self::Pixels(a.interpolate(b, t)),
+            (Self::Fraction(a), Self::Fraction(b)) => Self::Fraction(a.interpolate(b, t)),
+            _ => {
+                let (a, x) = self.components();
+                let (b, y) = target.components();
+                Self::Mixed(a.interpolate(b, t), x.interpolate(y, t))
+            }
+        }
+    }
+}
+
+impl Interpolate for Corners<Pixels> {
+    fn interpolate(self, target: Self, t: f32) -> Self {
+        Self {
+            top_left: self.top_left.interpolate(target.top_left, t),
+            top_right: self.top_right.interpolate(target.top_right, t),
+            bottom_right: self.bottom_right.interpolate(target.bottom_right, t),
+            bottom_left: self.bottom_left.interpolate(target.bottom_left, t),
+        }
     }
 }
 
@@ -201,28 +272,34 @@ impl<T: Interpolate, K: Copy + Eq + Hash> Tracks<T, K> {
         current
     }
 
-    pub(crate) fn advance(&mut self, now: Duration, mut apply: impl FnMut(K, T)) {
+    pub(crate) fn advance(
+        &mut self,
+        now: Duration,
+        mut apply: impl FnMut(K, T) -> crate::Result<()>,
+    ) -> crate::Result<()> {
         self.last_frame = now;
+        let mut result = Ok(());
         self.active.retain(|&key, track| {
-            let elapsed = now.saturating_sub(*track.start.get_or_insert(now));
-            if elapsed >= track.timing.duration {
-                apply(key, track.target);
-                return false;
+            if result.is_err() {
+                return true;
             }
-            let t = (elapsed.as_secs_f64() / track.timing.duration.as_secs_f64()) as f32;
-            let t = match track.timing.easing {
-                Easing::Linear => t,
-                Easing::EaseOut => t * (2.0 - t),
+            let elapsed = now.saturating_sub(*track.start.get_or_insert(now));
+            let finished = elapsed >= track.timing.duration;
+            let value = if finished {
+                track.target
+            } else if elapsed.is_zero() {
+                track.from
+            } else {
+                let t = (elapsed.as_secs_f64() / track.timing.duration.as_secs_f64()) as f32;
+                let t = match track.timing.easing {
+                    Easing::Linear => t,
+                    Easing::EaseOut => t * (2.0 - t),
+                };
+                track.from.interpolate(track.target, t)
             };
-            apply(
-                key,
-                if t == 0.0 {
-                    track.from
-                } else {
-                    track.from.interpolate(track.target, t)
-                },
-            );
-            true
+            result = apply(key, value);
+            !finished || result.is_err()
         });
+        result
     }
 }

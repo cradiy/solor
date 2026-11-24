@@ -106,10 +106,10 @@ pub(super) fn place(
     let limits = sizing
         .width
         .as_ref()
-        .map(|width| width.bounds.resolve(Some(parent.width)))
+        .map(|width| width.resolve(Some(parent.width)))
         .transpose()?
         .unwrap_or_default();
-    let query = if entry.item_style.auto_width {
+    let query = if entry.item_style.preferred.width.is_none() {
         let available = limits.clamp(x.available()?);
         if x.anchored_at_both_ends() {
             Query::Exact(available)
@@ -119,7 +119,7 @@ pub(super) fn place(
     } else {
         Query::Natural
     };
-    let item_basis = if entry.item_style.auto_height && y.anchored_at_both_ends() {
+    let item_basis = if entry.item_style.preferred.height.is_none() && y.anchored_at_both_ends() {
         ItemBasis::Height(Some(y.available()?))
     } else {
         ItemBasis::Preferred

@@ -201,7 +201,7 @@ impl FlexLayout {
             let align = item.style.alignment(self.align_items);
             if row
                 && align == Align::Stretch
-                && item.style.auto_height
+                && item.style.preferred.height.is_none()
                 && let (Margin::Fixed(top), Margin::Fixed(bottom)) = (margins.top, margins.bottom)
             {
                 let available = assigned.height.saturating_sub(add(top, bottom)?);

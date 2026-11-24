@@ -229,7 +229,11 @@ impl StyleRecipe {
     }
 }
 
-pub(super) fn item_style(style: &Style, gutter: Size) -> Result<crate::layout::FlexItemStyle> {
+pub(super) fn item_style(
+    style: &Style,
+    gutter: Size,
+    units: UnitResolver,
+) -> Result<crate::layout::FlexItemStyle> {
     if !style.text.letter_spacing.get().is_finite()
         || [
             style.corner_radii.top_left,
@@ -270,8 +274,10 @@ pub(super) fn item_style(style: &Style, gutter: Size) -> Result<crate::layout::F
         grow,
         shrink,
         align_self,
-        auto_width: style.width == crate::Length::Auto,
-        auto_height: style.height == crate::Length::Auto,
+        preferred: crate::layout::PreferredSize {
+            width: units.dimension(style.width)?,
+            height: units.dimension(style.height)?,
+        },
     })
 }
 
@@ -280,16 +286,19 @@ impl crate::Instance {
         let opacity = opacity(&style)?;
         let scroll_axes =
             crate::pointer::ScrollAxes::from_layout(style.layout.as_deref(), self.units)?;
-        let item = item_style(&style, scroll_axes.gutter)?;
+        let mut item = item_style(&style, scroll_axes.gutter, self.units)?;
+        let node = self.bodies.get_mut(&id).expect("mounted style target");
+        let rules = style.transitions.as_deref().filter(|_| node.visible);
+        let timing =
+            |property: crate::TransitionProperty| rules.and_then(|rules| property.timing(rules));
         let border = style.border_paint(self.units)?;
         let shadows = shadow::Shadows::resolve(&style, self.units)?;
-        let outline = outline::MountedOutline::resolve(&style, self.units)?;
+        let mut outline = outline::MountedOutline::resolve(&style, self.units)?;
         let mut background = MountedBackground::resolve(&style, self.units)?;
         // Custom content can use any declared property to determine its metrics.
         let builtin = std::any::TypeId::of::<E>() == std::any::TypeId::of::<FlexLayout>()
             || std::any::TypeId::of::<E>() == std::any::TypeId::of::<Text>()
             || std::any::TypeId::of::<E>() == std::any::TypeId::of::<super::image::ImageBody>();
-        let node = self.bodies.get_mut(&id).expect("mounted style target");
         let clip = item.overflow_clip;
         if layout
             || !builtin
@@ -298,6 +307,22 @@ impl crate::Instance {
         {
             let bounds =
                 crate::styled_body::BoxModel::resolve(&style, self.units, scroll_axes.gutter)?;
+            let current = self.scene.preferred_size(id)?;
+            for axis in crate::layout::Dimension::BOTH {
+                let key = (id, axis);
+                if let (Some(from), Some(target)) = (current.axis(axis), item.preferred.axis(axis))
+                {
+                    let value = self.transitions.dimensions.retarget(
+                        key,
+                        from,
+                        target,
+                        timing(axis.property()),
+                    );
+                    *item.preferred.axis_mut(axis) = Some(value);
+                } else {
+                    self.transitions.dimensions.remove(key);
+                }
+            }
             let sizing = bounds.item_sizing(&style, self.units)?;
             let padding = bounds.content_insets();
             let mut prepared = Ok(());
@@ -343,9 +368,12 @@ impl crate::Instance {
         node.scroll_axes = scroll_axes;
         let was_group = node.is_group();
         node.gradient_map = gradient_map(&style);
-        let rules = style.transitions.as_deref().filter(|_| node.visible);
-        let timing =
-            |property: crate::TransitionProperty| rules.and_then(|rules| property.timing(rules));
+        let radii = self.transitions.radii.retarget(
+            id,
+            node.corner_radii,
+            style.corner_radii,
+            timing(crate::TransitionProperty::BorderRadius),
+        );
         node.opacity = self.transitions.opacity.retarget(
             id,
             node.opacity,
@@ -378,9 +406,31 @@ impl crate::Instance {
         let colors = crate::TransitionProperty::COLORS.map(|property| {
             timing(property).map(|timing| (property, timing, node.transition_color(property)))
         });
+        for property in crate::TransitionProperty::OUTLINE_LENGTHS {
+            let Some(timing) = timing(property) else {
+                continue;
+            };
+            let key = (id, property);
+            let current = node
+                .outline
+                .as_ref()
+                .and_then(|outline| outline.length(property));
+            if let (Some(current), Some(next)) = (current, outline.as_deref_mut()) {
+                let target = next.length(property).expect("outline length property");
+                let value = self
+                    .transitions
+                    .lengths
+                    .retarget(key, current, target, Some(timing));
+                next.set_length(property, value);
+            } else {
+                self.transitions.lengths.remove(key);
+            }
+        }
         node.background = background;
         node.border = border;
         node.outline = outline;
+        node.corner_radii = style.corner_radii;
+        node.set_corner_radii(radii);
         for (property, timing, current) in colors.into_iter().flatten() {
             let key = (id, property);
             if let (Some(current), Some(target)) = (current, node.transition_color(property)) {

@@ -1,6 +1,6 @@
 use super::{AnyElement, Element, IntoElement, PaintContext, element};
 use crate::{
-    ImageAsset, ImageFill, Pixels, Style, StyleRefinement, Styled, SvgAsset,
+    ImageAsset, ImageFill, Style, StyleRefinement, Styled, SvgAsset,
     bitmap::Placement,
     layout::{
         self, LayoutContext, LayoutNode, LayoutOutput, MeasureContext, Metrics, Origin, Query, Size,
@@ -213,7 +213,6 @@ pub(super) struct ImageBody {
     image: ImageContent,
     units: UnitResolver,
     placement: Placement,
-    radii: Corners<Pixels>,
 }
 impl ImageBody {
     #[cfg(feature = "network")]
@@ -249,7 +248,6 @@ impl ImageBody {
             image,
             units,
             placement: Placement::centered(ObjectFit::Contain),
-            radii: Default::default(),
         });
         node.style = style;
         node
@@ -349,7 +347,6 @@ impl LayoutNode for ImageBody {
 impl Element for ImageBody {
     fn prepare_content(&mut self, style: &Style) -> Result<()> {
         self.placement = Placement::resolve(style, self.units, ObjectFit::Contain)?;
-        self.radii = style.corner_radii;
         Ok(())
     }
     fn paint(&self, cx: &mut PaintContext) -> Result<()> {
@@ -362,33 +359,33 @@ impl Element for ImageBody {
             ImageContent::Custom(image) => {
                 let mut image = image.clone();
                 image.placement = self.placement;
-                cx.record_fill(cx.origin, cx.size, image.into(), self.radii.fit_to(cx.size));
+                cx.record_fill(cx.origin, cx.size, image.into(), cx.corner_radii());
                 Ok(())
             }
             ImageContent::Bitmap(image) => {
                 let mut image = image.clone();
                 image.placement = self.placement;
-                cx.record_fill(cx.origin, cx.size, image.into(), self.radii.fit_to(cx.size));
+                cx.record_fill(cx.origin, cx.size, image.into(), cx.corner_radii());
                 Ok(())
             }
             #[cfg(feature = "image")]
             ImageContent::File(file, _) => {
                 let mut file = file.clone();
                 file.placement = self.placement;
-                cx.record_fill(cx.origin, cx.size, file.into(), self.radii.fit_to(cx.size));
+                cx.record_fill(cx.origin, cx.size, file.into(), cx.corner_radii());
                 Ok(())
             }
             ImageContent::Svg(asset, preserve_colors) => {
                 let (offset, size) = self.placement.bounds(asset.size(), cx.size)?;
                 cx.with_clip(Origin::default(), cx.size, |cx| {
-                    let rounded_clip = if self.radii != Corners::default() {
+                    let rounded_clip = if cx.corner_radii != Corners::default() {
                         Some(std::rc::Rc::new(crate::RoundedClip {
                             origin: cx
                                 .frame_offset
                                 .checked_add(cx.origin)
                                 .context("invalid SVG clip origin")?,
                             size: cx.size,
-                            radii: self.radii.fit_to(cx.size),
+                            radii: cx.corner_radii(),
                         }))
                     } else {
                         None

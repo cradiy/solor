@@ -18,7 +18,10 @@ mod absolute;
 
 #[path = "sizing.rs"]
 pub(super) mod sizing;
-use sizing::{AxisLimits, ItemBasis, ItemSizing, Positioning, SizeRange};
+use sizing::{
+    AxisLimits, ComputedLength, Dimension, ItemBasis, ItemSizing, Positioning, PreferredSize,
+    SizeRange,
+};
 
 use super::Align;
 use super::column::Margins;
@@ -446,8 +449,7 @@ pub(crate) struct FlexItemStyle {
     pub(crate) grow: f32,
     pub(crate) shrink: f32,
     pub(crate) align_self: Align,
-    pub(crate) auto_width: bool,
-    pub(crate) auto_height: bool,
+    pub(crate) preferred: PreferredSize,
 }
 
 impl Default for FlexItemStyle {
@@ -458,8 +460,7 @@ impl Default for FlexItemStyle {
             grow: 0.0,
             shrink: 0.0,
             align_self: Align::Auto,
-            auto_width: true,
-            auto_height: true,
+            preferred: PreferredSize::default(),
         }
     }
 }
@@ -609,6 +610,7 @@ impl<'a> FlowChildren<'a> {
 
 /// Access to children during a preferred-size calculation.
 pub struct MeasureContext<'a, 'store> {
+    pub(crate) preferred_size: PreferredSize,
     pub(crate) height_range: SizeRange,
     pub(crate) item_basis: ItemBasis,
     containing_block: ContainingBlock,
@@ -669,7 +671,7 @@ impl MeasureContext<'_, '_> {
                 let (main_limits, shrink_inset) =
                     match (entry.item_style.is_flexible(), mode, &entry.item_sizing) {
                         (true, ItemQuery::Row(_), Some(s)) => (
-                            s.width.as_ref().map(|w| (w.bounds, self.child_basis.width)),
+                            s.width.map(|w| (w, self.child_basis.width)),
                             s.shrink_inset.width,
                         ),
                         (true, ItemQuery::Column(_, _), Some(s)) => (
@@ -726,7 +728,7 @@ fn measure_item(
             _ => None,
         })?;
         let stretch = matches!(mode, ItemQuery::Column(align, _)
-            if entry.item_style.auto_width && entry.item_style.alignment(align) == Align::Stretch);
+            if entry.item_style.preferred.width.is_none() && entry.item_style.alignment(align) == Align::Stretch);
         let query = match query {
             Query::Exact(width) if stretch && !margins.has_auto_horizontal() => {
                 Query::Exact(margins.inner_width(width)?)
@@ -763,7 +765,13 @@ fn measure_item(
         item_basis,
     };
     if let Some(limits) = entry.item_sizing.as_ref().and_then(|v| v.width.as_ref())
-        && let Some((bounded, min)) = limits.constrain(query, basis.width, mode, item_basis)?
+        && let Some((bounded, min)) = limits.constrain_width(
+            query,
+            basis.width,
+            entry.item_style.preferred.width,
+            mode,
+            item_basis,
+        )?
     {
         let mut metrics = measure(
             entry,
@@ -838,6 +846,7 @@ fn measure(
     #[cfg(feature = "layout-audit")]
     let mut reads = ReadSet::default();
     let mut cx = MeasureContext {
+        preferred_size: entry.item_style.preferred,
         item_basis,
         height_range: entry
             .item_sizing
@@ -1002,6 +1011,7 @@ impl LayoutContext<'_, '_> {
         }
         self.failed = true;
         let metrics = MeasureContext {
+            preferred_size: PreferredSize::default(),
             height_range: SizeRange::default(),
             item_basis: ItemBasis::Preferred,
             containing_block: ContainingBlock::default(),
@@ -1545,6 +1555,12 @@ impl Scene {
         change: impl FnOnce(&mut N),
     ) -> Result<()> {
         self.body::<N>(node)?;
+        self.invalidate_input(node)?;
+        change(self.body_mut::<N>(node)?);
+        Ok(())
+    }
+
+    fn invalidate_input(&mut self, node: NodeId) -> Result<()> {
         #[cfg(feature = "layout-audit")]
         {
             let entry = self.store.get_mut(node)?;
@@ -1557,8 +1573,24 @@ impl Scene {
             }
             entry.input_revision = revision;
         }
-        self.invalidate(node)?;
-        change(self.body_mut::<N>(node)?);
+        self.invalidate(node)
+    }
+
+    pub(crate) fn preferred_size(&self, node: NodeId) -> Result<PreferredSize> {
+        Ok(self.store.get(node)?.item_style.preferred)
+    }
+
+    pub(crate) fn set_dimension(
+        &mut self,
+        node: NodeId,
+        axis: Dimension,
+        value: ComputedLength,
+    ) -> Result<()> {
+        if self.preferred_size(node)?.axis(axis) != Some(value) {
+            self.invalidate_input(node)?;
+            let preferred = &mut self.store.get_mut(node)?.item_style.preferred;
+            *preferred.axis_mut(axis) = Some(value);
+        }
         Ok(())
     }
 

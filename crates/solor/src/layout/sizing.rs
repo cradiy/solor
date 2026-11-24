@@ -6,13 +6,23 @@ use super::{ContainingBlock, ItemQuery, LayoutError, Origin, Pixels, Query, Resu
 pub(crate) enum ComputedLength {
     Pixels(Pixels),
     Fraction(f32),
+    Mixed(Pixels, f32),
 }
 
 impl ComputedLength {
+    pub(crate) fn components(self) -> (Pixels, f32) {
+        match self {
+            Self::Pixels(value) => (value, 0.0),
+            Self::Fraction(value) => (Pixels::default(), value),
+            Self::Mixed(px, fraction) => (px, fraction),
+        }
+    }
+
     pub(crate) fn resolve(self, basis: Option<Pixels>) -> Option<Pixels> {
         match self {
             Self::Pixels(value) => Some(value),
             Self::Fraction(fraction) => basis.map(|value| value * fraction),
+            Self::Mixed(px, fraction) => basis.map(|value| px + value * fraction),
         }
     }
 }
@@ -34,24 +44,52 @@ pub(crate) fn border_extent(
         .ok_or(LayoutError::InvalidSize)
 }
 
-pub(crate) struct WidthLimits {
-    pub(crate) preferred: Option<ComputedLength>,
-    pub(crate) bounds: AxisLimits,
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Dimension {
+    Width,
+    Height,
 }
 
-impl WidthLimits {
+impl Dimension {
+    pub(crate) const BOTH: [Self; 2] = [Self::Width, Self::Height];
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct PreferredSize {
+    pub(crate) width: Option<ComputedLength>,
+    pub(crate) height: Option<ComputedLength>,
+}
+
+impl PreferredSize {
+    pub(crate) fn axis(self, axis: Dimension) -> Option<ComputedLength> {
+        match axis {
+            Dimension::Width => self.width,
+            Dimension::Height => self.height,
+        }
+    }
+
+    pub(crate) fn axis_mut(&mut self, axis: Dimension) -> &mut Option<ComputedLength> {
+        match axis {
+            Dimension::Width => &mut self.width,
+            Dimension::Height => &mut self.height,
+        }
+    }
+}
+
+impl AxisLimits {
     // A direct query from a layout body is a hard constraint. Flow and stretch
     // offer the space left after margins, which an item's minimum may exceed.
-    pub(super) fn constrain(
+    pub(super) fn constrain_width(
         &self,
         query: Query,
         basis: Option<Pixels>,
+        preferred: Option<ComputedLength>,
         mode: ItemQuery,
         item_basis: ItemBasis,
     ) -> Result<Option<(Query, Pixels)>> {
         query.validate()?;
         let direct = matches!(mode, ItemQuery::Direct);
-        let SizeRange { min, max } = self.bounds.resolve(basis)?;
+        let SizeRange { min, max } = self.resolve(basis)?;
         if (min.is_none() && max.is_none()) || (direct && matches!(query, Query::Exact(_))) {
             return Ok(None);
         }
@@ -71,7 +109,7 @@ impl WidthLimits {
         };
         if !matches!(query, Query::Exact(_))
             && !matches!(item_basis, ItemBasis::Width(_))
-            && let Some(preferred) = border_extent(self.preferred, basis, self.bounds.extra)?
+            && let Some(preferred) = border_extent(preferred, basis, self.extra)?
         {
             query = Query::Exact(query.resolve(preferred).max(min));
         }
@@ -125,6 +163,7 @@ impl RelativeOffset {
                 end.map(|value| match value {
                     ComputedLength::Pixels(px) => ComputedLength::Pixels(px * -1.0),
                     ComputedLength::Fraction(f) => ComputedLength::Fraction(-f),
+                    ComputedLength::Mixed(px, f) => ComputedLength::Mixed(px * -1.0, -f),
                 })
             })
         }
@@ -157,7 +196,7 @@ pub(crate) struct ItemSizing {
     pub(crate) position: Positioning,
     pub(crate) shrink_inset: Size,
     pub(crate) basis: Option<FlexBasis>,
-    pub(crate) width: Option<WidthLimits>,
+    pub(crate) width: Option<AxisLimits>,
     pub(crate) height: Option<AxisLimits>,
 }
 

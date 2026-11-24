@@ -59,7 +59,6 @@ impl BoxShadow {
 
 pub(super) struct Shadows {
     layers: Vec<BoxShadow<Pixels>>,
-    radii: Corners<Pixels>,
 }
 
 impl Shadows {
@@ -78,22 +77,18 @@ impl Shadows {
                 resolved.push(shadow);
             }
         }
-        Ok((!resolved.is_empty()).then(|| {
-            Box::new(Self {
-                layers: resolved,
-                radii: style.corner_radii,
-            })
-        }))
+        Ok((!resolved.is_empty()).then(|| Box::new(Self { layers: resolved })))
     }
 
     pub(super) fn record(
         &self,
         inset: bool,
+        radii: Corners<Pixels>,
         size: Size,
         clip: &Option<Arc<ContentClip>>,
         draws: &mut Vec<Draw>,
     ) {
-        let corner_radii = self.radii.fit_to(size);
+        let corner_radii = radii.fit_to(size);
         for &shadow in self.layers.iter().rev().filter(|s| s.inset == inset) {
             draws.push(Draw::Shadow {
                 clip: clip.clone(),

@@ -269,6 +269,22 @@ impl Ui {
             .instances
             .get_mut(&view)
             .context("frame view is no longer mounted")?;
+        instance
+            .transitions
+            .dimensions
+            .advance(now, |(id, axis), value| {
+                Ok(instance.scene.set_dimension(id, axis, value)?)
+            })?;
+        instance.transitions.radii.advance(now, |id, radii| {
+            let node = instance
+                .bodies
+                .get_mut(&id)
+                .expect("mounted transition owner");
+            if node.set_corner_radii(radii) {
+                instance.repaints.borrow_mut().invalidate(id);
+            }
+            Ok(())
+        })?;
         instance.transitions.opacity.advance(now, |id, opacity| {
             let node = instance
                 .bodies
@@ -283,7 +299,8 @@ impl Ui {
                     instance.pointer.invalidate_geometry();
                 }
             }
-        });
+            Ok(())
+        })?;
         instance
             .transitions
             .colors
@@ -295,7 +312,21 @@ impl Ui {
                 if node.set_transition_color(property, color) {
                     instance.repaints.borrow_mut().invalidate(id);
                 }
-            });
+                Ok(())
+            })?;
+        instance
+            .transitions
+            .lengths
+            .advance(now, |(id, property), value| {
+                let node = instance
+                    .bodies
+                    .get_mut(&id)
+                    .expect("mounted transition owner");
+                if node.set_transition_length(property, value) {
+                    instance.repaints.borrow_mut().invalidate(id);
+                }
+                Ok(())
+            })?;
         instance
             .transitions
             .palette_position
@@ -307,7 +338,8 @@ impl Ui {
                 if node.set_palette_position(position) {
                     instance.repaints.borrow_mut().invalidate(id);
                 }
-            });
+                Ok(())
+            })?;
         for id in instance.pointer.frame_listeners() {
             if let Some(handler) = instance.frame_handlers.get_mut(id)
                 && let Some(node) = instance.bodies.get_mut(id)

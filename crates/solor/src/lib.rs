@@ -385,12 +385,25 @@ impl Instance {
                     self.visible_nodes += 1;
                 } else {
                     self.visible_nodes -= 1;
+                    for axis in layout::Dimension::BOTH {
+                        if let Some(value) = self.transitions.dimensions.remove((id, axis)) {
+                            self.scene.set_dimension(id, axis, value)?;
+                        }
+                    }
+                    if let Some(radii) = self.transitions.radii.remove(id) {
+                        body.set_corner_radii(radii);
+                    }
                     if let Some(target) = self.transitions.opacity.remove(id) {
                         body.opacity = target;
                     }
                     for property in TransitionProperty::COLORS {
                         if let Some(color) = self.transitions.colors.remove((id, property)) {
                             body.set_transition_color(property, color);
+                        }
+                    }
+                    for property in TransitionProperty::OUTLINE_LENGTHS {
+                        if let Some(length) = self.transitions.lengths.remove((id, property)) {
+                            body.set_transition_length(property, length);
                         }
                     }
                     if let Some(position) = self.transitions.palette_position.remove(id) {
