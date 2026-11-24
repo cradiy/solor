@@ -55,6 +55,7 @@ enum Brush<'a, F> {
     Gradient(F, Option<OpaqueLinearGradient<'a>>),
 }
 
+mod backdrop;
 mod border;
 mod repair;
 mod rounded_box;
@@ -218,6 +219,23 @@ impl Surface {
                     let fill = replay.images.resolve(fill).map_err(Error::other)?;
                     self.fill_box(*origin, *size, &fill, *corner_radii, scale, bounds)?;
                 }
+                Draw::BackdropBlur {
+                    origin,
+                    size,
+                    radius,
+                    corner_radii,
+                    ..
+                } => {
+                    backdrop::draw(
+                        self,
+                        *origin,
+                        *size,
+                        *corner_radii,
+                        f64::from(*radius) * scale.0,
+                        scale,
+                        (clip, bounds),
+                    );
+                }
                 Draw::WavyUnderline {
                     origin,
                     size,
@@ -327,7 +345,11 @@ impl Surface {
         // large surfaces by compositing one horizontal band at a time.
         let width = (bounds.right - bounds.left) as usize;
         let stride = self.size.width as usize * 4;
-        let rows = (65536 / width).max(1) as i64;
+        let rows = if draws.iter().any(backdrop::reads_backdrop) {
+            bounds.bottom - bounds.top
+        } else {
+            (65536 / width).max(1) as i64
+        };
         let mut backdrop =
             Vec::with_capacity(width * (bounds.bottom - bounds.top).min(rows) as usize * 4);
         let mut sampler = gradient_map.map(|map| (map.palette().ramp_sampler(), map.strength()));
@@ -496,6 +518,7 @@ fn opaque_cover(draw: &Draw, scale: RasterScale, area: Clip) -> Result<Option<so
 fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     let mut bounds = primitive_bounds(draw, scale)?;
     let (Draw::WavyUnderline { clip, .. }
+    | Draw::BackdropBlur { clip, .. }
     | Draw::Shadow { clip, .. }
     | Draw::Border { clip, .. }
     | Draw::Fill { clip, .. }
@@ -567,6 +590,12 @@ fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
             ..
         } => box_bounds(*origin, *size, paint.radii, scale),
         Draw::Fill {
+            origin,
+            size,
+            corner_radii,
+            ..
+        }
+        | Draw::BackdropBlur {
             origin,
             size,
             corner_radii,
@@ -731,6 +760,7 @@ fn include_changes(
     scale: RasterScale,
     canvas: Clip,
     area: &mut Damage,
+    on_change: &mut dyn FnMut(usize, &Draw) -> Result<()>,
 ) -> Result<bool> {
     // An insertion or removal can shift identical trailing commands to new indices.
     // They still replay in paint order wherever the changed draws cause damage.
@@ -764,13 +794,17 @@ fn include_changes(
                 && alpha == other
                 && gradient_map == other_map
             {
-                changed |= include_changes(draws, children, scale, canvas, area)?;
+                if include_changes(draws, children, scale, canvas, area, &mut |_, _| Ok(()))? {
+                    changed = true;
+                    on_change(i, b)?;
+                }
                 continue;
             }
             if same_draw(a, b) {
                 continue;
             }
             changed = true;
+            on_change(i, b)?;
             if include_image_change(a, b, scale, canvas, area)? {
                 continue;
             }

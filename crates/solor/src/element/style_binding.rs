@@ -12,6 +12,7 @@ pub(super) struct PreparedStyle {
     pub fixed: bool,
     pub visible: bool,
     pub opacity: f32,
+    pub backdrop_blur: Pixels,
 }
 
 pub(super) fn prepare<E: Element>(
@@ -130,6 +131,7 @@ pub(super) fn prepare<E: Element>(
         shadows: shadow::Shadows::resolve(&style, units)?,
         outline: outline::MountedOutline::resolve(&style, units)?,
         opacity: opacity(&style)?,
+        backdrop_blur: backdrop_blur(&style, units)?,
         background: MountedBackground::resolve(&style, units)?,
         style,
         text,
@@ -210,6 +212,16 @@ pub(super) fn gradient_map(style: &Style) -> Option<crate::GradientMap> {
         .as_ref()
         .filter(|map| map.strength() > 0.0)
         .cloned()
+}
+
+fn backdrop_blur(style: &Style, units: UnitResolver) -> Result<Pixels> {
+    let radius = style
+        .appearance
+        .as_deref()
+        .and_then(|a| a.backdrop_blur)
+        .map_or(px(0.), |radius| units.absolute(radius));
+    anyhow::ensure!(radius.is_extent(), "invalid backdrop blur radius");
+    Ok(radius)
 }
 
 fn opacity(style: &Style) -> Result<f32> {
@@ -353,6 +365,7 @@ impl Scene {
 impl crate::Instance {
     fn update_style<E: Element>(&mut self, id: NodeId, style: Style, layout: bool) -> Result<()> {
         let opacity = opacity(&style)?;
+        let blur = backdrop_blur(&style, self.units)?;
         let scroll_axes =
             crate::pointer::ScrollAxes::from_layout(style.layout.as_deref(), self.units)?;
         let mut item = item_style(&style, scroll_axes.gutter, self.units)?;
@@ -538,6 +551,13 @@ impl crate::Instance {
         node.cursor = cursor;
         node.hit_testable = hit_testable;
         let border = style.border_paint(self.scene.body::<StyledBody<E>>(id)?.bounds.border);
+        let property = crate::TransitionProperty::BackdropBlur;
+        node.backdrop_blur = self.transitions.lengths.retarget(
+            (id, property),
+            node.backdrop_blur,
+            blur,
+            timing(property),
+        );
         node.text_color = style.text.color;
         let color_timing = timing(crate::TransitionProperty::BackgroundColor);
         if let (Some(Background::GradientColor(current)), Some(Background::GradientColor(target))) = (

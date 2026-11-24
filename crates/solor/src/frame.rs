@@ -191,6 +191,7 @@ fn translate_draws(draws: &mut [Draw], offset: Origin) -> Result<()> {
                 continue;
             }
             Draw::WavyUnderline { origin, .. }
+            | Draw::BackdropBlur { origin, .. }
             | Draw::Shadow { origin, .. }
             | Draw::Border { origin, .. }
             | Draw::Fill { origin, .. }

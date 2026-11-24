@@ -195,6 +195,19 @@ pub enum Draw {
         /// Foreground paint across the wave.
         color: crate::Ink,
     },
+    /// Filters previously painted pixels under a rounded box in the current layer.
+    BackdropBlur {
+        /// Ancestor clip on the filter output.
+        clip: Option<Arc<ContentClip>>,
+        /// Upper-left corner of the box.
+        origin: Origin,
+        /// Size of the filtered region.
+        size: Size,
+        /// Sampling radius in logical pixels.
+        radius: Pixels,
+        /// Fitted radii of the output mask.
+        corner_radii: Corners<Pixels>,
+    },
     /// Fills a rounded rectangle.
     Fill {
         /// Effective clip in the same coordinates as the origin.
@@ -902,6 +915,7 @@ pub(super) struct MountedNode {
     pub(super) text_style: InheritedText,
     text_color: Foreground,
     corner_radii: Corners<Pixels>,
+    backdrop_blur: Pixels,
     background: Option<Box<MountedBackground>>,
     border: Option<Rc<crate::style::BorderPaint>>,
     outline: Option<Box<outline::MountedOutline>>,
@@ -1009,6 +1023,9 @@ impl MountedNode {
         property: crate::TransitionProperty,
         value: Pixels,
     ) -> bool {
+        if property == crate::TransitionProperty::BackdropBlur {
+            return std::mem::replace(&mut self.backdrop_blur, value) != value;
+        }
         self.outline
             .as_deref_mut()
             .is_some_and(|outline| outline.set_length(property, value))
@@ -1046,6 +1063,7 @@ impl MountedNode {
         let frame_paint = if handlers
             .as_deref()
             .is_some_and(|h| h.focus_indicator.is_some())
+            || mounted.backdrop_blur > px(0.)
             || mounted.border.is_some()
             || mounted.outline.is_some()
             || mounted.shadows.is_some()
@@ -1105,6 +1123,7 @@ impl MountedNode {
             text_style: mounted.text,
             text_color: style.text.color,
             corner_radii: style.corner_radii,
+            backdrop_blur: mounted.backdrop_blur,
             background: mounted.background,
             border: mounted.border,
             outline: mounted.outline,
@@ -1162,6 +1181,15 @@ impl MountedNode {
             RefreshPolicy::Bound(source) => *cx.read(source)?,
         };
         cx.next_frame = mode == RefreshMode::Continuous;
+        if self.backdrop_blur > px(0.) {
+            cx.commands.push(Draw::BackdropBlur {
+                clip: clips.inherited.clone(),
+                origin: Origin::default(),
+                size,
+                radius: self.backdrop_blur,
+                corner_radii: self.corner_radii.fit_to(size),
+            });
+        }
         if let Some(shadows) = &self.shadows {
             shadows.record(
                 false,

@@ -154,13 +154,13 @@ impl WindowHandler<Rgba8> for CpuWindow {
                 (
                     old.surface,
                     Damage::from_rect(canvas),
-                    RepairIndex::default(),
+                    RepairIndex::new(frame.draws(), scale, canvas)?,
                 )
             }
             None => (
                 Surface::raster_view(&frame, physical, scale, self.clear_byte, &mut self.caches)?,
                 Damage::from_rect(canvas),
-                RepairIndex::default(),
+                RepairIndex::new(frame.draws(), scale, canvas)?,
             ),
         };
         let animate = frame.requests_animation_frame();

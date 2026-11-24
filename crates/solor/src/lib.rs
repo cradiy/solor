@@ -483,7 +483,7 @@ impl Instance {
                             body.set_transition_color(property, color);
                         }
                     }
-                    for property in TransitionProperty::OUTLINE_LENGTHS {
+                    for property in TransitionProperty::PAINT_LENGTHS {
                         if let Some(length) = self.transitions.lengths.remove((id, property)) {
                             body.set_transition_length(property, length);
                         }

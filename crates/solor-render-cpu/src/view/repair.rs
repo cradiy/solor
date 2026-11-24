@@ -16,9 +16,20 @@ enum Block {
 pub(crate) struct RepairIndex {
     // The final block is always scanned first when looking for an opaque cover.
     blocks: Vec<Block>,
+    backdrop_inputs: std::collections::BTreeMap<usize, Clip>,
 }
 
 impl RepairIndex {
+    pub(crate) fn new(draws: &[Draw], scale: RasterScale, canvas: Clip) -> Result<Self> {
+        let mut index = Self::default();
+        for (i, draw) in draws.iter().enumerate() {
+            if let Some(input) = super::backdrop::footprint(draw, scale, canvas)? {
+                index.backdrop_inputs.insert(i, input);
+            }
+        }
+        Ok(index)
+    }
+
     pub(crate) fn damage(
         &mut self,
         previous: &solor::ViewFrame,
@@ -31,11 +42,29 @@ impl RepairIndex {
         let before = &old[prefix..old.len() - suffix];
         let after = &new[prefix..new.len() - suffix];
         let mut damage = Damage::default();
+        let inputs = &mut self.backdrop_inputs;
+        let mut compare = |offset, before: &[Draw], after: &[Draw], damage: &mut Damage| {
+            include_changes(before, after, scale, canvas, damage, &mut |i, draw| {
+                if let Some(input) = super::backdrop::footprint(draw, scale, canvas)? {
+                    inputs.insert(offset + i, input);
+                } else if !inputs.is_empty() {
+                    inputs.remove(&(offset + i));
+                }
+                Ok(())
+            })
+        };
         if old.len() != new.len() {
-            self.blocks = Vec::new();
-            include_changes(before, after, scale, canvas, &mut damage)?;
+            *self = Self::new(new, scale, canvas)?;
+            include_changes(
+                before,
+                after,
+                scale,
+                canvas,
+                &mut damage,
+                &mut |_, _| Ok(()),
+            )?;
         } else if self.blocks.is_empty() {
-            include_changes(before, after, scale, canvas, &mut damage)?;
+            compare(prefix, before, after, &mut damage)?;
             if new.len() >= 2 * BLOCK_SIZE && !damage.is_empty() {
                 self.blocks
                     .resize(new.len().div_ceil(BLOCK_SIZE) - 1, Block::Unmeasured);
@@ -48,7 +77,7 @@ impl RepairIndex {
                 .take((new.len() - suffix).div_ceil(BLOCK_SIZE))
                 .skip(prefix / BLOCK_SIZE)
             {
-                let changed = include_changes(before, after, scale, canvas, &mut damage)?;
+                let changed = compare(i * BLOCK_SIZE, before, after, &mut damage)?;
                 if let Some(block) = self.blocks.get_mut(i) {
                     if changed {
                         *block = Block::Changed;
@@ -57,6 +86,27 @@ impl RepairIndex {
                     }
                 }
             }
+        }
+        // A repair that intersects a filter must reconstruct its source pixels.
+        // Merging nearby repairs may reach another filter, so repeat until stable.
+        while self.backdrop_inputs.values().any(|input| {
+            damage
+                .rects()
+                .iter()
+                .any(|rect| !rect.intersect(*input).empty() && rect.union(*input) != *rect)
+        }) {
+            let mut expanded = Damage::default();
+            for &rect in damage.rects() {
+                let area = self.backdrop_inputs.values().fold(rect, |area, input| {
+                    if area.intersect(*input).empty() {
+                        area
+                    } else {
+                        area.union(*input)
+                    }
+                });
+                expanded.include(area);
+            }
+            damage = expanded;
         }
         Ok(damage)
     }

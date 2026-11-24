@@ -44,6 +44,8 @@ pub enum TransitionProperty {
     Opacity,
     /// Solid background color or position along a background color palette.
     BackgroundColor,
+    /// Sampling radius of the blur behind the element.
+    BackdropBlur,
     /// Inherited foreground color. Solid colors interpolate and gradient inks apply immediately.
     TextColor,
     /// Color of the outline surrounding the element.
@@ -66,6 +68,9 @@ pub enum TransitionProperty {
 
 impl TransitionProperty {
     pub(crate) const OUTLINE_LENGTHS: [Self; 2] = [Self::OutlineWidth, Self::OutlineOffset];
+
+    pub(crate) const PAINT_LENGTHS: [Self; 3] =
+        [Self::OutlineWidth, Self::OutlineOffset, Self::BackdropBlur];
 
     const BORDER_EDGES: [Self; 4] = [
         Self::BorderTopColor,
@@ -202,7 +207,7 @@ impl Transitions {
         for property in TransitionProperty::COLORS {
             self.colors.remove((id, property));
         }
-        for property in TransitionProperty::OUTLINE_LENGTHS {
+        for property in TransitionProperty::PAINT_LENGTHS {
             self.lengths.remove((id, property));
         }
         self.foregrounds.remove_with_data(id);

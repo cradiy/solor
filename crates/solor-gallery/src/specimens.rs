@@ -159,7 +159,7 @@ pub(super) const STOPS: [(f32, Rgba, &str); 4] = [
 pub(super) fn paint(
     geometry: Selection<3>,
     overlay: Selection<3>,
-    preview: Selection<6>,
+    preview: Selection<7>,
     ramp: Signal<Gradient>,
     patterns: &[Fill; 2],
     map: GradientMap,
@@ -196,7 +196,8 @@ pub(super) fn paint(
     });
     specimen = specimen
         .child_when(preview.flags()[4], color_change)
-        .child_when(preview.flags()[5], move || color_path(palette.clone()));
+        .child_when(preview.flags()[5], move || color_path(palette.clone()))
+        .child_when(preview.flags()[6], move || frosted_panel(ramp));
     for (active, fill) in overlay
         .flags()
         .into_iter()
@@ -247,11 +248,47 @@ pub(super) fn paint(
                     "Gradient map",
                     "Color change",
                     "Palette",
+                    "Blur",
                 ]),
             )),
         opacity_preview(specimen),
         details("Color stops", stops),
     )
+}
+
+fn frosted_panel(ramp: Signal<Gradient>) -> impl solor::Render {
+    component(move |cx| {
+        let radius = cx.signal(px(6.));
+        let levels = Selection::new(cx, 1, true)
+            .buttons_with(["Clear", "6 px", "16 px"], move |i, cx| {
+                cx.set(radius, px([0., 6., 16.][i]))
+            });
+        div()
+            .absolute()
+            .inset(px(0.))
+            .items_center()
+            .justify_center()
+            .paint(move |cx| {
+                let sky = cx.read(ramp)?.clone();
+                landscape(cx, &sky)
+            })
+            .child(
+                div()
+                    .rounded(px(16.))
+                    .p(px(14.))
+                    .gap(px(8.))
+                    .bg(rgba(0xffffff35))
+                    .border(px(1.))
+                    .border_color(rgba(0xffffff70))
+                    .backdrop_blur(radius)
+                    .transition(
+                        TransitionProperty::BackdropBlur,
+                        Transition::new(std::time::Duration::from_millis(400)),
+                    )
+                    .child(label("Backdrop blur", 18., 24.).text_color(crate::PAPER))
+                    .child(levels),
+            )
+    })
 }
 
 fn color_change() -> impl solor::Render {
