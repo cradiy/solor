@@ -37,6 +37,8 @@ pub use assets::{AssetSource, Assets, ImageResource};
 mod clip;
 pub use clip::{ContentClip, RoundedClip};
 mod column;
+mod debounce;
+pub use debounce::{Debounce, debounce};
 mod element;
 mod fill;
 mod frame;
