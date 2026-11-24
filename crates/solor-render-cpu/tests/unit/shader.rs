@@ -155,6 +155,73 @@ fn nested_helpers_bind_each_calls_own_arguments() -> Result<()> {
 }
 
 #[test]
+fn inherited_shader_tracks_only_elements_that_paint_with_its_parameters() -> Result<()> {
+    use crate::pixels::Surface;
+    use solor::{Draw, Styled, SvgAsset, Ui, component, div, px, raster::RasterScale, svg, text};
+    use std::rc::Rc;
+
+    let shader = EffectShader::wgsl(
+        "fn effect(uv: vec2<f32>, p: vec4<f32>) -> vec4<f32> {
+        return vec4<f32>(p.rgb, 1.0);
+    }",
+    )?;
+    let icon = SvgAsset::from_bytes(br#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>"#)?;
+    let font = include_bytes!("../../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
+    let mut ui = Ui::with_font(font.to_vec())?;
+    let phase = ui.context().signal(0.0_f32);
+    let tint = ui.context().signal([0., 0., 1., 1.]);
+    let view = ui.mount(component(|_| {
+        div()
+            .text_color(shader.with_params(phase))
+            .child(text("A"))
+            .child(svg(icon).size(px(8.)).text_color(shader.with_params(tint)))
+    }))?;
+    let size = DeviceSize {
+        width: 64,
+        height: 48,
+    };
+    ui.layout(view, size.at_unit_scale())?;
+    let (label, icon) = {
+        let mut nodes = ui.children(view, ui.root(view)?)?;
+        (nodes.next().unwrap(), nodes.next().unwrap())
+    };
+    let first = ui.record_frame(view)?;
+    let Draw::Text { paragraph, .. } = &first.draws()[0] else {
+        panic!("expected a label")
+    };
+
+    for (expected_node, icon_color) in [(label, [0, 0, 255, 255]), (icon, [0, 255, 0, 255])] {
+        if expected_node == label {
+            ui.context().set(phase, 1.)?;
+        } else {
+            ui.context().set(tint, [0., 1., 0., 1.])?;
+        }
+        ui.flush()?;
+        let mut dirty = Vec::new();
+        ui.collect_repaints(view, &mut dirty)?;
+        assert_eq!(dirty, [expected_node]);
+        assert_eq!(ui.layout(view, size.at_unit_scale())?, 0);
+        let frame = ui.record_frame(view)?;
+        let Draw::Text {
+            paragraph: updated, ..
+        } = &frame.draws()[0]
+        else {
+            panic!("expected a label")
+        };
+        assert!(Rc::ptr_eq(paragraph, updated));
+        let surface = Surface::draw_view(&frame, size, RasterScale::ONE)?;
+        let pixels = surface.rgba.as_chunks::<4>().0;
+        assert!(pixels.contains(&icon_color));
+        assert!(
+            pixels
+                .iter()
+                .any(|&[r, g, b, _]| r == 255 && g == b && g < 200)
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn single_axis_alpha_uses_the_requested_pixel_centers() -> Result<()> {
     let size = DeviceSize {
         width: 151,

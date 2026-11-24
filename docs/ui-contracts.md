@@ -622,7 +622,8 @@ and frame requests need platform-independent meanings for Web, macOS, Windows,
 Android and iOS. Native handles, buffer formats and backend resource indices
 belong in adapters. Enable `solor-platform/shader` to draw procedural WGSL fills. Compile the
 effect once with `EffectShader::wgsl` and pass `shader.with_params(value)` to
-a background or paint operation. A background also accepts a signal as the parameter.
+`.bg(...)`, `.text_color(...)`, or a paint operation. Both style setters also accept
+a scalar or four-float signal as the shader parameter.
 
 
 ## Image fills, image elements and SVG

@@ -140,13 +140,33 @@ pub enum Foreground {
     Bound(Signal<Rgba>),
     /// Read the current gradient when painting.
     Gradient(Signal<crate::Gradient>),
-    /// Read a foreground that may switch between solid and gradient paint.
+    /// Read the current ink when painting.
     Ink(Signal<crate::Ink>),
+    /// Fragment effect with a scalar parameter sampled during paint.
+    #[cfg(feature = "shader")]
+    ScalarShader(crate::ShaderFill<Signal<f32>>),
+    /// Fragment effect with four parameters sampled together during paint.
+    #[cfg(feature = "shader")]
+    VectorShader(crate::ShaderFill<Signal<[f32; 4]>>),
 }
 
 impl<T: Into<crate::Ink>> From<T> for Foreground {
     fn from(color: T) -> Self {
         Self::Fixed(color.into())
+    }
+}
+
+#[cfg(feature = "shader")]
+impl From<crate::ShaderFill<Signal<f32>>> for Foreground {
+    fn from(fill: crate::ShaderFill<Signal<f32>>) -> Self {
+        Self::ScalarShader(fill)
+    }
+}
+
+#[cfg(feature = "shader")]
+impl From<crate::ShaderFill<Signal<[f32; 4]>>> for Foreground {
+    fn from(fill: crate::ShaderFill<Signal<[f32; 4]>>) -> Self {
+        Self::VectorShader(fill)
     }
 }
 

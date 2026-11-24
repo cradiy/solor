@@ -166,7 +166,7 @@ fn bind_text_color<E: Element>(
     let displayed = match color {
         Foreground::Bound(source) => watch_text_color(*source, timing, &mut node.watches, cx)?,
         Foreground::Ink(source) => watch_text_color(*source, timing, &mut node.watches, cx)?,
-        Foreground::Fixed(_) | Foreground::Gradient(_) => return Ok(false),
+        _ => return Ok(false),
     };
     node.style.text.color = Some(displayed.into());
     Ok(true)

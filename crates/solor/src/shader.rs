@@ -23,7 +23,7 @@ impl EffectShader {
         Ok(Self(Arc::new(solor_shader::Program::compile(source)?)))
     }
 
-    /// Binds a float or four floats for one draw. Backgrounds also accept signals of either type.
+    /// Binds a float or four floats for one draw. Backgrounds and inherited foregrounds also accept signals of either type.
     pub fn with_params<P>(&self, params: P) -> ShaderFill<P> {
         ShaderFill {
             shader: self.clone(),
@@ -57,25 +57,45 @@ impl<P> ShaderFill<P> {
     }
 }
 
-impl From<ShaderFill> for crate::Ink {
-    fn from(fill: ShaderFill) -> Self {
-        Self::Shader(fill)
-    }
-}
-
-impl From<ShaderFill> for crate::Fill {
-    fn from(fill: ShaderFill) -> Self {
-        Self::Shader(fill)
-    }
-}
-
-impl From<ShaderFill<f32>> for crate::Fill {
+impl From<ShaderFill<f32>> for ShaderFill {
     fn from(fill: ShaderFill<f32>) -> Self {
-        Self::Shader(ShaderFill {
-            params: [fill.params, 0., 0., 0.],
+        Self {
             shader: fill.shader,
+            params: [fill.params, 0., 0., 0.],
             region: fill.region,
-        })
+        }
+    }
+}
+
+impl<P> From<ShaderFill<P>> for crate::Ink
+where
+    ShaderFill<P>: Into<ShaderFill>,
+{
+    fn from(fill: ShaderFill<P>) -> Self {
+        Self::Shader(fill.into())
+    }
+}
+
+impl<P> From<ShaderFill<P>> for crate::Fill
+where
+    ShaderFill<P>: Into<ShaderFill>,
+{
+    fn from(fill: ShaderFill<P>) -> Self {
+        Self::Shader(fill.into())
+    }
+}
+
+impl<T: Copy + 'static> ShaderFill<crate::Signal<T>> {
+    pub(crate) fn sample(&self, cx: &crate::PaintContext<'_>) -> crate::Result<crate::Ink>
+    where
+        ShaderFill<T>: Into<crate::Ink>,
+    {
+        Ok(ShaderFill {
+            shader: self.shader.clone(),
+            params: *cx.read(self.params)?,
+            region: self.region.clone(),
+        }
+        .into())
     }
 }
 

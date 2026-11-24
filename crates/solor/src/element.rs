@@ -377,6 +377,10 @@ impl<'paint> PaintContext<'paint> {
             Foreground::Bound(signal) => Ok((*self.read(*signal)?).into()),
             Foreground::Gradient(signal) => Ok(self.read(*signal)?.clone().into()),
             Foreground::Ink(signal) => Ok(self.read(*signal)?.clone()),
+            #[cfg(feature = "shader")]
+            Foreground::ScalarShader(fill) => fill.sample(self),
+            #[cfg(feature = "shader")]
+            Foreground::VectorShader(fill) => fill.sample(self),
         }
     }
 
