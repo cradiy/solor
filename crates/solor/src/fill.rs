@@ -162,6 +162,13 @@ impl From<Gradient> for GradientMap {
     }
 }
 
+/// A color selected from a gradient by a fixed or signal-driven position.
+#[derive(Clone, Debug)]
+pub struct GradientColor<P> {
+    pub(crate) palette: Gradient,
+    pub(crate) position: P,
+}
+
 /// A shared stop sequence and the parameters used to sample it.
 #[derive(Clone, Debug)]
 pub struct Gradient {
@@ -378,6 +385,14 @@ impl Gradient {
         size: crate::layout::Size,
     ) -> Result<Rgba, GradientError> {
         self.sample(self.projector(size)?(x, y)?)
+    }
+
+    /// Selects a color for a style property at a position from zero to one.
+    pub fn color_at<P: Into<crate::style::Property<f32>>>(&self, position: P) -> GradientColor<P> {
+        GradientColor {
+            palette: self.clone(),
+            position,
+        }
     }
 
     /// Samples the one-dimensional gradient ramp.

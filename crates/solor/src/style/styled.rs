@@ -482,8 +482,8 @@ pub trait Styled: Sized {
         self
     }
     /// Paints the assigned box with a fixed or signal-bound fill.
-    fn bg(mut self, fill: impl Into<Background>) -> Self {
-        self.style().background = Some(Some(fill.into()));
+    fn bg(mut self, fill: impl Into<Property<Background>>) -> Self {
+        self.style().set_background(fill.into());
         self
     }
     /// Clears the local background declaration's paint.

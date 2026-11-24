@@ -70,6 +70,8 @@ macro_rules! background_sources {
         pub enum Background {
             /// Paint stored directly on the declaration.
             Fixed(Fill),
+            /// A uniform color sampled at a normalized position along a gradient.
+            GradientColor(crate::GradientColor<f32>),
             $($(#[$doc])* $variant(Signal<$ty>)),+
         }
 
@@ -88,6 +90,7 @@ macro_rules! background_sources {
                 }
                 match self {
                     Self::Fixed(fill) => Ok(fill.clone()),
+                    Self::GradientColor(color) => Ok(color.palette.sample(color.position)?.into()),
                     $(Self::$variant(signal) => read(cx, *signal)),+
                 }
             }

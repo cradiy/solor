@@ -822,3 +822,114 @@ fn a_gradient_replaces_an_active_background_color_transition() -> Result<()> {
     assert!(matches!(frame.draws(), [Draw::Fill { fill, .. }] if *fill == gradient));
     Ok(())
 }
+
+#[test]
+fn reversing_a_palette_transition_retraces_its_color_stops() -> Result<()> {
+    use solor::{
+        ColorSpace, Draw, Fill, Transition, TransitionProperty, color_stop, linear_gradient, rgba,
+    };
+
+    let pink = rgba(0xc8409d88);
+    let palette = linear_gradient(
+        0.,
+        [
+            color_stop(rgb(0x203380), 0.),
+            color_stop(pink, 0.25),
+            color_stop(rgb(0x13be85), 1.),
+        ],
+    )?
+    .color_space(ColorSpace::Oklab);
+    let mut ui = Ui::new();
+    let position = ui.context().signal(0_f32);
+    let swatch = palette.color_at(0.25);
+    let moving = palette.color_at(position);
+    let view = ui.mount(component(move |_| {
+        div()
+            .flex_row()
+            .child(div().size(px(32.)).bg(swatch))
+            .child(div().size(px(32.)).bg(moving).transition(
+                TransitionProperty::BackgroundColor,
+                Transition::new(Duration::from_millis(100)),
+            ))
+    }))?;
+    ui.flush()?;
+    ui.layout(view, SIZE)?;
+    ui.context().set(position, 1.)?;
+    ui.flush()?;
+    for (ms, offset, active) in [
+        (0, 0., true),
+        (25, 0.25, true),
+        (50, 0.5, true),
+        (100, 0.25, true),
+        (150, 0., false),
+    ] {
+        if ms == 100 {
+            ui.context().set(position, 0.)?;
+            ui.flush()?;
+        }
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        assert_eq!(ui.layout(view, SIZE)?, 0);
+        let frame = ui.record_frame(view)?;
+        let expected = if offset == 0.25 {
+            pink
+        } else {
+            palette.sample(offset)?
+        };
+        assert!(matches!(frame.draws(), [
+            Draw::Fill { fill: Fill::Solid(fixed), .. },
+            Draw::Fill { fill: Fill::Solid(animated), .. },
+        ] if *fixed == pink && *animated == expected));
+        assert_eq!(frame.requests_animation_frame(), active);
+    }
+    Ok(())
+}
+
+#[test]
+fn background_and_outline_retarget_from_their_own_displayed_colors() -> Result<()> {
+    use solor::{
+        Draw, Fill, Transition,
+        TransitionProperty::{BackgroundColor, OutlineColor},
+        rgba,
+    };
+    let mut ui = Ui::new();
+    let bg = ui.context().signal(rgb(0));
+    let outline = ui.context().signal(rgba(0xffffff00));
+    let view = ui.mount(component(move |_| {
+        div()
+            .size(px(24.))
+            .bg(bg)
+            .outline_width(px(2.))
+            .outline_color(outline)
+            .transition(
+                [BackgroundColor, OutlineColor],
+                Transition::new(Duration::from_millis(100)),
+            )
+    }))?;
+    ui.flush()?;
+    ui.layout(view, SIZE)?;
+    ui.context().set(bg, rgb(0xffffff))?;
+    ui.context().set(outline, rgb(0xff0000))?;
+    for (ms, bg_value, outline_value, active) in [
+        (0, 0x000000, None, true),
+        (50, 0x808080, Some(0xff000080), true),
+        (100, 0x4040c0, Some(0xff0000ff), true),
+        (150, 0x0000ff, Some(0xff0000ff), false),
+    ] {
+        if ms == 100 {
+            ui.context().set(bg, rgb(0x0000ff))?;
+        }
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        assert_eq!(ui.layout(view, SIZE)?, 0);
+        let frame = ui.record_frame(view)?;
+        assert_eq!(frame.requests_animation_frame(), active);
+        assert!(
+            matches!(frame.draws().first(), Some(Draw::Fill { fill: Fill::Solid(color), .. }) if *color == rgb(bg_value))
+        );
+        let stroke = frame.draws().iter().find_map(|draw| match draw {
+            Draw::Border { paint, .. } => paint.fills.top.clone(),
+            _ => None,
+        });
+        assert_eq!(stroke, outline_value.map(|value| Fill::from(rgba(value))));
+    }
+    Ok(())
+}

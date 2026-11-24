@@ -791,17 +791,15 @@ struct MountedBackground {
 }
 
 impl MountedBackground {
-    fn solid_mut(&mut self) -> Option<&mut crate::Rgba> {
-        match &mut self.source {
-            Background::Fixed(Fill::Solid(color)) => Some(color),
-            _ => None,
-        }
-    }
-
     fn resolve(style: &Style, units: UnitResolver) -> Result<Option<Box<Self>>> {
         let Some(source) = &style.background else {
             return Ok(None);
         };
+        if let Background::GradientColor(color) = source
+            && !(0.0..=1.0).contains(&color.position)
+        {
+            return Err(crate::GradientError::InvalidOffset.into());
+        }
         use crate::{bitmap::Placement, style::ObjectFit};
         let placement = match source {
             #[cfg(feature = "image")]
@@ -916,17 +914,57 @@ pub(super) struct MountedNode {
 }
 
 impl MountedNode {
-    pub(super) fn set_background_color(&mut self, color: crate::Rgba) -> bool {
-        let Some(current) = self
-            .background
-            .as_deref_mut()
-            .and_then(MountedBackground::solid_mut)
-        else {
-            return false;
-        };
-        let changed = *current != color;
-        *current = color;
-        changed
+    fn transition_color(&self, property: crate::TransitionProperty) -> Option<crate::Rgba> {
+        match property {
+            crate::TransitionProperty::BackgroundColor => match &self.background.as_ref()?.source {
+                Background::Fixed(Fill::Solid(color)) => Some(*color),
+                _ => None,
+            },
+            crate::TransitionProperty::OutlineColor => self.outline.as_ref()?.color(),
+            crate::TransitionProperty::Opacity => None,
+        }
+    }
+
+    pub(super) fn set_transition_color(
+        &mut self,
+        property: crate::TransitionProperty,
+        color: crate::Rgba,
+    ) -> bool {
+        match property {
+            crate::TransitionProperty::BackgroundColor => {
+                let Some(Background::Fixed(Fill::Solid(current))) =
+                    self.background.as_mut().map(|bg| &mut bg.source)
+                else {
+                    return false;
+                };
+                if *current == color {
+                    return false;
+                }
+                *current = color;
+            }
+            crate::TransitionProperty::OutlineColor => {
+                let Some(outline) = &mut self.outline else {
+                    return false;
+                };
+                if outline.color() == Some(color) {
+                    return false;
+                }
+                outline.set_color(color);
+            }
+            crate::TransitionProperty::Opacity => return false,
+        }
+        true
+    }
+
+    pub(super) fn set_palette_position(&mut self, value: f32) -> bool {
+        if let Some(paint) = &mut self.background
+            && let Background::GradientColor(color) = &mut paint.source
+            && color.position != value
+        {
+            color.position = value;
+            return true;
+        }
+        false
     }
 
     pub(super) fn alpha(&self) -> u8 {
@@ -960,7 +998,9 @@ impl MountedNode {
         } else if record.is_none() {
             match &style.background {
                 None => FramePaint::Empty,
-                Some(Background::Fixed(_)) => FramePaint::FixedBackground,
+                Some(Background::Fixed(_) | Background::GradientColor(_)) => {
+                    FramePaint::FixedBackground
+                }
                 Some(_) => FramePaint::Recorded,
             }
         } else if fixed_label

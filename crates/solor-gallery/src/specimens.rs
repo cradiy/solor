@@ -159,11 +159,12 @@ pub(super) const STOPS: [(f32, Rgba, &str); 4] = [
 pub(super) fn paint(
     geometry: Selection<3>,
     overlay: Selection<3>,
-    preview: Selection<4>,
+    preview: Selection<6>,
     ramp: Signal<Gradient>,
     patterns: &[Fill; 2],
     map: GradientMap,
 ) -> Div {
+    let palette = map.palette().clone();
     let mut specimen = stage(rgb(0x262336))
         .h_full()
         .child_when(preview.flags()[0], move || {
@@ -193,6 +194,9 @@ pub(super) fn paint(
             .child(landscape_preview("Original", ramp, None))
             .child(landscape_preview("Mapped", ramp, Some(map.clone())))
     });
+    specimen = specimen
+        .child_when(preview.flags()[4], color_change)
+        .child_when(preview.flags()[5], move || color_path(palette.clone()));
     for (active, fill) in overlay
         .flags()
         .into_iter()
@@ -236,11 +240,76 @@ pub(super) fn paint(
             ))
             .child(control(
                 "Preview",
-                preview.buttons(["Swatch", "Even-odd", "Nonzero", "Gradient map"]),
+                preview.buttons([
+                    "Swatch",
+                    "Even-odd",
+                    "Nonzero",
+                    "Gradient map",
+                    "Color change",
+                    "Palette",
+                ]),
             )),
         opacity_preview(specimen),
         details("Color stops", stops),
     )
+}
+
+fn color_change() -> impl solor::Render {
+    component(|cx| {
+        let indigo = rgb(0x393664);
+        let accent = cx.signal(indigo);
+        let choices = Selection::new(cx, 0, true)
+            .buttons_with(["Indigo", "Peach", "Teal"], move |i, cx| {
+                cx.set(accent, [indigo, rgb(0xf1a891), rgb(0x458e88)][i])
+            });
+        let timing = Transition::new(std::time::Duration::from_millis(650));
+        div()
+            .absolute()
+            .inset(px(0.))
+            .p(px(12.))
+            .justify_end()
+            .bg(accent)
+            .transition(TransitionProperty::BackgroundColor, timing)
+            .child(
+                div()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(12.))
+                    .p(px(8.))
+                    .rounded(px(8.))
+                    .bg(crate::PAPER)
+                    .child(choices)
+                    .child(
+                        div()
+                            .size(px(16.))
+                            .rounded_full()
+                            .outline_width(px(3.))
+                            .outline_color(accent)
+                            .transition(TransitionProperty::OutlineColor, timing),
+                    ),
+            )
+    })
+}
+
+fn color_path(palette: Gradient) -> impl solor::Render {
+    component(move |cx| {
+        let position = cx.signal(0.0_f32);
+        let stops = Selection::new(cx, 0, true)
+            .buttons_with(["Indigo", "Mauve", "Peach", "Sand"], move |i, cx| {
+                cx.set(position, STOPS[i].0)
+            });
+        div()
+            .absolute()
+            .inset(px(0.))
+            .p(px(12.))
+            .justify_end()
+            .bg(palette.color_at(position))
+            .transition(
+                TransitionProperty::BackgroundColor,
+                Transition::new(std::time::Duration::from_millis(1000)),
+            )
+            .child(stops)
+    })
 }
 
 fn opacity_preview(specimen: Div) -> impl solor::Render {

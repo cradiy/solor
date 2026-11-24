@@ -284,15 +284,30 @@ impl Ui {
                 }
             }
         });
-        instance.transitions.background.advance(now, |id, color| {
-            let node = instance
-                .bodies
-                .get_mut(&id)
-                .expect("mounted transition owner");
-            if node.set_background_color(color) {
-                instance.repaints.borrow_mut().invalidate(id);
-            }
-        });
+        instance
+            .transitions
+            .colors
+            .advance(now, |(id, property), color| {
+                let node = instance
+                    .bodies
+                    .get_mut(&id)
+                    .expect("mounted transition owner");
+                if node.set_transition_color(property, color) {
+                    instance.repaints.borrow_mut().invalidate(id);
+                }
+            });
+        instance
+            .transitions
+            .palette_position
+            .advance(now, |id, position| {
+                let node = instance
+                    .bodies
+                    .get_mut(&id)
+                    .expect("mounted transition owner");
+                if node.set_palette_position(position) {
+                    instance.repaints.borrow_mut().invalidate(id);
+                }
+            });
         for id in instance.pointer.frame_listeners() {
             if let Some(handler) = instance.frame_handlers.get_mut(id)
                 && let Some(node) = instance.bodies.get_mut(id)

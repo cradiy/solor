@@ -1,16 +1,22 @@
 //! Host-paced transitions for retained element styles.
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, hash::Hash, time::Duration};
 
 use crate::{NodeId, Rgba};
 
 /// Element style properties with interpolated display values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum TransitionProperty {
     /// Opacity of the composited subtree.
     Opacity,
-    /// Solid background color. Other fill types apply immediately.
+    /// Solid background color or position along a background color palette.
     BackgroundColor,
+    /// Color of the outline surrounding the element.
+    OutlineColor,
+}
+
+impl TransitionProperty {
+    pub(crate) const COLORS: [Self; 2] = [Self::BackgroundColor, Self::OutlineColor];
 }
 
 impl AsRef<[TransitionProperty]> for TransitionProperty {
@@ -58,26 +64,32 @@ struct Track<T> {
 #[derive(Default)]
 pub(crate) struct Transitions {
     pub(crate) opacity: Tracks<f32>,
-    pub(crate) background: Tracks<Rgba>,
+    pub(crate) colors: Tracks<Rgba, (NodeId, TransitionProperty)>,
+    pub(crate) palette_position: Tracks<f32>,
 }
 
 impl Transitions {
     pub(crate) fn is_active(&self) -> bool {
-        !self.opacity.active.is_empty() || !self.background.active.is_empty()
+        !self.opacity.active.is_empty()
+            || !self.colors.active.is_empty()
+            || !self.palette_position.active.is_empty()
     }
 
     pub(crate) fn remove(&mut self, id: NodeId) {
         self.opacity.remove(id);
-        self.background.remove(id);
+        for property in TransitionProperty::COLORS {
+            self.colors.remove((id, property));
+        }
+        self.palette_position.remove(id);
     }
 }
 
-pub(crate) struct Tracks<T> {
-    active: HashMap<NodeId, Track<T>>,
+pub(crate) struct Tracks<T, K = NodeId> {
+    active: HashMap<K, Track<T>>,
     last_frame: Duration,
 }
 
-impl<T> Default for Tracks<T> {
+impl<T, K> Default for Tracks<T, K> {
     fn default() -> Self {
         Self {
             active: HashMap::new(),
@@ -105,30 +117,30 @@ impl Interpolate for Rgba {
     }
 }
 
-impl<T: Interpolate> Tracks<T> {
-    pub(crate) fn remove(&mut self, id: NodeId) -> Option<T> {
-        self.active.remove(&id).map(|track| track.target)
+impl<T: Interpolate, K: Copy + Eq + Hash> Tracks<T, K> {
+    pub(crate) fn remove(&mut self, key: K) -> Option<T> {
+        self.active.remove(&key).map(|track| track.target)
     }
 
     pub(crate) fn retarget(
         &mut self,
-        id: NodeId,
+        key: K,
         current: T,
         target: T,
         timing: Option<Transition>,
     ) -> T {
         let Some(timing) = timing.filter(|t| !t.duration.is_zero() && current != target) else {
-            self.remove(id);
+            self.remove(key);
             return target;
         };
-        let previous = self.active.get(&id);
+        let previous = self.active.get(&key);
         if previous.is_some_and(|track| track.target == target && track.timing == timing) {
             return current;
         }
         // A retargeted track starts at the time of the value currently on screen.
         let start = previous.and_then(|track| track.start.map(|_| self.last_frame));
         self.active.insert(
-            id,
+            key,
             Track {
                 timing,
                 start,
@@ -139,12 +151,12 @@ impl<T: Interpolate> Tracks<T> {
         current
     }
 
-    pub(crate) fn advance(&mut self, now: Duration, mut apply: impl FnMut(NodeId, T)) {
+    pub(crate) fn advance(&mut self, now: Duration, mut apply: impl FnMut(K, T)) {
         self.last_frame = now;
-        self.active.retain(|&id, track| {
+        self.active.retain(|&key, track| {
             let elapsed = now.saturating_sub(*track.start.get_or_insert(now));
             if elapsed >= track.timing.duration {
-                apply(id, track.target);
+                apply(key, track.target);
                 return false;
             }
             let t = (elapsed.as_secs_f64() / track.timing.duration.as_secs_f64()) as f32;
@@ -153,7 +165,7 @@ impl<T: Interpolate> Tracks<T> {
                 Easing::EaseOut => t * (2.0 - t),
             };
             apply(
-                id,
+                key,
                 if t == 0.0 {
                     track.from
                 } else {

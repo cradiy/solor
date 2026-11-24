@@ -90,6 +90,24 @@ exact!(
     Option<std::num::NonZeroUsize>
 );
 
+impl<T: Into<Background>> From<T> for Property<Background> {
+    fn from(source: T) -> Self {
+        Self(Source::Fixed(source.into()))
+    }
+}
+
+impl<P: Into<Property<f32>>> From<crate::GradientColor<P>> for Property<Background> {
+    fn from(color: crate::GradientColor<P>) -> Self {
+        let palette = color.palette;
+        color.position.into().map(move |position| {
+            Background::GradientColor(crate::GradientColor {
+                palette: palette.clone(),
+                position,
+            })
+        })
+    }
+}
+
 impl From<Property<Rgba>> for Property<crate::Ink> {
     fn from(color: Property<Rgba>) -> Self {
         color.map(crate::Ink::from)
@@ -123,7 +141,7 @@ impl<T: 'static> Property<T> {
         }
     }
 
-    pub(super) fn map<U: 'static>(self, convert: fn(T) -> U) -> Property<U> {
+    pub(super) fn map<U: 'static>(self, convert: impl Fn(T) -> U + 'static) -> Property<U> {
         Property(match self.0 {
             Source::Fixed(value) => Source::Fixed(convert(value)),
             Source::Signal(id, read) => {
@@ -278,12 +296,19 @@ impl StyleRefinement {
         {
             return;
         }
+        if self.background.is_none() && self.bindings.contains("background") {
+            return;
+        }
         let source: Property<Fill> = match self.background.as_ref().unwrap_or(&base.background) {
             Some(Background::Color(source)) => (*source).into(),
             Some(Background::Bound(source)) => (*source).into(),
             _ => return,
         };
         // Subscribe at style resolution so a new target wakes an idle transition.
+        self.set_background(source.map(Background::Fixed));
+    }
+
+    pub(super) fn set_background(&mut self, source: Property<Background>) {
         source.declare(
             self,
             Field {
@@ -292,7 +317,7 @@ impl StyleRefinement {
                 layout: false,
                 specified: |s| s.background.is_some(),
             },
-            |s, fill| s.background = Some(Some(Background::Fixed(fill))),
+            |s, fill| s.background = Some(Some(fill)),
             |s| s.background = None,
         );
     }

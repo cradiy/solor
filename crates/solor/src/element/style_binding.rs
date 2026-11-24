@@ -359,25 +359,40 @@ impl crate::Instance {
         node.cursor = cursor;
         node.hit_testable = hit_testable;
         node.text_color = style.text.color;
-        if let (Some(timing), Some(current), Some(target)) = (
-            timing(crate::TransitionProperty::BackgroundColor),
-            node.background
-                .as_deref_mut()
-                .and_then(MountedBackground::solid_mut),
-            background
-                .as_deref_mut()
-                .and_then(MountedBackground::solid_mut),
-        ) {
-            *target = self
-                .transitions
-                .background
-                .retarget(id, *current, *target, Some(timing));
+        let color_timing = timing(crate::TransitionProperty::BackgroundColor);
+        if let (Some(Background::GradientColor(current)), Some(Background::GradientColor(target))) = (
+            node.background.as_ref().map(|paint| &paint.source),
+            background.as_mut().map(|paint| &mut paint.source),
+        ) && current.palette == target.palette
+        {
+            target.position = self.transitions.palette_position.retarget(
+                id,
+                current.position,
+                target.position,
+                color_timing,
+            );
         } else {
-            self.transitions.background.remove(id);
+            self.transitions.palette_position.remove(id);
         }
+        let colors = crate::TransitionProperty::COLORS
+            .map(|property| (property, node.transition_color(property)));
         node.background = background;
         node.border = border;
         node.outline = outline;
+        for (property, current) in colors {
+            let key = (id, property);
+            if let (Some(timing), Some(current), Some(target)) =
+                (timing(property), current, node.transition_color(property))
+            {
+                let value = self
+                    .transitions
+                    .colors
+                    .retarget(key, current, target, Some(timing));
+                node.set_transition_color(property, value);
+            } else {
+                self.transitions.colors.remove(key);
+            }
+        }
         node.shadows = shadows;
         if routing_changed {
             self.invalidate_geometry();

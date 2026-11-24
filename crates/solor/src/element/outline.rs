@@ -26,10 +26,14 @@ impl MountedOutline {
             return Err(LayoutError::InvalidSize);
         }
         let pattern = a.outline_style.unwrap_or(BorderStyle::Solid);
-        let Some(color) = a.outline_color.filter(|color| color.alpha != 0) else {
+        let Some(color) = a.outline_color else {
             return Ok(None);
         };
-        if width == px(0.) || pattern == BorderStyle::None {
+        let fades = style
+            .transitions
+            .as_ref()
+            .is_some_and(|rules| rules.contains_key(&crate::TransitionProperty::OutlineColor));
+        if width == px(0.) || pattern == BorderStyle::None || (color.alpha == 0 && !fades) {
             return Ok(None);
         }
         Ok(Some(Box::new(Self {
@@ -43,7 +47,29 @@ impl MountedOutline {
         })))
     }
 
+    pub(super) fn color(&self) -> Option<crate::Rgba> {
+        match self.paint.fills.top.as_ref()? {
+            crate::Fill::Solid(color) => Some(*color),
+            _ => None,
+        }
+    }
+
+    pub(super) fn set_color(&mut self, color: crate::Rgba) {
+        let fills = &mut Rc::make_mut(&mut self.paint).fills;
+        for fill in [
+            &mut fills.top,
+            &mut fills.right,
+            &mut fills.bottom,
+            &mut fills.left,
+        ] {
+            *fill = Some(color.into());
+        }
+    }
+
     pub(super) fn draw(&self, size: Size, clip: &Option<Arc<ContentClip>>) -> Result<Option<Draw>> {
+        if self.color().is_some_and(|color| color.alpha == 0) {
+            return Ok(None);
+        }
         let expand = |axis: Pixels| {
             axis.checked_add(self.outset * 2.)
                 .ok_or(LayoutError::InvalidSize)

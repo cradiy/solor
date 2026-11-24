@@ -84,10 +84,10 @@ pub use element::{
     ParentElement, RefreshMode, RefreshPolicy, Render, TextContent, div, element, text,
 };
 pub use fill::{
-    Checkerboard, ColorSpace, ColorStop, DiagonalStripes, Fill, Gradient, GradientError,
-    GradientKind, GradientMap, Ink, Rgba, checkerboard, color_stop, diagonal_stripes,
-    gradient_bottom_to_top, gradient_left_to_right, gradient_right_to_left, gradient_top_to_bottom,
-    linear_gradient, rgb, rgba,
+    Checkerboard, ColorSpace, ColorStop, DiagonalStripes, Fill, Gradient, GradientColor,
+    GradientError, GradientKind, GradientMap, Ink, Rgba, checkerboard, color_stop,
+    diagonal_stripes, gradient_bottom_to_top, gradient_left_to_right, gradient_right_to_left,
+    gradient_top_to_bottom, linear_gradient, rgb, rgba,
 };
 use length::UnitResolver;
 pub use length::{AbsoluteLength, Length, percent, rem};
@@ -388,8 +388,13 @@ impl Instance {
                     if let Some(target) = self.transitions.opacity.remove(id) {
                         body.opacity = target;
                     }
-                    if let Some(color) = self.transitions.background.remove(id) {
-                        body.set_background_color(color);
+                    for property in TransitionProperty::COLORS {
+                        if let Some(color) = self.transitions.colors.remove((id, property)) {
+                            body.set_transition_color(property, color);
+                        }
+                    }
+                    if let Some(position) = self.transitions.palette_position.remove(id) {
+                        body.set_palette_position(position);
                     }
                     if self.focused == Some(id) {
                         self.set_focus(None, false, state);
