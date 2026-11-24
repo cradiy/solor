@@ -274,3 +274,78 @@ fn measure_frames(pair: [(&str, &str, bool); 2]) -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn path_ink_repairs_the_band_and_tracks_contour_changes() -> Result<()> {
+    use solor::{
+        Ui, component, div,
+        layout::Origin,
+        platform::{WindowEvent, WindowHandler},
+        px,
+        raster::RasterScale,
+    };
+    use solor_render_cpu::CpuWindow;
+    use std::time::Duration;
+
+    let shader = EffectShader::wgsl(
+        "fn effect(uv: vec2<f32>, p: f32) -> vec4<f32> {
+            return vec4<f32>(0.0, 1.0 - smoothstep(0.0, 0.02, abs(uv.x - p)), 0.4, 1.0);
+        }",
+    )?;
+    let window = |initial: usize| {
+        let shader = shader.clone();
+        CpuWindow::mount(
+            Ui::new(),
+            component(move |cx| {
+                let step = cx.signal(initial);
+                div()
+                    .paint(move |cx| {
+                        let step = *cx.read(step)?;
+                        let p = [0.03, 0.12, 0.06][step];
+                        let fill = shader
+                            .with_params(p)
+                            .changing_region([p - 0.02, 0.]..[p + 0.02, 1.]);
+                        let point = |x, y| Origin { x: px(x), y: px(y) };
+                        cx.fill_polygon(
+                            [
+                                point(15.5, 2.5),
+                                point(112.25, 4.),
+                                point(112.25, if step == 2 { 8. } else { 21. }),
+                                point(15.5, 21.),
+                            ],
+                            fill.clone(),
+                        )?;
+                        cx.stroke_polyline(
+                            [point(17.5, 35.5), point(105., 35.5)],
+                            px(if step == 2 { 5. } else { 16. }),
+                            fill,
+                        )
+                    })
+                    .on_frame(move |_, cx| cx.update(step, |s| *s = (*s + 1).min(2)))
+            }),
+        )
+    };
+    let size = DeviceSize {
+        width: 120,
+        height: 50,
+    }
+    .at_unit_scale();
+    let scale = RasterScale(1.25);
+    let mut retained = window(0)?;
+    let mut previous = retained.frame(size, scale)?.rgba.to_vec();
+    for step in [1, 2] {
+        retained.frame_submitted()?;
+        retained.event(WindowEvent::FrameReady(Duration::from_millis(
+            step as u64 * 8,
+        )))?;
+        let frame = retained.frame(size, scale)?;
+        let bounds = frame.damage.bounds().unwrap();
+        if step == 1 {
+            assert!(bounds.right - bounds.left < 32, "{bounds:?}");
+        }
+        assert_ne!(previous, frame.rgba);
+        assert!(frame.rgba == window(step)?.frame(size, scale)?.rgba);
+        previous.copy_from_slice(frame.rgba);
+    }
+    Ok(())
+}

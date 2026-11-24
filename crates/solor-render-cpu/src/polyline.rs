@@ -28,6 +28,25 @@ pub(super) fn bounds(
     PathBounds::new(origin, rings, scale)?.clip(f64::from(width) * scale.0 * 0.5 + 0.5)
 }
 
+pub(super) fn paint_box(
+    origin: Origin,
+    rings: &[Rc<[Origin]>],
+    width: Pixels,
+) -> std::io::Result<(Origin, Size)> {
+    let b = PathBounds::new(origin, rings, RasterScale::ONE)?;
+    let width = f64::from(width);
+    Ok((
+        Origin {
+            x: px((b.left - width * 0.5) as f32),
+            y: px((b.top - width * 0.5) as f32),
+        },
+        Size {
+            width: px((b.right - b.left + width) as f32),
+            height: px((b.bottom - b.top + width) as f32),
+        },
+    ))
+}
+
 impl Surface {
     pub(super) fn stroke_polyline(
         &mut self,
@@ -41,20 +60,7 @@ impl Surface {
         let rings = contours.rings;
         let (at, size) = match ink {
             Ink::Solid(_) => (origin, Size::default()),
-            _ => {
-                let b = PathBounds::new(origin, rings, RasterScale::ONE)?;
-                let width = f64::from(width);
-                (
-                    Origin {
-                        x: px((b.left - width * 0.5) as f32),
-                        y: px((b.top - width * 0.5) as f32),
-                    },
-                    Size {
-                        width: px((b.right - b.left + width) as f32),
-                        height: px((b.bottom - b.top + width) as f32),
-                    },
-                )
-            }
+            _ => paint_box(origin, rings, width)?,
         };
         let mut painter = mask::painter(ink, at, size, scale, (0, 0), clip)?;
         let pitch = (clip.right - clip.left) as usize;

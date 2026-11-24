@@ -539,7 +539,7 @@ fn opaque_cover(draw: &Draw, scale: RasterScale, area: Clip) -> Result<Option<so
 
 // Fill coverage includes fractional edge pixels. Text is clipped to rounded layout edges.
 fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
-    let mut bounds = primitive_bounds(draw, scale)?;
+    let bounds = primitive_bounds(draw, scale)?;
     let (Draw::WavyUnderline { clip, .. }
     | Draw::BackdropBlur { clip, .. }
     | Draw::Shadow { clip, .. }
@@ -552,6 +552,14 @@ fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     else {
         return Ok(bounds);
     };
+    Ok(clip_to_content(bounds, clip.as_deref(), scale))
+}
+
+fn clip_to_content(
+    mut bounds: Clip,
+    clip: Option<&solor::ContentClip>,
+    scale: RasterScale,
+) -> Clip {
     if let Some(clip) = clip {
         if let Some(x) = &clip.x {
             bounds.left = bounds.left.max(scale.edge(f64::from(x.start)));
@@ -562,7 +570,7 @@ fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
             bounds.bottom = bounds.bottom.min(scale.edge(f64::from(y.end)));
         }
     }
-    Ok(bounds)
+    bounds
 }
 
 fn draw_bounds(draws: &[Draw], scale: RasterScale) -> Result<Clip> {

@@ -1,6 +1,7 @@
 //! Unclipped device-space geometry for recorded paths.
 use solor::{
-    layout::Origin,
+    layout::{Origin, Size},
+    px,
     raster::{Clip, RasterScale},
 };
 use std::{
@@ -41,6 +42,13 @@ impl PathBounds {
             return Err(Error::other("path exceeds device coordinate range"));
         }
         Ok(b)
+    }
+
+    pub fn logical_size(&self, scale: RasterScale) -> Size {
+        Size {
+            width: px(((self.right - self.left) / scale.0) as f32),
+            height: px(((self.bottom - self.top) / scale.0) as f32),
+        }
     }
 
     pub fn clip(&self, margin: f64) -> Result<Clip> {

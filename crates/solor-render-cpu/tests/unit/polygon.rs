@@ -1,5 +1,5 @@
 use super::*;
-use solor::{color_stop, gradient_left_to_right, raster::DeviceSize, rgb, rgba};
+use solor::{color_stop, gradient_left_to_right, layout::Size, px, raster::DeviceSize, rgb, rgba};
 
 fn point(x: f32, y: f32) -> Origin {
     Origin { x: px(x), y: px(y) }

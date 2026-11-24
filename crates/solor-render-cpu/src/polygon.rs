@@ -5,8 +5,7 @@ use crate::{
 };
 use solor::{
     Fill, FillRule,
-    layout::{Origin, Size},
-    px,
+    layout::Origin,
     raster::{Clip, RasterScale},
 };
 use std::{
@@ -186,10 +185,7 @@ impl Surface {
             }
             Fill::Image(image) => {
                 let bounds = PathBounds::new(origin, contours, scale)?;
-                let size = Size {
-                    width: px(((bounds.right - bounds.left) / scale.0) as f32),
-                    height: px(((bounds.bottom - bounds.top) / scale.0) as f32),
-                };
+                let size = bounds.logical_size(scale);
                 let sampler = crate::bitmap::ImageSampler::new(image, size, scale)?;
                 for_each_span(
                     contours,
@@ -217,10 +213,7 @@ impl Surface {
                     return Ok(());
                 }
                 let mut sample = gradient
-                    .sampler(Size {
-                        width: px(((bounds.right - bounds.left) / scale.0) as f32),
-                        height: px(((bounds.bottom - bounds.top) / scale.0) as f32),
-                    })
+                    .sampler(bounds.logical_size(scale))
                     .map_err(Error::other)?;
                 for_each_span(
                     contours,
@@ -240,10 +233,7 @@ impl Surface {
             }
             _ => {
                 let bounds = PathBounds::new(origin, contours, scale)?;
-                let size = Size {
-                    width: px(((bounds.right - bounds.left) / scale.0) as f32),
-                    height: px(((bounds.bottom - bounds.top) / scale.0) as f32),
-                };
+                let size = bounds.logical_size(scale);
                 let origin_device = [bounds.left, bounds.top];
                 let sampler = match fill {
                     Fill::CustomImage(image) => {
