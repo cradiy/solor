@@ -11,7 +11,7 @@ pub(super) struct PreparedStyle {
     pub text: InheritedText,
     pub fixed: bool,
     pub visible: bool,
-    pub opacity: u8,
+    pub opacity: f32,
 }
 
 pub(super) fn prepare<E: Element>(
@@ -21,6 +21,7 @@ pub(super) fn prepare<E: Element>(
     units: UnitResolver,
 ) -> Result<PreparedStyle> {
     let base = node.body.base_style();
+    node.style.bind_transition_background(&base);
     node.style.bindings = node.style.bindings.without_fixed_overrides(&node.style);
     let inherited_bindings = inherited.bindings.unshadowed(&node.style);
     let mut child_bindings = inherited_bindings.clone();
@@ -151,13 +152,13 @@ pub(super) fn gradient_map(style: &Style) -> Option<crate::GradientMap> {
         .cloned()
 }
 
-fn opacity(style: &Style) -> Result<u8> {
+fn opacity(style: &Style) -> Result<f32> {
     let value = style
         .appearance
         .as_deref()
         .and_then(|a| a.opacity)
         .unwrap_or(1.0);
-    opacity_alpha(value)
+    normalized_opacity(value)
 }
 
 struct VisibilityObserver {
@@ -283,7 +284,7 @@ impl crate::Instance {
         let border = style.border_paint(self.units)?;
         let shadows = shadow::Shadows::resolve(&style, self.units)?;
         let outline = outline::MountedOutline::resolve(&style, self.units)?;
-        let background = MountedBackground::resolve(&style, self.units)?;
+        let mut background = MountedBackground::resolve(&style, self.units)?;
         // Custom content can use any declared property to determine its metrics.
         let builtin = std::any::TypeId::of::<E>() == std::any::TypeId::of::<FlexLayout>()
             || std::any::TypeId::of::<E>() == std::any::TypeId::of::<Text>()
@@ -342,7 +343,14 @@ impl crate::Instance {
         node.scroll_axes = scroll_axes;
         let was_group = node.is_group();
         node.gradient_map = gradient_map(&style);
-        node.opacity = opacity;
+        let rules = style.transitions.as_deref().filter(|_| node.visible);
+        let timing = |property| rules.and_then(|rules| rules.get(&property)).copied();
+        node.opacity = self.transitions.opacity.retarget(
+            id,
+            node.opacity,
+            opacity,
+            timing(crate::TransitionProperty::Opacity),
+        );
         if was_group != node.is_group() {
             self.pointer.invalidate_geometry();
         }
@@ -351,6 +359,22 @@ impl crate::Instance {
         node.cursor = cursor;
         node.hit_testable = hit_testable;
         node.text_color = style.text.color;
+        if let (Some(timing), Some(current), Some(target)) = (
+            timing(crate::TransitionProperty::BackgroundColor),
+            node.background
+                .as_deref_mut()
+                .and_then(MountedBackground::solid_mut),
+            background
+                .as_deref_mut()
+                .and_then(MountedBackground::solid_mut),
+        ) {
+            *target = self
+                .transitions
+                .background
+                .retarget(id, *current, *target, Some(timing));
+        } else {
+            self.transitions.background.remove(id);
+        }
         node.background = background;
         node.border = border;
         node.outline = outline;

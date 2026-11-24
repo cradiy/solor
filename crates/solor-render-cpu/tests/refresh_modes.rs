@@ -632,3 +632,193 @@ fn visibility_signal_suspends_paint_reads_and_resumes_the_same_meter() -> Result
     assert_eq!(sibling_paints.get(), 1);
     Ok(())
 }
+
+#[test]
+fn reversing_opacity_reuses_the_retained_subtree_and_releases_the_frame_clock() -> Result<()> {
+    use solor::{Draw, ImageAsset, Transition, TransitionProperty, image};
+
+    let mut ui = Ui::with_font(FONT.to_vec())?;
+    let alpha = ui.context().signal(1.0_f32);
+    let open = ui.context().signal(true);
+    let bitmap = ImageAsset::from_rgba8(1, 1, vec![255; 4])?;
+    let paints = Rc::new(Cell::new(0));
+    let observed = paints.clone();
+    let view = ui.mount(component(move |_| {
+        div().child_when(open, move || {
+            let observed = observed.clone();
+            div()
+                .w_full()
+                .h_full()
+                .opacity(alpha)
+                .transition(
+                    TransitionProperty::Opacity,
+                    Transition::new(Duration::from_millis(100)),
+                )
+                .child(bar(move |_| {
+                    observed.update(|n| n + 1);
+                    Ok(12)
+                }))
+                .child(text("Volume"))
+                .child(image(bitmap.clone()).size(px(4.)))
+        })
+    }))?;
+    ui.flush()?;
+    ui.layout(view, SIZE)?;
+    let inspect = |ui: &mut Ui, expected_alpha, active| -> Result<_> {
+        let frame = ui.record_frame(view)?;
+        assert_eq!(frame.requests_animation_frame(), active);
+        let draws = match frame.draws() {
+            [Draw::Group { alpha, draws, .. }] => {
+                assert_eq!(*alpha, expected_alpha);
+                draws.as_slice()
+            }
+            draws => {
+                assert_eq!(expected_alpha, 255);
+                draws
+            }
+        };
+        let paragraph = draws
+            .iter()
+            .find_map(|d| match d {
+                Draw::Text { paragraph, .. } => Some(paragraph.clone()),
+                _ => None,
+            })
+            .unwrap();
+        ui.accept_pointer_frame(frame.into_pointer_frame())?;
+        Ok(paragraph)
+    };
+    let paragraph = inspect(&mut ui, 255, false)?;
+    let initial_paints = paints.get();
+    ui.context().set(alpha, 0.0)?;
+    ui.flush()?;
+    inspect(&mut ui, 255, true)?;
+    for (ms, expected, active) in [
+        (1000, 255, true),
+        (1050, 128, true),
+        (1075, 159, true),
+        (1150, 255, false),
+    ] {
+        if ms == 1075 {
+            ui.context().set(alpha, 1.0)?;
+            ui.flush()?;
+            inspect(&mut ui, 128, true)?;
+        }
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        assert_eq!(ui.layout(view, SIZE)?, 0);
+        assert!(Rc::ptr_eq(&paragraph, &inspect(&mut ui, expected, active)?));
+    }
+    assert_eq!(paints.get(), initial_paints);
+    ui.context().set(alpha, 0.0)?;
+    ui.flush()?;
+    inspect(&mut ui, 255, true)?;
+    ui.context().set(open, false)?;
+    ui.flush()?;
+    ui.layout(view, SIZE)?;
+    assert!(!ui.record_frame(view)?.requests_animation_frame());
+    Ok(())
+}
+
+#[test]
+fn selected_properties_use_independent_timings() -> Result<()> {
+    use solor::{
+        Draw, Fill, Transition,
+        TransitionProperty::{BackgroundColor, Opacity},
+    };
+
+    let mut ui = Ui::new();
+    let black = rgb(0x000000);
+    let white = rgb(0xffffff);
+    let tint = ui.context().signal(black);
+    let alpha = ui.context().signal(1.0_f32);
+    let fast = Transition::new(Duration::from_millis(100));
+    let slow = Transition::new(Duration::from_millis(200));
+    let view = ui.mount(component(move |_| {
+        let tile = || div().size(px(16.)).opacity(alpha).bg(tint);
+        div()
+            .flex_row()
+            .child(
+                tile()
+                    .transition([Opacity, BackgroundColor], fast)
+                    .transition(BackgroundColor, slow),
+            )
+            .child(tile().transition(Opacity, fast))
+    }))?;
+    ui.flush()?;
+    ui.layout(view, SIZE)?;
+    ui.context().set(tint, white)?;
+    ui.context().set(alpha, 0.5)?;
+    ui.flush()?;
+
+    for (ms, alpha, shade, active) in [
+        (0, 255, 0x000000, true),
+        (50, 191, 0x404040, true),
+        (100, 128, 0x808080, true),
+        (200, 128, 0xffffff, false),
+    ] {
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        assert_eq!(ui.layout(view, SIZE)?, 0);
+        let frame = ui.record_frame(view)?;
+        assert_eq!(frame.requests_animation_frame(), active);
+        assert_eq!(frame.draws().len(), 2);
+        for (draw, expected) in frame.draws().iter().zip([rgb(shade), white]) {
+            let draw = match draw {
+                Draw::Group {
+                    alpha: actual,
+                    draws,
+                    ..
+                } => {
+                    assert_eq!(*actual, alpha);
+                    assert_eq!(draws.len(), 1);
+                    &draws[0]
+                }
+                draw => {
+                    assert_eq!(alpha, 255);
+                    draw
+                }
+            };
+            assert!(
+                matches!(draw, Draw::Fill { fill: Fill::Solid(color), .. } if *color == expected),
+                "{draw:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_gradient_replaces_an_active_background_color_transition() -> Result<()> {
+    use solor::{Draw, Fill, Rgba, Transition, TransitionProperty, color_stop, linear_gradient};
+
+    let red = rgb(0xff0000);
+    let transparent_blue = Rgba::new(0, 0, 255, 0);
+    let gradient = Fill::from(linear_gradient(
+        90.,
+        [color_stop(red, 0.), color_stop(transparent_blue, 1.)],
+    )?);
+    let mut ui = Ui::new();
+    let fill = ui.context().signal(Fill::Solid(red));
+    let view = ui.mount(component(move |_| {
+        div().size(px(16.)).bg(fill).transition(
+            TransitionProperty::BackgroundColor,
+            Transition::new(Duration::from_millis(100)),
+        )
+    }))?;
+    ui.flush()?;
+    ui.layout(view, SIZE)?;
+    ui.context().set(fill, Fill::Solid(transparent_blue))?;
+    ui.flush()?;
+    ui.dispatch_frame(view, Duration::ZERO)?;
+    ui.dispatch_frame(view, Duration::from_millis(50))?;
+    let frame = ui.record_frame(view)?;
+    assert!(frame.requests_animation_frame());
+    assert!(
+        matches!(frame.draws(), [Draw::Fill { fill: Fill::Solid(color), .. }] if *color == Rgba::new(255, 0, 0, 128))
+    );
+
+    ui.context().set(fill, gradient.clone())?;
+    ui.flush()?;
+    let frame = ui.record_frame(view)?;
+    assert!(!frame.requests_animation_frame());
+    assert!(matches!(frame.draws(), [Draw::Fill { fill, .. }] if *fill == gradient));
+    Ok(())
+}

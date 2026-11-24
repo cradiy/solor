@@ -1,7 +1,7 @@
 use crate::{CITRON, INK, MUTED, Selection, control, details, label, page, stage};
 use solor::{
     Div, Fill, FillRule, Gradient, GradientKind, GradientMap, PaintContext, Rgba, Signal, Styled,
-    div,
+    Transition, TransitionProperty, component, div,
     keyboard::Key,
     layout::Origin,
     px, rgb, rgba,
@@ -165,7 +165,7 @@ pub(super) fn paint(
     map: GradientMap,
 ) -> Div {
     let mut specimen = stage(rgb(0x262336))
-        .h(px(192.0))
+        .h_full()
         .child_when(preview.flags()[0], move || {
             div().absolute().inset(px(0.)).rounded(px(16.)).bg(ramp)
         });
@@ -238,9 +238,31 @@ pub(super) fn paint(
                 "Preview",
                 preview.buttons(["Swatch", "Even-odd", "Nonzero", "Gradient map"]),
             )),
-        specimen,
+        opacity_preview(specimen),
         details("Color stops", stops),
     )
+}
+
+fn opacity_preview(specimen: Div) -> impl solor::Render {
+    component(move |cx| {
+        let alpha = cx.signal(1.0_f32);
+        let choices = Selection::new(cx, 1, false);
+        let buttons = choices.buttons_with(["Fade out", "Fade in"], move |index, cx| {
+            cx.set(alpha, if index == 0 { 0.0 } else { 1.0 })
+        });
+        div()
+            .items_stretch()
+            .gap(px(8.))
+            .child(
+                stage(rgb(0xe5e3df))
+                    .h(px(192.))
+                    .child(specimen.opacity(alpha).transition(
+                        TransitionProperty::Opacity,
+                        Transition::new(std::time::Duration::from_millis(900)),
+                    )),
+            )
+            .child(control("Opacity", buttons))
+    })
 }
 
 fn landscape_preview(title: &'static str, ramp: Signal<Gradient>, map: Option<GradientMap>) -> Div {

@@ -214,6 +214,15 @@ impl TextStyleRefinement {
     }
 }
 
+/// Timing declarations keyed by the property whose target changes.
+pub type TransitionRules = std::collections::BTreeMap<crate::TransitionProperty, crate::Transition>;
+
+impl properties::Overlay for TransitionRules {
+    fn overlay(&mut self, later: &Self) {
+        self.extend(later);
+    }
+}
+
 /// Local box properties after cascading. An automatic dimension follows the content.
 #[derive(Clone, Debug, Default)]
 pub struct Style {
@@ -221,6 +230,8 @@ pub struct Style {
     pub layout: Option<Rc<LayoutProperties>>,
     /// Local paint and interaction declarations.
     pub appearance: Option<Rc<Appearance>>,
+    /// Timing for transitions on this element.
+    pub transitions: Option<Rc<TransitionRules>>,
     /// Space between the border box and content on each side.
     pub padding: Edges<Pixels>,
     /// Preferred horizontal size before the parent's constraint.
@@ -248,6 +259,8 @@ pub struct StyleRefinement {
     pub layout: Option<Rc<LayoutProperties>>,
     /// Local paint and interaction declarations.
     pub appearance: Option<Rc<Appearance>>,
+    /// Timing for transitions on this element.
+    pub transitions: Option<Rc<TransitionRules>>,
     /// Independently specified padding edges.
     pub padding: Edges<Option<AbsoluteLength>>,
     /// Horizontal size declaration.
@@ -352,6 +365,7 @@ impl Style {
         );
         overlay_group(&mut self.layout, &later.layout);
         overlay_group(&mut self.appearance, &later.appearance);
+        overlay_group(&mut self.transitions, &later.transitions);
         if let Some(background) = &later.background {
             self.background.clone_from(background);
         }
@@ -436,6 +450,7 @@ impl StyleRefinement {
         );
         overlay_group(&mut self.layout, &later.layout);
         overlay_group(&mut self.appearance, &later.appearance);
+        overlay_group(&mut self.transitions, &later.transitions);
         self.text = self.text.overlay(&later.text);
     }
 }

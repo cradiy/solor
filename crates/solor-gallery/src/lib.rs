@@ -293,7 +293,7 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
     ))
 }
 
-fn page(title: &'static str, control: Div, sample: Div, details: Div) -> Div {
+fn page(title: &'static str, control: Div, sample: impl IntoElement, details: Div) -> Div {
     div()
         .items_stretch()
         .p(px(22.0))

@@ -204,6 +204,24 @@ pub trait Styled: Sized {
         }
     }
 
+    /// Applies timing to one or more properties. A later declaration overrides matching properties.
+    fn transition(
+        mut self,
+        properties: impl AsRef<[crate::TransitionProperty]>,
+        timing: crate::Transition,
+    ) -> Self {
+        let properties = properties.as_ref();
+        if !properties.is_empty() {
+            let rules = Rc::make_mut(
+                self.style()
+                    .transitions
+                    .get_or_insert_with(Default::default),
+            );
+            rules.extend(properties.iter().map(|&property| (property, timing)));
+        }
+        self
+    }
+
     /// Overlays a reusable set of style declarations.
     fn with_style(mut self, style: &StyleRefinement) -> Self {
         self.style().refine(style);

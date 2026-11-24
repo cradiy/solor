@@ -159,7 +159,7 @@ impl PaintGroups<'_> {
                 // Closing a group moves its children out of the recording buffer.
                 self.peak = self.peak.max(draws.len());
                 let node = &instance.bodies[&owner];
-                wrap_group(draws, start, node.opacity, node.gradient_map.as_ref());
+                wrap_group(draws, start, node.alpha(), node.gradient_map.as_ref());
             }
         }
     }
@@ -269,6 +269,30 @@ impl Ui {
             .instances
             .get_mut(&view)
             .context("frame view is no longer mounted")?;
+        instance.transitions.opacity.advance(now, |id, opacity| {
+            let node = instance
+                .bodies
+                .get_mut(&id)
+                .expect("mounted transition owner");
+            let previous = node.alpha();
+            node.opacity = opacity;
+            let alpha = node.alpha();
+            if previous != alpha {
+                instance.repaints.borrow_mut().dirty.insert(id);
+                if node.gradient_map.is_none() && (previous == 255 || alpha == 255) {
+                    instance.pointer.invalidate_geometry();
+                }
+            }
+        });
+        instance.transitions.background.advance(now, |id, color| {
+            let node = instance
+                .bodies
+                .get_mut(&id)
+                .expect("mounted transition owner");
+            if node.set_background_color(color) {
+                instance.repaints.borrow_mut().invalidate(id);
+            }
+        });
         for id in instance.pointer.frame_listeners() {
             if let Some(handler) = instance.frame_handlers.get_mut(id)
                 && let Some(node) = instance.bodies.get_mut(id)
@@ -297,7 +321,7 @@ impl Ui {
         let cache = &instance.fixed_draws;
         let mut state = self.state.try_borrow_mut()?;
         let mut caret = pointer.focused_caret(instance, &state);
-        let mut next_frame = false;
+        let mut next_frame = instance.transitions.is_active();
         for id in pointer.frame_listeners() {
             if instance.frame_handlers[id].is_enabled(&state)? {
                 next_frame = true;

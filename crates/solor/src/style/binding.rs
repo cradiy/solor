@@ -267,3 +267,33 @@ impl<T: 'static> Property<T> {
         }
     }
 }
+
+impl StyleRefinement {
+    pub(crate) fn bind_transition_background(&mut self, base: &Style) {
+        let has_color_rule = |rules: &Rc<TransitionRules>| {
+            rules.contains_key(&crate::TransitionProperty::BackgroundColor)
+        };
+        if !self.transitions.as_ref().is_some_and(has_color_rule)
+            && !base.transitions.as_ref().is_some_and(has_color_rule)
+        {
+            return;
+        }
+        let source: Property<Fill> = match self.background.as_ref().unwrap_or(&base.background) {
+            Some(Background::Color(source)) => (*source).into(),
+            Some(Background::Bound(source)) => (*source).into(),
+            _ => return,
+        };
+        // Subscribe at style resolution so a new target wakes an idle transition.
+        source.declare(
+            self,
+            Field {
+                key: "background",
+                inherited: false,
+                layout: false,
+                specified: |s| s.background.is_some(),
+            },
+            |s, fill| s.background = Some(Some(Background::Fixed(fill))),
+            |s| s.background = None,
+        );
+    }
+}

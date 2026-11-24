@@ -321,9 +321,13 @@ fn collect_contours(
     Ok(rings)
 }
 
-fn opacity_alpha(value: f32) -> Result<u8> {
+fn normalized_opacity(value: f32) -> Result<f32> {
     anyhow::ensure!(value.is_finite(), "opacity must be finite");
-    Ok((value.clamp(0.0, 1.0) * 255.0).round() as u8)
+    Ok(value.clamp(0.0, 1.0))
+}
+
+fn opacity_alpha(value: f32) -> u8 {
+    (value * 255.0).round() as u8
 }
 
 fn validate_points(points: &[Origin]) -> Result<()> {
@@ -371,7 +375,7 @@ impl<'paint> PaintContext<'paint> {
         opacity: f32,
         draw: impl FnOnce(&mut PaintContext<'_>) -> Result<R>,
     ) -> Result<R> {
-        self.with_group(opacity_alpha(opacity)?, None, draw)
+        self.with_group(opacity_alpha(normalized_opacity(opacity)?), None, draw)
     }
 
     /// Recolors the callback's composited pixels by sampling the map at their luminance.
@@ -787,6 +791,13 @@ struct MountedBackground {
 }
 
 impl MountedBackground {
+    fn solid_mut(&mut self) -> Option<&mut crate::Rgba> {
+        match &mut self.source {
+            Background::Fixed(Fill::Solid(color)) => Some(color),
+            _ => None,
+        }
+    }
+
     fn resolve(style: &Style, units: UnitResolver) -> Result<Option<Box<Self>>> {
         let Some(source) = &style.background else {
             return Ok(None);
@@ -895,7 +906,7 @@ pub(super) struct MountedNode {
     record: Option<Record>,
     pub(super) owned: crate::Owned,
     pub(crate) handlers: Option<Box<Handlers>>,
-    pub(super) opacity: u8,
+    pub(super) opacity: f32,
     pub(super) gradient_map: Option<crate::GradientMap>,
     pub(super) z_index: i32,
     pub(crate) cursor: Option<crate::style::Cursor>,
@@ -905,8 +916,25 @@ pub(super) struct MountedNode {
 }
 
 impl MountedNode {
+    pub(super) fn set_background_color(&mut self, color: crate::Rgba) -> bool {
+        let Some(current) = self
+            .background
+            .as_deref_mut()
+            .and_then(MountedBackground::solid_mut)
+        else {
+            return false;
+        };
+        let changed = *current != color;
+        *current = color;
+        changed
+    }
+
+    pub(super) fn alpha(&self) -> u8 {
+        opacity_alpha(self.opacity)
+    }
+
     pub(super) fn is_group(&self) -> bool {
-        self.opacity < 255 || self.gradient_map.is_some()
+        self.alpha() < 255 || self.gradient_map.is_some()
     }
 
     fn new(

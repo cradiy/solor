@@ -25,6 +25,8 @@ macro_rules! impl_event_context {
     };
 }
 
+mod transition;
+pub use transition::{Transition, TransitionProperty};
 mod tasks;
 pub use tasks::AsyncContext;
 use tasks::{TaskScope, Tasks};
@@ -254,6 +256,7 @@ struct Instance {
     focused: Option<NodeId>,
     focus_generation: u64,
     tab_order: Option<keyboard::TabOrder>,
+    transitions: transition::Transitions,
     frame_handlers: HashMap<NodeId, element::FrameHandler>,
     scope: NodeId,
     paint_reads: RefCell<Vec<SignalId>>,
@@ -382,6 +385,12 @@ impl Instance {
                     self.visible_nodes += 1;
                 } else {
                     self.visible_nodes -= 1;
+                    if let Some(target) = self.transitions.opacity.remove(id) {
+                        body.opacity = target;
+                    }
+                    if let Some(color) = self.transitions.background.remove(id) {
+                        body.set_background_color(color);
+                    }
                     if self.focused == Some(id) {
                         self.set_focus(None, false, state);
                     }
@@ -575,6 +584,7 @@ impl Instance {
             }
             self.pointer.retire(node.id);
             self.frame_handlers.remove(&node.id);
+            self.transitions.remove(node.id);
             self.unobserve_paint(node.id, cx.state);
             self.repaints.borrow_mut().dirty.remove(&node.id);
             if let Some(target) = node.binding_target {
@@ -717,6 +727,7 @@ impl Ui {
             focused: None,
             focus_generation: 0,
             tab_order: None,
+            transitions: Default::default(),
             frame_handlers: on_frame
                 .into_iter()
                 .map(|handler| (root, handler))
@@ -1047,7 +1058,7 @@ impl Ui {
         let mut state = self.state.try_borrow_mut()?;
         let start = commands.len();
         body.paint(instance, &state, None, commands)?;
-        frame::wrap_group(commands, start, body.opacity, body.gradient_map.as_ref());
+        frame::wrap_group(commands, start, body.alpha(), body.gradient_map.as_ref());
         instance.observe_paint(node, &mut state)?;
         let mut repaints = instance.repaints.borrow_mut();
         repaints.commands.remove(&node);
