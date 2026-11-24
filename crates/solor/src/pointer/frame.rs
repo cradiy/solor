@@ -92,13 +92,21 @@ pub(super) struct HitGeometry {
 impl PointerFrame {
     pub(crate) fn focused_caret(
         &self,
-        focused: Option<NodeId>,
+        instance: &Instance,
         state: &crate::state::Runtime<()>,
     ) -> Option<crate::text::FrameCaret> {
-        let field = self.geometry.fields.get(&focused?)?;
+        let field = self.geometry.fields.get(&instance.focused?)?;
+        let label = instance.scene.body::<StyledBody<Text>>(field.label).ok()?;
+        let color = label
+            .content
+            .input
+            .as_ref()?
+            .selection_color
+            .unwrap_or(crate::rgba(0x3684eb60));
         Some(crate::text::FrameCaret::new(
             field.label,
             state.read(field.source).ok()?,
+            color,
         ))
     }
 

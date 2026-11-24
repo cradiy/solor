@@ -101,6 +101,13 @@ impl Element for Text {
             line_height: style.text.line_height,
         })?;
         self.set_paragraph_style(style.text.attributes.as_deref(), style.text.letter_spacing);
+        if let Some(input) = &mut self.input {
+            input.selection_color = style
+                .text
+                .attributes
+                .as_ref()
+                .and_then(|a| a.selection_color);
+        }
         self.set_decorations(&style.text)?;
         Ok(())
     }

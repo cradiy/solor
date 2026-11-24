@@ -675,6 +675,7 @@ pub struct Text {
 
 pub(crate) struct InputLabel {
     pub(crate) source: crate::Signal<TextInputState>,
+    pub(crate) selection_color: Option<crate::Rgba>,
     scroll: std::cell::Cell<Pixels>,
 }
 
@@ -682,6 +683,7 @@ impl Text {
     pub(crate) fn bind_input(&mut self, source: crate::Signal<TextInputState>) {
         self.input = Some(Box::new(InputLabel {
             source,
+            selection_color: None,
             scroll: Default::default(),
         }));
     }

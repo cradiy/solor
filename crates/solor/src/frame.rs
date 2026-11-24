@@ -296,7 +296,7 @@ impl Ui {
         let pointer = self.prepare_pointer_frame(view)?;
         let cache = &instance.fixed_draws;
         let mut state = self.state.try_borrow_mut()?;
-        let mut caret = pointer.focused_caret(instance.focused, &state);
+        let mut caret = pointer.focused_caret(instance, &state);
         let mut next_frame = false;
         for id in pointer.frame_listeners() {
             if instance.frame_handlers[id].is_enabled(&state)? {

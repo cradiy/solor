@@ -24,6 +24,7 @@ pub(super) fn typography(spacing: Selection<3>, input: Signal<TextInputState>) -
                 .bg(rgb(0xf9fbea))
                 .overflow_hidden()
                 .text_input(input)
+                .selection_color(rgb(0xc5dd99))
                 .cursor_text()
                 .focus_indicator(crate::viewport_focus_indicator)
                 .on_key_down(move |key, cx| {
@@ -41,16 +42,20 @@ pub(super) fn typography(spacing: Selection<3>, input: Signal<TextInputState>) -
                         Key::Text(value) if !value.chars().any(char::is_control) => {
                             cx.update_in_place(input, |state| state.commit(value))?;
                         }
-                        &Key::ArrowLeft | &Key::ArrowRight | &Key::Home | &Key::End
-                            if !mods.shift =>
-                        {
+                        &Key::ArrowLeft | &Key::ArrowRight | &Key::Home | &Key::End => {
                             let movement = match key.key {
                                 Key::ArrowLeft => CaretMove::Previous,
                                 Key::ArrowRight => CaretMove::Next,
                                 Key::Home => CaretMove::Start,
                                 _ => CaretMove::End,
                             };
-                            cx.update_in_place(input, |state| state.move_caret(movement))?;
+                            cx.update_in_place(input, |state| {
+                                if mods.shift {
+                                    state.extend_selection(movement);
+                                } else {
+                                    state.move_caret(movement);
+                                }
+                            })?;
                         }
                         &Key::Delete => {
                             cx.update_in_place(input, TextInputState::delete_forward)?

@@ -71,16 +71,28 @@ impl TextInputState {
             return;
         }
         let range = self.selection.range();
-        let head = self.selection.head;
-        let next = match movement {
-            CaretMove::Start => 0,
-            CaretMove::End => self.text.len(),
+        let offset = match movement {
             CaretMove::Previous if !range.is_empty() => range.start,
             CaretMove::Next if !range.is_empty() => range.end,
-            CaretMove::Previous => self.previous_boundary(head),
-            CaretMove::Next => self.next_boundary(head),
+            _ => self.destination(movement),
         };
-        self.selection = TextSelection::caret(next);
+        self.selection = TextSelection::caret(offset);
+    }
+
+    /// Moves the head of the selection while keeping its anchor fixed.
+    pub fn extend_selection(&mut self, movement: CaretMove) {
+        if self.preedit.is_none() {
+            self.selection.head = self.destination(movement);
+        }
+    }
+
+    fn destination(&self, movement: CaretMove) -> usize {
+        match movement {
+            CaretMove::Start => 0,
+            CaretMove::End => self.text.len(),
+            CaretMove::Previous => self.previous_boundary(self.selection.head),
+            CaretMove::Next => self.next_boundary(self.selection.head),
+        }
     }
 
     fn previous_boundary(&self, byte: usize) -> usize {

@@ -4,6 +4,7 @@ use crate::{
     layout::{Origin, Size},
     px,
 };
+use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Bounds of the insertion point in logical window coordinates.
@@ -19,6 +20,26 @@ struct Cluster {
     bytes: std::ops::Range<usize>,
     leading: f32,
     trailing: f32,
+}
+
+impl Cluster {
+    fn x_at(&self, text: &str, byte: usize) -> f32 {
+        if byte <= self.bytes.start {
+            return self.leading;
+        }
+        if byte >= self.bytes.end {
+            return self.trailing;
+        }
+        let text = &text[self.bytes.clone()];
+        let offset = byte - self.bytes.start;
+        let mut boundaries = text.grapheme_indices(true).peekable();
+        let mut before = 0;
+        while boundaries.next_if(|(i, _)| *i < offset).is_some() {
+            before += 1;
+        }
+        let fraction = before as f32 / (before + boundaries.count()) as f32;
+        self.leading + (self.trailing - self.leading) * fraction
+    }
 }
 
 impl Line {
@@ -94,28 +115,12 @@ impl Paragraph {
             if line.glyphs.is_empty() && offset == line.source_start {
                 return Some((0., line));
             }
-            for Cluster {
-                bytes,
-                leading,
-                trailing,
-            } in line.caret_clusters()
-            {
-                if offset == bytes.start {
-                    return Some((leading, line));
+            for cluster in line.caret_clusters() {
+                if cluster.bytes.contains(&offset) {
+                    return Some((cluster.x_at(&self.text, offset), line));
                 }
-                if bytes.contains(&offset) {
-                    let local = offset - bytes.start;
-                    let cluster = self.text.get(bytes)?;
-                    let mut boundaries = cluster.grapheme_indices(true).peekable();
-                    let mut before = 0;
-                    while boundaries.next_if(|(i, _)| *i < local).is_some() {
-                        before += 1;
-                    }
-                    let fraction = before as f32 / (before + boundaries.count()) as f32;
-                    return Some((leading + (trailing - leading) * fraction, line));
-                }
-                if offset == bytes.end {
-                    end = Some((trailing, line));
+                if offset == cluster.bytes.end {
+                    end = Some((cluster.trailing, line));
                 }
             }
         }
@@ -127,13 +132,25 @@ pub(crate) struct FrameCaret {
     label: NodeId,
     byte: usize,
     visible: bool,
+    selected: Range<usize>,
+    selection_color: crate::Rgba,
     pub(crate) bounds: Option<CaretBounds>,
 }
 
 impl FrameCaret {
-    pub(crate) fn new(label: NodeId, input: &TextInputState) -> Self {
+    pub(crate) fn new(label: NodeId, input: &TextInputState, selection_color: crate::Rgba) -> Self {
         let (byte, visible) = input.label_caret();
+        let selection = match input.preedit() {
+            Some(preedit) => preedit.selection,
+            None => Some(input.selection()),
+        };
+        let anchor = selection.map_or(byte, |s| {
+            byte.saturating_sub(s.head.saturating_sub(s.anchor))
+                .saturating_add(s.anchor.saturating_sub(s.head))
+        });
         Self {
+            selected: byte.min(anchor)..byte.max(anchor),
+            selection_color,
             label,
             byte,
             visible,
@@ -141,25 +158,114 @@ impl FrameCaret {
         }
     }
 
+    fn highlights(
+        &self,
+        paragraph: &Paragraph,
+        origin: Origin,
+        size: Size,
+        clip: &Option<std::sync::Arc<crate::ContentClip>>,
+    ) -> smallvec::SmallVec<[Draw; 1]> {
+        let mut fills = smallvec::SmallVec::new();
+        let mut spans = smallvec::SmallVec::<[Range<f32>; 8]>::new();
+        for line in &paragraph.lines {
+            let top = px(line.top).max(px(0.));
+            let bottom = px(line.top + line.height).min(size.height);
+            if bottom <= top {
+                continue;
+            }
+            for cluster in line.caret_clusters() {
+                if self.selected.start >= cluster.bytes.end
+                    || self.selected.end <= cluster.bytes.start
+                {
+                    continue;
+                }
+                let a = cluster.x_at(&paragraph.text, self.selected.start);
+                let b = cluster.x_at(&paragraph.text, self.selected.end);
+                let start = a.min(b).max(0.);
+                let end = a.max(b).min(size.width.get());
+                if start < end {
+                    if let Some(last) = spans.last_mut()
+                        && start <= last.end
+                        && end >= last.start
+                    {
+                        last.start = last.start.min(start);
+                        last.end = last.end.max(end);
+                    } else {
+                        spans.push(start..end);
+                    }
+                }
+            }
+            for span in spans.drain(..) {
+                let origin = Origin {
+                    x: origin.x + px(span.start),
+                    y: origin.y + top,
+                };
+                let size = Size {
+                    width: px(span.end - span.start),
+                    height: bottom - top,
+                };
+                if clip.as_ref().is_none_or(|c| c.intersects(origin, size)) {
+                    fills.push(Draw::Fill {
+                        origin,
+                        size,
+                        clip: clip.clone(),
+                        fill: self.selection_color.into(),
+                        corner_radii: Default::default(),
+                    });
+                }
+            }
+        }
+        fills
+    }
+
     pub(crate) fn record(&mut self, id: NodeId, commands: &mut Vec<Draw>, start: usize) {
         if id != self.label {
             return;
         }
-        let Some(Draw::Text {
+        let Some(offset) = commands[start..]
+            .iter()
+            .position(|c| matches!(c, Draw::Text { .. }))
+        else {
+            return;
+        };
+        let index = start + offset;
+        let Draw::Text {
             paragraph,
             origin,
             size,
             clip,
             color,
-        }) = commands[start..]
-            .iter()
-            .find(|c| matches!(c, Draw::Text { .. }))
+        } = &commands[index]
         else {
             return;
         };
-        let Some((x, line)) = paragraph.caret_position(self.byte) else {
-            return;
-        };
+        let caret = paragraph
+            .caret_position(self.byte)
+            .and_then(|(x, line)| CaretBounds::clipped(x, line, *origin, *size, clip.as_deref()));
+        self.bounds = caret;
+        let marker = caret.filter(|_| self.visible).map(|bounds| Draw::Fill {
+            clip: clip.clone(),
+            origin: bounds.origin,
+            size: bounds.size,
+            fill: color.clone().into(),
+            corner_radii: Default::default(),
+        });
+        if !self.selected.is_empty() && self.selection_color.alpha != 0 {
+            let highlights = self.highlights(paragraph, *origin, *size, clip);
+            commands.splice(index..index, highlights);
+        }
+        commands.extend(marker);
+    }
+}
+
+impl CaretBounds {
+    fn clipped(
+        x: f32,
+        line: &Line,
+        origin: Origin,
+        size: Size,
+        clip: Option<&crate::ContentClip>,
+    ) -> Option<Self> {
         let width = px(1.);
         let mut left = origin.x + px(x).max(px(0.)).min(size.width.saturating_sub(width));
         let mut top = origin.y + px(line.top);
@@ -177,24 +283,14 @@ impl FrameCaret {
             }
         }
         if right <= left || bottom <= top {
-            return;
+            return None;
         }
-        let bounds = CaretBounds {
+        Some(Self {
             origin: Origin { x: left, y: top },
             size: Size {
                 width: right - left,
                 height: bottom - top,
             },
-        };
-        self.bounds = Some(bounds);
-        if self.visible {
-            commands.push(Draw::Fill {
-                clip: clip.clone(),
-                origin: bounds.origin,
-                size: bounds.size,
-                fill: color.clone().into(),
-                corner_radii: Default::default(),
-            });
-        }
+        })
     }
 }

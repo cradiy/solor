@@ -47,6 +47,9 @@ macro_rules! affects_layout {
     (layout_mut.dominant_scroll_axis) => {
         false
     };
+    (attributes_mut.selection_color) => {
+        false
+    };
     (attributes_mut.text_background) => {
         false
     };
@@ -269,6 +272,7 @@ pub trait Styled: Sized {
     }
     property_setters! { attributes_mut;
         font_features => font_features: Rc<[FontFeature]>, font_family => font_family: FontFamily, font_fallbacks => font_fallbacks: Rc<[FontFamily]>,
+        selection_color => selection_color: crate::Rgba,
         letter_spacing => letter_spacing: AbsoluteLength, text_bg => text_background: crate::Ink,
         underline_color => underline_color: crate::Ink, strikethrough_color => strikethrough_color: crate::Ink,
         underline_thickness => underline_thickness: AbsoluteLength, strikethrough_thickness => strikethrough_thickness: AbsoluteLength

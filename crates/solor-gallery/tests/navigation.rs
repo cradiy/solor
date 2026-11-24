@@ -119,6 +119,69 @@ fn typography_sample_displays_keyboard_and_composed_text() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn keyboard_selection_highlights_and_replaces_complete_graphemes() -> Result<()> {
+    use solor::text::{TextInputEvent, TextSelection};
+
+    let (ui, root) = gallery()?;
+    let mut window = CpuWindow::mount(ui, root)?;
+    let size = Size {
+        width: px(800.),
+        height: px(560.),
+    };
+    let render = |window: &mut CpuWindow| -> Result<usize> {
+        let frame = window.frame(size, RasterScale::ONE)?;
+        let selected = frame
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| **p == [0xc5, 0xdd, 0x99, 255])
+            .count();
+        window.frame_submitted()?;
+        Ok(selected)
+    };
+    let press = |w: &mut CpuWindow, key, shift| -> Result<()> {
+        w.event(WindowEvent::Key(KeyEvent {
+            key,
+            state: KeyState::Down,
+            repeat: false,
+            modifiers: solor::keyboard::Modifiers {
+                shift,
+                ..Default::default()
+            },
+        }))?;
+        Ok(())
+    };
+    render(&mut window)?;
+    click(&mut window, 120., 275.)?;
+    press(&mut window, Key::End, false)?;
+    window.event(WindowEvent::TextInput(TextInputEvent::Commit(
+        "e\u{301}中".into(),
+    )))?;
+    let plain = render(&mut window)?;
+    press(&mut window, Key::ArrowLeft, true)?;
+    press(&mut window, Key::ArrowLeft, true)?;
+    let end = "Aae\u{301}中".len();
+    assert_eq!(
+        window.surrounding_text(64).unwrap().selection(),
+        TextSelection {
+            anchor: end,
+            head: 2
+        }
+    );
+    assert!(render(&mut window)? > plain);
+    press(&mut window, Key::End, true)?;
+    assert_eq!(render(&mut window)?, plain);
+    press(&mut window, Key::Home, true)?;
+    window.event(WindowEvent::TextInput(TextInputEvent::Commit("字".into())))?;
+    let input = window.surrounding_text(64).unwrap();
+    assert_eq!(input.text(), "字");
+    assert_eq!(input.selection(), TextSelection::caret("字".len()));
+    assert_eq!(render(&mut window)?, plain);
+    Ok(())
+}
+
 fn click(window: &mut CpuWindow, x: f32, y: f32) -> Result<()> {
     let point = mouse_at(x, y);
     for input in [

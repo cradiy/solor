@@ -206,6 +206,8 @@ properties! {
         line_clamp: Option<NonZeroUsize>,
         /// Paint behind each visual line of text.
         text_background: crate::Ink,
+        /// Background color of selected text in a focused input.
+        selection_color: crate::Rgba,
         /// Stroke beneath each visible text line.
         underline: UnderlineStyle,
         /// Draw a line through the text.
