@@ -272,7 +272,29 @@ impl<'a> TextRaster<'a> {
                     .variations([("wght", f32::from(face.weight()))])
                     .hint(false)
                     .build();
+                // Invert the clip using the full outline box, including overhang and
+                // a device pixel of raster rounding on either edge.
+                let visible_origins = face.horizontal_outline_bounds().map(|(left, right)| {
+                    let min = bounds
+                        .left
+                        .saturating_sub((right * device_em).ceil() as i64)
+                        .saturating_sub(1);
+                    let max = bounds
+                        .right
+                        .saturating_sub((left * device_em).floor() as i64)
+                        .saturating_add(1);
+                    min..max
+                });
                 for glyph in run {
+                    let glyph_x = scale
+                        .edge(f64::from(at.x) + f64::from(glyph.x + em * glyph.x_offset))
+                        .saturating_sub(origin.0);
+                    if visible_origins
+                        .as_ref()
+                        .is_some_and(|range| !range.contains(&glyph_x))
+                    {
+                        continue;
+                    }
                     let mut rasterize = |mask: &mut Image| {
                         mask.clear();
                         if renderer.render_into(&mut scaler, glyph.id, mask) {
@@ -294,10 +316,7 @@ impl<'a> TextRaster<'a> {
                             &self.scratch
                         }
                     };
-                    let x = scale
-                        .edge(f64::from(at.x) + f64::from(glyph.x + em * glyph.x_offset))
-                        .saturating_sub(origin.0)
-                        .saturating_add(i64::from(mask.placement.left));
+                    let x = glyph_x.saturating_add(i64::from(mask.placement.left));
                     let y = scale
                         .edge(
                             f64::from(at.y)

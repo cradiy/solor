@@ -523,7 +523,7 @@ impl Engine {
         paragraph: &ParagraphStyle,
         width: Option<Pixels>,
         allow_notdef: bool,
-    ) -> Result<Paragraph> {
+    ) -> Result<Cached> {
         if self.fonts.db().is_empty() {
             return Err(LayoutError::Node("no fonts available"));
         }
@@ -610,11 +610,15 @@ impl Engine {
         let mut lines = Vec::new();
         let mut content = Size::default();
         let limit = line_clamp.map_or(usize::MAX, NonZeroUsize::get);
+        let mut width_independent = nowrap
+            && paragraph.overflow == TextOverflow::Clip
+            && matches!(paragraph.alignment, TextAlign::Start | TextAlign::Left);
         let mut runs = buffer.layout_runs().peekable();
         let mut source_line = 0;
         let mut source_start = 0;
         while lines.len() < limit {
             let Some(run) = runs.next() else { break };
+            width_independent &= !run.rtl;
             let source_offset = |i: usize| collapsed.as_ref().map_or(i, |c| c.offsets[i]);
             let (glyphs, line_width) =
                 if mark_overflow && lines.len() + 1 == limit && runs.peek().is_some() {
@@ -645,19 +649,24 @@ impl Engine {
             });
         }
         let baseline = lines.first().map(|l| extent(l.baseline)).transpose()?;
-        Ok(Paragraph {
-            faces,
-            text: text.clone(),
-            style,
-            lines,
-            content,
-            baseline,
+        Ok(Cached {
+            width,
+            width_independent,
+            paragraph: Rc::new(Paragraph {
+                faces,
+                text: text.clone(),
+                style,
+                lines,
+                content,
+                baseline,
+            }),
         })
     }
 }
 
 struct Cached {
     width: Option<Pixels>,
+    width_independent: bool,
     paragraph: Rc<Paragraph>,
 }
 
@@ -818,27 +827,30 @@ impl Text {
         let mut engine = self.engine.borrow_mut();
         engine.counts.requests += 1;
         let mut cache = self.cache.borrow_mut();
-        if let Some(cached) = cache.iter().find(|c| c.width == width) {
+        if let Some(cached) = cache
+            .iter()
+            .find(|c| c.width_independent || c.width == width)
+        {
             engine.counts.hits += 1;
             return Ok(Rc::clone(&cached.paragraph));
         }
-        let paragraph = Rc::new(engine.shape(
+        let shaped = engine.shape(
             &self.content,
             self.style,
             &self.paragraph,
             width,
             self.input.is_some(),
-        )?);
+        )?;
         if self.cache_enabled {
             if cache.len() == CACHE_SLOTS {
                 cache.pop_front();
             }
-            cache.push_back(Cached {
-                width,
-                paragraph: Rc::clone(&paragraph),
-            });
+            let paragraph = Rc::clone(&shaped.paragraph);
+            cache.push_back(shaped);
+            Ok(paragraph)
+        } else {
+            Ok(shaped.paragraph)
         }
-        Ok(paragraph)
     }
 }
 

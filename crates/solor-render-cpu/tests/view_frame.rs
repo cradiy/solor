@@ -600,6 +600,35 @@ fn logical_alignment_follows_paragraph_direction_and_justification_skips_last_li
 }
 
 #[test]
+fn resizing_preformatted_text_repositions_each_paragraph_by_its_direction() -> Result<()> {
+    use solor::{Draw, style::WhiteSpace};
+
+    let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
+    let mut ui = Ui::with_font(font.to_vec())?;
+    let view = ui.mount(component(|_| {
+        text("A\n\u{200f}A").w_full().white_space(WhiteSpace::Pre)
+    }))?;
+    for width in [72, 144, 96] {
+        ui.layout(view, DeviceSize { width, height: 80 }.at_unit_scale())?;
+        let frame = ui.record_frame(view)?;
+        let [Draw::Text { paragraph, .. }] = frame.draws() else {
+            panic!("expected one label");
+        };
+        let [ltr, rtl] = paragraph.lines.as_slice() else {
+            panic!("expected two lines");
+        };
+        assert_eq!(ltr.glyphs[0].x, 0.0);
+        let letter = rtl
+            .glyphs
+            .iter()
+            .find(|g| g.start == '\u{200f}'.len_utf8())
+            .unwrap();
+        assert!((letter.x + letter.width - width as f32).abs() < 0.01);
+    }
+    Ok(())
+}
+
+#[test]
 fn inherited_line_clamp_sizes_and_paints_only_visible_lines() -> Result<()> {
     use solor::{Draw, SharedString, percent};
     use std::num::NonZeroUsize;

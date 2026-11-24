@@ -230,12 +230,34 @@ pub struct FontFace {
     index: u32,
     weight: u16,
     key: u64,
+    horizontal_bounds: Option<(f32, f32)>,
 }
 
 impl FontFace {
     pub(super) fn new(font: Arc<cosmic_text::Font>, index: u32, weight: u16) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
+        let horizontal_bounds = ttf_parser::Face::parse(font.data(), index)
+            .ok()
+            .and_then(|face| {
+                // The head box covers outlines at the default variation coordinates.
+                if face
+                    .raw_face()
+                    .table(ttf_parser::Tag::from_bytes(b"fvar"))
+                    .is_some()
+                {
+                    return None;
+                }
+                let bounds = face.global_bounding_box();
+                let units = f32::from(face.units_per_em());
+                (bounds.x_min < bounds.x_max).then(|| {
+                    (
+                        f32::from(bounds.x_min) / units,
+                        f32::from(bounds.x_max) / units,
+                    )
+                })
+            });
         Self {
+            horizontal_bounds,
             font,
             index,
             weight,
@@ -253,6 +275,11 @@ impl FontFace {
     /// Weight used during shaping, including the weight axis of a variable font.
     pub fn weight(&self) -> u16 {
         self.weight
+    }
+    /// Horizontal outline bounds in em units relative to the glyph origin, when
+    /// the font supplies a box valid for every glyph at the selected weight.
+    pub fn horizontal_outline_bounds(&self) -> Option<(f32, f32)> {
+        self.horizontal_bounds
     }
     /// Process-local key for raster caches, including the face's weight.
     pub fn cache_key(&self) -> u64 {
