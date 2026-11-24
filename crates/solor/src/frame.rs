@@ -275,6 +275,10 @@ impl Ui {
             .advance(now, |(id, axis), value| {
                 Ok(instance.scene.set_dimension(id, axis, value)?)
             })?;
+        instance
+            .transitions
+            .gaps
+            .advance(now, |id, value| instance.scene.set_flex_gap(id, value))?;
         instance.transitions.radii.advance(now, |id, radii| {
             let node = instance
                 .bodies

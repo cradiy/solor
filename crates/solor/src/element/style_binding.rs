@@ -281,6 +281,15 @@ pub(super) fn item_style(
     })
 }
 
+impl Scene {
+    pub(crate) fn set_flex_gap(&mut self, id: NodeId, gap: Pixels) -> Result<()> {
+        if self.body::<StyledBody<FlexLayout>>(id)?.content.gap != gap {
+            self.edit_layout::<StyledBody<FlexLayout>>(id, |body| body.content.gap = gap)?;
+        }
+        Ok(())
+    }
+}
+
 impl crate::Instance {
     fn update_style<E: Element>(&mut self, id: NodeId, style: Style, layout: bool) -> Result<()> {
         let opacity = opacity(&style)?;
@@ -299,6 +308,22 @@ impl crate::Instance {
         let builtin = std::any::TypeId::of::<E>() == std::any::TypeId::of::<FlexLayout>()
             || std::any::TypeId::of::<E>() == std::any::TypeId::of::<Text>()
             || std::any::TypeId::of::<E>() == std::any::TypeId::of::<super::image::ImageBody>();
+        let gap_timing = timing(crate::TransitionProperty::Gap);
+        let mut prepare_content = |content: &mut E| -> Result<()> {
+            if let Some(timing) = gap_timing
+                && let Some(flex) = (content as &mut dyn std::any::Any).downcast_mut::<FlexLayout>()
+            {
+                let current = flex.gap;
+                flex.prepare_content(&style)?;
+                flex.gap = self
+                    .transitions
+                    .gaps
+                    .retarget(id, current, flex.gap, Some(timing));
+                Ok(())
+            } else {
+                content.prepare_content(&style)
+            }
+        };
         let clip = item.overflow_clip;
         if layout
             || !builtin
@@ -327,7 +352,7 @@ impl crate::Instance {
             let padding = bounds.content_insets();
             let mut prepared = Ok(());
             self.scene.edit_layout::<StyledBody<E>>(id, |body| {
-                prepared = body.content.prepare_content(&style);
+                prepared = prepare_content(&mut body.content);
                 if prepared.is_ok() {
                     body.bounds = bounds;
                 }
@@ -341,10 +366,7 @@ impl crate::Instance {
                 self.pointer.invalidate_geometry();
             }
         } else {
-            self.scene
-                .body_mut::<StyledBody<E>>(id)?
-                .content
-                .prepare_content(&style)?;
+            prepare_content(&mut self.scene.body_mut::<StyledBody<E>>(id)?.content)?;
         }
         let appearance = style.appearance.as_deref();
         let z_index = appearance.and_then(|a| a.z_index).unwrap_or_default();

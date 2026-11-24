@@ -1169,3 +1169,62 @@ fn animated_box_tracks_the_parent_size_and_reflows_its_sibling() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn changing_flex_direction_retargets_spacing_from_the_displayed_gap() -> Result<()> {
+    use solor::{Transition, TransitionProperty, layout::FlexDirection};
+    use std::time::Duration;
+
+    let mut ui = Ui::new();
+    let direction = ui.context().signal(FlexDirection::Row);
+    let column_gap = ui.context().signal(px(4.));
+    let row_gap = ui.context().signal(px(12.));
+    let view = ui.mount(component(move |_| {
+        div().items_start().child(
+            div()
+                .flex_direction(direction)
+                .gap_x(column_gap)
+                .gap_y(row_gap)
+                .transition(
+                    TransitionProperty::Gap,
+                    Transition::new(Duration::from_millis(100)),
+                )
+                .child(div().size(px(10.)))
+                .child(div().size(px(10.))),
+        )
+    }))?;
+    let line = ui.children(view, ui.root(view)?)?.next().unwrap();
+    let second = ui.children(view, line)?.nth(1).unwrap();
+    let viewport = Size {
+        width: px(120.),
+        height: px(120.),
+    };
+    ui.layout(view, viewport)?;
+    ui.context().set(column_gap, px(44.))?;
+    for (ms, vertical, gap) in [
+        (0, false, 4.),
+        (50, false, 24.),
+        (50, true, 24.),
+        (100, true, 18.),
+        (150, true, 12.),
+    ] {
+        if vertical && ms == 50 {
+            ui.context().set(direction, FlexDirection::Column)?;
+        }
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        ui.layout(view, viewport)?;
+        let size = ui.geometry(view, line).unwrap().metrics.size;
+        let pos = ui.geometry(view, second).unwrap().origin;
+        let (main, cross, offset) = if vertical {
+            (size.height, size.width, pos.y)
+        } else {
+            (size.width, size.height, pos.x)
+        };
+        assert_eq!(
+            (main, cross, offset),
+            (px(20. + gap), px(10.), px(10. + gap))
+        );
+        assert_eq!(ui.record_frame(view)?.requests_animation_frame(), ms < 150);
+    }
+    Ok(())
+}

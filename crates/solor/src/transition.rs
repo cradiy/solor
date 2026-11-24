@@ -16,6 +16,8 @@ pub enum TransitionProperty {
     Width,
     /// Preferred height. Changes to or from automatic sizing apply immediately.
     Height,
+    /// Spacing between adjacent children along a flex container's main axis.
+    Gap,
     /// The four radii of the border box.
     BorderRadius,
     /// Opacity of the composited subtree.
@@ -132,6 +134,7 @@ struct Track<T> {
 pub(crate) struct Transitions {
     pub(crate) opacity: Tracks<f32>,
     pub(crate) dimensions: Tracks<ComputedLength, (NodeId, Dimension)>,
+    pub(crate) gaps: Tracks<Pixels>,
     pub(crate) radii: Tracks<Corners<Pixels>>,
     pub(crate) lengths: Tracks<Pixels, (NodeId, TransitionProperty)>,
     pub(crate) colors: Tracks<Rgba, (NodeId, TransitionProperty)>,
@@ -142,6 +145,7 @@ impl Transitions {
     pub(crate) fn is_active(&self) -> bool {
         !self.opacity.active.is_empty()
             || !self.dimensions.active.is_empty()
+            || !self.gaps.active.is_empty()
             || !self.radii.active.is_empty()
             || !self.lengths.active.is_empty()
             || !self.colors.active.is_empty()
@@ -150,6 +154,7 @@ impl Transitions {
 
     pub(crate) fn remove(&mut self, id: NodeId) {
         self.opacity.remove(id);
+        self.gaps.remove(id);
         self.radii.remove(id);
         for axis in Dimension::BOTH {
             self.dimensions.remove((id, axis));

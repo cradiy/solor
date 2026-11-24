@@ -390,6 +390,9 @@ impl Instance {
                             self.scene.set_dimension(id, axis, value)?;
                         }
                     }
+                    if let Some(gap) = self.transitions.gaps.remove(id) {
+                        self.scene.set_flex_gap(id, gap)?;
+                    }
                     if let Some(radii) = self.transitions.radii.remove(id) {
                         body.set_corner_radii(radii);
                     }
