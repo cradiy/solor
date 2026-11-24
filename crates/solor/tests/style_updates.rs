@@ -1446,3 +1446,77 @@ fn foreground_transition_repaints_inherited_glyphs_without_relayout() -> Result<
     assert!(!running);
     Ok(())
 }
+
+#[test]
+fn border_width_tracks_content_and_paint_when_reversed() -> Result<()> {
+    use solor::{Edges, Transition, TransitionProperty};
+    use std::time::Duration;
+
+    let mut ui = Ui::new();
+    let left = ui.context().signal(px(0.));
+    let top = ui.context().signal(px(0.));
+    let color = ui.context().signal(INK);
+    let view = ui.mount(component(|_| {
+        div()
+            .w(px(100.))
+            .items_stretch()
+            .border_l(left)
+            .border_t(top)
+            .border_color(color)
+            .transition(
+                TransitionProperty::BorderWidth,
+                Transition::new(Duration::from_millis(100)),
+            )
+            .child(div().h(px(10.)).bg(INK))
+    }))?;
+    let child = ui.children(view, ui.root(view)?)?.next().unwrap();
+    ui.context().set(left, px(19.))?;
+    ui.context().set(top, px(7.))?;
+    for (ms, x, y) in [
+        (0, 0., 0.),
+        (50, 9.5, 3.5),
+        (75, 7.125, 2.625),
+        (150, 0., 0.),
+    ] {
+        if ms == 75 {
+            ui.context().set(left, px(0.))?;
+            ui.context().set(top, px(0.))?;
+        }
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        if ms == 50 {
+            ui.context().set(color, ACCENT)?;
+            ui.flush()?;
+        }
+        ui.layout(
+            view,
+            Size {
+                width: px(100.),
+                height: px(80.),
+            },
+        )?;
+        let geometry = ui.geometry(view, child).unwrap();
+        assert_eq!(geometry.origin, Origin { x: px(x), y: px(y) });
+        assert_eq!(geometry.metrics.size.width, px(100. - x));
+        let frame = ui.record_frame(view)?;
+        let border = frame.draws().iter().find_map(|draw| match draw {
+            Draw::Border { paint, .. } => Some(paint),
+            _ => None,
+        });
+        if x > 0. {
+            let paint = border.unwrap();
+            assert_eq!(
+                paint.widths,
+                Edges {
+                    left: px(x),
+                    top: px(y),
+                    ..Edges::default()
+                }
+            );
+            assert_eq!(paint.visible_fills()[3], Some(&Fill::Solid(ACCENT)));
+        } else {
+            assert!(border.is_none());
+        }
+        assert_eq!(frame.requests_animation_frame(), ms < 150);
+    }
+    Ok(())
+}

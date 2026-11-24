@@ -450,11 +450,19 @@ impl Instance {
                             self.scene.set_flex_factor(id, factor, value)?;
                         }
                     }
-                    if let Some((padding, apply)) = self.transitions.padding.remove_with_data(id)
-                        && let Some(insets) = apply(&mut self.scene, id, padding)?
-                        && let Some(handlers) = body.handlers.as_mut()
-                    {
-                        handlers.padding = insets;
+                    for kind in styled_body::BoxEdges::ALL {
+                        if let Some((value, apply)) =
+                            self.transitions.box_edges.remove_with_data((id, kind))
+                        {
+                            if let Some(insets) = apply(&mut self.scene, id, kind, value)?
+                                && let Some(handlers) = body.handlers.as_mut()
+                            {
+                                handlers.padding = insets;
+                            }
+                            if kind == styled_body::BoxEdges::Border {
+                                body.set_border_widths(value);
+                            }
+                        }
                     }
                     if let Some((target, apply)) = self.transitions.margins.remove_with_data(id) {
                         apply(&mut self.scene, id, target)?;

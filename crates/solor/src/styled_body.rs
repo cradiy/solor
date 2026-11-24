@@ -17,9 +17,9 @@ pub(crate) type MarginLengths = Edges<Option<ComputedLength>>;
 const ZERO_MARGINS: MarginLengths = Edges::all(Some(ComputedLength::Pixels(px(0.0))));
 
 pub(crate) struct BoxModel {
-    padding_box_insets: ContentInsets,
-    pub(crate) padding: Edges,
-    border: Size,
+    padding: Edges,
+    pub(crate) border: Edges,
+    gutter: Size,
     margins: Option<Box<MarginLengths>>,
     box_sizing: BoxSizing,
     aspect_ratio: Option<f32>,
@@ -87,13 +87,35 @@ impl BoxModel {
         }
     }
 
-    pub(crate) fn content_insets(&self) -> ContentInsets {
+    fn border_size(&self) -> Size {
+        Size {
+            width: self.border.left + self.border.right,
+            height: self.border.top + self.border.bottom,
+        }
+    }
+
+    fn padding_box_insets(&self) -> ContentInsets {
+        let size = self.border_size();
         ContentInsets {
             origin: Origin {
-                x: self.padding_box_insets.origin.x + self.padding.left,
-                y: self.padding_box_insets.origin.y + self.padding.top,
+                x: self.border.left,
+                y: self.border.top,
             },
-            total: self.with_padding(self.padding_box_insets.total),
+            total: Size {
+                width: size.width + self.gutter.width,
+                height: size.height + self.gutter.height,
+            },
+        }
+    }
+
+    pub(crate) fn content_insets(&self) -> ContentInsets {
+        let insets = self.padding_box_insets();
+        ContentInsets {
+            origin: Origin {
+                x: insets.origin.x + self.padding.left,
+                y: insets.origin.y + self.padding.top,
+            },
+            total: self.with_padding(insets.total),
         }
     }
 
@@ -104,16 +126,29 @@ impl BoxModel {
         }
     }
 
-    pub(crate) fn set_padding(&mut self, padding: Edges) -> Result<()> {
-        if [padding.top, padding.right, padding.bottom, padding.left]
+    pub(crate) fn edges(&self, kind: BoxEdges) -> Edges {
+        match kind {
+            BoxEdges::Border => self.border,
+            BoxEdges::Padding => self.padding,
+        }
+    }
+
+    pub(crate) fn set_edges(&mut self, kind: BoxEdges, value: Edges) -> Result<()> {
+        let (padding, border) = match kind {
+            BoxEdges::Border => (self.padding, value),
+            BoxEdges::Padding => (value, self.border),
+        };
+        if [value.top, value.right, value.bottom, value.left]
             .iter()
-            .any(|value| !value.is_extent())
+            .any(|v| !v.is_extent())
         {
             return Err(LayoutError::InvalidSize);
         }
-        let totals = self.padding_box_insets.total;
-        add(add(padding.left, padding.right)?, totals.width)?;
-        add(add(padding.top, padding.bottom)?, totals.height)?;
+        let width = add(add(border.left, border.right)?, self.gutter.width)?;
+        let height = add(add(border.top, border.bottom)?, self.gutter.height)?;
+        add(add(padding.left, padding.right)?, width)?;
+        add(add(padding.top, padding.bottom)?, height)?;
+        self.border = border;
         self.padding = padding;
         Ok(())
     }
@@ -131,26 +166,10 @@ impl BoxModel {
             .map(|edges| map_edges(edges, |value| units.offset(value.unwrap_or(px(0.0).into()))))
             .transpose()?
             .map(Box::new);
-        let b = style.border_widths(units)?;
-        let border_width = add(b.left, b.right)?;
-        let border_height = add(b.top, b.bottom)?;
-        let padding_box_insets = ContentInsets {
-            origin: Origin {
-                x: b.left,
-                y: b.top,
-            },
-            total: Size {
-                width: add(border_width, gutter.width)?,
-                height: add(border_height, gutter.height)?,
-            },
-        };
         let mut bounds = Self {
-            padding_box_insets,
+            border: style.border_widths(units)?,
             padding: Edges::default(),
-            border: Size {
-                width: border_width,
-                height: border_height,
-            },
+            gutter,
             margins,
             aspect_ratio,
             box_sizing: style
@@ -159,7 +178,7 @@ impl BoxModel {
                 .and_then(|layout| layout.box_sizing)
                 .unwrap_or(BoxSizing::BorderBox),
         };
-        bounds.set_padding(style.padding)?;
+        bounds.set_edges(BoxEdges::Padding, style.padding)?;
         Ok(bounds)
     }
 
@@ -330,17 +349,15 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
     }
     fn layout(&mut self, cx: &mut LayoutContext<'_, '_>, assigned: Size) -> Result<LayoutOutput> {
         let content_size = self.content_size(assigned);
-        cx.padding_box = (
-            self.bounds.padding_box_insets.origin,
-            self.bounds.padding_box_insets.content_size(assigned),
-        );
+        let insets = self.bounds.padding_box_insets();
+        cx.padding_box = (insets.origin, insets.content_size(assigned));
         cx.set_child_containing_block(content_size.into());
         let out = self.content.layout(cx, content_size)?.validate()?;
         let origin = self.origin();
         if origin != Origin::default() {
             cx.offset_children(origin)?;
         }
-        let outer = self.bounds.with_padding(self.bounds.border);
+        let outer = self.bounds.with_padding(self.bounds.border_size());
         Ok(LayoutOutput {
             content: Size {
                 width: add(out.content.width, outer.width)?,
@@ -367,19 +384,37 @@ pub(crate) fn apply_margin<E: LayoutNode>(
     Ok(())
 }
 
-pub(crate) type ApplyPadding =
-    fn(&mut crate::layout::Scene, crate::NodeId, Edges) -> Result<Option<ContentInsets>>;
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum BoxEdges {
+    Padding,
+    Border,
+}
 
-pub(crate) fn apply_padding<E: LayoutNode>(
+impl BoxEdges {
+    pub(crate) const ALL: [Self; 2] = [Self::Padding, Self::Border];
+
+    pub(crate) fn property(self) -> crate::TransitionProperty {
+        match self {
+            Self::Padding => crate::TransitionProperty::Padding,
+            Self::Border => crate::TransitionProperty::BorderWidth,
+        }
+    }
+}
+
+pub(crate) type ApplyBoxEdges =
+    fn(&mut crate::layout::Scene, crate::NodeId, BoxEdges, Edges) -> Result<Option<ContentInsets>>;
+
+pub(crate) fn apply_box_edges<E: LayoutNode>(
     scene: &mut crate::layout::Scene,
     id: crate::NodeId,
-    padding: Edges,
+    kind: BoxEdges,
+    value: Edges,
 ) -> Result<Option<ContentInsets>> {
-    if scene.body::<StyledBody<E>>(id)?.bounds.padding == padding {
+    if scene.body::<StyledBody<E>>(id)?.bounds.edges(kind) == value {
         return Ok(None);
     }
     let mut updated = Ok(());
-    scene.edit_layout::<StyledBody<E>>(id, |body| updated = body.bounds.set_padding(padding))?;
+    scene.edit_layout::<StyledBody<E>>(id, |body| updated = body.bounds.set_edges(kind, value))?;
     updated?;
     let bounds = &scene.body::<StyledBody<E>>(id)?.bounds;
     let insets = bounds.content_insets();

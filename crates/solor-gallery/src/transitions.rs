@@ -4,7 +4,8 @@ use crate::{INK, MUTED, Selection, control, label};
 use solor::{
     Context, Div, Length, Render, Styled, Transition,
     TransitionProperty::{
-        BorderRadius, Gap, Height, Margin, MaxHeight, MaxWidth, MinHeight, MinWidth, Padding, Width,
+        BorderRadius, BorderWidth, Gap, Height, Margin, MaxHeight, MaxWidth, MinHeight, MinWidth,
+        Padding, Width,
     },
     component, div, percent, px, rgb,
 };
@@ -47,12 +48,14 @@ fn shape(cx: &mut Context<'_>, timing: Transition) -> Div {
     let width = cx.signal(px(84.));
     let height = cx.signal(px(40.));
     let radius = cx.signal(px(6.));
+    let border = cx.signal(px(1.));
     let controls =
         Selection::new(cx, 0, false).buttons_with(["Compact", "Expanded"], move |i, cx| {
-            let (w, h, r) = [(84., 40., 6.), (176., 72., 36.)][i];
+            let (w, h, r, b) = [(84., 40., 6., 1.), (176., 72., 36., 8.)][i];
             cx.set(width, px(w))?;
             cx.set(height, px(h))?;
-            cx.set(radius, px(r))
+            cx.set(radius, px(r))?;
+            cx.set(border, px(b))
         });
     specimen(
         "Size & radius",
@@ -67,10 +70,9 @@ fn shape(cx: &mut Context<'_>, timing: Transition) -> Div {
                     .h(height)
                     .rounded(radius)
                     .bg(rgb(0x66548e))
-                    .outline_width(px(1.))
-                    .outline_offset(px(4.))
-                    .outline_color(rgb(0x9786b2))
-                    .transition([Width, Height, BorderRadius], timing),
+                    .border(border)
+                    .border_fill(rgb(0xaa96c8))
+                    .transition([Width, Height, BorderRadius, BorderWidth], timing),
             ),
     )
 }

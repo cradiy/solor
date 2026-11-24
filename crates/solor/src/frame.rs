@@ -287,13 +287,16 @@ impl Ui {
             })?;
         instance
             .transitions
-            .padding
-            .advance_with_data(now, |id, padding, apply| {
-                if let Some(insets) = apply(&mut instance.scene, id, padding)? {
+            .box_edges
+            .advance_with_data(now, |(id, kind), value, apply| {
+                if let Some(insets) = apply(&mut instance.scene, id, kind, value)? {
                     let node = instance
                         .bodies
                         .get_mut(&id)
                         .expect("mounted transition owner");
+                    if kind == crate::styled_body::BoxEdges::Border {
+                        node.set_border_widths(value);
+                    }
                     if let Some(handlers) = node.handlers.as_mut() {
                         handlers.padding = insets;
                         instance.pointer.invalidate_geometry();

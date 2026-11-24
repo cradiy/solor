@@ -126,7 +126,7 @@ pub(super) fn prepare<E: Element>(
     };
     Ok(PreparedStyle {
         scroll_axes: crate::pointer::ScrollAxes::from_layout(style.layout.as_deref(), units)?,
-        border: style.border_paint(units)?,
+        border: style.border_paint(style.border_widths(units)?),
         shadows: shadow::Shadows::resolve(&style, units)?,
         outline: outline::MountedOutline::resolve(&style, units)?,
         opacity: opacity(&style)?,
@@ -360,7 +360,6 @@ impl crate::Instance {
         let rules = style.transitions.as_deref().filter(|_| node.visible);
         let timing =
             |property: crate::TransitionProperty| rules.and_then(|rules| property.timing(rules));
-        let border = style.border_paint(self.units)?;
         let shadows = shadow::Shadows::resolve(&style, self.units)?;
         let mut outline = outline::MountedOutline::resolve(&style, self.units)?;
         let mut background = MountedBackground::resolve(&style, self.units)?;
@@ -417,19 +416,23 @@ impl crate::Instance {
                     bounds.set_margin_lengths(displayed);
                 }
             }
-            let mut padding_changes = false;
-            if let Some(timing) = timing(crate::TransitionProperty::Padding) {
-                let current = self.scene.body::<StyledBody<E>>(id)?.bounds.padding;
-                let displayed = self.transitions.padding.retarget_with_data(
-                    id,
+            let mut insets_changing = false;
+            for kind in crate::styled_body::BoxEdges::ALL {
+                let Some(timing) = timing(kind.property()) else {
+                    continue;
+                };
+                let current = self.scene.body::<StyledBody<E>>(id)?.bounds.edges(kind);
+                let target = bounds.edges(kind);
+                let displayed = self.transitions.box_edges.retarget_with_data(
+                    (id, kind),
                     current,
-                    style.padding,
+                    target,
                     Some(timing),
-                    crate::styled_body::apply_padding::<E>,
+                    crate::styled_body::apply_box_edges::<E>,
                 );
-                padding_changes = displayed != style.padding;
-                if padding_changes {
-                    bounds.set_padding(displayed)?;
+                if displayed != target {
+                    bounds.set_edges(kind, displayed)?;
+                    insets_changing = true;
                 }
             }
             let shrinking_to_zero = item.shrink == 0.0
@@ -441,7 +444,7 @@ impl crate::Instance {
             let mut sizing = bounds.item_sizing(
                 &style,
                 self.units,
-                shrinking_to_zero || (padding_changes && item.shrink > 0.0),
+                shrinking_to_zero || (insets_changing && item.shrink > 0.0),
             )?;
             if let Some(rules) = rules {
                 for (&property, &timing) in rules {
@@ -534,6 +537,7 @@ impl crate::Instance {
         node.overflow_clip = clip;
         node.cursor = cursor;
         node.hit_testable = hit_testable;
+        let border = style.border_paint(self.scene.body::<StyledBody<E>>(id)?.bounds.border);
         node.text_color = style.text.color;
         let color_timing = timing(crate::TransitionProperty::BackgroundColor);
         if let (Some(Background::GradientColor(current)), Some(Background::GradientColor(target))) = (

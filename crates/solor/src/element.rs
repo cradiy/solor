@@ -920,6 +920,14 @@ pub(super) struct MountedNode {
 }
 
 impl MountedNode {
+    pub(super) fn set_border_widths(&mut self, widths: crate::Edges) {
+        if let Some(border) = &mut self.border
+            && border.widths != widths
+        {
+            Rc::make_mut(border).widths = widths;
+        }
+    }
+
     pub(super) fn set_corner_radii(&mut self, radii: Corners<Pixels>) -> bool {
         if self.corner_radii == radii {
             return false;
@@ -941,13 +949,7 @@ impl MountedNode {
                 _ => None,
             },
             crate::TransitionProperty::OutlineColor => self.outline.as_ref()?.color(),
-            edge => {
-                let side = edge.border_edge()?;
-                let Fill::Solid(color) = self.border.as_ref()?.visible_fills()[side]? else {
-                    return None;
-                };
-                Some(*color)
-            }
+            edge => self.border.as_ref()?.solid_color(edge.border_edge()?),
         }
     }
 
@@ -984,7 +986,9 @@ impl MountedNode {
                 let Some(border) = &mut self.border else {
                     return false;
                 };
-                if !matches!(border.visible_fills()[side], Some(Fill::Solid(current)) if *current != color)
+                if border
+                    .solid_color(side)
+                    .is_none_or(|current| current == color)
                 {
                     return false;
                 }
@@ -1190,7 +1194,9 @@ impl MountedNode {
         if let Some(shadows) = &self.shadows {
             shadows.record(true, self.corner_radii, size, &clips.inherited, cx.commands);
         }
-        if let Some(paint) = &self.border {
+        if let Some(paint) = &self.border
+            && paint.visible_fills().iter().any(Option::is_some)
+        {
             cx.commands.push(Draw::Border {
                 clip: clips.inherited.clone(),
                 origin: Origin::default(),

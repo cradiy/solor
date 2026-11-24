@@ -44,6 +44,14 @@ impl BorderPaint {
         }
     }
 
+    pub(crate) fn solid_color(&self, side: usize) -> Option<Rgba> {
+        let fills = &self.fills;
+        match [&fills.top, &fills.right, &fills.bottom, &fills.left][side] {
+            Some(Fill::Solid(color)) => Some(*color),
+            _ => None,
+        }
+    }
+
     /// Returns the painted sides in top, right, bottom, left order.
     pub fn visible_fills(&self) -> [Option<&Fill>; 4] {
         let widths = self.widths;
@@ -308,16 +316,14 @@ impl Style {
         })
     }
 
-    pub(crate) fn border_paint(
-        &self,
-        units: UnitResolver,
-    ) -> crate::layout::Result<Option<Rc<BorderPaint>>> {
-        let Some(a) = self.appearance.as_deref() else {
-            return Ok(None);
-        };
-        let widths = self.border_widths(units)?;
-        if widths == Edges::default() {
-            return Ok(None);
+    pub(crate) fn border_paint(&self, widths: Edges) -> Option<Rc<BorderPaint>> {
+        let a = self.appearance.as_deref()?;
+        let animate_width = self
+            .transitions
+            .as_deref()
+            .is_some_and(|rules| rules.contains_key(&crate::TransitionProperty::BorderWidth));
+        if widths == Edges::default() && !animate_width {
+            return None;
         }
         let styles = Edges {
             top: a.border_style.top.unwrap_or(BorderStyle::Solid),
@@ -325,20 +331,26 @@ impl Style {
             bottom: a.border_style.bottom.unwrap_or(BorderStyle::Solid),
             left: a.border_style.left.unwrap_or(BorderStyle::Solid),
         };
-        let fills = Edges {
-            top: visible_fill(widths.top, styles.top, &a.border_fill.top).cloned(),
-            right: visible_fill(widths.right, styles.right, &a.border_fill.right).cloned(),
-            bottom: visible_fill(widths.bottom, styles.bottom, &a.border_fill.bottom).cloned(),
-            left: visible_fill(widths.left, styles.left, &a.border_fill.left).cloned(),
+        let fill = |width, style, declared: &Option<Fill>| {
+            declared
+                .as_ref()
+                .filter(|_| style != BorderStyle::None && (animate_width || width > px(0.)))
+                .cloned()
         };
-        Ok((fills != Edges::default()).then(|| {
+        let fills = Edges {
+            top: fill(widths.top, styles.top, &a.border_fill.top),
+            right: fill(widths.right, styles.right, &a.border_fill.right),
+            bottom: fill(widths.bottom, styles.bottom, &a.border_fill.bottom),
+            left: fill(widths.left, styles.left, &a.border_fill.left),
+        };
+        (fills != Edges::default()).then(|| {
             Rc::new(BorderPaint {
                 widths,
                 fills,
                 styles,
                 radii: self.corner_radii,
             })
-        }))
+        })
     }
 
     pub(crate) fn display_none(&self) -> bool {

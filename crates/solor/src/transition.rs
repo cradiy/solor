@@ -36,6 +36,8 @@ pub enum TransitionProperty {
     Padding,
     /// Outer spacing on the four edges. Changes to or from an automatic edge apply immediately.
     Margin,
+    /// Thickness of the four borders, including their space in layout.
+    BorderWidth,
     /// The four radii of the border box.
     BorderRadius,
     /// Opacity of the composited subtree.
@@ -159,7 +161,8 @@ pub(crate) struct Transitions {
     pub(crate) gaps: Tracks<Pixels>,
     pub(crate) margins:
         Tracks<crate::styled_body::MarginLengths, NodeId, crate::styled_body::ApplyMargin>,
-    pub(crate) padding: Tracks<Edges, NodeId, crate::styled_body::ApplyPadding>,
+    pub(crate) box_edges:
+        Tracks<Edges, (NodeId, crate::styled_body::BoxEdges), crate::styled_body::ApplyBoxEdges>,
     pub(crate) radii: Tracks<Corners<Pixels>>,
     pub(crate) lengths: Tracks<Pixels, (NodeId, TransitionProperty)>,
     pub(crate) colors: Tracks<Rgba, (NodeId, TransitionProperty)>,
@@ -173,7 +176,7 @@ impl Transitions {
             || !self.dimensions.active.is_empty()
             || !self.flex_factors.active.is_empty()
             || !self.gaps.active.is_empty()
-            || !self.padding.active.is_empty()
+            || !self.box_edges.active.is_empty()
             || !self.margins.active.is_empty()
             || !self.radii.active.is_empty()
             || !self.lengths.active.is_empty()
@@ -185,7 +188,9 @@ impl Transitions {
     pub(crate) fn remove(&mut self, id: NodeId) {
         self.opacity.remove(id);
         self.gaps.remove(id);
-        self.padding.remove_with_data(id);
+        for kind in crate::styled_body::BoxEdges::ALL {
+            self.box_edges.remove_with_data((id, kind));
+        }
         self.margins.remove_with_data(id);
         for factor in FlexFactor::ALL {
             self.flex_factors.remove((id, factor));
