@@ -64,6 +64,7 @@ struct Window {
     presentation: Option<wp_presentation::WpPresentation>,
     viewport: wp_viewport::WpViewport,
     scale_120: u32,
+    buffer_size: Option<DeviceSize>,
     surface: wl_surface::WlSurface,
     shm: wl_shm::WlShm,
     background: WindowBackground,
@@ -176,13 +177,14 @@ impl DamageAudit {
 }
 
 pub(crate) fn buffer_size(scale_120: u32, logical: Size) -> io::Result<DeviceSize> {
+    budgeted_buffer_size(scale_120, logical)?
+        .ok_or_else(|| io::Error::other("buffer exceeds raster budget"))
+}
+
+fn budgeted_buffer_size(scale_120: u32, logical: Size) -> io::Result<Option<DeviceSize>> {
     let size = RasterScale(f64::from(scale_120) / 120.0).buffer_size(logical)?;
-    if scale_120 == 0 || u64::from(size.width) * u64::from(size.height) > 4 * 1024 * 1024 {
-        return Err(io::Error::other(
-            "scale or buffer size outside raster budget",
-        ));
-    }
-    Ok(size)
+    let pixels = u64::from(size.width) * u64::from(size.height);
+    Ok((pixels <= 4 * 1024 * 1024).then_some(size))
 }
 
 impl Platform for Wayland {
@@ -297,10 +299,24 @@ impl Window {
     }
 
     fn resize(&mut self, size: Size) {
-        if self.size != size {
-            self.size = size;
-            self.full_damage = true;
-            self.dirty = true;
+        self.configure_raster(size, self.scale_120);
+    }
+
+    fn configure_raster(&mut self, size: Size, scale_120: u32) {
+        if self.size == size && self.scale_120 == scale_120 {
+            return;
+        }
+        self.size = size;
+        self.scale_120 = scale_120;
+        self.full_damage = true;
+        self.dirty = true;
+        match budgeted_buffer_size(scale_120, size) {
+            Ok(target) => self.buffer_size = target,
+            Err(error) => {
+                self.buffer_size = None;
+                self.failure.get_or_insert(error.into());
+                self.life.revisit.set(true);
+            }
         }
     }
 
@@ -339,6 +355,7 @@ impl Window {
 
     fn present(
         &mut self,
+        size: DeviceSize,
         compositor: &wl_compositor::WlCompositor,
         qh: &QueueHandle<Desktop>,
     ) -> anyhow::Result<()> {
@@ -359,7 +376,6 @@ impl Window {
         };
         let region_changed =
             matches!(self.role, Role::Popup { .. }) && self.apply_input_region(compositor, qh);
-        let size = buffer_size(self.scale_120, self.size)?;
         let scale = RasterScale(f64::from(self.scale_120) / 120.0);
         let mut frame = self.view.frame(self.size, scale)?;
         frame.validate(size)?;
@@ -496,12 +512,8 @@ impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for Desktop
         let Some(state) = desktop.windows.get_mut(id) else {
             return;
         };
-        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event
-            && state.scale_120 != scale
-        {
-            state.scale_120 = scale;
-            state.full_damage = true;
-            state.dirty = true;
+        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
+            state.configure_raster(state.size, scale);
         }
     }
 }
@@ -578,7 +590,7 @@ impl Dispatch<wl_buffer::WlBuffer, (ObjectId, usize)> for Desktop {
         if let wl_buffer::Event::Release = event
             && let Some(slot) = &mut state.slots[*index]
         {
-            if buffer_size(state.scale_120, state.size).is_ok_and(|size| size != slot.size) {
+            if state.buffer_size.is_some_and(|size| size != slot.size) {
                 state.slots[*index] = None;
             } else {
                 slot.busy = false;

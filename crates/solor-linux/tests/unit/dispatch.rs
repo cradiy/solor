@@ -50,3 +50,76 @@ fn a_blocked_wayland_writer_services_wakes_and_resumes_on_writable() -> anyhow::
     }
     Ok(())
 }
+
+#[test]
+fn oversized_surface_waits_while_a_second_window_keeps_submitting() -> anyhow::Result<()> {
+    use solor::{
+        layout::Size,
+        platform::{EventResponse, WindowEvent},
+        px,
+        raster::{Clip, Damage, RasterFrame, RasterScale},
+    };
+    use std::io::Write;
+
+    #[derive(Default)]
+    struct Redraw(Vec<u8>);
+    impl WindowHandler<Rgba8> for Redraw {
+        fn event(&mut self, _: WindowEvent) -> anyhow::Result<EventResponse> {
+            Ok(Default::default())
+        }
+        fn next_redraw(&self) -> Option<Instant> {
+            Some(Instant::now())
+        }
+        fn frame(&mut self, size: Size, scale: RasterScale) -> anyhow::Result<RasterFrame<'_>> {
+            let size = scale.buffer_size(size)?;
+            self.0
+                .resize(size.width as usize * size.height as usize * 4, 255);
+            Ok(RasterFrame {
+                size,
+                rgba: &self.0,
+                damage: Damage::from_rect(Clip::canvas(size)),
+                request_callback: false,
+            })
+        }
+    }
+    let mut host = fixture::Host::new()?;
+    let large = host.open(Redraw::default())?;
+    let small = host.open(Redraw::default())?;
+    let events = &mut host.events;
+    for (id, w, h) in [(&large, 1920., 1080.), (&small, 32., 16.)] {
+        let window = events.desktop.windows.get_mut(id).unwrap();
+        window.resize(Size {
+            width: px(w),
+            height: px(h),
+        });
+        window.set_visible(true, &events.connection, &events.windows.qh);
+    }
+    let fractional = events.desktop.windows[&large].fractional.id().protocol_id();
+    for (scale, expected_large, expected_small) in [(150u32, 1, 1), (180, 1, 2), (150, 2, 3)] {
+        host.peer.write_all(&fractional.to_ne_bytes())?;
+        host.peer.write_all(&(12u32 << 16).to_ne_bytes())?;
+        host.peer.write_all(&scale.to_ne_bytes())?;
+        events.queue.blocking_dispatch(&mut events.desktop)?;
+        for (id, window) in &mut events.desktop.windows {
+            let next = window.present_if_due(&events.windows.compositor, &events.windows.qh)?;
+            if id == &large && scale == 180 {
+                assert!(next.is_none());
+                assert!(
+                    window
+                        .present_if_due(&events.windows.compositor, &events.windows.qh)?
+                        .is_none()
+                );
+                assert!(window.full_damage);
+            } else {
+                assert!(next.is_some());
+                let slot = window.slots[1 - window.next_slot].as_ref().unwrap();
+                host.peer
+                    .write_all(&slot.handle.id().protocol_id().to_ne_bytes())?;
+                host.peer.write_all(&(8u32 << 16).to_ne_bytes())?;
+            }
+        }
+        assert_eq!(events.desktop.windows[&large].commits, expected_large);
+        assert_eq!(events.desktop.windows[&small].commits, expected_small);
+    }
+    Ok(())
+}

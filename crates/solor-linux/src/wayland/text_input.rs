@@ -55,6 +55,7 @@ pub(super) struct SeatInput {
     serial: u32,
     enabled_serial: u32,
     surrounding: Option<SurroundingText<'static>>,
+    surrounding_serial: u32,
     rectangle: Option<[i32; 4]>,
     defer_publish: bool,
     batch: Batch,
@@ -70,6 +71,7 @@ impl SeatInput {
             serial: 0,
             enabled_serial: 0,
             surrounding: None,
+            surrounding_serial: 0,
             rectangle: None,
             defer_publish: false,
             batch: Batch::default(),
@@ -193,6 +195,9 @@ impl SeatInput {
             self.rectangle = rectangle;
         }
         self.commit_state();
+        if enable || reset || context_changed {
+            self.surrounding_serial = self.serial;
+        }
         if enable || reset {
             self.enabled_serial = self.serial;
         }
@@ -220,7 +225,9 @@ impl SeatInput {
         before: usize,
         after: usize,
     ) -> bool {
-        serial == self.serial
+        // Rectangle-only commits keep the published byte offsets valid.
+        serial.wrapping_sub(self.surrounding_serial)
+            <= self.serial.wrapping_sub(self.surrounding_serial)
             && self.surrounding.as_ref().is_some_and(|published| {
                 published.permits_deletion(before, after) && current.as_ref() == Some(published)
             })

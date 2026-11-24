@@ -387,7 +387,7 @@ impl WindowFactory {
         };
         let globals = self.globals.as_ref().expect("live window factory");
         let (role, size) = request.create(globals, qh, surface)?;
-        buffer_size(120, size)?;
+        let buffer_size = buffer_size(120, size)?;
         let life = WindowLife::new(activation, self.revisit.clone(), modal_parent);
         let target = Rc::downgrade(&life);
         let handle = WindowHandle::new(target);
@@ -432,6 +432,7 @@ impl WindowFactory {
                 .get_fractional_scale(surface, qh, surface.id()),
             viewport,
             scale_120: 120,
+            buffer_size: Some(buffer_size),
             surface: surface.clone(),
             shm: self.shm.clone(),
             background,
@@ -533,18 +534,10 @@ impl EventLoop {
                     ) {
                         deadline = Some(deadline.map_or(next, |d: Instant| d.min(next)));
                     }
-                    let mut next = window.deadline();
-                    if next.is_some_and(|time| time <= Instant::now()) {
-                        window.dirty = true;
-                    }
                     if self.desktop.popup_only && window.input_region.changed() {
                         window.dirty = true;
                     }
-                    if window.dirty {
-                        window.present(&self.windows.compositor, &qh)?;
-                        next = window.deadline();
-                    }
-                    if let Some(next) = next {
+                    if let Some(next) = window.present_if_due(&self.windows.compositor, &qh)? {
                         deadline = Some(deadline.map_or(next, |d: Instant| d.min(next)));
                     }
                 }
@@ -616,6 +609,25 @@ impl Drop for EventLoop {
 }
 
 impl Window {
+    fn present_if_due(
+        &mut self,
+        compositor: &wl_compositor::WlCompositor,
+        qh: &QueueHandle<Desktop>,
+    ) -> anyhow::Result<Option<Instant>> {
+        let Some(size) = self.buffer_size else {
+            return Ok(None);
+        };
+        let next = self.deadline();
+        if next.is_some_and(|deadline| deadline <= Instant::now()) {
+            self.dirty = true;
+        }
+        if self.dirty {
+            self.present(size, compositor, qh)?;
+            return Ok(self.deadline());
+        }
+        Ok(next)
+    }
+
     fn deadline(&self) -> Option<Instant> {
         if self.mapping == Mapping::Mapped && !self.dirty && self.waiting.is_none() {
             self.view.next_redraw()
@@ -730,3 +742,7 @@ mod tests;
 #[cfg(test)]
 #[path = "../../tests/unit/dispatch.rs"]
 mod dispatch_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/host.rs"]
+pub(super) mod fixture;
