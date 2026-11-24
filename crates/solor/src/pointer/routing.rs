@@ -168,20 +168,31 @@ impl Delivery<'_> {
         Ok(event)
     }
 
-    fn press_target(&mut self, sample: PointerSample, button: PointerButton) -> Option<NodeId> {
-        let frame = self.instance.pointer.frame.as_ref()?;
+    fn press_target(
+        &mut self,
+        sample: PointerSample,
+        button: PointerButton,
+    ) -> Result<Option<NodeId>> {
+        let Some(frame) = self.instance.pointer.frame.as_ref() else {
+            return Ok(None);
+        };
         let Some((leaf, recipients)) = frame.hit(sample.position) else {
             if button == PointerButton::Primary {
                 self.instance.set_focus(None, false, self.state);
             }
-            return None;
+            return Ok(None);
         };
-        let body = self.instance.bodies.get(&leaf)?;
+        let Some(body) = self.instance.bodies.get(&leaf) else {
+            return Ok(None);
+        };
         if button == PointerButton::Primary && body.visible {
             // A live visible leaf retains its mounted ancestors, all of which are visible.
+            if let Some(owner) = recipients.focus {
+                frame.place_caret(owner, sample.position, self.state)?;
+            }
             self.instance.set_focus(recipients.focus, false, self.state);
         }
-        recipients.pointer
+        Ok(recipients.pointer)
     }
 
     fn down(
@@ -198,7 +209,11 @@ impl Delivery<'_> {
             return Ok(None);
         }
         let capture = router.capture(sample.id);
-        let Some(owner) = capture.or_else(|| self.press_target(sample, button)) else {
+        let target = match capture {
+            Some(owner) => Some(owner),
+            None => self.press_target(sample, button)?,
+        };
+        let Some(owner) = target else {
             return Ok(None);
         };
         let event = self.event(owner, sample, Some(button))?;

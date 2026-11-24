@@ -879,7 +879,7 @@ impl Ui {
             let state = self.state.get_mut();
             let result = match *source {
                 ContentUpdate::InputText(source) => state.read(source).ok().map(|input| {
-                    if instance.text_input_signal() == Some(source) {
+                    if instance.bodies[&id].visible {
                         instance.repaints.borrow_mut().invalidate(id);
                     }
                     instance.update_label(id, &input.label_content())

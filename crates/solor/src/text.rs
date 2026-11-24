@@ -9,7 +9,7 @@ mod input;
 mod surrounding;
 use decoration::Decorations;
 pub(crate) use decoration::Stroke;
-pub use edit::{Preedit, TextInputState, TextSelection};
+pub use edit::{CaretMove, Preedit, TextInputState, TextSelection};
 use family::FamilyPreferences;
 pub use family::{FontFamily, GenericFontFamily};
 use fonts::sans_query;
@@ -663,7 +663,7 @@ struct Cached {
 
 /// Retained text leaf with a bounded paragraph cache.
 pub struct Text {
-    pub(crate) input: Option<crate::Signal<TextInputState>>,
+    pub(crate) input: Option<Box<InputLabel>>,
     engine: SharedEngine,
     content: SharedString,
     style: TextStyle,
@@ -673,7 +673,45 @@ pub struct Text {
     cache_enabled: bool,
 }
 
+pub(crate) struct InputLabel {
+    pub(crate) source: crate::Signal<TextInputState>,
+    scroll: std::cell::Cell<Pixels>,
+}
+
 impl Text {
+    pub(crate) fn bind_input(&mut self, source: crate::Signal<TextInputState>) {
+        self.input = Some(Box::new(InputLabel {
+            source,
+            scroll: Default::default(),
+        }));
+    }
+
+    pub(crate) fn scroll_for_caret(
+        &self,
+        paragraph: &Paragraph,
+        width: Pixels,
+        caret: usize,
+    ) -> Pixels {
+        let Some(input) = &self.input else {
+            return px(0.);
+        };
+        if self.paragraph.white_space != WhiteSpace::Pre
+            || self.paragraph.overflow != TextOverflow::Clip
+        {
+            return px(0.);
+        }
+        let visible = width.saturating_sub(px(1.));
+        let limit = paragraph.content.width.saturating_sub(visible);
+        let mut left = input.scroll.get().min(limit);
+        if limit > px(0.)
+            && let Some((x, _)) = paragraph.caret_position(caret)
+        {
+            left = left.min(px(x)).max(px(x) - visible).max(px(0.)).min(limit);
+        }
+        input.scroll.set(left);
+        left
+    }
+
     /// Validates the source and metrics and creates a text leaf.
     pub fn new(
         engine: SharedEngine,

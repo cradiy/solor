@@ -1,9 +1,8 @@
-use super::{Line, Paragraph, Text};
+use super::{Line, Paragraph, TextInputState};
 use crate::{
-    Draw, Instance, NodeId, StyledBody,
+    Draw, NodeId,
     layout::{Origin, Size},
     px,
-    state::Runtime,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -16,43 +15,111 @@ pub struct CaretBounds {
     pub size: Size,
 }
 
+struct Cluster {
+    bytes: std::ops::Range<usize>,
+    leading: f32,
+    trailing: f32,
+}
+
+impl Line {
+    fn caret_clusters(&self) -> impl Iterator<Item = Cluster> {
+        self.glyphs
+            .chunk_by(|a, b| a.start == b.start && a.end == b.end)
+            .filter_map(|glyphs| {
+                let first = &glyphs[0];
+                if first.start == first.end {
+                    return None;
+                }
+                let (left, right) = glyphs
+                    .iter()
+                    .skip(1)
+                    .fold((first.x, first.x + first.width), |(l, r), g| {
+                        (l.min(g.x), r.max(g.x + g.width))
+                    });
+                let (leading, trailing) = if first.rtl {
+                    (right, left)
+                } else {
+                    (left, right)
+                };
+                Some(Cluster {
+                    bytes: self.source_start + first.start..self.source_start + first.end,
+                    leading,
+                    trailing,
+                })
+            })
+    }
+}
+
 impl Paragraph {
-    fn caret_position(&self, offset: usize) -> Option<(f32, &Line)> {
-        let mut trailing = None;
-        for line in &self.lines {
-            let Some(byte) = offset.checked_sub(line.source_start) else {
-                break;
-            };
-            if line.glyphs.is_empty() && byte == 0 {
-                return Some((0.0, line));
+    pub(crate) fn closest_caret(&self, point: Origin) -> Option<usize> {
+        let y = point.y.get();
+        let line = self.lines.iter().min_by(|a, b| {
+            let distance = |l: &Line| (l.top - y).max(y - l.top - l.height).max(0.);
+            distance(a).total_cmp(&distance(b))
+        })?;
+        let x = point.x.get();
+        let mut nearest = (f32::INFINITY, line.source_start);
+        for Cluster {
+            bytes,
+            leading,
+            trailing,
+        } in line.caret_clusters()
+        {
+            if x > leading.min(trailing) && x < leading.max(trailing) {
+                let text = self.text.get(bytes.clone())?;
+                let fraction = (x - leading) / (trailing - leading);
+                let index = (fraction * text.graphemes(true).count() as f32).round() as usize;
+                return Some(
+                    text.grapheme_indices(true)
+                        .nth(index)
+                        .map_or(bytes.end, |(i, _)| bytes.start + i),
+                );
             }
-            for g in &line.glyphs {
-                if g.start == g.end {
-                    continue;
-                }
-                let leading = if g.rtl { g.x + g.width } else { g.x };
-                let end = if g.rtl { g.x } else { g.x + g.width };
-                if byte == g.start {
-                    return Some((leading, line));
-                }
-                if (g.start..g.end).contains(&byte) {
-                    let cluster = self
-                        .text
-                        .get(line.source_start + g.start..line.source_start + g.end)?;
-                    let mut graphemes = cluster.grapheme_indices(true).peekable();
-                    let mut before = 0;
-                    while graphemes.next_if(|(i, _)| *i < byte - g.start).is_some() {
-                        before += 1;
-                    }
-                    let fraction = before as f32 / (before + graphemes.count()) as f32;
-                    return Some((leading + (end - leading) * fraction, line));
-                }
-                if byte == g.end {
-                    trailing = Some((end, line));
+            for (position, byte) in [(leading, bytes.start), (trailing, bytes.end)] {
+                let distance = (x - position).abs();
+                if distance < nearest.0 {
+                    nearest = (distance, byte);
                 }
             }
         }
-        trailing
+        Some(nearest.1)
+    }
+
+    pub(crate) fn caret_position(&self, offset: usize) -> Option<(f32, &Line)> {
+        let mut end = None;
+        for line in &self.lines {
+            if offset < line.source_start {
+                break;
+            }
+            if line.glyphs.is_empty() && offset == line.source_start {
+                return Some((0., line));
+            }
+            for Cluster {
+                bytes,
+                leading,
+                trailing,
+            } in line.caret_clusters()
+            {
+                if offset == bytes.start {
+                    return Some((leading, line));
+                }
+                if bytes.contains(&offset) {
+                    let local = offset - bytes.start;
+                    let cluster = self.text.get(bytes)?;
+                    let mut boundaries = cluster.grapheme_indices(true).peekable();
+                    let mut before = 0;
+                    while boundaries.next_if(|(i, _)| *i < local).is_some() {
+                        before += 1;
+                    }
+                    let fraction = before as f32 / (before + boundaries.count()) as f32;
+                    return Some((leading + (trailing - leading) * fraction, line));
+                }
+                if offset == bytes.end {
+                    end = Some((trailing, line));
+                }
+            }
+        }
+        end
     }
 }
 
@@ -64,37 +131,14 @@ pub(crate) struct FrameCaret {
 }
 
 impl FrameCaret {
-    pub(crate) fn focused(instance: &Instance, state: &Runtime<()>) -> Option<Self> {
-        let source = instance.text_input_signal()?;
-        let focused = instance.focused?;
-        let mut nodes = vec![focused];
-        while let Some(id) = nodes.pop() {
-            let node = &instance.bodies[&id];
-            if !node.visible
-                || (id != focused
-                    && node
-                        .handlers
-                        .as_ref()
-                        .is_some_and(|h| h.text_input.is_some()))
-            {
-                continue;
-            }
-            if instance
-                .scene
-                .body::<StyledBody<Text>>(id)
-                .is_ok_and(|b| b.content.input == Some(source))
-            {
-                let (byte, visible) = state.read(source).ok()?.label_caret();
-                return Some(Self {
-                    label: id,
-                    byte,
-                    visible,
-                    bounds: None,
-                });
-            }
-            nodes.extend(instance.scene.children(id).ok()?.rev());
+    pub(crate) fn new(label: NodeId, input: &TextInputState) -> Self {
+        let (byte, visible) = input.label_caret();
+        Self {
+            label,
+            byte,
+            visible,
+            bounds: None,
         }
-        None
     }
 
     pub(crate) fn record(&mut self, id: NodeId, commands: &mut Vec<Draw>, start: usize) {

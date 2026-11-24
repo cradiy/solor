@@ -106,6 +106,27 @@ impl Element for Text {
     }
     fn paint(&self, cx: &mut PaintContext) -> Result<()> {
         let paragraph = self.resolve(Query::Exact(cx.size.width))?;
+        if let Some(input) = &self.input {
+            let (caret, _) = cx.state.read(input.source)?.label_caret();
+            let left = self.scroll_for_caret(&paragraph, cx.size.width, caret);
+            if left > px(0.) {
+                return cx.with_clip(Origin::default(), cx.size, |cx| {
+                    cx.origin.x = cx.origin.x - left;
+                    cx.size.width += left;
+                    self.paint_paragraph(cx, paragraph)
+                });
+            }
+        }
+        self.paint_paragraph(cx, paragraph)
+    }
+}
+
+impl Text {
+    fn paint_paragraph(
+        &self,
+        cx: &mut PaintContext,
+        paragraph: Rc<crate::text::Paragraph>,
+    ) -> Result<()> {
         let color = cx.text_color()?;
         let decorations = self.decorations.as_deref();
         if let Some(background) = decorations.and_then(|d| d.background.as_ref()) {
@@ -1584,7 +1605,9 @@ impl IntoElement for Label {
                 TextStyle::default(),
                 true,
             )?;
-            leaf.input = input;
+            if let Some(input) = input {
+                leaf.bind_input(input);
+            }
             let mut node = element(leaf);
             node.style = self.style;
             if let Some(watch) = watch {

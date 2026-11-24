@@ -7,19 +7,21 @@ use solor::{
     px, rgb, rgba,
     style::{Distribution, FontFeature},
     text,
-    text::TextInputState,
+    text::{CaretMove, TextInputState},
 };
 
 pub(super) fn typography(spacing: Selection<3>, input: Signal<TextInputState>) -> Div {
     let mut specimen = div().items_stretch();
     for (flag, tracking) in spacing.flags().into_iter().zip([-1.5, 0.0, 3.0]) {
         specimen = specimen.child_when(flag, move || {
-            let latin = div()
-                .flex_grow(2.0)
-                .flex_basis(px(0.0))
+            let field = div()
                 .items_stretch()
-                .justify_center()
-                .px(px(16.0))
+                .px(px(12.))
+                .py(px(4.))
+                .border(px(1.))
+                .border_color(rgb(0x879762))
+                .rounded(px(8.))
+                .bg(rgb(0xf9fbea))
                 .overflow_hidden()
                 .text_input(input)
                 .cursor_text()
@@ -39,23 +41,42 @@ pub(super) fn typography(spacing: Selection<3>, input: Signal<TextInputState>) -
                         Key::Text(value) if !value.chars().any(char::is_control) => {
                             cx.update_in_place(input, |state| state.commit(value))?;
                         }
+                        &Key::ArrowLeft | &Key::ArrowRight | &Key::Home | &Key::End
+                            if !mods.shift =>
+                        {
+                            let movement = match key.key {
+                                Key::ArrowLeft => CaretMove::Previous,
+                                Key::ArrowRight => CaretMove::Next,
+                                Key::Home => CaretMove::Start,
+                                _ => CaretMove::End,
+                            };
+                            cx.update_in_place(input, |state| state.move_caret(movement))?;
+                        }
+                        &Key::Delete => {
+                            cx.update_in_place(input, TextInputState::delete_forward)?
+                        }
                         &Key::Backspace => cx.update_in_place(input, TextInputState::backspace)?,
                         _ => return Ok(()),
                     }
                     cx.prevent_default();
                     Ok(())
                 })
-                .child(label("TYPE SAMPLE", 11.0, 22.0).letter_spacing(px(1.4)))
                 .child(
                     text(input)
-                        .text_size(px(82.))
-                        .line_height(px(100.))
+                        .text_size(px(48.))
                         .white_space(solor::style::WhiteSpace::Pre)
-                        .text_ellipsis_start()
                         .letter_spacing(px(tracking)),
-                )
-                .child(div().h(px(1.0)).bg(rgb(0xb6c77c)))
-                .child(label("Click to edit", 14.0, 29.0));
+                );
+            let latin = div()
+                .flex_grow(2.0)
+                .flex_basis(px(0.))
+                .min_w(px(0.))
+                .items_stretch()
+                .justify_center()
+                .px(px(12.))
+                .gap(px(6.))
+                .child(label("Type sample", 13., 20.).text_color(MUTED))
+                .child(field);
             let cjk = div()
                 .flex_1()
                 .items_center()

@@ -1,5 +1,5 @@
 //! Immutable hit geometry paired with a host submission.
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use anyhow::{Context as _, ensure};
 
@@ -54,6 +54,20 @@ struct Entry {
 pub struct PointerFrame {
     pub(super) view: ViewId,
     geometry: Arc<HitGeometry>,
+    text_hits: Option<Rc<HashMap<NodeId, TextHit>>>,
+}
+
+struct Field {
+    label: NodeId,
+    source: crate::Signal<crate::text::TextInputState>,
+    origin: Origin,
+    size: Size,
+}
+
+struct TextHit {
+    paragraph: Rc<crate::text::Paragraph>,
+    origin: Origin,
+    start: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -63,6 +77,7 @@ pub(super) struct ScrollViewport {
 }
 
 pub(super) struct HitGeometry {
+    fields: HashMap<NodeId, Field>,
     frame_listeners: Vec<NodeId>,
     entries: Vec<Entry>,
     group_events: Vec<(usize, Option<NodeId>)>,
@@ -75,6 +90,54 @@ pub(super) struct HitGeometry {
 }
 
 impl PointerFrame {
+    pub(crate) fn focused_caret(
+        &self,
+        focused: Option<NodeId>,
+        state: &crate::state::Runtime<()>,
+    ) -> Option<crate::text::FrameCaret> {
+        let field = self.geometry.fields.get(&focused?)?;
+        Some(crate::text::FrameCaret::new(
+            field.label,
+            state.read(field.source).ok()?,
+        ))
+    }
+
+    pub(super) fn place_caret(
+        &self,
+        owner: NodeId,
+        point: Origin,
+        state: &mut crate::state::Runtime<()>,
+    ) -> Result<()> {
+        let Some(field) = self.geometry.fields.get(&owner) else {
+            return Ok(());
+        };
+        let Some(hit) = self.text_hits.as_ref().and_then(|hits| hits.get(&owner)) else {
+            return Ok(());
+        };
+        let Ok(input) = state.read(field.source) else {
+            return Ok(());
+        };
+        let Some(start) = hit.start else {
+            return Ok(());
+        };
+        if input.preedit().is_some()
+            || input.text().get(start..start + hit.paragraph.text.len())
+                != Some(hit.paragraph.text.as_str())
+        {
+            return Ok(());
+        }
+        if let Some(byte) = hit.paragraph.closest_caret(Origin {
+            x: point.x - hit.origin.x,
+            y: point.y - hit.origin.y,
+        }) {
+            let selection = crate::text::TextSelection::caret(start + byte);
+            if input.selection() != selection {
+                state.update_in_place(field.source, |s| s.select(selection))??;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn frame_listeners(&self) -> &[NodeId] {
         &self.geometry.frame_listeners
     }
@@ -192,16 +255,51 @@ impl Ui {
                 cache.get_or_init(|| Arc::new(built))
             }
         };
-        Ok(PointerFrame {
+        let mut frame = PointerFrame {
             view,
             geometry: geometry.clone(),
-        })
+            text_hits: None,
+        };
+        if geometry.fields.is_empty() {
+            return Ok(frame);
+        }
+        let state = self.state.try_borrow()?;
+        let mut hits = HashMap::with_capacity(geometry.fields.len());
+        for (&owner, field) in &geometry.fields {
+            let body = instance.scene.body::<StyledBody<Text>>(field.label)?;
+            let size = body.content_size(field.size);
+            let paragraph = body
+                .content
+                .resolve(crate::layout::Query::Exact(size.width))?;
+            let input = state.read(field.source)?;
+            let (caret, _) = input.label_caret();
+            let scroll = body.content.scroll_for_caret(&paragraph, size.width, caret);
+            let mut origin = field
+                .origin
+                .checked_add(body.origin())
+                .context("invalid text origin")?;
+            origin.x = origin.x - scroll;
+            hits.insert(
+                owner,
+                TextHit {
+                    paragraph,
+                    origin,
+                    start: input
+                        .preedit()
+                        .is_none()
+                        .then(|| input.selection().head - caret),
+                },
+            );
+        }
+        frame.text_hits = Some(Rc::new(hits));
+        Ok(frame)
     }
 }
 
 impl HitGeometry {
     fn from_layout(instance: &Instance) -> Result<Self> {
         let mut frame = Self {
+            fields: HashMap::new(),
             frame_listeners: Vec::new(),
             group_events: Vec::new(),
             entries: Vec::with_capacity(instance.visible_nodes),
@@ -293,6 +391,25 @@ impl HitGeometry {
                     frame.has_cursor |=
                         matches!(handlers.control, Some(crate::WindowControl::Resize(_)));
                 }
+            }
+            if let Some(owner) = recipients.focus
+                && let Some(source) = instance.bodies[&owner]
+                    .handlers
+                    .as_deref()
+                    .and_then(|h| h.text_input)
+                && let Ok(body) = instance.scene.body::<StyledBody<Text>>(id)
+                && body
+                    .content
+                    .input
+                    .as_ref()
+                    .is_some_and(|i| i.source == source)
+            {
+                frame.fields.entry(owner).or_insert(Field {
+                    label: id,
+                    source,
+                    origin,
+                    size: area.size,
+                });
             }
             let children = instance.scene.children(id)?;
             let mut child_origin = origin;

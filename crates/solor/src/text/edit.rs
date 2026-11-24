@@ -1,5 +1,19 @@
 use anyhow::{Result, ensure};
 use std::ops::Range;
+use unicode_segmentation::GraphemeCursor;
+
+/// Destination for moving a logical insertion point in committed text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaretMove {
+    /// One extended grapheme towards the beginning.
+    Previous,
+    /// One extended grapheme towards the end.
+    Next,
+    /// Beginning of the buffer.
+    Start,
+    /// End of the buffer.
+    End,
+}
 
 /// A directed selection in UTF-8 byte offsets. Equal endpoints form a caret.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -51,19 +65,57 @@ pub struct TextInputState {
 }
 
 impl TextInputState {
+    /// Moves the insertion point by a grapheme or to a buffer edge and collapses the selection.
+    pub fn move_caret(&mut self, movement: CaretMove) {
+        if self.preedit.is_some() {
+            return;
+        }
+        let range = self.selection.range();
+        let head = self.selection.head;
+        let next = match movement {
+            CaretMove::Start => 0,
+            CaretMove::End => self.text.len(),
+            CaretMove::Previous if !range.is_empty() => range.start,
+            CaretMove::Next if !range.is_empty() => range.end,
+            CaretMove::Previous => self.previous_boundary(head),
+            CaretMove::Next => self.next_boundary(head),
+        };
+        self.selection = TextSelection::caret(next);
+    }
+
+    fn previous_boundary(&self, byte: usize) -> usize {
+        GraphemeCursor::new(byte, self.text.len(), true)
+            .prev_boundary(&self.text, 0)
+            .expect("complete text")
+            .unwrap_or(0)
+    }
+
+    fn next_boundary(&self, byte: usize) -> usize {
+        GraphemeCursor::new(byte, self.text.len(), true)
+            .next_boundary(&self.text, 0)
+            .expect("complete text")
+            .unwrap_or(self.text.len())
+    }
+
+    /// Deletes the selection or the grapheme immediately after the caret.
+    pub fn delete_forward(&mut self) {
+        if self.preedit.is_some() {
+            return;
+        }
+        if self.selection.range().is_empty() {
+            self.selection.head = self.next_boundary(self.selection.head);
+        }
+        self.commit("");
+    }
+
     /// Deletes the selection or the grapheme immediately before the caret.
     /// While composing, the input method owns backspace.
     pub fn backspace(&mut self) {
-        use unicode_segmentation::UnicodeSegmentation;
         if self.preedit.is_some() {
             return;
         }
         if self.selection.anchor == self.selection.head {
-            let offset = self.selection.head;
-            let Some((start, _)) = self.text[..offset].grapheme_indices(true).next_back() else {
-                return;
-            };
-            self.selection.anchor = start;
+            self.selection.anchor = self.previous_boundary(self.selection.head);
         }
         self.commit("");
     }

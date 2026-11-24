@@ -84,6 +84,38 @@ fn typography_sample_displays_keyboard_and_composed_text() -> Result<()> {
         window.surrounding_text(8192).unwrap().text(),
         format!("Aa中{long}")
     );
+    let end = window.caret_bounds().unwrap();
+    window.event(key(Key::Home, false))?;
+    render(&mut window)?;
+    let start = window.caret_bounds().unwrap();
+    assert!(start.origin.x < end.origin.x);
+    assert_eq!(window.surrounding_text(8192).unwrap().selection().head, 0);
+    click(
+        &mut window,
+        original_caret.origin.x.get(),
+        start.origin.y.get() + 10.,
+    )?;
+    assert_eq!(window.surrounding_text(8192).unwrap().selection().head, 2);
+    window.event(key(Key::ArrowRight, false))?;
+    assert_eq!(
+        window.surrounding_text(8192).unwrap().selection().head,
+        "Aa中".len()
+    );
+    window.event(key(Key::End, false))?;
+    render(&mut window)?;
+    assert_eq!(window.caret_bounds(), Some(end));
+    click(&mut window, end.origin.x.get(), end.origin.y.get() + 10.)?;
+    let state = window.surrounding_text(8192).unwrap();
+    assert_eq!(state.selection().head, state.text().len());
+    window.event(key(Key::ArrowLeft, false))?;
+    window.event(key(Key::Delete, false))?;
+    assert!(
+        window
+            .surrounding_text(8192)
+            .unwrap()
+            .text()
+            .ends_with("中")
+    );
     Ok(())
 }
 
