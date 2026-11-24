@@ -3,7 +3,7 @@ use super::{
 };
 use crate::path::PathBounds;
 use solor::{ContentClip, FillRule, Ink, Pixels, ShaderFill};
-use std::rc::Rc;
+use std::{ops::Range, rc::Rc};
 
 #[derive(PartialEq)]
 enum Mask<'a> {
@@ -115,6 +115,34 @@ fn shader_paint(draw: &Draw) -> Option<(Geometry<'_>, &ShaderFill)> {
     ))
 }
 
+pub(super) fn changed_regions<'a>(
+    old: &'a ShaderFill,
+    new: &'a ShaderFill,
+) -> Option<[&'a Range<[f32; 2]>; 2]> {
+    let regions = [old.region()?, new.region()?];
+    (old.shader == new.shader
+        && regions.iter().all(|r| {
+            (0..2).all(|i| r.start[i].is_finite() && r.end[i].is_finite() && r.start[i] <= r.end[i])
+        }))
+    .then_some(regions)
+}
+
+pub(super) fn project(
+    [left, top]: [f64; 2],
+    size: Size,
+    scale: RasterScale,
+    uv: &Range<[f32; 2]>,
+) -> Clip {
+    let x = |u: f32| left + f64::from(size.width) * scale.0 * f64::from(u);
+    let y = |v: f32| top + f64::from(size.height) * scale.0 * f64::from(v);
+    Clip {
+        left: x(uv.start[0]).floor() as i64,
+        right: x(uv.end[0]).ceil() as i64,
+        top: y(uv.start[1]).floor() as i64,
+        bottom: y(uv.end[1]).ceil() as i64,
+    }
+}
+
 pub(super) fn include(
     before: &Draw,
     after: &Draw,
@@ -128,39 +156,23 @@ pub(super) fn include(
     let Some((current, new)) = shader_paint(after) else {
         return Ok(false);
     };
-    let (Some(a), Some(b)) = (old.region(), new.region()) else {
+    let Some(regions) = changed_regions(old, new) else {
         return Ok(false);
     };
-    if old.shader != new.shader || previous != current {
+    if previous != current {
         return Ok(false);
     }
-    let ([left, top], size) = current.paint_box(scale)?;
-    let project = |start: [f32; 2], end: [f32; 2]| {
-        let x = |u: f32| left + f64::from(size.width) * scale.0 * f64::from(u);
-        let y = |v: f32| top + f64::from(size.height) * scale.0 * f64::from(v);
-        Clip {
-            left: x(start[0]).floor() as i64,
-            right: x(end[0]).ceil() as i64,
-            top: y(start[1]).floor() as i64,
-            bottom: y(end[1]).ceil() as i64,
-        }
-    };
+    let (origin, size) = current.paint_box(scale)?;
+    let project = |region| project(origin, size, scale, region);
     let visible = match current.mask {
         Mask::Polygon(..) | Mask::Stroke(..) => {
-            clip_to_content(project([0.; 2], [1.; 2]), current.clip, scale)
+            clip_to_content(project(&([0.; 2]..[1.; 2])), current.clip, scale)
         }
         _ => device_bounds(after, scale)?,
     }
     .intersect(canvas);
-    for region in [a, b] {
-        if !(0..2).all(|i| {
-            region.start[i].is_finite()
-                && region.end[i].is_finite()
-                && region.start[i] <= region.end[i]
-        }) {
-            return Ok(false);
-        }
-        damage.include(project(region.start, region.end).intersect(visible));
+    for region in regions {
+        damage.include(project(region).intersect(visible));
     }
     Ok(true)
 }

@@ -843,7 +843,9 @@ fn include_changes(
             if shader_damage::include(a, b, scale, canvas, area)? {
                 continue;
             }
-            if include_fill_change(a, b, scale, canvas, area)? {
+            if border::include_fill_changes(a, b, scale, canvas, area)?
+                || include_fill_change(a, b, scale, canvas, area)?
+            {
                 continue;
             }
         }

@@ -2,9 +2,9 @@
 use super::{Brush, SampleGradient, brush};
 use crate::pixels::{Surface, blend_premultiplied, blend_solid_span};
 use solor::{
-    Fill, ImageCache,
+    Draw, Fill, ImageCache,
     layout::{Origin, Size},
-    raster::{Clip, RasterScale},
+    raster::{Clip, Damage, RasterScale},
     style::BorderPaint,
 };
 use std::io::{Error, Result};
@@ -176,6 +176,63 @@ pub(super) fn edge_clips(
             ..clip
         },
     ]
+}
+
+pub(super) fn include_fill_changes(
+    before: &Draw,
+    after: &Draw,
+    scale: RasterScale,
+    canvas: Clip,
+    damage: &mut Damage,
+) -> Result<bool> {
+    let (
+        Draw::Border {
+            origin,
+            size,
+            paint,
+            clip,
+        },
+        Draw::Border {
+            origin: at,
+            size: extent,
+            paint: next,
+            clip: next_clip,
+        },
+    ) = (before, after)
+    else {
+        return Ok(false);
+    };
+    if origin != at
+        || size != extent
+        || clip != next_clip
+        || paint.widths != next.widths
+        || paint.styles != next.styles
+        || paint.radii != next.radii
+    {
+        return Ok(false);
+    }
+    let visible = super::device_bounds(after, scale)?.intersect(canvas);
+    let edges = edge_clips(*origin, *size, next, scale, visible);
+    let fills = paint.visible_fills().into_iter().zip(next.visible_fills());
+    for ((old, new), edge) in fills.zip(edges) {
+        if edge.empty() || old == new {
+            continue;
+        }
+        #[cfg(feature = "shader")]
+        if let (Some(Fill::Shader(a)), Some(Fill::Shader(b))) = (old, new)
+            && let Some(regions) = super::shader_damage::changed_regions(a, b)
+        {
+            let origin = [origin.x, origin.y].map(|v| f64::from(v) * scale.0);
+            for region in regions {
+                damage.include(
+                    super::shader_damage::project(origin, *size, scale, region).intersect(edge),
+                );
+            }
+            continue;
+        }
+        damage.include(edge);
+    }
+    Ok(true)
 }
 
 impl Surface {

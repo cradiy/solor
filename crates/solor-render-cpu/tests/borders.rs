@@ -478,3 +478,72 @@ fn animated_outline_geometry_repairs_the_previous_ring() -> Result<()> {
     );
     Ok(())
 }
+
+#[cfg(feature = "shader")]
+#[test]
+fn a_shader_band_repairs_the_corner_and_independent_edge_colors() -> Result<()> {
+    use solor::{
+        EffectShader,
+        platform::{WindowEvent, WindowHandler},
+    };
+    use solor_render_cpu::CpuWindow;
+    use std::time::Duration;
+
+    let shader = EffectShader::wgsl(
+        "fn effect(uv: vec2<f32>, p: f32) -> vec4<f32> {
+            let band = 1.0 - smoothstep(0.0, 0.035, abs(uv.x - p));
+            return vec4<f32>(band, 0.4, 0.8, 0.7);
+        }",
+    )?;
+    let scene = |position: f32, right_color| {
+        let shader = shader.clone();
+        component(move |cx| {
+            let band = move |p: f32| {
+                shader
+                    .with_params(p)
+                    .changing_region([p - 0.035, 0.]..[p + 0.035, 1.])
+            };
+            let top = cx.signal(band(position));
+            let right = cx.signal(right_color);
+            div().p(px(3.25)).child(
+                div()
+                    .w(px(120.))
+                    .h(px(62.))
+                    .border(px(6.5))
+                    .rounded(px(12.))
+                    .border_color(rgba(0x225588b0))
+                    .border_top_fill(top)
+                    .border_right_color(right)
+                    .on_frame(move |now, cx| {
+                        cx.set(top, band(if now.is_zero() { 0.16 } else { 0.08 }))?;
+                        if !now.is_zero() {
+                            cx.set(right, rgb(0xfc6746))?;
+                        }
+                        Ok(())
+                    }),
+            )
+        })
+    };
+    let size = Size {
+        width: px(140.),
+        height: px(80.),
+    };
+    let scale = RasterScale(1.25);
+    let initial_right = rgb(0x503050);
+    let mut window = CpuWindow::mount(Ui::new(), scene(0.05, initial_right))?;
+    let mut previous = window.frame(size, scale)?.rgba.to_vec();
+    for (ms, position, right) in [(0, 0.16, initial_right), (8, 0.08, rgb(0xfc6746))] {
+        window.frame_submitted()?;
+        window.event(WindowEvent::FrameReady(Duration::from_millis(ms)))?;
+        let frame = window.frame(size, scale)?;
+        let bounds = frame.damage.bounds().unwrap();
+        if ms == 0 {
+            assert!(bounds.right < 40 && bounds.bottom < 22, "{bounds:?}");
+        }
+        assert_ne!(frame.rgba, previous);
+        let mut reference = CpuWindow::mount(Ui::new(), scene(position, right))?;
+        assert!(frame.rgba == reference.frame(size, scale)?.rgba);
+        previous.copy_from_slice(frame.rgba);
+    }
+    Ok(())
+}
