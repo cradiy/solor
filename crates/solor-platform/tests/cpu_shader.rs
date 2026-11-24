@@ -5,7 +5,7 @@ use anyhow::Result;
 use solor::{EffectShader, raster::DeviceSize};
 use std::{hint::black_box, time::Instant};
 
-const SWEEP: &str = include_str!("../examples/cpu_shader/sweep.wgsl");
+use surface::{Footprint, ROUNDED_RECT, SPOTLIGHT, SWEEP};
 const RIBBON: &str = include_str!("../examples/cpu_shader/ribbon.wgsl");
 
 #[path = "../examples/cpu_shader/surface.rs"]
@@ -18,12 +18,17 @@ fn shader_window(
 ) -> Result<solor_render_cpu::CpuWindow> {
     use solor::{Ui, component};
     let program = EffectShader::wgsl(source)?;
+    let footprint = if regional {
+        Footprint::for_source(source)
+    } else {
+        None
+    };
     solor_render_cpu::CpuWindow::mount(
         Ui::new(),
         component(move |cx| {
             let position = cx.signal(0.4);
             let mut positions = positions;
-            surface::shader_surface(program, position, regional).on_frame(move |_, cx| {
+            surface::shader_surface(program, position, footprint).on_frame(move |_, cx| {
                 if let Some(next) = positions.next() {
                     cx.set(position, next)?;
                 }
@@ -72,33 +77,128 @@ fn shared_shader_samples_independent_uniforms() -> Result<()> {
 }
 
 #[test]
+fn spotlight_keeps_its_logical_radius_across_damage_and_resize() -> Result<()> {
+    use solor::{
+        Styled, Ui, component, div,
+        platform::{WindowEvent, WindowHandler},
+        px,
+        raster::RasterScale,
+        rgb,
+    };
+    use solor_render_cpu::CpuWindow;
+    let shader = EffectShader::wgsl(include_str!("../examples/cpu_shader/spotlight.wgsl"))?;
+    let mut window = CpuWindow::mount(
+        Ui::new(),
+        component(move |cx| {
+            let overlay = cx.signal(true);
+            div()
+                .items_center()
+                .justify_center()
+                .bg(shader.with_params(0.5))
+                .on_frame_when(overlay, move |_, cx| cx.set(overlay, false))
+                .child_when(overlay, || div().size(px(32.)).bg(rgb(0xffffff)))
+        }),
+    )?;
+    let scale = RasterScale(1.25);
+    let logical = DeviceSize {
+        width: 320,
+        height: 224,
+    }
+    .at_unit_scale();
+    let wide = DeviceSize {
+        width: 480,
+        height: 224,
+    }
+    .at_unit_scale();
+    let sample = |frame: &solor::raster::RasterFrame, dx: usize, dy: usize| -> [u8; 4] {
+        let width = frame.size.width as usize;
+        let y = frame.size.height as usize / 2 + dy;
+        let offset = (y * width + width / 2 + dx) * 4;
+        frame.rgba[offset..offset + 4].try_into().unwrap()
+    };
+    let first = window.frame(logical, scale)?;
+    assert_eq!(sample(&first, 12, 0), [255; 4]);
+    let ring = sample(&first, 60, 0);
+    assert_eq!(ring, sample(&first, 0, 60));
+    assert_ne!(ring, sample(&first, 125, 0));
+
+    window.frame_submitted()?;
+    window.event(WindowEvent::FrameReady(std::time::Duration::ZERO))?;
+    let repaired = window.frame(logical, scale)?;
+    let dirty = repaired.damage.bounds().unwrap();
+    assert!(dirty.right - dirty.left < i64::from(repaired.size.width));
+    let core = sample(&repaired, 12, 0);
+    assert_ne!(core, [255; 4]);
+    assert_ne!(core, ring);
+
+    window.frame_submitted()?;
+    let resized = window.frame(wide, scale)?;
+    assert_eq!(core, sample(&resized, 12, 0));
+    assert_eq!(ring, sample(&resized, 60, 0));
+    assert_eq!(ring, sample(&resized, 0, 60));
+    // At 1.25x, the 96 logical pixel halo still covers a 100 device pixel offset.
+    assert_ne!(sample(&resized, 100, 0), sample(&resized, 125, 0));
+    Ok(())
+}
+
+#[test]
+fn rounded_contour_has_a_straight_rim_and_clear_outer_corners() -> Result<()> {
+    use solor::{Styled, Ui, component, div, platform::WindowHandler, raster::RasterScale};
+    let shader = EffectShader::wgsl(ROUNDED_RECT)?;
+    let mut window = solor_render_cpu::CpuWindow::mount(
+        Ui::new(),
+        component(move |_| div().bg(shader.with_params(0.5))),
+    )?;
+    let size = DeviceSize {
+        width: 240,
+        height: 160,
+    };
+    let frame = window.frame(size.at_unit_scale(), RasterScale::ONE)?;
+    let pixel = |x, y| {
+        let offset: usize = (y * size.width as usize + x) * 4;
+        &frame.rgba[offset..offset + 4]
+    };
+    // Pixel centers sit half a pixel inside the straight edges.
+    assert_eq!(pixel(191, 79), &[168, 245, 196, 255]);
+    assert_eq!(pixel(119, 123), pixel(191, 79));
+    assert_eq!(pixel(191, 123), &[11, 21, 26, 255]);
+    assert_eq!(pixel(119, 79), &[13, 62, 54, 255]);
+    assert!(pixel(184, 79)[1] > pixel(119, 79)[1]);
+    Ok(())
+}
+
+#[test]
 fn moving_light_repairs_match_full_frames() -> Result<()> {
     use solor::{
         platform::{WindowEvent, WindowHandler},
         raster::RasterScale,
     };
-    let positions = [0.41, 0.02, 0.98, 0.01];
-    let mut partial = shader_window(SWEEP, true, positions.into_iter())?;
-    let mut full = shader_window(SWEEP, false, positions.into_iter())?;
-    let logical = DeviceSize {
-        width: 481,
-        height: 223,
-    }
-    .at_unit_scale();
-    let scale = RasterScale(1.25);
-    for index in 0..=positions.len() {
-        let a = partial.frame(logical, scale)?;
-        let b = full.frame(logical, scale)?;
-        assert_eq!(a.rgba, b.rgba);
-        if index == 1 {
-            let dirty = a.damage.bounds().unwrap();
-            assert!(dirty.right - dirty.left < i64::from(scale.buffer_size(logical)?.width) / 2);
+    for source in [SWEEP, SPOTLIGHT, ROUNDED_RECT] {
+        let positions = [0.41, 0.02, 0.98, 0.01];
+        let mut partial = shader_window(source, true, positions.into_iter())?;
+        let mut full = shader_window(source, false, positions.into_iter())?;
+        let logical = DeviceSize {
+            width: 481,
+            height: 223,
         }
-        for window in [&mut partial, &mut full] {
-            window.frame_submitted()?;
-            window.event(WindowEvent::FrameReady(std::time::Duration::from_millis(
-                (index + 1) as u64 * 8,
-            )))?;
+        .at_unit_scale();
+        let scale = RasterScale(1.25);
+        for index in 0..=positions.len() {
+            let a = partial.frame(logical, scale)?;
+            let b = full.frame(logical, scale)?;
+            assert_eq!(a.rgba, b.rgba);
+            if index == 1 {
+                let dirty = a.damage.bounds().unwrap();
+                assert!(
+                    dirty.right - dirty.left < i64::from(scale.buffer_size(logical)?.width) / 2
+                );
+            }
+            for window in [&mut partial, &mut full] {
+                window.frame_submitted()?;
+                window.event(WindowEvent::FrameReady(std::time::Duration::from_millis(
+                    (index + 1) as u64 * 8,
+                )))?;
+            }
         }
     }
     Ok(())
@@ -107,6 +207,10 @@ fn moving_light_repairs_match_full_frames() -> Result<()> {
 #[test]
 #[ignore = "release-mode retained CPU frame timings"]
 fn compare_shader_frames() -> Result<()> {
+    measure_frames([
+        ("spotlight full", SPOTLIGHT, false),
+        ("spotlight regional", SPOTLIGHT, true),
+    ])?;
     let vertical = RIBBON.replace("uv.x", "uv.y");
     for pair in [
         [("full", SWEEP, false), ("regional", SWEEP, true)],

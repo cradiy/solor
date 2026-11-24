@@ -341,7 +341,7 @@ impl RegionSampler {
                 width: 1,
                 height: 1,
             },
-            |region| crate::shader::render(fill, region),
+            |region| crate::shader::render(fill, target, region),
         )
     }
 

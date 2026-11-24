@@ -452,7 +452,7 @@ Use `.on_frame(|now, cx| { ... })` to advance application state on host frame
 opportunities. A visible listener requests the next callback with its frame.
 Delivery uses the last accepted view snapshot and stops when the listener is
 hidden or unmounted. All listeners for one callback receive the same monotonic
-dispatch timestamp. Signal writes are flushed before layout. A custom element
+animation timestamp. Signal writes are flushed before layout. A custom element
 that samples a stream directly in paint can combine this with
 `.refresh_mode(RefreshMode::Continuous)`. Its `PaintContext::fill_rect` takes an
 offset in content-local logical pixels and an extent.

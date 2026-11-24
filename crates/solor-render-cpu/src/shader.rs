@@ -1,15 +1,16 @@
 use anyhow::Result;
 use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
-use solor::{ImageAsset, ImageRegion, ShaderFill, raster::DeviceSize};
+use solor::{ImageAsset, ImageRegion, ShaderFill, layout::Size, raster::DeviceSize};
 use solor_shader::Op;
 use std::sync::OnceLock;
 
 const LANES: usize = 32;
 type Batch = [f32; LANES];
 
-pub(super) fn render(fill: &ShaderFill, region: ImageRegion) -> Result<ImageAsset> {
+pub(super) fn render(fill: &ShaderFill, size: Size, region: ImageRegion) -> Result<ImageAsset> {
     let program = solor::raster::shader_program(&fill.shader);
     let params = fill.params;
+    let size = [size.width.get(), size.height.get()];
     let [width, height] = program.sample_extent(region.output.width, region.output.height);
     rasterize(
         region,
@@ -21,14 +22,21 @@ pub(super) fn render(fill: &ShaderFill, region: ImageRegion) -> Result<ImageAsse
                 registers[dst] = match op {
                     Op::U => u,
                     Op::V => [v; LANES],
+                    Op::Size(axis) => [size[axis]; LANES],
                     Op::Param(index) => [params[index]; LANES],
                     Op::Constant(value) => [value; LANES],
                     Op::Abs(a) => r[a].map(f32::abs),
+                    Op::Sqrt(a) => r[a].map(f32::sqrt),
                     Op::Neg(a) => r[a].map(|x| -x),
                     Op::Add(a, b) => std::array::from_fn(|i| r[a][i] + r[b][i]),
                     Op::Sub(a, b) => std::array::from_fn(|i| r[a][i] - r[b][i]),
                     Op::Mul(a, b) => std::array::from_fn(|i| r[a][i] * r[b][i]),
                     Op::Div(a, b) => std::array::from_fn(|i| r[a][i] / r[b][i]),
+                    Op::Min(a, b) => std::array::from_fn(|i| r[a][i].min(r[b][i])),
+                    Op::Max(a, b) => std::array::from_fn(|i| r[a][i].max(r[b][i])),
+                    Op::Clamp(a, lo, hi) => {
+                        std::array::from_fn(|i| r[a][i].max(r[lo][i]).min(r[hi][i]))
+                    }
                     Op::Mix(a, b, c) => {
                         std::array::from_fn(|i| r[a][i] * (1. - r[c][i]) + r[b][i] * r[c][i])
                     }

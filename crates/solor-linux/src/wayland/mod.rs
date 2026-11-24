@@ -63,6 +63,7 @@ struct Window {
     maximized: bool,
     pending_maximized: bool,
     presentation: Option<wp_presentation::WpPresentation>,
+    frame_clock: presentation::FrameClock,
     viewport: wp_viewport::WpViewport,
     scale_120: u32,
     buffer_size: Option<DeviceSize>,
@@ -347,6 +348,7 @@ impl Window {
                     self.mapping = Mapping::Unmapping;
                 }
                 self.waiting = None;
+                self.frame_clock.clear_refresh();
                 self.full_damage = true;
                 self.dirty = true;
             }
@@ -450,7 +452,7 @@ impl Window {
             );
         }
         if let Some(presentation) = &self.presentation {
-            presentation.feedback(&self.surface, qh, self.commits + 1);
+            presentation.feedback(&self.surface, qh, (self.surface.id(), self.commits + 1));
         }
         if let Some(panel) = &self.floating {
             content.commit();
@@ -572,7 +574,8 @@ impl Dispatch<wl_callback::WlCallback, (ObjectId, Option<usize>)> for Desktop {
             }
         }
         state.waiting = None;
-        state.event(WindowEvent::FrameReady(state.start.elapsed()));
+        let time = state.frame_clock.sample(state.start.elapsed());
+        state.event(WindowEvent::FrameReady(time));
     }
 }
 

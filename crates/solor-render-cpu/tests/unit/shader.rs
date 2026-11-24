@@ -58,6 +58,7 @@ fn wgsl_matches_native_for_full_and_fractional_damage() -> Result<()> {
             let expected = reference(size, region, position)?;
             let actual = render(
                 &program.with_params([position, 0., 0., 0.]),
+                size.at_unit_scale(),
                 normalized(size, region),
             )?;
             assert_eq!(expected.pixels(), actual.pixels());
@@ -90,6 +91,7 @@ fn single_axis_alpha_uses_the_requested_pixel_centers() -> Result<()> {
         for position in [0.1, 0.3] {
             let image = render(
                 &program.with_params([position, 0., 0., 0.]),
+                size.at_unit_scale(),
                 normalized(size, region),
             )?;
             for (y, row) in image
@@ -128,6 +130,7 @@ fn compare_cpu_shader() -> Result<()> {
             } else {
                 render(
                     &program.with_params([position, 0., 0., 0.]),
+                    size.at_unit_scale(),
                     normalized(size, region),
                 )?
             };

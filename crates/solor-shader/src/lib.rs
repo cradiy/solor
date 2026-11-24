@@ -15,6 +15,8 @@ pub enum Op {
     U,
     /// Normalized vertical coordinate.
     V,
+    /// Component of the logical fill size in pixels.
+    Size(usize),
     /// Component of the draw parameters.
     Param(usize),
     /// Literal float.
@@ -29,8 +31,16 @@ pub enum Op {
     Div(Reg, Reg),
     /// Arithmetic negation.
     Neg(Reg),
+    /// Smaller operand.
+    Min(Reg, Reg),
+    /// Larger operand.
+    Max(Reg, Reg),
+    /// Value limited to the given lower and upper bounds.
+    Clamp(Reg, Reg, Reg),
     /// Absolute value.
     Abs(Reg),
+    /// Square root.
+    Sqrt(Reg),
     /// Linear interpolation.
     Mix(Reg, Reg, Reg),
     /// Smooth Hermite interpolation.
@@ -50,15 +60,46 @@ impl CoordinateAxes {
             let mask = match *op {
                 Op::U => Self::X,
                 Op::V => Self::Y,
-                Op::Param(_) | Op::Constant(_) => 0,
-                Op::Neg(a) | Op::Abs(a) => axes[a],
-                Op::Add(a, b) | Op::Sub(a, b) | Op::Mul(a, b) | Op::Div(a, b) => axes[a] | axes[b],
-                Op::Mix(a, b, c) | Op::SmoothStep(a, b, c) => axes[a] | axes[b] | axes[c],
+                Op::Size(_) | Op::Param(_) | Op::Constant(_) => 0,
+                Op::Neg(a) | Op::Abs(a) | Op::Sqrt(a) => axes[a],
+                Op::Add(a, b)
+                | Op::Sub(a, b)
+                | Op::Mul(a, b)
+                | Op::Div(a, b)
+                | Op::Min(a, b)
+                | Op::Max(a, b) => axes[a] | axes[b],
+                Op::Clamp(a, b, c) | Op::Mix(a, b, c) | Op::SmoothStep(a, b, c) => {
+                    axes[a] | axes[b] | axes[c]
+                }
             };
             axes.push(mask);
         }
         Self(rgba.into_iter().fold(0, |mask, r| mask | axes[r]))
     }
+}
+
+// WGSL length and distance each reduce all vector components to a single float.
+fn magnitude(ops: &mut Vec<Op>, a: &[Reg], b: Option<&[Reg]>) -> Reg {
+    fn emit(ops: &mut Vec<Op>, op: Op) -> Reg {
+        let reg = ops.len();
+        ops.push(op);
+        reg
+    }
+    let delta = |i: usize, ops: &mut Vec<Op>| match b {
+        Some(other) => emit(ops, Op::Sub(a[i], other[i])),
+        None => a[i],
+    };
+    let first = delta(0, ops);
+    if a.len() == 1 {
+        return emit(ops, Op::Abs(first));
+    }
+    let mut sum = emit(ops, Op::Mul(first, first));
+    for i in 1..a.len() {
+        let d = delta(i, ops);
+        let square = emit(ops, Op::Mul(d, d));
+        sum = emit(ops, Op::Add(sum, square));
+    }
+    emit(ops, Op::Sqrt(sum))
 }
 
 /// A validated, straight-line WGSL fragment effect.
@@ -71,7 +112,8 @@ pub struct Program {
 }
 impl Program {
     /// Compiles `effect(uv: vec2<f32>, params: vec4<f32>) -> vec4<f32>`.
-    /// A scalar second argument reads the first parameter.
+    /// A scalar second argument reads the first parameter. An optional third
+    /// `vec2<f32>` receives the logical fill size in pixels.
     pub fn compile(source: &str) -> Result<Self> {
         let module = naga::front::wgsl::parse_str(source)
             .map_err(|err| anyhow!(err.emit_to_string(source)))?;
@@ -91,14 +133,24 @@ impl Program {
             size: VectorSize::Quad,
             scalar: Scalar::F32,
         };
+        let args = &function.arguments;
+        let valid_args = match args.as_slice() {
+            [uv_arg, params, rest @ ..] => {
+                let param_type = &module.types[params.ty].inner;
+                module.types[uv_arg.ty].inner == uv
+                    && (*param_type == TypeInner::Scalar(Scalar::F32) || *param_type == color)
+                    && (rest.is_empty()
+                        || matches!(rest, [size] if module.types[size.ty].inner == uv))
+            }
+            _ => false,
+        };
         ensure!(
-            matches!(&function.arguments[..], [a,b] if module.types[a.ty].inner == uv
-            && (module.types[b.ty].inner == TypeInner::Scalar(Scalar::F32) || module.types[b.ty].inner == color))
+            valid_args
                 && function
                     .result
                     .as_ref()
                     .is_some_and(|r| module.types[r.ty].inner == color),
-            "expected effect(vec2<f32>, f32 or vec4<f32>) -> vec4<f32>"
+            "expected effect(uv: vec2<f32>, params: f32 or vec4<f32>[, size: vec2<f32>]) -> vec4<f32>"
         );
         let mut result = None;
         for (statement, span) in function.body.span_iter() {
@@ -132,8 +184,17 @@ impl Program {
                 _ => return Err(unsupported()),
             };
             let registers = |h: Handle<Expr>| &values[h.index()];
-            // Constructors and swizzles only rearrange existing registers.
-            let aliases = match *expr {
+            let lowered = match *expr {
+                Expr::Math {
+                    fun: Math::Length | Math::Distance,
+                    arg,
+                    arg1,
+                    ..
+                } => Some(vec![magnitude(
+                    &mut ops,
+                    registers(arg),
+                    arg1.map(|handle| registers(handle).as_slice()),
+                )]),
                 Expr::Compose { ref components, .. } => Some(
                     components
                         .iter()
@@ -153,8 +214,8 @@ impl Program {
                 ),
                 _ => None,
             };
-            if let Some(aliases) = aliases {
-                values.push(aliases);
+            if let Some(output) = lowered {
+                values.push(output);
                 continue;
             }
             let lane = |h, i| {
@@ -172,6 +233,7 @@ impl Program {
                         }
                     }
                     Expr::FunctionArgument(1) => Op::Param(i),
+                    Expr::FunctionArgument(2) => Op::Size(i),
                     Expr::Literal(Literal::F32(v)) => Op::Constant(v),
                     Expr::Unary {
                         op: UnaryOperator::Negate,
@@ -193,6 +255,19 @@ impl Program {
                         ..
                     } => Op::Abs(lane(arg, i)),
                     Expr::Math {
+                        fun: fun @ (Math::Min | Math::Max),
+                        arg,
+                        arg1: Some(b),
+                        ..
+                    } => {
+                        let (a, b) = (lane(arg, i), lane(b, i));
+                        if fun == Math::Min {
+                            Op::Min(a, b)
+                        } else {
+                            Op::Max(a, b)
+                        }
+                    }
+                    Expr::Math {
                         fun,
                         arg,
                         arg1: Some(b),
@@ -201,6 +276,7 @@ impl Program {
                     } => {
                         let (a, b, c) = (lane(arg, i), lane(b, i), lane(c, i));
                         match fun {
+                            Math::Clamp => Op::Clamp(a, b, c),
                             Math::Mix => Op::Mix(a, b, c),
                             Math::SmoothStep => Op::SmoothStep(a, b, c),
                             _ => return Err(unsupported()),

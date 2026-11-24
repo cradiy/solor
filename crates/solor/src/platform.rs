@@ -237,7 +237,7 @@ pub enum WindowEvent {
     Key(crate::keyboard::KeyEvent),
     /// A text edit from the active platform input method.
     TextInput(crate::text::TextInputEvent),
-    /// A requested frame opportunity, timestamped at dispatch from a monotonic host clock.
+    /// A requested frame opportunity with a monotonic animation timestamp.
     /// Timestamps in one window share an origin and can be subtracted to measure cadence.
     FrameReady(std::time::Duration),
 }

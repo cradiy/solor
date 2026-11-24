@@ -38,6 +38,8 @@ pub(super) struct Desktop {
     pub(super) text_inputs: Option<super::text_input::Manager>,
     pub(super) activation: Option<Rc<Activation>>,
     pub(super) popup_only: bool,
+    pub(super) monotonic_presentation: bool,
+    pub(super) trace_submissions: bool,
     pub(super) windows: HashMap<ObjectId, Window>,
     pub(super) seats: Vec<pointer::Seat>,
     pub(super) cursor_shapes: Option<WpCursorShapeManagerV1>,
@@ -274,6 +276,7 @@ impl EventLoop {
         let qh = queue.handle();
         let mut desktop = Desktop {
             popup_only: guest,
+            trace_submissions: host.trace_submissions,
             clipboard: if guest {
                 None
             } else {
@@ -305,11 +308,7 @@ impl EventLoop {
             shm: globals.bind(&qh, 1..=1, ())?,
             viewporter: globals.bind(&qh, 1..=1, ())?,
             scale_manager: globals.bind(&qh, 1..=1, ())?,
-            presentation: if host.trace_submissions {
-                globals.bind(&qh, 1..=1, ()).ok()
-            } else {
-                None
-            },
+            presentation: globals.bind(&qh, 1..=1, ()).ok(),
             trace_submissions: host.trace_submissions,
             verify_shm: host.verify_shm,
             qh,
@@ -438,6 +437,7 @@ impl WindowFactory {
             maximized: false,
             pending_maximized: false,
             presentation: self.presentation.clone(),
+            frame_clock: Default::default(),
             fractional: self
                 .scale_manager
                 .get_fractional_scale(surface, qh, surface.id()),

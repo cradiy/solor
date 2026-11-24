@@ -21,14 +21,20 @@ fn main() -> Result<()> {
                 .help("WGSL effect file (dragging changes the first parameter)"),
         )
         .get_matches();
-    let source = args
-        .get_one::<PathBuf>("shader")
+    let path = args.get_one::<PathBuf>("shader");
+    let title = path
+        .and_then(|path| path.file_stem())
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("Light sweep")
+        .to_owned();
+    let source = path
         .map(|path| {
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
         })
         .transpose()?;
-    let shader = EffectShader::wgsl(source.as_deref().unwrap_or(include_str!("sweep.wgsl")))?;
-    let built_in_sweep = source.is_none();
+    let source = source.as_deref().unwrap_or(surface::SWEEP);
+    let shader = EffectShader::wgsl(source)?;
+    let footprint = surface::Footprint::for_source(source);
     let view = component(move |cx| {
         let position = cx.signal(0.4);
         let playing = cx.signal(false);
@@ -36,7 +42,7 @@ fn main() -> Result<()> {
         let owner = cx.signal(None);
         let clock = Rc::new(Cell::new(None));
         let reset_clock = clock.clone();
-        let surface = surface::shader_surface(shader, position, built_in_sweep)
+        let surface = surface::shader_surface(shader, position, footprint)
             .on_pointer_down(move |event, cx| {
                 if event.is_primary_action() && cx.read(owner)?.is_none() {
                     cx.capture_pointer();
@@ -76,7 +82,7 @@ fn main() -> Result<()> {
                     .flex_row()
                     .items_center()
                     .justify_between()
-                    .child(text("Light sweep").text_size(px(24.)))
+                    .child(text(title).text_size(px(24.)))
                     .child(
                         div()
                             .px(px(18.))
@@ -95,10 +101,16 @@ fn main() -> Result<()> {
             )
             .child(surface)
             .on_frame_when(playing, move |now, cx| {
-                if let Some(previous) = clock.replace(Some(now)) {
-                    let delta = now.saturating_sub(previous).as_secs_f32();
-                    cx.update(position, |p| *p = (*p + delta * 0.35).rem_euclid(1.))?;
-                }
+                let (start, phase) = match clock.get() {
+                    Some(anchor) => anchor,
+                    None => {
+                        let phase = (1.0_f32 - 2. * *cx.read(position)?).acos();
+                        clock.set(Some((now, phase)));
+                        return Ok(());
+                    }
+                };
+                let elapsed = now.saturating_sub(start).as_secs_f32();
+                cx.set(position, 0.5 - 0.5 * (phase + elapsed * 0.9).cos())?;
                 Ok(())
             })
     });

@@ -1625,7 +1625,7 @@ impl<E: Element> Node<E> {
     }
 
     /// Requests successive host frame opportunities while this node is visible.
-    /// The timestamp is the monotonic dispatch time. Signal writes apply before the next layout.
+    /// The timestamp is the window’s monotonic animation time. Signal writes apply before the next layout.
     pub fn on_frame(
         mut self,
         handler: impl FnMut(std::time::Duration, &mut Context<'_>) -> Result<()> + 'static,

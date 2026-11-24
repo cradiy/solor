@@ -14,8 +14,10 @@ impl PartialEq for EffectShader {
 impl EffectShader {
     /// Compiles a straight-line `effect(uv: vec2<f32>, params: vec4<f32>) -> vec4<f32>`.
     /// UV runs from the top left to the bottom right of the fill. Return straight sRGB and alpha.
-    /// The second argument may also be a single float. Supported operations include float and
-    /// vector arithmetic, swizzles, `abs`, `mix` and `smoothstep`.
+    /// The second argument may also be a single float. Declare an optional third
+    /// `size: vec2<f32>` argument to read the full fill dimensions in logical pixels.
+    /// Supported operations include float and vector arithmetic, swizzles,
+    /// `abs`, `min`, `max`, `clamp`, `length`, `distance`, `mix` and `smoothstep`.
     pub fn wgsl(source: &str) -> anyhow::Result<Self> {
         Ok(Self(Arc::new(solor_shader::Program::compile(source)?)))
     }
