@@ -302,6 +302,12 @@ impl Ui {
                 }
                 Ok(())
             })?;
+        instance
+            .transitions
+            .margins
+            .advance_with_data(now, |id, margins, apply| {
+                Ok(apply(&mut instance.scene, id, margins)?)
+            })?;
         instance.transitions.radii.advance(now, |id, radii| {
             let node = instance
                 .bodies

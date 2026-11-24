@@ -404,6 +404,9 @@ impl Instance {
                     {
                         handlers.padding = insets;
                     }
+                    if let Some((target, apply)) = self.transitions.margins.remove_with_data(id) {
+                        apply(&mut self.scene, id, target)?;
+                    }
                     if let Some(radii) = self.transitions.radii.remove(id) {
                         body.set_corner_radii(radii);
                     }

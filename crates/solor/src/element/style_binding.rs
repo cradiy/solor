@@ -332,6 +332,31 @@ impl crate::Instance {
         {
             let mut bounds =
                 crate::styled_body::BoxModel::resolve(&style, self.units, scroll_axes.gutter)?;
+            if let Some(timing) = timing(crate::TransitionProperty::Margin) {
+                let target = bounds.margin_lengths();
+                let current = self
+                    .scene
+                    .body::<StyledBody<E>>(id)?
+                    .bounds
+                    .margin_lengths();
+                let start = current.zip_map(target, |from, to| {
+                    if from.is_some() && to.is_some() {
+                        from
+                    } else {
+                        to
+                    }
+                });
+                let displayed = self.transitions.margins.retarget_with_data(
+                    id,
+                    start,
+                    target,
+                    Some(timing),
+                    crate::styled_body::apply_margin::<E>,
+                );
+                if displayed != target {
+                    bounds.set_margin_lengths(displayed);
+                }
+            }
             let mut padding_changes = false;
             if let Some(timing) = timing(crate::TransitionProperty::Padding) {
                 let current = self.scene.body::<StyledBody<E>>(id)?.bounds.padding;

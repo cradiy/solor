@@ -4,7 +4,7 @@ use crate::{INK, MUTED, Selection, control, label};
 use solor::{
     Context, Div, Length, Render, Styled, Transition,
     TransitionProperty::{
-        BorderRadius, Gap, Height, MaxHeight, MaxWidth, MinHeight, MinWidth, Padding, Width,
+        BorderRadius, Gap, Height, Margin, MaxHeight, MaxWidth, MinHeight, MinWidth, Padding, Width,
     },
     component, div, percent, px, rgb,
 };
@@ -84,14 +84,19 @@ fn spacing(cx: &mut Context<'_>, timing: Transition) -> Div {
     let insets = Selection::new(cx, 0, false).buttons_with(["2 px", "14 px"], move |i, cx| {
         cx.set(padding, px([2., 14.][i]))
     });
+    let margin = cx.signal(Length::from(px(0.)));
+    let margins = Selection::new(cx, 0, false).buttons_with(["0 px", "20%"], move |i, cx| {
+        cx.set(margin, [px(0.).into(), percent(20.)][i])
+    });
     let bars = div()
         .flex_row()
         .items_center()
         .gap(gap)
         .p(padding)
+        .ml(margin)
         .bg(rgb(0xc7dbd0))
         .rounded(px(10.))
-        .transition([Gap, Padding], timing)
+        .transition([Gap, Padding, Margin], timing)
         .children(
             [
                 (32., 0x679c90),
@@ -107,7 +112,8 @@ fn spacing(cx: &mut Context<'_>, timing: Transition) -> Div {
         div()
             .gap(px(6.))
             .child(control("Gap", controls))
-            .child(control("Padding", insets)),
+            .child(control("Padding", insets))
+            .child(control("Left margin", margins)),
         div()
             .items_center()
             .justify_center()

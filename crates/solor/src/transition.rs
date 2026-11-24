@@ -34,6 +34,8 @@ pub enum TransitionProperty {
     Gap,
     /// Space between each border edge and the element content.
     Padding,
+    /// Outer spacing on the four edges. Changes to or from an automatic edge apply immediately.
+    Margin,
     /// The four radii of the border box.
     BorderRadius,
     /// Opacity of the composited subtree.
@@ -153,6 +155,8 @@ pub(crate) struct Transitions {
     pub(crate) dimensions: Tracks<ComputedLength, (NodeId, Dimension)>,
     pub(crate) flex_factors: Tracks<f32, (NodeId, FlexFactor)>,
     pub(crate) gaps: Tracks<Pixels>,
+    pub(crate) margins:
+        Tracks<crate::styled_body::MarginLengths, NodeId, crate::styled_body::ApplyMargin>,
     pub(crate) padding: Tracks<Edges, NodeId, crate::styled_body::ApplyPadding>,
     pub(crate) radii: Tracks<Corners<Pixels>>,
     pub(crate) lengths: Tracks<Pixels, (NodeId, TransitionProperty)>,
@@ -167,6 +171,7 @@ impl Transitions {
             || !self.flex_factors.active.is_empty()
             || !self.gaps.active.is_empty()
             || !self.padding.active.is_empty()
+            || !self.margins.active.is_empty()
             || !self.radii.active.is_empty()
             || !self.lengths.active.is_empty()
             || !self.colors.active.is_empty()
@@ -177,6 +182,7 @@ impl Transitions {
         self.opacity.remove(id);
         self.gaps.remove(id);
         self.padding.remove_with_data(id);
+        self.margins.remove_with_data(id);
         for factor in FlexFactor::ALL {
             self.flex_factors.remove((id, factor));
         }
@@ -262,14 +268,18 @@ impl Interpolate for ComputedLength {
     }
 }
 
-impl Interpolate for Edges {
+impl Interpolate for Option<ComputedLength> {
     fn interpolate(self, target: Self, t: f32) -> Self {
-        Self {
-            top: self.top.interpolate(target.top, t),
-            right: self.right.interpolate(target.right, t),
-            bottom: self.bottom.interpolate(target.bottom, t),
-            left: self.left.interpolate(target.left, t),
+        match (self, target) {
+            (Some(a), Some(b)) => Some(a.interpolate(b, t)),
+            _ => target,
         }
+    }
+}
+
+impl<T: Interpolate> Interpolate for Edges<T> {
+    fn interpolate(self, target: Self, t: f32) -> Self {
+        self.zip_map(target, |a, b| a.interpolate(b, t))
     }
 }
 

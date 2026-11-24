@@ -21,8 +21,15 @@ impl ComputedLength {
     pub(crate) fn resolve(self, basis: Option<Pixels>) -> Option<Pixels> {
         match self {
             Self::Pixels(value) => Some(value),
-            Self::Fraction(fraction) => basis.map(|value| value * fraction),
-            Self::Mixed(px, fraction) => basis.map(|value| px + value * fraction),
+            _ => basis.map(|basis| self.resolve_at(basis)),
+        }
+    }
+
+    pub(crate) fn resolve_at(self, basis: Pixels) -> Pixels {
+        match self {
+            Self::Pixels(value) => value,
+            Self::Fraction(fraction) => basis * fraction,
+            Self::Mixed(px, fraction) => px + basis * fraction,
         }
     }
 }

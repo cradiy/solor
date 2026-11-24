@@ -13,11 +13,14 @@ pub(crate) struct StyledBody<E> {
     pub(crate) bounds: BoxModel,
 }
 
+pub(crate) type MarginLengths = Edges<Option<ComputedLength>>;
+const ZERO_MARGINS: MarginLengths = Edges::all(Some(ComputedLength::Pixels(px(0.0))));
+
 pub(crate) struct BoxModel {
     padding_box_insets: ContentInsets,
     pub(crate) padding: Edges,
     border: Size,
-    margins: Option<Box<Edges<Option<ComputedLength>>>>,
+    margins: Option<Box<MarginLengths>>,
     box_sizing: BoxSizing,
     aspect_ratio: Option<f32>,
 }
@@ -70,6 +73,20 @@ impl<E> StyledBody<E> {
 }
 
 impl BoxModel {
+    pub(crate) fn margin_lengths(&self) -> MarginLengths {
+        self.margins.as_deref().copied().unwrap_or(ZERO_MARGINS)
+    }
+
+    pub(crate) fn set_margin_lengths(&mut self, values: MarginLengths) {
+        if values == ZERO_MARGINS {
+            self.margins = None;
+        } else if let Some(current) = self.margins.as_deref_mut() {
+            *current = values;
+        } else {
+            self.margins = Some(Box::new(values));
+        }
+    }
+
     pub(crate) fn content_insets(&self) -> ContentInsets {
         ContentInsets {
             origin: Origin {
@@ -220,7 +237,7 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
             let Some(length) = value else {
                 return Ok(Margin::Auto);
             };
-            let distance = length.resolve(inline_width).unwrap_or_default();
+            let distance = length.resolve_at(inline_width.unwrap_or_default());
             if distance.get().is_finite() {
                 Ok(Margin::Fixed(distance))
             } else {
@@ -334,6 +351,20 @@ impl<E: LayoutNode> LayoutNode for StyledBody<E> {
                 .filter(|&b| b <= assigned.height),
         })
     }
+}
+
+pub(crate) type ApplyMargin =
+    fn(&mut crate::layout::Scene, crate::NodeId, MarginLengths) -> Result<()>;
+
+pub(crate) fn apply_margin<E: LayoutNode>(
+    scene: &mut crate::layout::Scene,
+    id: crate::NodeId,
+    values: MarginLengths,
+) -> Result<()> {
+    if scene.body::<StyledBody<E>>(id)?.bounds.margin_lengths() != values {
+        scene.edit_layout::<StyledBody<E>>(id, |body| body.bounds.set_margin_lengths(values))?;
+    }
+    Ok(())
 }
 
 pub(crate) type ApplyPadding =

@@ -109,3 +109,51 @@ fn automatic_margin_shares_only_positive_free_space() -> Result<()> {
     assert_eq!(ui.geometry(view, root).unwrap().content.width, px(30.0));
     Ok(())
 }
+
+#[test]
+fn margin_transition_resolves_against_the_live_parent_and_applies_auto_per_edge() -> Result<()> {
+    use solor::{Transition, TransitionProperty};
+    use std::time::Duration;
+
+    let mut ui = Ui::new();
+    let left = ui.context().signal(Length::from(px(-8.)));
+    let right = ui.context().signal(Length::Auto);
+    let view = ui.mount_with_rem_size(
+        component(move |_| {
+            div()
+                .flex_row()
+                .child(div().size(px(20.)).ml(left).mr(right).transition(
+                    TransitionProperty::Margin,
+                    Transition::new(Duration::from_millis(100)),
+                ))
+                .child(div().size(px(10.)))
+        }),
+        px(16.),
+    )?;
+    let items: Vec<_> = ui.children(view, ui.root(view)?)?.collect();
+    ui.context().set(left, percent(25.))?;
+    ui.context().set(right, Length::from(rem(0.5)))?;
+    for (ms, width, x, auto) in [
+        (0, 200., -8., false),
+        (50, 200., 21., false),
+        (50, 120., 11., false),
+        (100, 120., 30., false),
+        (100, 120., 82., true),
+    ] {
+        if auto {
+            ui.context().set(left, Length::Auto)?;
+        }
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        ui.layout(
+            view,
+            Size {
+                width: px(width),
+                height: px(50.),
+            },
+        )?;
+        assert_eq!(ui.geometry(view, items[0]).unwrap().origin.x, px(x));
+        assert_eq!(ui.geometry(view, items[1]).unwrap().origin.x, px(x + 28.));
+        assert_eq!(ui.record_frame(view)?.requests_animation_frame(), ms < 100);
+    }
+    Ok(())
+}
