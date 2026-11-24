@@ -23,7 +23,7 @@ impl EffectShader {
         Ok(Self(Arc::new(solor_shader::Program::compile(source)?)))
     }
 
-    /// Binds a float or four floats for one draw. Backgrounds and inherited foregrounds also accept signals of either type.
+    /// Binds a float or four floats for one draw. Style setters also accept a signal of either type.
     pub fn with_params<P>(&self, params: P) -> ShaderFill<P> {
         ShaderFill {
             shader: self.clone(),
@@ -99,22 +99,18 @@ impl<T: Copy + 'static> ShaderFill<crate::Signal<T>> {
     }
 }
 
-impl<T: Clone + 'static> From<ShaderFill<crate::Signal<T>>>
-    for crate::style::Property<crate::style::Background>
+impl<T: Clone + 'static, P: From<ShaderFill<T>> + 'static> From<ShaderFill<crate::Signal<T>>>
+    for crate::style::Property<P>
 where
     crate::style::Property<T>: From<crate::Signal<T>>,
-    ShaderFill<T>: Into<crate::Fill>,
 {
     fn from(fill: ShaderFill<crate::Signal<T>>) -> Self {
         crate::style::Property::<T>::from(fill.params).map(move |params| {
-            crate::style::Background::Fixed(
-                ShaderFill {
-                    shader: fill.shader.clone(),
-                    params,
-                    region: fill.region.clone(),
-                }
-                .into(),
-            )
+            P::from(ShaderFill {
+                shader: fill.shader.clone(),
+                params,
+                region: fill.region.clone(),
+            })
         })
     }
 }

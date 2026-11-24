@@ -469,3 +469,66 @@ fn independent_strokes_inherit_and_repaint_without_reshaping() -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(feature = "shader")]
+#[test]
+fn shader_parameters_repaint_inherited_text_decorations() -> Result<()> {
+    use solor::{EffectShader, Ink, style::Property};
+
+    let shader = EffectShader::wgsl(
+        "fn effect(uv: vec2<f32>, p: vec4<f32>) -> vec4<f32> { return vec4<f32>(p.rgb, 1.0); }",
+    )?;
+    let mut ui = Ui::with_font(FONT.to_vec())?;
+    let intensity = ui.context().signal(0.0_f32);
+    let strokes = ui.context().signal([0., 0., 1., 1.]);
+    let label = |highlight: Property<Ink>, decoration: Property<Ink>| {
+        div().text_bg(highlight).decoration_color(decoration).child(
+            text("Audio")
+                .underline_wavy()
+                .line_through()
+                .decoration_thickness(px(2.)),
+        )
+    };
+    let view = ui.mount(component(|_| {
+        label(
+            shader.with_params(intensity).into(),
+            shader.with_params(strokes).into(),
+        )
+    }))?;
+    let reference = ui.mount(component(|_| {
+        label(rgb(0xff0000).into(), rgb(0x00ff00).into())
+    }))?;
+    let size = DeviceSize {
+        width: 90,
+        height: 36,
+    };
+    for id in [view, reference] {
+        ui.layout(id, size.at_unit_scale())?;
+    }
+    let initial = ui.record_frame(view)?;
+    ui.context().set(intensity, 1.)?;
+    ui.context().set(strokes, [0., 1., 0., 1.])?;
+    ui.flush()?;
+    assert_eq!(ui.layout(view, size.at_unit_scale())?, 0);
+    let updated = ui.record_frame(view)?;
+    let paragraph = |frame: &solor::ViewFrame| {
+        frame
+            .draws()
+            .iter()
+            .find_map(|draw| match draw {
+                Draw::Text { paragraph, .. } => Some(paragraph.clone()),
+                _ => None,
+            })
+            .unwrap()
+    };
+    assert!(std::rc::Rc::ptr_eq(
+        &paragraph(&initial),
+        &paragraph(&updated)
+    ));
+    let render = |frame| Surface::draw_view(frame, size, RasterScale::ONE);
+    let pixels = render(&updated)?.rgba;
+    assert_ne!(pixels, render(&initial)?.rgba);
+    let expected = ui.record_frame(reference)?;
+    assert!(pixels == render(&expected)?.rgba);
+    Ok(())
+}

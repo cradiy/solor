@@ -561,21 +561,21 @@ impl<'paint> PaintContext<'paint> {
         }
         let fill = Fill::from(color.clone());
         let spatial = !matches!(color, crate::Ink::Solid(_));
-        let draw = |cx: &mut PaintContext<'_>| {
-            for line in &paragraph.lines {
-                let (left, right) = line.advance_bounds();
-                let (top, bottom) = vertical_bounds(line);
-                let (x0, x1) = (left.max(0.), right.min(cx.size.width.get()));
-                let (y0, y1) = (top.max(0.), bottom.min(cx.size.height.get()));
-                if x1 <= x0 || y1 <= y0 {
-                    continue;
-                }
-                // Spatial ink samples the full line even where the content clip cuts it off.
-                let (left, right, top, bottom) = if spatial {
-                    (left, right, top, bottom)
-                } else {
-                    (x0, x1, y0, y1)
-                };
+        for line in &paragraph.lines {
+            let (left, right) = line.advance_bounds();
+            let (top, bottom) = vertical_bounds(line);
+            let (x0, x1) = (left.max(0.), right.min(self.size.width.get()));
+            let (y0, y1) = (top.max(0.), bottom.min(self.size.height.get()));
+            if x1 <= x0 || y1 <= y0 {
+                continue;
+            }
+            let needs_clip = spatial && (left, right, top, bottom) != (x0, x1, y0, y1);
+            let (left, right, top, bottom) = if needs_clip {
+                (left, right, top, bottom)
+            } else {
+                (x0, x1, y0, y1)
+            };
+            let record = |cx: &mut PaintContext<'_>| {
                 cx.record_fill(
                     Origin {
                         x: cx.origin.x + px(left),
@@ -588,14 +588,16 @@ impl<'paint> PaintContext<'paint> {
                     fill.clone(),
                     Corners::default(),
                 );
+                Ok(())
+            };
+            if needs_clip {
+                // Sample across the full line when only part of its ink is visible.
+                self.with_clip(Origin::default(), self.size, record)?;
+            } else {
+                record(self)?;
             }
-            Ok(())
-        };
-        if spatial {
-            self.with_clip(Origin::default(), self.size, draw)
-        } else {
-            draw(self)
         }
+        Ok(())
     }
 
     /// Fills a polygon in local logical pixels, implicitly closing the contour.
