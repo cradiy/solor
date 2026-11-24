@@ -1371,3 +1371,78 @@ fn animated_padding_reflows_text_at_the_presented_content_width() -> Result<()> 
     assert!(rows[0] < rows[2]);
     Ok(())
 }
+
+#[test]
+fn foreground_transition_repaints_inherited_glyphs_without_relayout() -> Result<()> {
+    use solor::{Ink, Transition, TransitionProperty};
+    use std::time::Duration;
+
+    let mut ui = Ui::with_font(FONT.to_vec())?;
+    let tone = ui.context().signal(Ink::Solid(INK));
+    let view = ui.mount(component(|_| {
+        div()
+            .text_color(tone)
+            .transition(
+                TransitionProperty::TextColor,
+                Transition::new(Duration::from_millis(100)),
+            )
+            .child(div().child(text("Inherited")))
+            .child(text("Override").text_color(ACCENT))
+    }))?;
+    ui.flush()?;
+    ui.layout(
+        view,
+        Size {
+            width: px(180.),
+            height: px(80.),
+        },
+    )?;
+    let root = ui.root(view)?;
+    let group = ui.children(view, root)?.next().unwrap();
+    let label = ui.children(view, group)?.next().unwrap();
+    let snapshot = |ui: &Ui| -> Result<_> {
+        let frame = ui.record_frame(view)?;
+        let [
+            Draw::Text {
+                paragraph, color, ..
+            },
+            Draw::Text { color: fixed, .. },
+        ] = frame.draws()
+        else {
+            panic!("expected two labels")
+        };
+        assert_eq!(*fixed, Ink::Solid(ACCENT));
+        Ok((
+            Rc::clone(paragraph),
+            color.clone(),
+            frame.requests_animation_frame(),
+        ))
+    };
+    let (shaped, _, _) = snapshot(&ui)?;
+    ui.context().set(tone, Ink::Solid(ACCENT))?;
+    ui.dispatch_frame(view, Duration::ZERO)?;
+    assert_eq!(snapshot(&ui)?.1, Ink::Solid(INK));
+    ui.dispatch_frame(view, Duration::from_millis(50))?;
+    assert!(ui.geometry(view, label).is_some());
+    let mut dirty = Vec::new();
+    ui.collect_repaints(view, &mut dirty)?;
+    assert_eq!(dirty, [label]);
+    let (mid_shape, mid, running) = snapshot(&ui)?;
+    assert!(running && Rc::ptr_eq(&shaped, &mid_shape));
+    assert_ne!(mid, Ink::Solid(INK));
+    assert_ne!(mid, Ink::Solid(ACCENT));
+    ui.dispatch_frame(view, Duration::from_millis(100))?;
+    let (end_shape, end, running) = snapshot(&ui)?;
+    assert!(Rc::ptr_eq(&shaped, &end_shape));
+    assert_eq!(end, Ink::Solid(ACCENT));
+    assert!(!running);
+
+    let gradient: Ink =
+        linear_gradient(90., [ColorStop::new(0., INK), ColorStop::new(1., ACCENT)])?.into();
+    ui.context().set(tone, gradient.clone())?;
+    ui.flush()?;
+    let (_, end, running) = snapshot(&ui)?;
+    assert_eq!(end, gradient);
+    assert!(!running);
+    Ok(())
+}

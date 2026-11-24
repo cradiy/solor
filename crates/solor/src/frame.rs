@@ -373,6 +373,15 @@ impl Ui {
                 }
                 Ok(())
             })?;
+        instance
+            .transitions
+            .foregrounds
+            .advance_with_data(now, |_, color, displayed| {
+                Ok(self
+                    .state
+                    .get_mut()
+                    .publish_for_frame(displayed, crate::Ink::Solid(color))?)
+            })?;
         for id in instance.pointer.frame_listeners() {
             if let Some(handler) = instance.frame_handlers.get_mut(id)
                 && let Some(node) = instance.bodies.get_mut(id)

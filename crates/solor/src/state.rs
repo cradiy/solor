@@ -293,8 +293,8 @@ impl<N> Runtime<N> {
         Ok(true)
     }
 
-    /// Publishes a layout result to its subscribers before recording, leaving other signals queued.
-    pub(crate) fn publish_layout_value<S: PartialEq + 'static>(
+    /// Publishes a frame value to its subscribers before recording, leaving other signals queued.
+    pub(crate) fn publish_for_frame<S: PartialEq + 'static>(
         &mut self,
         signal: Signal<S>,
         value: S,

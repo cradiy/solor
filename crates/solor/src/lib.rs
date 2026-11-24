@@ -238,7 +238,59 @@ type Repaints = Rc<RefCell<PaintState>>;
 type VisibilityBatch = BTreeMap<Rc<[usize]>, (NodeId, bool)>;
 type VisibilityUpdates = Rc<RefCell<HashMap<ViewId, VisibilityBatch>>>;
 type Restyle = Rc<dyn Fn(&mut Instance, NodeId, &mut Runtime<()>, bool) -> Result<()>>;
-type StyleUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), (Restyle, bool)>>>;
+type StyleUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), PendingStyle>>>;
+
+#[derive(Default)]
+struct PendingStyle {
+    restyle: Option<(Restyle, bool)>,
+    foreground: Option<TextColorTarget>,
+}
+
+impl PendingStyle {
+    fn apply(
+        &mut self,
+        instance: &mut Instance,
+        id: NodeId,
+        state: &mut Runtime<()>,
+    ) -> Result<()> {
+        if let Some((apply, layout)) = &self.restyle {
+            apply(instance, id, state, *layout)?;
+            self.restyle = None;
+        }
+        if let Some(target) = &self.foreground {
+            target.apply(instance, id, state)?;
+        }
+        Ok(())
+    }
+}
+
+struct TextColorTarget {
+    ink: Ink,
+    displayed: Signal<Ink>,
+    timing: Transition,
+}
+
+impl TextColorTarget {
+    fn apply(&self, instance: &mut Instance, id: NodeId, state: &mut Runtime<()>) -> Result<()> {
+        let tracks = &mut instance.transitions.foregrounds;
+        let ink = match (state.read(self.displayed)?, &self.ink) {
+            (Ink::Solid(current), Ink::Solid(target)) => Ink::Solid(tracks.retarget_with_data(
+                id,
+                *current,
+                *target,
+                instance.bodies[&id].visible.then_some(self.timing),
+                self.displayed,
+            )),
+            _ => {
+                tracks.remove_with_data(id);
+                self.ink.clone()
+            }
+        };
+        state.set(self.displayed, ink)?;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy)]
 enum ContentUpdate {
     InputText(Signal<text::TextInputState>),
@@ -409,6 +461,11 @@ impl Instance {
                     }
                     if let Some(radii) = self.transitions.radii.remove(id) {
                         body.set_corner_radii(radii);
+                    }
+                    if let Some((target, displayed)) =
+                        self.transitions.foregrounds.remove_with_data(id)
+                    {
+                        state.set(displayed, Ink::Solid(target))?;
                     }
                     if let Some(target) = self.transitions.opacity.remove(id) {
                         body.opacity = target;
@@ -852,17 +909,15 @@ impl Ui {
             let batch = std::mem::take(&mut *self.pending.borrow_mut());
             if batch.is_empty() {
                 let mut failure = None;
-                self.styles
-                    .borrow_mut()
-                    .retain(|&(view, id), (apply, layout)| {
-                        if let Some(instance) = self.instances.get_mut(&view)
-                            && let Err(error) = apply(instance, id, self.state.get_mut(), *layout)
-                        {
-                            failure.get_or_insert(error);
-                            return true;
-                        }
-                        false
-                    });
+                self.styles.borrow_mut().retain(|&(view, id), update| {
+                    if let Some(instance) = self.instances.get_mut(&view)
+                        && let Err(error) = update.apply(instance, id, self.state.get_mut())
+                    {
+                        failure.get_or_insert(error);
+                        return true;
+                    }
+                    false
+                });
                 for (view, updates) in self.visibility.borrow_mut().drain() {
                     if let Some(instance) = self.instances.get_mut(&view) {
                         instance.apply_visibility(updates, self.state.get_mut())?;

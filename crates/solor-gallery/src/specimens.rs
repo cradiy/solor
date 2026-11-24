@@ -258,9 +258,11 @@ fn color_change() -> impl solor::Render {
     component(|cx| {
         let indigo = rgb(0x393664);
         let accent = cx.signal(indigo);
-        let choices = Selection::new(cx, 0, true)
-            .buttons_with(["Indigo", "Peach", "Teal"], move |i, cx| {
-                cx.set(accent, [indigo, rgb(0xf1a891), rgb(0x458e88)][i])
+        let lettering = cx.signal(indigo);
+        let choices =
+            Selection::new(cx, 0, true).buttons_with(["Indigo", "Peach", "Teal"], move |i, cx| {
+                cx.set(accent, [indigo, rgb(0xf1a891), rgb(0x458e88)][i])?;
+                cx.set(lettering, [indigo, rgb(0x934931), rgb(0x18665d)][i])
             });
         let timing = Transition::new(std::time::Duration::from_millis(650));
         div()
@@ -278,6 +280,9 @@ fn color_change() -> impl solor::Render {
                     .p(px(8.))
                     .rounded(px(8.))
                     .bg(crate::PAPER)
+                    .text_color(lettering)
+                    .transition(TransitionProperty::TextColor, timing)
+                    .child(label("Aa", 27., 34.))
                     .child(choices)
                     .child(
                         div()

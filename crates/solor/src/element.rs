@@ -856,6 +856,7 @@ impl From<Signal<RefreshMode>> for RefreshPolicy {
 
 #[derive(Clone, Default)]
 pub(super) struct InheritedText {
+    animated_color: bool,
     fixed: TextStyleRefinement,
     bindings: crate::style::Bindings,
 }

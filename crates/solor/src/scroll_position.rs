@@ -127,7 +127,7 @@ impl PositionObservers {
         self.0.borrow_mut().retain(|observer| {
             observer
                 .upgrade()
-                .is_some_and(|signal| state.publish_layout_value(*signal, position).is_ok())
+                .is_some_and(|signal| state.publish_for_frame(*signal, position).is_ok())
         });
     }
 }

@@ -21,6 +21,7 @@ pub(super) fn prepare<E: Element>(
     units: UnitResolver,
 ) -> Result<PreparedStyle> {
     let base = node.body.base_style();
+    let animated_color = bind_text_color(node, inherited, &base, cx)?;
     node.style.bind_transition_background(&base);
     node.style.bindings = node.style.bindings.without_fixed_overrides(&node.style);
     let inherited_bindings = inherited.bindings.unshadowed(&node.style);
@@ -44,8 +45,8 @@ pub(super) fn prepare<E: Element>(
             base,
             local: std::mem::take(&mut node.style),
             inherited: InheritedText {
-                fixed: inherited.fixed.clone(),
                 bindings: inherited_bindings,
+                ..inherited.clone()
             },
         };
         let style = recipe.resolve(cx.state, units)?;
@@ -81,11 +82,13 @@ pub(super) fn prepare<E: Element>(
                 let updates = cx.styles.clone();
                 let apply = apply.clone();
                 cx.state.observe(signal, target, move || {
-                    updates
-                        .borrow_mut()
+                    let mut updates = updates.borrow_mut();
+                    let (_, needs_layout) = updates
                         .entry(key)
-                        .and_modify(|(_, any_layout)| *any_layout |= layout)
-                        .or_insert_with(|| (apply.clone(), layout));
+                        .or_default()
+                        .restyle
+                        .get_or_insert_with(|| (apply.clone(), false));
+                    *needs_layout |= layout;
                 })?;
             }
             Ok(())
@@ -93,6 +96,7 @@ pub(super) fn prepare<E: Element>(
         (style, fixed)
     };
     let text = InheritedText {
+        animated_color,
         fixed: fixed_text,
         bindings: child_bindings,
     };
@@ -132,6 +136,62 @@ pub(super) fn prepare<E: Element>(
         fixed,
         visible: local_visible,
     })
+}
+
+fn bind_text_color<E: Element>(
+    node: &mut Node<E>,
+    inherited: &InheritedText,
+    base: &Style,
+    cx: &mut Context<'_>,
+) -> Result<bool> {
+    if node.style.text.color.is_none() && inherited.animated_color {
+        return Ok(true);
+    }
+    let property = crate::TransitionProperty::TextColor;
+    let timing = |style: &Option<Rc<crate::style::TransitionRules>>| {
+        style.as_deref().and_then(|rules| property.timing(rules))
+    };
+    let Some(timing) = timing(&node.style.transitions).or_else(|| timing(&base.transitions)) else {
+        return Ok(false);
+    };
+    let color = node
+        .style
+        .text
+        .color
+        .as_ref()
+        .or(inherited.fixed.color.as_ref())
+        .unwrap_or(&base.text.color);
+    let displayed = match color {
+        Foreground::Bound(source) => watch_text_color(*source, timing, &mut node.watches, cx)?,
+        Foreground::Ink(source) => watch_text_color(*source, timing, &mut node.watches, cx)?,
+        Foreground::Fixed(_) | Foreground::Gradient(_) => return Ok(false),
+    };
+    node.style.text.color = Some(displayed.into());
+    Ok(true)
+}
+
+fn watch_text_color<T: Clone + Into<crate::Ink> + 'static>(
+    source: Signal<T>,
+    timing: crate::Transition,
+    watches: &mut Vec<Watch>,
+    cx: &mut Context<'_>,
+) -> Result<Signal<crate::Ink>> {
+    let initial = cx.read(source)?.clone().into();
+    let displayed = cx.signal(initial);
+    watches.push(Box::new(move |cx, binding, node, _, _| {
+        let updates = cx.styles.clone();
+        let key = (ViewId(cx.scope), node);
+        cx.state.bind(source, binding, move |value, _| {
+            updates.borrow_mut().entry(key).or_default().foreground =
+                Some(crate::TextColorTarget {
+                    ink: value.clone().into(),
+                    displayed,
+                    timing,
+                });
+        })?;
+        Ok(())
+    }));
+    Ok(displayed)
 }
 
 fn local_visibility(style: &Style) -> Option<Visibility> {

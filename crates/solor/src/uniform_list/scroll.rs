@@ -324,7 +324,7 @@ impl ListScrollHandle {
         }
         if let Some(signal) = self.0.position_signal {
             // The scope owning the signal may have unmounted while the list was still live.
-            let _ = state.publish_layout_value(signal, position);
+            let _ = state.publish_for_frame(signal, position);
         }
         self.0.observers.publish(state, position.map(Into::into));
     }

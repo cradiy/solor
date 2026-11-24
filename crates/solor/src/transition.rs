@@ -42,6 +42,8 @@ pub enum TransitionProperty {
     Opacity,
     /// Solid background color or position along a background color palette.
     BackgroundColor,
+    /// Inherited foreground color. Solid colors interpolate and gradient inks apply immediately.
+    TextColor,
     /// Color of the outline surrounding the element.
     OutlineColor,
     /// Thickness of the outline stroke.
@@ -161,6 +163,7 @@ pub(crate) struct Transitions {
     pub(crate) radii: Tracks<Corners<Pixels>>,
     pub(crate) lengths: Tracks<Pixels, (NodeId, TransitionProperty)>,
     pub(crate) colors: Tracks<Rgba, (NodeId, TransitionProperty)>,
+    pub(crate) foregrounds: Tracks<Rgba, NodeId, crate::Signal<crate::Ink>>,
     pub(crate) palette_position: Tracks<f32>,
 }
 
@@ -175,6 +178,7 @@ impl Transitions {
             || !self.radii.active.is_empty()
             || !self.lengths.active.is_empty()
             || !self.colors.active.is_empty()
+            || !self.foregrounds.active.is_empty()
             || !self.palette_position.active.is_empty()
     }
 
@@ -196,6 +200,7 @@ impl Transitions {
         for property in TransitionProperty::OUTLINE_LENGTHS {
             self.lengths.remove((id, property));
         }
+        self.foregrounds.remove_with_data(id);
         self.palette_position.remove(id);
     }
 }

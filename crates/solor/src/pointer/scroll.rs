@@ -253,7 +253,7 @@ impl ScrollHandle {
         if self.0.metrics.replace(metrics) != metrics {
             if let Some(signal) = self.0.metrics_signal {
                 // The scope owning the signal can unmount before the container.
-                let _ = state.publish_layout_value(signal, metrics);
+                let _ = state.publish_for_frame(signal, metrics);
             }
             for axis in [ScrollAxis::Horizontal, ScrollAxis::Vertical] {
                 self.observers(axis).publish(state, self.position(axis));
