@@ -32,7 +32,7 @@ fn stripe_coverage(pixel: vec2f, band: vec4f) -> f32 {
     return area;
 }
 
-fn paint(local: vec2f, size: vec2f, q: Quad) -> vec4f {
+fn solor_paint(local: vec2f, size: vec2f, q: solor_Quad) -> vec4f {
     if q.viewport.w >= 2. {
         let pixel = local * q.viewport.z - 0.5;
         var coverage: f32;

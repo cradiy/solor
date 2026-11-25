@@ -77,6 +77,98 @@ fn select_uses_the_condition_axes_and_vector_lanes() -> Result<()> {
 }
 
 #[test]
+fn bounds_masks_match_pixel_centers_at_inclusive_and_exclusive_edges() -> Result<()> {
+    let shader = EffectShader::wgsl(
+        "fn effect(uv: vec2f, bounds: vec4f) -> vec4f {
+            let lower = uv >= bounds.xy;
+            let upper = uv < bounds.zw;
+            let inside = all(lower & upper);
+            let outside = any(!lower | !upper);
+            return vec4f(select(0., 1., inside), select(0., 1., outside), select(0., 1., !outside), 1.);
+        }",
+    )?;
+    let size = DeviceSize {
+        width: 4,
+        height: 4,
+    };
+    let image = render(
+        &shader.with_params([0.375, 0.125, 0.875, 0.625]),
+        size.at_unit_scale(),
+        normalized(size, full(size)),
+    )?;
+    assert_eq!(image.dimensions(), size);
+    for (i, pixel) in image.pixels().iter().enumerate() {
+        let inside = (1..3).contains(&(i % 4)) && i / 4 < 2;
+        assert_eq!(
+            *pixel,
+            if inside {
+                [255, 0, 255, 255]
+            } else {
+                [0, 255, 0, 255]
+            }
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn branch_assignments_and_early_returns_keep_each_pixels_local_values() -> Result<()> {
+    let shader = EffectShader::wgsl(
+        "fn shade(uv: vec2f, edge: f32) -> vec2f {
+            var color = vec2f(0.25, 0.5);
+            let original = color;
+            if uv.x < edge {
+                color.x += uv.y;
+                if uv.y >= 0.5 { return color.yx; }
+            } else if uv.y < 0.5 {
+                color = uv;
+            }
+            color.y = original.x;
+            return color;
+        }
+        fn effect(uv: vec2f, edge: f32) -> vec4f {
+            var blue: f32;
+            if (uv.x >= edge && uv.y < edge) || uv.x == uv.y { blue = 1.; }
+            let pair = shade(uv, edge);
+            return vec4f(pair, blue, 1.);
+        }",
+    )?;
+    let size = DeviceSize {
+        width: 4,
+        height: 4,
+    };
+    for edge in [0.375, 0.625] {
+        let image = render(
+            &shader.with_params([edge, 0., 0., 0.]),
+            size.at_unit_scale(),
+            normalized(size, full(size)),
+        )?;
+        assert_eq!(image.dimensions(), size);
+        for (i, pixel) in image.pixels().iter().enumerate() {
+            let u = ((i % 4) as f32 + 0.5) / 4.;
+            let v = ((i / 4) as f32 + 0.5) / 4.;
+            let (r, g) = match (u < edge, v < 0.5) {
+                (true, false) => (0.5, 0.25 + v),
+                (true, true) => (0.25 + v, 0.25),
+                (false, true) => (u, 0.25),
+                (false, false) => (0.25, 0.25),
+            };
+            let blue = if (u >= edge && v < edge) || u == v {
+                255
+            } else {
+                0
+            };
+            assert_eq!(
+                *pixel,
+                [unorm(r), unorm(g), blue, 255],
+                "UV ({u}, {v}), edge {edge}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn wgsl_matches_native_for_full_and_fractional_damage() -> Result<()> {
     let program = EffectShader::wgsl(SWEEP)?;
     let size = DeviceSize {
@@ -342,8 +434,14 @@ fn nested_helpers_bind_each_calls_own_arguments() -> Result<()> {
     };
     assert_eq!(draw(&helper)?.pixels(), draw(&flat)?.pixels());
     assert_eq!(
-        solor::raster::shader_program(&helper).instructions().len(),
-        solor::raster::shader_program(&flat).instructions().len()
+        solor::raster::shader_program(&helper)
+            .cpu()?
+            .instructions()
+            .len(),
+        solor::raster::shader_program(&flat)
+            .cpu()?
+            .instructions()
+            .len()
     );
     Ok(())
 }

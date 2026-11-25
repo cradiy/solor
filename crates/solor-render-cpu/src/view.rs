@@ -232,6 +232,8 @@ impl Surface {
                     if let Fill::Shader(shader) = &*fill {
                         // Consume large shader images in bands so only one temporary is live.
                         let [width, height] = solor::raster::shader_program(&shader.shader)
+                            .cpu()
+                            .map_err(Error::other)?
                             .sample_extent(
                                 (bounds.right - bounds.left) as u32,
                                 (bounds.bottom - bounds.top) as u32,

@@ -8,6 +8,9 @@ description = "Portable WGSL fill programs for Solor renderers"
 [lints]
 workspace = true
 
+[features]
+cpu = []
+
 [dependencies]
 anyhow.workspace = true
-naga = { version = "30", default-features = false, features = ["wgsl-in"] }
+naga.workspace = true

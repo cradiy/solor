@@ -29,7 +29,7 @@ pub fn rasterize_shader(fill: &ShaderFill, size: Size, output: DeviceSize) -> Re
 }
 
 pub(super) fn render(fill: &ShaderFill, size: Size, region: ImageRegion) -> Result<ImageAsset> {
-    let program = solor::raster::shader_program(&fill.shader);
+    let program = solor::raster::shader_program(&fill.shader).cpu()?;
     let [width, height] = program.sample_extent(region.output.width, region.output.height);
     sample(fill, size, region, DeviceSize { width, height })
 }
@@ -40,7 +40,7 @@ fn sample(
     region: ImageRegion,
     samples: DeviceSize,
 ) -> Result<ImageAsset> {
-    let program = solor::raster::shader_program(&fill.shader);
+    let program = solor::raster::shader_program(&fill.shader).cpu()?;
     let params = fill.params;
     let size = [size.width.get(), size.height.get()];
     let (column_ops, row_ops) = program.column_plan();

@@ -2,7 +2,8 @@
 mod effect;
 mod images;
 mod masks;
-use anyhow::{Result, bail, ensure};
+mod path;
+use anyhow::{Result, ensure};
 use images::{FrameImages, Images, TextureSource};
 use solor::{
     ColorSpace, Draw, EffectShader, Fill, GradientKind, Rgba, ViewFrame,
@@ -20,6 +21,8 @@ pub struct Renderer {
     bindings: wgpu::BindGroupLayout,
     texture_layout: wgpu::PipelineLayout,
     brush: wgpu::RenderPipeline,
+    border: Option<wgpu::RenderPipeline>,
+    path: Option<wgpu::RenderPipeline>,
     underline: Option<wgpu::RenderPipeline>,
     images: Images,
     masks: masks::Atlas,
@@ -34,6 +37,8 @@ pub struct Renderer {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Material {
     Brush,
+    Border,
+    Path,
     Underline,
     Effect(usize),
     Image(usize),
@@ -157,7 +162,7 @@ impl Renderer {
             format,
             concat!(
                 include_str!("gradient.wgsl"),
-                "fn foreground(local: vec2f, size: vec2f, q: Quad, ramp: vec4f) -> vec4f {
+                "fn solor_foreground(local: vec2f, size: vec2f, q: solor_Quad, ramp: vec4f) -> vec4f {
                     return gradient_color(local, size, q.params, ramp, q.viewport.w != 0.);
                 }",
                 include_str!("mask.wgsl")
@@ -167,6 +172,8 @@ impl Renderer {
         Ok(Self {
             mask_pipeline,
             underline: None,
+            border: None,
+            path: None,
             masks: Default::default(),
             rasterizer: Default::default(),
             images,
@@ -184,7 +191,7 @@ impl Renderer {
         })
     }
 
-    /// Clears the target and draws fills, text, wavy underlines and SVGs in paint order.
+    /// Clears the target and draws fills, solid borders, paths, text, wavy underlines and SVGs in paint order.
     pub fn draw(
         &mut self,
         frame: &ViewFrame,
@@ -199,28 +206,34 @@ impl Renderer {
         result
     }
 
-    fn effect_pipeline(&mut self, shader: &EffectShader, target: effect::Target) -> usize {
+    fn effect_pipeline(&mut self, shader: &EffectShader, target: effect::Target) -> Result<usize> {
         if let Some(index) = self
             .effects
             .iter()
             .position(|p| p.shader == *shader && p.target == target)
         {
             self.effects[index].used = true;
-            return index;
+            return Ok(index);
         }
         let layout = match target {
             effect::Target::Fill | effect::Target::Underline => &self.layout,
             effect::Target::Mask => &self.texture_layout,
         };
-        let body = effect::paint(solor::raster::shader_program(shader), target);
+        let pipeline = effect::pipeline(
+            &self.device,
+            layout,
+            self.format,
+            solor::raster::shader_program(shader),
+            target,
+        )?;
         let index = self.effects.len();
         self.effects.push(effect::Pipeline {
             shader: shader.clone(),
             target,
-            pipeline: pipeline(&self.device, layout, self.format, &body, target),
+            pipeline,
             used: true,
         });
-        index
+        Ok(index)
     }
 
     fn draw_frame(
@@ -235,7 +248,22 @@ impl Renderer {
         let mut stops = vec![[[0f32; 4]; 2]];
         let mut frame_images = FrameImages::default();
         let mut batches: Vec<(Material, Range<u32>)> = Vec::new();
-        for cmd in frame.draws() {
+        for (index, cmd) in frame.draws().iter().enumerate() {
+            let unsupported = |reason: &str| {
+                anyhow::anyhow!(
+                    "GPU draw #{} (Draw::{}): {reason}",
+                    index + 1,
+                    draw_name(cmd)
+                )
+            };
+            if let Some(path) = path::Path::from_draw(cmd).map_err(unsupported)? {
+                let first = quads.len();
+                path.record(size, scale, &mut quads, &mut stops)?;
+                if quads.len() > first {
+                    batches.push((Material::Path, first as u32..quads.len() as u32));
+                }
+                continue;
+            }
             let raster = match cmd {
                 Draw::Text {
                     clip,
@@ -331,10 +359,10 @@ impl Renderer {
                         (brush.params, Some(brush.ramp), brush.oklab)
                     }
                     Some(solor::Ink::Shader(fill)) => {
-                        effect = Some(self.effect_pipeline(&fill.shader, effect::Target::Mask));
+                        effect = Some(self.effect_pipeline(&fill.shader, effect::Target::Mask)?);
                         (fill.params, Some([0.; 4]), 0.)
                     }
-                    _ => bail!("unsupported GPU mask ink"),
+                    _ => return Err(unsupported("unsupported mask ink")),
                 };
                 let paint_box = ramp.map_or(0., |ramp| {
                     let index = stops.len();
@@ -421,6 +449,58 @@ impl Renderer {
                 }
                 continue;
             }
+            if let Draw::Border {
+                origin,
+                size: extent,
+                paint,
+                clip,
+            } = cmd
+            {
+                let Some(bounds) = visible_bounds(*origin, *extent, clip.as_deref(), size, scale)
+                else {
+                    continue;
+                };
+                let styles = paint.styles;
+                let mut colors = [[0.; 4]; 4];
+                for ((out, fill), style) in colors.iter_mut().zip(paint.visible_fills()).zip([
+                    styles.top,
+                    styles.right,
+                    styles.bottom,
+                    styles.left,
+                ]) {
+                    let Some(fill) = fill else { continue };
+                    let Fill::Solid(color) = fill else {
+                        return Err(unsupported("borders require solid colors"));
+                    };
+                    if style != solor::style::BorderStyle::Solid {
+                        return Err(unsupported(&format!("unsupported border style {style:?}")));
+                    }
+                    let [r, g, b, a] = rgba(*color);
+                    *out = [r * a, g * a, b * a, a];
+                }
+                let index = quads.len() as u32;
+                let colors_start = stops.len() as f32;
+                let [t, r, b, l] = colors;
+                stops.extend([[t, r], [b, l]]);
+                let r = paint.radii.fit_to(*extent);
+                let w = paint.widths;
+                quads.push([
+                    [
+                        origin.x.get(),
+                        origin.y.get(),
+                        extent.width.get(),
+                        extent.height.get(),
+                    ],
+                    [r.top_left, r.top_right, r.bottom_right, r.bottom_left]
+                        .map(solor::Pixels::get),
+                    bounds,
+                    [w.top, w.right, w.bottom, w.left].map(solor::Pixels::get),
+                    [size.width as f32, size.height as f32, scale.0 as f32, 0.],
+                    [colors_start, 0., 0., 0.],
+                ]);
+                batch(&mut batches, Material::Border, index);
+                continue;
+            }
             let underline_fill;
             let (origin, extent, clip, radii, fill, mut material) = match cmd {
                 Draw::Fill {
@@ -458,33 +538,16 @@ impl Renderer {
                         Material::Underline,
                     )
                 }
-                _ => bail!("unsupported GPU draw command"),
+                _ => return Err(unsupported("command not implemented")),
             };
             let [w, h] = [extent.width.get(), extent.height.get()];
             if w == 0. || h == 0. {
                 continue;
             }
-            let mut bounds = [
-                0.,
-                0.,
-                size.width as f32 / scale.0 as f32,
-                size.height as f32 / scale.0 as f32,
-            ];
-            if let Some(c) = clip {
-                if let Some(x) = &c.x {
-                    bounds[0] = bounds[0].max(x.start.get());
-                    bounds[2] = bounds[2].min(x.end.get());
-                }
-                if let Some(y) = &c.y {
-                    bounds[1] = bounds[1].max(y.start.get());
-                    bounds[3] = bounds[3].min(y.end.get());
-                }
-            }
-            if bounds[0].max(origin.x.get()) >= bounds[2].min(origin.x.get() + w)
-                || bounds[1].max(origin.y.get()) >= bounds[3].min(origin.y.get() + h)
-            {
+            let Some(bounds) = visible_bounds(*origin, *extent, clip.as_deref(), size, scale)
+            else {
                 continue;
-            }
+            };
             let mut material_option = 0.;
             let mut ramp = [0.; 4];
             let fill = self.files.resolve(fill)?;
@@ -524,7 +587,7 @@ impl Renderer {
                     } else {
                         effect::Target::Fill
                     };
-                    material = Material::Effect(self.effect_pipeline(&f.shader, target));
+                    material = Material::Effect(self.effect_pipeline(&f.shader, target)?);
                     f.params
                 }
                 Fill::Image(image) => {
@@ -550,7 +613,7 @@ impl Renderer {
                         fit.height.get(),
                     ]
                 }
-                _ => bail!("unsupported GPU fill"),
+                _ => return Err(unsupported("unsupported fill")),
             };
             let index = quads.len() as u32;
             quads.push([
@@ -636,6 +699,38 @@ impl Renderer {
             for (id, range) in batches {
                 match id {
                     Material::Brush => pass.set_pipeline(&self.brush),
+                    Material::Path => {
+                        pass.set_pipeline(self.path.get_or_insert_with(|| {
+                            module_pipeline(
+                                &self.device,
+                                &self.layout,
+                                self.format,
+                                concat!(
+                                    include_str!("vertex.wgsl"),
+                                    "\n",
+                                    include_str!("path.wgsl")
+                                )
+                                .to_owned(),
+                                "solor_",
+                            )
+                        }));
+                    }
+                    Material::Border => {
+                        pass.set_pipeline(self.border.get_or_insert_with(|| {
+                            module_pipeline(
+                                &self.device,
+                                &self.layout,
+                                self.format,
+                                concat!(
+                                    include_str!("vertex.wgsl"),
+                                    "\n",
+                                    include_str!("border.wgsl")
+                                )
+                                .to_owned(),
+                                "solor_",
+                            )
+                        }));
+                    }
                     Material::Underline => {
                         pass.set_pipeline(self.underline.get_or_insert_with(|| {
                             pipeline(
@@ -667,6 +762,53 @@ impl Renderer {
     }
 }
 
+fn draw_name(draw: &Draw) -> &'static str {
+    match draw {
+        Draw::Fill { .. } => "Fill",
+        Draw::WavyUnderline { .. } => "WavyUnderline",
+        Draw::Text { .. } => "Text",
+        Draw::Svg { .. } => "Svg",
+        Draw::Shadow { .. } => "Shadow",
+        Draw::Border { .. } => "Border",
+        Draw::Group { .. } => "Group",
+        Draw::BackdropBlur { .. } => "BackdropBlur",
+        Draw::Polygon { .. } => "Polygon",
+        Draw::Polyline { .. } => "Polyline",
+    }
+}
+
+fn visible_bounds(
+    origin: solor::layout::Origin,
+    extent: solor::layout::Size,
+    clip: Option<&solor::ContentClip>,
+    size: DeviceSize,
+    scale: RasterScale,
+) -> Option<[f32; 4]> {
+    let [w, h] = [extent.width.get(), extent.height.get()];
+    let mut bounds = [
+        0.,
+        0.,
+        size.width as f32 / scale.0 as f32,
+        size.height as f32 / scale.0 as f32,
+    ];
+    if let Some(c) = clip {
+        if let Some(x) = &c.x {
+            bounds[0] = bounds[0].max(x.start.get());
+            bounds[2] = bounds[2].min(x.end.get());
+        }
+        if let Some(y) = &c.y {
+            bounds[1] = bounds[1].max(y.start.get());
+            bounds[3] = bounds[3].min(y.end.get());
+        }
+    }
+    if bounds[0].max(origin.x.get()) >= bounds[2].min(origin.x.get() + w)
+        || bounds[1].max(origin.y.get()) >= bounds[3].min(origin.y.get() + h)
+    {
+        return None;
+    }
+    Some(bounds)
+}
+
 fn batch(batches: &mut Vec<(Material, Range<u32>)>, material: Material, index: u32) {
     if let Some((id, span)) = batches.last_mut()
         && *id == material
@@ -684,11 +826,16 @@ fn pipeline(
     body: &str,
     target: effect::Target,
 ) -> wgpu::RenderPipeline {
-    let fragment = match target {
-        effect::Target::Underline => include_str!("underline.wgsl"),
-        effect::Target::Fill | effect::Target::Mask => include_str!("quad.wgsl"),
-    };
-    let source = [include_str!("vertex.wgsl"), body, fragment].join("\n");
+    module_pipeline(device, layout, format, target.module(body), "solor_")
+}
+
+fn module_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    format: TextureFormat,
+    source: String,
+    prefix: &str,
+) -> wgpu::RenderPipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Solor quad"),
         source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -698,7 +845,7 @@ fn pipeline(
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: &module,
-            entry_point: Some("vertex"),
+            entry_point: Some(&format!("{prefix}vertex")),
             compilation_options: Default::default(),
             buffers: &[],
         },
@@ -707,7 +854,7 @@ fn pipeline(
         multisample: Default::default(),
         fragment: Some(wgpu::FragmentState {
             module: &module,
-            entry_point: Some("fragment"),
+            entry_point: Some(&format!("{prefix}fragment")),
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format,

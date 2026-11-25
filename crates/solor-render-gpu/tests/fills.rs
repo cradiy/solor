@@ -22,7 +22,11 @@ fn scene(phase: f32) -> Result<(Size, ViewFrame)> {
     let shader = EffectShader::wgsl(
         "fn effect(uv: vec2f, t: f32, size: vec2f) -> vec4f {
             let axes = select(uv, 1.0 - uv, uv >= vec2f(t));
-            return select(vec4f(axes, t, 0.67), vec4f(t, axes.yx, 0.48), uv.x < t);
+            let inside = all((uv >= vec2f(t * 0.5)) & (uv < vec2f(0.93)));
+            if inside && uv.y < t { return vec4f(t, axes.yx, 0.48); }
+            var color = vec4f(axes, t, 0.67);
+            if inside { color.b *= uv.y; } else { color.a = 0.5; }
+            return color;
         }",
     )?;
     let size = |w, h| Size {
@@ -145,11 +149,166 @@ fn ordered_fills_match_cpu_across_scales() -> Result<()> {
             assert!(max <= 16 && above_two * 500 < errors.len());
         }
     }
+    draw_gpu_only_effect(&device, &queue, &mut renderer)?;
+    compare_paths(&device, &queue, &mut renderer)?;
+    compare_borders(&device, &queue, &mut renderer)?;
     compare_patterns(&device, &queue, &mut renderer)?;
     compare_gradients(&device, &queue, &mut renderer)?;
     compare_replaced_images(&device, &queue, &mut renderer)?;
     compare_text(&device, &queue, &mut renderer)?;
     compare_svg(&device, &queue, &mut renderer)
+}
+
+fn draw_gpu_only_effect(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut Renderer,
+) -> Result<()> {
+    let shader = EffectShader::wgsl(
+        "const palette = array(vec3f(1, 0, 0), vec3f(0, 1, 0), vec3f(0, 0, 1));
+         fn solor_paint(column: u32) -> vec3f {
+             var color = vec3f(0);
+             for (var i = 0u; i <= column; i++) { color += palette[i]; }
+             return color;
+         }
+         fn effect(uv: vec2f, p: vec4f, size: vec2f) -> vec4f {
+             return vec4f(solor_paint(u32(uv.x * size.x)) * p.rgb, p.a);
+         }",
+    )?;
+    let mut ui = Ui::new();
+    let view = ui.mount(component(move |_| {
+        div().w_full().h_full().bg(shader.with_params([1.; 4]))
+    }))?;
+    let size = DeviceSize {
+        width: 3,
+        height: 1,
+    };
+    let scale = RasterScale(1.);
+    ui.layout(view, size.at_unit_scale())?;
+    let frame = ui.record_frame(view)?;
+    let cpu = Surface::draw_view(&frame, size, scale)
+        .err()
+        .expect("requires GPU");
+    assert!(
+        cpu.to_string().contains("CPU renderer cannot execute"),
+        "{cpu}"
+    );
+    assert_eq!(
+        pixels(device, queue, renderer, &frame, size, scale)?,
+        [255, 0, 0, 255, 255, 255, 0, 255, 255, 255, 255, 255]
+    );
+    Ok(())
+}
+
+fn compare_paths(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut Renderer,
+) -> Result<()> {
+    let size = Size {
+        width: px(80.),
+        height: px(48.),
+    };
+    let mut ui = Ui::new();
+    let view = ui.mount(component(move |_| {
+        div().w_full().h_full().paint(move |cx| {
+            let at = |x, y| Origin { x: px(x), y: px(y) };
+            cx.with_clip(
+                at(4., 2.),
+                Size {
+                    width: px(70.),
+                    height: px(42.),
+                },
+                |cx| {
+                    for (offset, rule) in [
+                        (0., solor::FillRule::EvenOdd),
+                        (40., solor::FillRule::NonZero),
+                    ] {
+                        let rect = |l: f32, t: f32, r: f32, b: f32| {
+                            [
+                                at(l + offset, t),
+                                at(r + offset, t),
+                                at(r + offset, b),
+                                at(l + offset, b),
+                            ]
+                        };
+                        cx.fill_contours(
+                            [rect(0., 0., 38., 48.), rect(9., 10., 25., 32.)],
+                            rgba(0x40ce9480),
+                            rule,
+                        )?;
+                    }
+                    cx.stroke_polyline(
+                        [
+                            at(0., 6.),
+                            at(71., 39.),
+                            at(17., 5.),
+                            at(17., 5.),
+                            at(71., 39.),
+                        ],
+                        px(2.5),
+                        rgba(0xdf513680),
+                    )
+                },
+            )
+        })
+    }))?;
+    ui.layout(view, size)?;
+    let frame = ui.record_frame(view)?;
+    for scale in [1., 1.25, 2.].map(RasterScale) {
+        let physical = scale.buffer_size(size)?;
+        let cpu = Surface::draw_view(&frame, physical, scale)?;
+        let gpu = pixels(device, queue, renderer, &frame, physical, scale)?;
+        for (i, (a, b)) in gpu.iter().zip(&cpu.rgba).enumerate() {
+            assert!(
+                a.abs_diff(*b) <= 2,
+                "path byte {i} at scale {}: GPU={a} CPU={b}",
+                scale.0
+            );
+        }
+    }
+    Ok(())
+}
+
+fn compare_borders(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut Renderer,
+) -> Result<()> {
+    let mut ui = Ui::new();
+    let view = ui.mount(component(|_| {
+        div().size(px(36.)).p(px(1.5)).child(
+            div()
+                .w_full()
+                .h_full()
+                .rounded(px(8.))
+                .border(px(1.))
+                .border_l(px(4.5))
+                .border_b(px(2.25))
+                .border_color(rgba(0x30629185))
+                .border_left_color(rgba(0xaf3546bc))
+                .border_right_style(solor::style::BorderStyle::None),
+        )
+    }))?;
+    let size = Size {
+        width: px(36.),
+        height: px(36.),
+    };
+    ui.layout(view, size)?;
+    let frame = ui.record_frame(view)?;
+    for scale in [1., 1.25, 2.].map(RasterScale) {
+        let physical = scale.buffer_size(size)?;
+        let cpu = Surface::draw_view(&frame, physical, scale)?;
+        let gpu = pixels(device, queue, renderer, &frame, physical, scale)?;
+        for (i, (a, b)) in gpu.iter().zip(&cpu.rgba).enumerate() {
+            assert!(
+                a.abs_diff(*b) <= 3,
+                "border byte {i} at scale {}: GPU={a} CPU={b}",
+                scale.0
+            );
+        }
+    }
+    Ok(())
 }
 
 fn compare_patterns(

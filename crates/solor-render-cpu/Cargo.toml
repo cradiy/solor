@@ -13,7 +13,7 @@ shader = ["solor/shader", "dep:solor-shader", "dep:rayon"]
 layout-audit = ["solor/layout-audit"]
 
 [dependencies]
-solor-shader = { workspace = true, optional = true }
+solor-shader = { workspace = true, optional = true, features = ["cpu"] }
 rayon = { version = "1", optional = true }
 anyhow.workspace = true
 solor = { workspace = true, features = ["glyph-raster", "svg-raster"] }

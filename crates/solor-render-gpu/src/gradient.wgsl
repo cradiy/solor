@@ -3,21 +3,21 @@ fn ramp_color(t: f32, first: u32, count: u32, repeating: bool) -> vec4f {
     var hi = count;
     while lo < hi {
         let mid = lo + (hi - lo) / 2u;
-        if stops[first + mid].segment.x <= t { lo = mid + 1u; } else { hi = mid; }
+        if solor_stops[first + mid].segment.x <= t { lo = mid + 1u; } else { hi = mid; }
     }
     if !repeating {
-        if lo == 0u { return stops[first].color; }
-        let left = stops[first + lo - 1u];
+        if lo == 0u { return solor_stops[first].color; }
+        let left = solor_stops[first + lo - 1u];
         if lo == count || left.segment.x == t { return left.color; }
-        let right = stops[first + lo];
+        let right = solor_stops[first + lo];
         let f = (t - left.segment.x) / (right.segment.x - left.segment.x);
         return mix(left.color, right.color, pow(f, left.segment.y));
     }
     // Periodic cubic B-spline over the four neighboring control colors.
     let li = (lo + count - 1u) % count;
     let ri = lo % count;
-    let left = stops[first + li];
-    let right = stops[first + ri];
+    let left = solor_stops[first + li];
+    let right = solor_stops[first + ri];
     let width = right.segment.x - left.segment.x + select(0., 1., ri == 0u);
     var f = 0.;
     if width > 0. {
@@ -26,8 +26,8 @@ fn ramp_color(t: f32, first: u32, count: u32, repeating: bool) -> vec4f {
     let ff = f * f;
     let fff = ff * f;
     let inv = 1. - f;
-    let before = stops[first + (li + count - 1u) % count].color;
-    let after = stops[first + (ri + 1u) % count].color;
+    let before = solor_stops[first + (li + count - 1u) % count].color;
+    let after = solor_stops[first + (ri + 1u) % count].color;
     return (before * (inv * inv * inv) + left.color * (3.*fff - 6.*ff + 4.) +
             right.color * (-3.*fff + 3.*ff + 3.*f + 1.) + after * fff) / 6.;
 }

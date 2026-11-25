@@ -1,5 +1,5 @@
-@fragment fn fragment(v: Vertex) -> @location(0) vec4f {
-    let q = quads[v.index];
+@fragment fn solor_fragment(v: solor_Vertex) -> @location(0) vec4f {
+    let q = solor_quads[v.index];
     let p = v.pos.xy / q.viewport.z;
     let local = p - q.rect.xy;
     let far = q.rect.zw - local;
@@ -13,7 +13,7 @@
         if r > 0. && all(c - half_pixel < vec2f(r)) { touches_corner = true; }
         if all(c < vec2f(r)) { dist = min(dist, r - length(vec2f(r)-c)); }
     }
-    if outside_clip(v.pos.xy, q) { discard; }
+    if solor_outside_clip(v.pos.xy, q) { discard; }
     let pixel_min = local * q.viewport.z - 0.5;
     let pixel_max = pixel_min + 1.0;
     let overlap = clamp(min(pixel_max, q.rect.zw * q.viewport.z) - max(pixel_min, vec2f(0.0)),
@@ -42,6 +42,6 @@
             coverage = f32(inside) / 16.;
         }
     }
-    let color = clamp(paint(local, q.rect.zw, q),vec4f(0),vec4f(1));
+    let color = clamp(solor_paint(local, q.rect.zw, q),vec4f(0),vec4f(1));
     return vec4f(color.rgb, color.a * coverage);
 }

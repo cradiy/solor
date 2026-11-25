@@ -1,4 +1,4 @@
-fn paint(local: vec2f, size: vec2f, q: Quad) -> vec4f {
+fn solor_paint(local: vec2f, size: vec2f, q: solor_Quad) -> vec4f {
     let fitted_start = q.params.xy;
     let fitted_size = q.params.zw;
     let half_pixel = vec2f(0.5 / q.viewport.z);
@@ -11,9 +11,9 @@ fn paint(local: vec2f, size: vec2f, q: Quad) -> vec4f {
     let texel = clamp(source, q.ramp.xy + 0.5, q.ramp.zw - 0.5);
     var color: vec4f;
     if q.viewport.w > 0.0 {
-        color = textureLoad(bitmap, vec2i(floor(texel)), 0);
+        color = textureLoad(solor_bitmap, vec2i(floor(texel)), 0);
     } else {
-        color = textureSampleLevel(bitmap, bitmap_sampler, texel / vec2f(textureDimensions(bitmap)), 0.0);
+        color = textureSampleLevel(solor_bitmap, solor_bitmap_sampler, texel / vec2f(textureDimensions(solor_bitmap)), 0.0);
     }
     return vec4f(color.rgb / max(color.a, 1e-8), color.a * overlap.x * overlap.y);
 }

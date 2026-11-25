@@ -13,6 +13,7 @@ solor-platform = { path = "crates/solor-platform" }
 solor-render-cpu = { path = "crates/solor-render-cpu" }
 solor-shader = { path = "crates/solor-shader" }
 solor-render-gpu = { path = "crates/solor-render-gpu" }
+naga = { version = "30", default-features = false, features = ["wgsl-in"] }
 wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
 color = "=0.3.3"
 pollster = "0.4"

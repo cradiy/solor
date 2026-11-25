@@ -1,6 +1,6 @@
-@fragment fn fragment(v: Vertex) -> @location(0) vec4f {
-    let q = quads[v.index];
-    if outside_clip(v.pos.xy, q) { discard; }
+@fragment fn solor_fragment(v: solor_Vertex) -> @location(0) vec4f {
+    let q = solor_quads[v.index];
+    if solor_outside_clip(v.pos.xy, q) { discard; }
     let scale = q.viewport.z;
     let point = v.pos.xy - q.rect.xy * scale;
     let size = q.rect.zw * scale;
@@ -22,6 +22,6 @@
         let bottom = min(point.y + 0.5, center + half);
         coverage += max(bottom - top, 0.) * step;
     }
-    let ink = clamp(paint(point / scale, q.rect.zw, q), vec4f(0.), vec4f(1.));
+    let ink = clamp(solor_paint(point / scale, q.rect.zw, q), vec4f(0.), vec4f(1.));
     return vec4f(ink.rgb, ink.a * coverage);
 }

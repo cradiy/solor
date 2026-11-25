@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 solor = { workspace = true, features = ["shader", "glyph-raster", "svg-raster"] }
+naga.workspace = true
 wgpu.workspace = true
 bytemuck = "1"
 color.workspace = true
