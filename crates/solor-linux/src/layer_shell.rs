@@ -2,8 +2,10 @@
 use solor::{Edges, Pixels, platform::WindowBackground};
 
 mod handle;
+mod placement;
 pub use crate::surface_control::InputRect;
 pub use handle::LayerSurfaceHandle;
+pub(crate) use placement::{LayerChanges, LayerRules, extent, units};
 
 pub use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::Layer,
@@ -22,7 +24,7 @@ pub enum ExclusiveZone {
     Reserve(Pixels),
 }
 
-/// Initial placement and input policy on a compositor-selected output.
+/// Initial placement and input policy for a desktop layer surface.
 #[derive(Clone, Copy, Debug)]
 pub struct LayerShellOptions<'a> {
     /// Allows drag regions to move a fixed-size panel within the selected output.
@@ -34,6 +36,8 @@ pub struct LayerShellOptions<'a> {
     pub handle: Option<&'a LayerSurfaceHandle>,
     /// Stable name used by compositor rules to identify the surface.
     pub namespace: &'a str,
+    /// Wayland output name, such as `DP-1`. By default the compositor chooses the output.
+    pub output: Option<&'a str>,
     /// Stacking layer relative to other desktop surfaces.
     pub layer: Layer,
     /// Output edges used for placement.
@@ -58,6 +62,7 @@ impl<'a> LayerShellOptions<'a> {
             background: WindowBackground::Opaque,
             handle: None,
             namespace,
+            output: None,
             layer,
             anchor: Anchor::Top | Anchor::Right | Anchor::Bottom | Anchor::Left,
             width: None,

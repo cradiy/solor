@@ -81,6 +81,12 @@ impl FloatingPanel {
         }
     }
 
+    pub fn set_size(&mut self, width: u32, height: u32) -> Option<Size> {
+        self.geometry.requested = [width as i32, height as i32];
+        let [w, h] = self.geometry.available;
+        (w > 0 && h > 0).then(|| self.configure(w as u32, h as u32))
+    }
+
     pub fn pointer(&mut self, input: &mut PointerInput) {
         let before = self.geometry.position;
         self.geometry.pointer(input);

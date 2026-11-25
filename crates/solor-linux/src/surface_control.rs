@@ -1,5 +1,6 @@
 //! Latest surface state requested by another thread.
 mod input_region;
+use crate::layer_shell::{LayerChanges, LayerRules};
 pub use input_region::InputRect;
 pub(crate) use input_region::InputRegion;
 use rustix::{
@@ -20,6 +21,7 @@ use std::{
 pub(crate) struct Update {
     pub(crate) visible: Option<bool>,
     pub(crate) size: Option<Size>,
+    pub(crate) layer: LayerChanges,
     pub(crate) region: Option<InputRegion>,
 }
 
@@ -30,7 +32,13 @@ pub(crate) struct Control(Arc<Shared>);
 struct Shared {
     wake: OwnedFd,
     claimed: AtomicBool,
-    update: Mutex<Update>,
+    update: Mutex<State>,
+}
+
+#[derive(Debug)]
+struct State {
+    pending: Update,
+    rules: Option<LayerRules>,
 }
 
 impl Control {
@@ -38,10 +46,14 @@ impl Control {
         Ok(Self(Arc::new(Shared {
             wake: eventfd(0, EventfdFlags::NONBLOCK | EventfdFlags::CLOEXEC)?,
             claimed: AtomicBool::new(false),
-            update: Mutex::new(Update {
-                visible: Some(visible),
-                size: None,
-                region: None,
+            update: Mutex::new(State {
+                rules: None,
+                pending: Update {
+                    layer: LayerChanges::default(),
+                    visible: Some(visible),
+                    size: None,
+                    region: None,
+                },
             }),
         })))
     }
@@ -51,11 +63,28 @@ impl Control {
     }
 
     pub(crate) fn update(&self, edit: impl FnOnce(&mut Update) -> bool) -> io::Result<()> {
+        self.edit(|state| Ok(edit(&mut state.pending)))
+    }
+
+    pub(crate) fn update_layer(&self, edit: impl FnOnce(&mut LayerChanges)) -> io::Result<()> {
+        self.edit(|state| {
+            let mut next = state.pending.layer;
+            edit(&mut next);
+            if let Some(rules) = state.rules {
+                rules.validate(next)?;
+            }
+            let changed = state.pending.layer != next;
+            state.pending.layer = next;
+            Ok(changed)
+        })
+    }
+
+    fn edit(&self, edit: impl FnOnce(&mut State) -> io::Result<bool>) -> io::Result<()> {
         let mut state = self.0.update.lock().expect("surface control lock");
-        if state.visible.is_none() {
+        if state.pending.visible.is_none() {
             return Err(io::Error::new(io::ErrorKind::BrokenPipe, "surface closed"));
         }
-        let changed = edit(&mut state);
+        let changed = edit(&mut state)?;
         drop(state);
         if changed {
             self.wake()?;
@@ -69,6 +98,7 @@ impl Control {
             .update
             .lock()
             .expect("surface control lock")
+            .pending
             .visible
             .take()
             .is_some()
@@ -99,9 +129,18 @@ impl Control {
 pub(crate) struct Binding(Arc<Shared>);
 
 impl Binding {
+    pub(crate) fn set_layer_rules(&self, rules: LayerRules) -> io::Result<()> {
+        let mut state = self.0.update.lock().expect("surface control lock");
+        rules.validate(state.pending.layer)?;
+        state.rules = Some(rules);
+        Ok(())
+    }
+
     pub(crate) fn take(&self) -> Update {
         let mut state = self.0.update.lock().expect("surface control lock");
+        let state = &mut state.pending;
         Update {
+            layer: std::mem::take(&mut state.layer),
             visible: state.visible,
             size: state.size.take(),
             region: state.region.take(),
@@ -121,6 +160,11 @@ impl Binding {
 
 impl Drop for Binding {
     fn drop(&mut self) {
-        self.0.update.lock().expect("surface control lock").visible = None;
+        self.0
+            .update
+            .lock()
+            .expect("surface control lock")
+            .pending
+            .visible = None;
     }
 }

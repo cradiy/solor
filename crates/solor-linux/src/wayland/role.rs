@@ -21,7 +21,10 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 use super::{Desktop, decorations::Decorations, stacking::Topmost};
-use crate::layer_shell::{Anchor, ExclusiveZone, KeyboardInteractivity, Layer, LayerShellOptions};
+use crate::layer_shell::{
+    Anchor, KeyboardInteractivity, Layer, LayerChanges, LayerRules, LayerShellOptions, extent,
+    units,
+};
 
 type AssignPopup<'a> = Box<dyn FnOnce(&WlSurface) -> Result<Box<dyn std::any::Any>> + 'a>;
 
@@ -58,6 +61,44 @@ pub(super) struct LayerPlacement {
 }
 
 impl LayerPlacement {
+    pub(super) fn update(
+        &mut self,
+        changes: LayerChanges,
+        surface: Option<&ZwlrLayerSurfaceV1>,
+    ) -> bool {
+        let mut changed = false;
+        if let Some(size) = changes.size
+            && self.size != size
+        {
+            self.size = size;
+            if let Some(surface) = surface
+                && !self.movable
+            {
+                surface.set_size(size.0, size.1);
+            }
+            changed = true;
+        }
+        if let Some(zone) = changes.zone
+            && self.zone != zone
+        {
+            self.zone = zone;
+            if let Some(surface) = surface {
+                surface.set_exclusive_zone(zone);
+            }
+            changed = true;
+        }
+        if let Some(keyboard) = changes.keyboard
+            && self.keyboard != keyboard
+        {
+            self.keyboard = keyboard;
+            if let Some(surface) = surface {
+                surface.set_keyboard_interactivity(keyboard);
+            }
+            changed = true;
+        }
+        changed
+    }
+
     pub(super) fn apply(&self, surface: &ZwlrLayerSurfaceV1, remapping: bool) {
         if remapping && surface.version() >= 2 {
             surface.set_layer(self.layer);
@@ -153,15 +194,7 @@ impl Request<'_> {
                     units(margin.bottom)?,
                     units(margin.left)?,
                 );
-                let zone = match options.exclusive_zone {
-                    ExclusiveZone::Avoid => 0,
-                    ExclusiveZone::Ignore => -1,
-                    ExclusiveZone::Reserve(value) => {
-                        let distance = units(value)?;
-                        ensure!(distance > 0, "reserved distance must be positive");
-                        distance
-                    }
-                };
+                let zone = options.exclusive_zone.units()?;
                 ensure!(
                     !options.namespace.contains('\0'),
                     "layer namespace contains a null byte"
@@ -171,6 +204,10 @@ impl Request<'_> {
                 } else {
                     1
                 };
+                let output = options
+                    .output
+                    .map(|name| super::output::NamedOutput::find(globals, name))
+                    .transpose()?;
                 let shell: ZwlrLayerShellV1 =
                     globals.bind(qh, minimum..=4, ()).with_context(|| {
                         format!(
@@ -179,7 +216,7 @@ impl Request<'_> {
                     })?;
                 let layer = shell.get_layer_surface(
                     surface,
-                    None,
+                    output.as_ref().map(|output| &output.0),
                     options.layer,
                     options.namespace.into(),
                     qh,
@@ -272,51 +309,23 @@ impl ToplevelSizing {
     }
 }
 
-fn units(pixels: Pixels) -> Result<i32> {
-    let rounded = f64::from(pixels).round();
-    ensure!(
-        (f64::from(i32::MIN)..=f64::from(i32::MAX)).contains(&rounded),
-        "layer surface length is outside the Wayland coordinate range"
-    );
-    Ok(rounded as i32)
-}
-
 fn requested_size(options: &LayerShellOptions<'_>) -> Result<(u32, u32)> {
     ensure!(
         Anchor::all().contains(options.anchor),
         "unknown layer surface anchor"
     );
-    if options.movable {
-        ensure!(
-            options.width.is_some()
-                && options.height.is_some()
-                && !matches!(options.exclusive_zone, ExclusiveZone::Reserve(_)),
-            "a movable panel needs fixed dimensions and cannot reserve desktop space"
-        );
+    let size = (extent(options.width)?, extent(options.height)?);
+    LayerRules {
+        anchor: options.anchor,
+        movable: options.movable,
+        version: 4,
     }
-    let axis = |length, edges| -> Result<u32> {
-        match length {
-            Some(value) => {
-                let units = units(value)?;
-                ensure!(
-                    units > 0,
-                    "layer surface extent must round to a positive logical size"
-                );
-                Ok(units as u32)
-            }
-            None => {
-                ensure!(
-                    options.anchor.contains(edges),
-                    "an automatic layer surface extent requires both opposite anchors"
-                );
-                Ok(0)
-            }
-        }
-    };
-    Ok((
-        axis(options.width, Anchor::Left | Anchor::Right)?,
-        axis(options.height, Anchor::Top | Anchor::Bottom)?,
-    ))
+    .validate(LayerChanges {
+        size: Some(size),
+        zone: Some(options.exclusive_zone.units()?),
+        keyboard: None,
+    })?;
+    Ok(size)
 }
 
 impl Drop for Role {
@@ -377,13 +386,18 @@ impl Dispatch<ZwlrLayerSurfaceV1, wayland_client::backend::ObjectId> for Desktop
                     state.resize(size);
                     return;
                 }
-                let mut size = state.size;
-                if width > 0 {
-                    size.width = px(width as f32);
-                }
-                if height > 0 {
-                    size.height = px(height as f32);
-                }
+                let Role::Layer(_, placement) = &state.role else {
+                    return;
+                };
+                let axis = |configured, requested, current| match (configured, requested) {
+                    (0, 0) => current,
+                    (0, requested) => px(requested as f32),
+                    (configured, _) => px(configured as f32),
+                };
+                let size = Size {
+                    width: axis(width, placement.size.0, state.size.width),
+                    height: axis(height, placement.size.1, state.size.height),
+                };
                 state.resize(size);
             }
             Event::Closed => state.life.close(),

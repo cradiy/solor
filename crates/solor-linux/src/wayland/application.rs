@@ -482,6 +482,13 @@ impl WindowFactory {
         };
         let globals = self.globals.as_ref().expect("live window factory");
         let (role, size) = request.create(globals, qh, surface)?;
+        if let (Some(control), Role::Layer(layer, placement)) = (&control, &role) {
+            control.set_layer_rules(crate::layer_shell::LayerRules {
+                anchor: placement.anchor,
+                movable: placement.movable,
+                version: layer.version(),
+            })?;
+        }
         let life = WindowLife::new(activation, self.revisit.clone(), modal_parent);
         let target = Rc::downgrade(&life);
         let handle = WindowHandle::new(target);
@@ -606,6 +613,7 @@ impl EventLoop {
                         window.resize(size);
                     }
                     window.input_region.update(update.region);
+                    window.update_layer(update.layer, visible);
                 }
                 if visible
                     && !self.desktop.popup_only

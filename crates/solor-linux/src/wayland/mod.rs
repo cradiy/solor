@@ -11,6 +11,7 @@ mod window_view;
 use window_view::WindowView;
 mod input_region;
 mod keyboard;
+mod output;
 mod parent;
 mod pointer;
 mod presentation;
@@ -326,6 +327,26 @@ impl Window {
                 self.failure.get_or_insert(error.into());
                 self.life.revisit.set(true);
             }
+        }
+    }
+
+    fn update_layer(&mut self, changes: crate::layer_shell::LayerChanges, visible: bool) {
+        let Role::Layer(layer, placement) = &mut self.role else {
+            return;
+        };
+        let active = matches!(self.mapping, Mapping::AwaitingConfigure | Mapping::Ready)
+            || (visible && self.mapping == Mapping::Mapped);
+        if !placement.update(changes, active.then_some(layer)) {
+            return;
+        }
+        if active {
+            self.surface.commit();
+        }
+        if let Some(panel) = &mut self.floating
+            && let Some((width, height)) = changes.size
+            && let Some(size) = panel.set_size(width, height)
+        {
+            self.resize(size);
         }
     }
 

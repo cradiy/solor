@@ -192,7 +192,10 @@ Run `cargo run -p solor-platform --example layer_panel` to open a 300 × 36
 logical-pixel panel centered on the top edge. Set the panel's dimensions in
 `LayerShellOptions`. Its root element receives the configured surface size.
 `LayerShellOptions::new(namespace, layer)` spans the compositor-selected output
-and leaves keyboard focus with the active application. Set a fixed axis with
+and leaves keyboard focus with the active application. To target a named output,
+set `options.output` before opening the surface (requires `wl_output` v4).
+Use the handle’s `set_size`, `set_exclusive_zone` and `set_keyboard_interactivity`
+to change placement and input policy while visible or hidden. Set a fixed axis with
 `Some(px(...))` or leave it as `None` with both opposite edges anchored.
 For instance, a top bar can stretch horizontally and use the same logical
 height for its fixed height and its reserved space. A corner overlay can set

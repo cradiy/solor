@@ -119,3 +119,37 @@ fn invalid_region_updates_preserve_the_last_complete_request() -> std::io::Resul
     );
     Ok(())
 }
+
+#[test]
+fn rejected_layer_changes_preserve_pending_updates_on_a_hidden_panel() -> std::io::Result<()> {
+    use crate::layer_shell::{
+        ExclusiveZone, KeyboardInteractivity, LayerRules, LayerSurfaceHandle,
+    };
+    use std::io::ErrorKind;
+
+    let handle = LayerSurfaceHandle::new(false)?;
+    handle.set_size(Some(px(180.0)), Some(px(40.0)))?;
+    let binding = handle.claim()?;
+    binding.set_layer_rules(LayerRules {
+        anchor: Anchor::Top,
+        movable: false,
+        version: 3,
+    })?;
+    handle.set_exclusive_zone(ExclusiveZone::Reserve(px(40.0)))?;
+    assert_eq!(
+        handle.set_size(None, Some(px(40.0))).unwrap_err().kind(),
+        ErrorKind::InvalidInput
+    );
+    assert_eq!(
+        handle
+            .set_keyboard_interactivity(KeyboardInteractivity::OnDemand)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::Unsupported
+    );
+    let pending = binding.take();
+    assert_eq!(pending.layer.size, Some((180, 40)));
+    assert_eq!(pending.layer.zone, Some(40));
+    assert_eq!(pending.layer.keyboard, None);
+    Ok(())
+}
