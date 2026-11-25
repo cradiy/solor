@@ -123,6 +123,36 @@ fn interference_matches_native_at_fractional_sample_positions() -> Result<()> {
 }
 
 #[test]
+fn power_curves_preserve_each_channels_coordinate_dependencies() -> Result<()> {
+    let shader = EffectShader::wgsl(
+        "fn effect(uv: vec2<f32>, p: f32) -> vec4<f32> {
+            let curves = pow(vec2<f32>(p, uv.x), vec2<f32>(uv.x, 2.0));
+            return vec4<f32>(curves, pow(uv.y, p), 1.0);
+        }",
+    )?;
+    let size = DeviceSize {
+        width: 37,
+        height: 5,
+    };
+    let image = render(
+        &shader.with_params([0.5, 0., 0., 0.]),
+        size.at_unit_scale(),
+        normalized(size, full(size)),
+    )?;
+    assert_eq!(image.dimensions(), size);
+    let width = size.width as usize;
+    for (i, pixel) in image.pixels().iter().enumerate() {
+        let x = ((i % width) as f32 + 0.5) / size.width as f32;
+        let y = ((i / width) as f32 + 0.5) / size.height as f32;
+        let expected = [(-x).exp2(), x * x, y.sqrt(), 1.0].map(unorm);
+        for (&actual, expected) in pixel.iter().zip(expected) {
+            assert!(actual.abs_diff(expected) <= 1, "pixel {i}: {pixel:?}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn normalized_vectors_and_dot_products_use_every_component() -> Result<()> {
     let shader = EffectShader::wgsl(
         "fn effect(uv: vec2<f32>, p: vec4<f32>) -> vec4<f32> {

@@ -18,7 +18,7 @@ impl EffectShader {
     /// `size: vec2<f32>` argument to read the full fill dimensions in logical pixels.
     /// The effect can call straight-line WGSL helpers with float or vector parameters and results.
     /// Supported operations include float and vector arithmetic, swizzles,
-    /// `abs`, `min`, `max`, `clamp`, `sqrt`, `length`, `distance`, `dot`, `normalize`,
+    /// `abs`, `min`, `max`, `clamp`, `sqrt`, `pow`, `length`, `distance`, `dot`, `normalize`,
     /// `reflect`, `refract`, `sin`, `cos`, `mix` and `smoothstep`.
     pub fn wgsl(source: &str) -> anyhow::Result<Self> {
         Ok(Self(Arc::new(solor_shader::Program::compile(source)?)))

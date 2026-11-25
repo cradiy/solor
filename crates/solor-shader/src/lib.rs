@@ -41,6 +41,8 @@ pub enum Op {
     Abs(Reg),
     /// Square root.
     Sqrt(Reg),
+    /// Base raised to an exponent.
+    Pow(Reg, Reg),
     /// Zero when the first operand is negative, otherwise the second operand.
     ZeroIfNegative(Reg, Reg),
     /// Sine of an angle in radians.
@@ -77,6 +79,7 @@ impl CoordinateAxes {
                 | Op::Sub(a, b)
                 | Op::Mul(a, b)
                 | Op::Div(a, b)
+                | Op::Pow(a, b)
                 | Op::Min(a, b)
                 | Op::Max(a, b)
                 | Op::ZeroIfNegative(a, b) => axes[a] | axes[b],
@@ -479,16 +482,19 @@ impl Lowerer<'_> {
                         }
                     }
                     Expr::Math {
-                        fun: fun @ (Math::Min | Math::Max),
+                        fun,
                         arg,
                         arg1: Some(b),
+                        arg2: None,
                         ..
                     } => {
                         let (a, b) = (lane(arg, i), lane(b, i));
-                        if fun == Math::Min {
-                            Op::Min(a, b)
-                        } else {
-                            Op::Max(a, b)
+                        match fun {
+                            Math::Min => Op::Min(a, b),
+                            Math::Max => Op::Max(a, b),
+                            Math::Pow if matches!(self.ops[b], Op::Constant(2.0)) => Op::Mul(a, a),
+                            Math::Pow => Op::Pow(a, b),
+                            _ => return Err(unsupported()),
                         }
                     }
                     Expr::Math {

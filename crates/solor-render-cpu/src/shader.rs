@@ -24,6 +24,8 @@ pub(super) fn render(fill: &ShaderFill, size: Size, region: ImageRegion) -> Resu
                 Op::Constant(value) => [value; LANES],
                 Op::Abs(a) => r[a].map(f32::abs),
                 Op::Sqrt(a) => r[a].map(f32::sqrt),
+                Op::Pow(a, b) if !program.varies_across_row(dst) => [r[a][0].powf(r[b][0]); LANES],
+                Op::Pow(a, b) => std::array::from_fn(|i| r[a][i].powf(r[b][i])),
                 Op::ZeroIfNegative(test, value) => {
                     std::array::from_fn(|i| if r[test][i] < 0.0 { 0.0 } else { r[value][i] })
                 }
