@@ -15,9 +15,8 @@ layout-audit = ["solor/layout-audit"]
 [dependencies]
 solor-shader = { workspace = true, optional = true }
 rayon = { version = "1", optional = true }
-resvg = { version = "=0.48.1", default-features = false }
 anyhow.workspace = true
-solor = { workspace = true, features = ["glyph-raster"] }
+solor = { workspace = true, features = ["glyph-raster", "svg-raster"] }
 
 [dev-dependencies]
 png = "0.18"

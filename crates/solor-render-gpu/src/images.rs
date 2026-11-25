@@ -1,11 +1,15 @@
 use anyhow::{Result, ensure};
-use solor::ImageAsset;
+use solor::{
+    ImageAsset,
+    raster::{DeviceSize, svg::SvgRaster},
+};
+use std::borrow::Cow;
 use std::collections::{HashMap, hash_map::Entry};
 
 pub(super) struct Images {
     bindings: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    resident: HashMap<ImageAsset, Texture>,
+    resident: HashMap<TextureSource, Texture>,
 }
 
 struct Texture {
@@ -59,18 +63,39 @@ impl Texture {
     }
 }
 
-/// An image can appear at different scales and in different atlas regions in one frame.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum TextureSource {
+    Bitmap(ImageAsset),
+    Svg(SvgRaster),
+}
+
+impl TextureSource {
+    fn dimensions(&self) -> DeviceSize {
+        match self {
+            Self::Bitmap(asset) => asset.dimensions(),
+            Self::Svg(region) => region.size(),
+        }
+    }
+
+    fn pixels(&self) -> Result<Cow<'_, [u8]>> {
+        Ok(match self {
+            Self::Bitmap(asset) => Cow::Borrowed(bytemuck::cast_slice(asset.pixels())),
+            Self::Svg(region) => Cow::Owned(region.rgba()?),
+        })
+    }
+}
+
 #[derive(Default)]
 pub(super) struct FrameImages {
-    indices: HashMap<ImageAsset, usize>,
-    assets: Vec<ImageAsset>,
+    indices: HashMap<TextureSource, usize>,
+    assets: Vec<TextureSource>,
 }
 
 impl FrameImages {
-    pub(super) fn index(&mut self, asset: &ImageAsset) -> usize {
+    pub(super) fn index(&mut self, asset: TextureSource) -> usize {
         *self.indices.entry(asset.clone()).or_insert_with(|| {
             let i = self.assets.len();
-            self.assets.push(asset.clone());
+            self.assets.push(asset);
             i
         })
     }
@@ -162,7 +187,7 @@ impl Images {
                         });
                     queue.write_texture(
                         texture.pixels.as_image_copy(),
-                        bytemuck::cast_slice(entry.key().pixels()),
+                        &entry.key().pixels()?,
                         wgpu::TexelCopyBufferLayout {
                             offset: 0,
                             bytes_per_row: Some(size.width * 4),

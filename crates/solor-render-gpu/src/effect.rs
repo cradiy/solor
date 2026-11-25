@@ -1,11 +1,28 @@
 use solor_shader::{Op, Program};
 use std::fmt::Write;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Target {
+    Fill,
+    Mask,
+}
+
+pub(super) struct Pipeline {
+    pub shader: solor::EffectShader,
+    pub target: Target,
+    pub pipeline: wgpu::RenderPipeline,
+    pub used: bool,
+}
+
 // Locals are generated from validated scalar IR, independent of user function names and signatures.
-pub(super) fn paint(program: &Program) -> String {
-    let mut code = String::from(
-        "fn paint(local: vec2f, size: vec2f, q: Quad) -> vec4f {\nlet uv = clamp(local / size, vec2f(0), vec2f(1));\n",
-    );
+pub(super) fn paint(program: &Program, target: Target) -> String {
+    let mut code = String::from(match target {
+        Target::Fill => "fn paint(local: vec2f, size: vec2f, q: Quad) -> vec4f {\n",
+        Target::Mask => {
+            "fn foreground(local: vec2f, size: vec2f, q: Quad, ramp: vec4f) -> vec4f {\n"
+        }
+    });
+    code.push_str("let uv = clamp(local / size, vec2f(0), vec2f(1));\n");
     for (i, op) in program.instructions().iter().copied().enumerate() {
         let expr = match op {
             Op::U => "uv.x".into(),
@@ -36,5 +53,8 @@ pub(super) fn paint(program: &Program) -> String {
     }
     let [r, g, b, a] = program.outputs();
     write!(code, "return vec4f(r{r},r{g},r{b},r{a}); }}").unwrap();
+    if target == Target::Mask {
+        code.push_str(include_str!("mask.wgsl"));
+    }
     code
 }

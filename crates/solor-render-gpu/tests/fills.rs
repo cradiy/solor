@@ -144,7 +144,8 @@ fn ordered_fills_match_cpu_across_scales() -> Result<()> {
     }
     compare_gradients(&device, &queue, &mut renderer)?;
     compare_replaced_images(&device, &queue, &mut renderer)?;
-    compare_text(&device, &queue, &mut renderer)
+    compare_text(&device, &queue, &mut renderer)?;
+    compare_svg(&device, &queue, &mut renderer)
 }
 
 fn compare_gradients(
@@ -351,33 +352,65 @@ fn compare_text(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &mut Rende
     let mut ui = Ui::with_font(
         include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf").to_vec(),
     )?;
-    let tint = ui.context().signal(rgb(0x143a91));
+    use solor::{ColorSpace, GradientKind, Ink};
+    let blue = Ink::from(rgb(0x143a91));
+    let tint = ui.context().signal(blue.clone());
     let size = Size {
         width: px(72.),
-        height: px(38.),
+        height: px(58.),
     };
+    let effect = EffectShader::wgsl(
+        "fn effect(uv: vec2f, p: vec4f, size: vec2f) -> vec4f {
+            let front = smoothstep(p.x - 5., p.x + 5., uv.x * size.x);
+            return vec4f(p.y, uv.y, uv.x, (1. - front) * p.z + p.w);
+        }",
+    )?;
+    let background = effect.with_params([24., 0.8, 0.08, 0.08]);
     let view = ui.mount(component(move |_| {
-        div().w_full().h_full().bg(rgb(0xffffff)).child(
+        div().w_full().h_full().bg(background).child(
             div()
                 .absolute()
                 .left(px(5.25))
                 .top(px(4.5))
                 .w(px(54.))
-                .h(px(21.))
+                .h(px(47.))
                 .overflow_hidden()
                 .child(
-                    solor::text("Ag 中 Ag Ag")
-                        .whitespace_nowrap()
+                    solor::text("Ag 中 Ag Ag 中 Ag Ag")
+                        .w(px(67.))
                         .text_size(px(18.))
                         .text_color(tint),
                 ),
         )
     }))?;
-    for color in [rgb(0x143a91), rgba(0xad153fa0)] {
+    let ramp = linear_gradient(
+        124.,
+        [
+            color_stop(rgb(0x032b56), 0.),
+            color_stop(rgba(0xe3323e90), 0.52),
+            color_stop(rgb(0x0b8247), 1.),
+        ],
+    )?;
+    let angular = ramp
+        .clone()
+        .gradient_kind(GradientKind::Angular)
+        .color_space(ColorSpace::Oklab)
+        .phase(0.24)?;
+    for color in [
+        blue,
+        ramp.into(),
+        effect.with_params([19., 0.12, 1.4, 0.04]).into(),
+        effect.with_params([43., 0.55, 0.75, 0.1]).into(),
+        angular.into(),
+        rgba(0xad153fa0).into(),
+    ] {
         ui.context().set(tint, color)?;
         ui.flush()?;
         ui.layout(view, size)?;
         let frame = ui.record_frame(view)?;
+        assert!(frame.draws().iter().any(
+            |d| matches!(d, solor::Draw::Text { paragraph, .. } if paragraph.lines.len() > 1)
+        ));
         for scale in [1., 1.25, 2.].map(RasterScale) {
             let physical = scale.buffer_size(size)?;
             let cpu = Surface::draw_view(&frame, physical, scale)?;
@@ -387,6 +420,98 @@ fn compare_text(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &mut Rende
                 assert!(
                     a.abs_diff(*b) <= 2,
                     "scale={}, byte={i}, GPU={a}, CPU={b}",
+                    scale.0
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn compare_svg(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &mut Renderer) -> Result<()> {
+    use solor::{Ink, SvgAsset, style::ObjectFit, svg};
+    let art = SvgAsset::from_bytes(
+        br#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">
+        <defs><linearGradient id="ink"><stop stop-color="gold"/><stop offset="1" stop-color="red"/></linearGradient></defs>
+        <path fill="url(#ink)" d="M0 0h17l10 20H0z"/><circle cx="23" cy="8" r="8" fill="blue" opacity=".6"/>
+    </svg>"#,
+    )?;
+    let mut ui = Ui::new();
+    let solid = Ink::from(rgba(0x2745adcc));
+    let tint = ui.context().signal(solid.clone());
+    let fit = ui.context().signal(ObjectFit::Cover);
+    let view = ui.mount(component(move |_| {
+        div()
+            .w_full()
+            .h_full()
+            .bg(rgb(0x93b3ae))
+            .text_color(tint)
+            .child(
+                svg(art.clone())
+                    .absolute()
+                    .top(px(1.5))
+                    .left(px(-3.25))
+                    .w(px(29.))
+                    .h(px(23.))
+                    .object_fit(fit),
+            )
+            .child(
+                svg(art.clone())
+                    .absolute()
+                    .top(px(12.25))
+                    .left(px(26.5))
+                    .w(px(22.))
+                    .h(px(18.))
+                    .object_fit(fit)
+                    .rounded(px(6.)),
+            )
+            .child(
+                svg(art)
+                    .preserve_colors()
+                    .absolute()
+                    .left(px(43.25))
+                    .top(px(-1.5))
+                    .w(px(27.))
+                    .h(px(19.))
+                    .object_fit(fit)
+                    .rounded(px(5.5)),
+            )
+    }))?;
+    let viewport = Size {
+        width: px(67.),
+        height: px(32.),
+    };
+    let gradient = linear_gradient(
+        127.,
+        [
+            color_stop(rgba(0x2730fe5a), 0.),
+            color_stop(rgb(0xef5321), 1.),
+        ],
+    )?;
+    let shader = EffectShader::wgsl(
+        "fn effect(uv:vec2f, p:f32)->vec4f {return vec4f(uv.x, p, uv.y, 0.8);}",
+    )?;
+    for (ink, mode) in [
+        (solid, ObjectFit::Cover),
+        (gradient.into(), ObjectFit::Cover),
+        (shader.with_params(0.28).into(), ObjectFit::Contain),
+    ] {
+        ui.context().set(tint, ink)?;
+        ui.context().set(fit, mode)?;
+        ui.flush()?;
+        ui.layout(view, viewport)?;
+        let frame = ui.record_frame(view)?;
+        for scale in [1., 1.25, 2.].map(RasterScale) {
+            let size = scale.buffer_size(viewport)?;
+            let cpu = Surface::draw_view(&frame, size, scale)?;
+            let gpu = pixels(device, queue, renderer, &frame, size, scale)?;
+            assert!(cpu.rgba.iter().any(|c| *c < 180));
+            for (i, (a, b)) in gpu.iter().zip(&cpu.rgba).enumerate() {
+                let x = i / 4 % size.width as usize;
+                let y = i / 4 / size.width as usize;
+                assert!(
+                    a.abs_diff(*b) <= 2,
+                    "SVG fit={mode:?} scale={} at ({x},{y}) GPU={a}, CPU={b}",
                     scale.0
                 );
             }

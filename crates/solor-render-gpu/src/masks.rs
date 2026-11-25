@@ -1,4 +1,8 @@
-use solor::raster::glyphs::{GlyphKey, GlyphMask};
+use solor::raster::{
+    DeviceSize,
+    glyphs::{GlyphKey, GlyphMask},
+    svg::SvgRaster,
+};
 use std::{
     collections::{HashMap, VecDeque},
     io::{Error, Result},
@@ -18,7 +22,7 @@ struct Page {
     x: u32,
     y: u32,
     row_height: u32,
-    glyph_count: usize,
+    tile_count: usize,
 }
 
 impl Page {
@@ -48,10 +52,16 @@ impl Page {
 #[derive(Default)]
 pub(super) struct Atlas {
     entries: HashMap<GlyphKey, Option<Tile>>,
+    svgs: HashMap<SvgRaster, Tile>,
+    storage: Pages,
+    scratch: GlyphMask,
+}
+
+#[derive(Default)]
+struct Pages {
     pages: VecDeque<Page>,
     first_page: usize,
     bytes: u64,
-    scratch: GlyphMask,
 }
 
 impl Atlas {
@@ -61,22 +71,25 @@ impl Atlas {
         if self.scratch.data.capacity() as u64 > BYTE_BUDGET {
             self.scratch = GlyphMask::default();
         }
-        if self.bytes <= BYTE_BUDGET && self.entries.len() <= ENTRY_BUDGET {
+        if self.storage.bytes <= BYTE_BUDGET && self.entries.len() + self.svgs.len() <= ENTRY_BUDGET
+        {
             return;
         }
-        let mut count: usize = self.pages.iter().map(|page| page.glyph_count).sum();
-        while self.bytes > BYTE_BUDGET || count > ENTRY_BUDGET {
-            let page = self.pages.pop_front().unwrap();
-            self.bytes -= u64::from(page.texture.width()) * u64::from(page.texture.height());
-            count -= page.glyph_count;
-            self.first_page += 1;
+        let mut count: usize = self.storage.pages.iter().map(|page| page.tile_count).sum();
+        while self.storage.bytes > BYTE_BUDGET || count > ENTRY_BUDGET {
+            let page = self.storage.pages.pop_front().unwrap();
+            self.storage.bytes -=
+                u64::from(page.texture.width()) * u64::from(page.texture.height());
+            count -= page.tile_count;
+            self.storage.first_page += 1;
         }
+        self.svgs.retain(|_, t| t.page >= self.storage.first_page);
         self.entries
-            .retain(|_, tile| tile.is_some_and(|t| t.page >= self.first_page));
+            .retain(|_, tile| tile.is_some_and(|t| t.page >= self.storage.first_page));
     }
 
     pub(super) fn group(&self, page: usize) -> &wgpu::BindGroup {
-        &self.pages[page - self.first_page].group
+        &self.storage.pages[page - self.storage.first_page].group
     }
 
     pub(super) fn resolve(
@@ -96,20 +109,62 @@ impl Atlas {
             self.entries.insert(key, None);
             return Ok(None);
         }
-        if p.width.max(p.height) > device.limits().max_texture_dimension_2d {
-            return Err(Error::other("glyph exceeds GPU texture dimensions"));
+        let mut tile = self.storage.upload(
+            device,
+            queue,
+            images,
+            DeviceSize {
+                width: p.width,
+                height: p.height,
+            },
+            &self.scratch.data,
+        )?;
+        tile.offset = [p.left, -p.top];
+        self.entries.insert(key, Some(tile));
+        Ok(Some(tile))
+    }
+
+    pub(super) fn svg(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        images: &super::images::Images,
+        region: SvgRaster,
+    ) -> Result<Tile> {
+        if let Some(tile) = self.svgs.get(&region) {
+            return Ok(*tile);
+        }
+        let tile = self
+            .storage
+            .upload(device, queue, images, region.size(), &region.mask()?)?;
+        self.svgs.insert(region, tile);
+        Ok(tile)
+    }
+}
+
+impl Pages {
+    fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        images: &super::images::Images,
+        size: DeviceSize,
+        pixels: &[u8],
+    ) -> Result<Tile> {
+        if size.width.max(size.height) > device.limits().max_texture_dimension_2d {
+            return Err(Error::other("mask exceeds GPU texture dimensions"));
         }
         let pos = self
             .pages
             .back_mut()
-            .and_then(|page| page.allocate(p.width, p.height));
+            .and_then(|page| page.allocate(size.width, size.height));
         let uv = match pos {
             Some(pos) => pos,
             None => {
-                let width = p.width.max(512);
-                let height = p.height.max(512);
+                let width = size.width.max(512);
+                let height = size.height.max(512);
                 let texture = device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("Solor glyph atlas"),
+                    label: Some("Solor mask atlas"),
                     size: wgpu::Extent3d {
                         width,
                         height,
@@ -126,17 +181,17 @@ impl Atlas {
                 self.pages.push_back(Page {
                     texture,
                     group,
-                    x: p.width,
+                    x: size.width,
                     y: 0,
-                    row_height: p.height,
-                    glyph_count: 0,
+                    row_height: size.height,
+                    tile_count: 0,
                 });
                 self.bytes += u64::from(width) * u64::from(height);
                 [0, 0]
             }
         };
         let page = self.pages.back_mut().unwrap();
-        page.glyph_count += 1;
+        page.tile_count += 1;
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 origin: wgpu::Origin3d {
@@ -146,25 +201,23 @@ impl Atlas {
                 },
                 ..page.texture.as_image_copy()
             },
-            &self.scratch.data,
+            pixels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(p.width),
+                bytes_per_row: Some(size.width),
                 rows_per_image: None,
             },
             wgpu::Extent3d {
-                width: p.width,
-                height: p.height,
+                width: size.width,
+                height: size.height,
                 depth_or_array_layers: 1,
             },
         );
-        let tile = Tile {
+        Ok(Tile {
             page: self.first_page + self.pages.len() - 1,
             uv,
-            size: [p.width, p.height],
-            offset: [p.left, -p.top],
-        };
-        self.entries.insert(key, Some(tile));
-        Ok(Some(tile))
+            size: [size.width, size.height],
+            offset: [0, 0],
+        })
     }
 }
