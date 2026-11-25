@@ -150,6 +150,7 @@ fn ordered_fills_match_cpu_across_scales() -> Result<()> {
         }
     }
     draw_gpu_only_effect(&device, &queue, &mut renderer)?;
+    compare_shadows(&device, &queue, &mut renderer)?;
     compare_backdrop_blur(&device, &queue, &mut renderer)?;
     compare_groups(&device, &queue, &mut renderer)?;
     compare_paths(&device, &queue, &mut renderer)?;
@@ -199,6 +200,81 @@ fn draw_gpu_only_effect(
         pixels(device, queue, renderer, &frame, size, scale)?,
         [255, 0, 0, 255, 255, 255, 0, 255, 255, 255, 255, 255]
     );
+    Ok(())
+}
+
+fn compare_shadows(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut Renderer,
+) -> Result<()> {
+    use solor::style::BoxShadow;
+    let card = |x, y| {
+        div()
+            .absolute()
+            .left(px(x))
+            .top(px(y))
+            .w(px(24.5))
+            .h(px(20.25))
+            .rounded_tr(px(9.))
+            .rounded_br(px(6.5))
+            .rounded_bl(px(3.5))
+    };
+    let mut ui = Ui::new();
+    let view = ui.mount(component(move |_| {
+        div().bg(rgb(0xf2ecdc)).child(
+            div()
+                .absolute()
+                .left(px(4.))
+                .top(px(3.))
+                .w(px(61.))
+                .h(px(44.))
+                .overflow_hidden()
+                .child(
+                    card(2.25, 3.5).shadow([
+                        BoxShadow::new(px(-2.), px(3.5), rgba(0x263b7dcc))
+                            .blur(px(5.25))
+                            .spread(px(2.)),
+                        BoxShadow::new(px(3.), px(-1.75), rgba(0xce533cbf))
+                            .blur(px(2.5))
+                            .spread(px(-1.))
+                            .inset(),
+                    ]),
+                )
+                .child(
+                    card(31.5, 5.25).shadow([
+                        BoxShadow::new(px(6.5), px(4.), rgb(0x2d7253)).spread(px(-2.)),
+                        BoxShadow::new(px(-3.5), px(2.), rgba(0x463f64b0))
+                            .spread(px(1.25))
+                            .inset(),
+                    ]),
+                )
+                .child(
+                    card(23., 31.).shadow([BoxShadow::new(px(2.), px(0.), rgba(0x16345590))
+                        .spread(px(16.))
+                        .inset()]),
+                ),
+        )
+    }))?;
+    let logical = DeviceSize {
+        width: 70,
+        height: 50,
+    }
+    .at_unit_scale();
+    ui.layout(view, logical)?;
+    let frame = ui.record_frame(view)?;
+    for scale in [1., 1.25, 2.].map(RasterScale) {
+        let size = scale.buffer_size(logical)?;
+        let cpu = Surface::draw_view(&frame, size, scale)?;
+        let gpu = pixels(device, queue, renderer, &frame, size, scale)?;
+        for (offset, (&c, &g)) in cpu.rgba.iter().zip(&gpu).enumerate() {
+            assert!(
+                c.abs_diff(g) <= 2,
+                "shadow scale {}, byte {offset}: {c} / {g}",
+                scale.0
+            );
+        }
+    }
     Ok(())
 }
 

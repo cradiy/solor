@@ -5,6 +5,7 @@ mod images;
 mod layers;
 mod masks;
 mod path;
+mod shadow;
 use anyhow::{Result, ensure};
 use images::{FrameImages, Images, TextureSource};
 use solor::{
@@ -24,6 +25,7 @@ pub struct Renderer {
     texture_layout: wgpu::PipelineLayout,
     brush: wgpu::RenderPipeline,
     border: Option<wgpu::RenderPipeline>,
+    shadow: Option<wgpu::RenderPipeline>,
     path: Option<wgpu::RenderPipeline>,
     composite: Option<wgpu::RenderPipeline>,
     backdrop: Option<backdrop::Filter>,
@@ -45,6 +47,7 @@ enum Material {
     Composite,
     Blur,
     Border,
+    Shadow,
     Path,
     Underline,
     Effect(usize),
@@ -192,6 +195,7 @@ impl Renderer {
             mask_pipeline,
             underline: None,
             border: None,
+            shadow: None,
             path: None,
             composite: None,
             backdrop: None,
@@ -314,6 +318,28 @@ impl Renderer {
                     draw_name(cmd)
                 )
             };
+            if let Draw::Shadow {
+                origin,
+                size: extent,
+                corner_radii,
+                shadow,
+                clip,
+            } = cmd
+            {
+                let geometry = solor::raster::BoxShadowGeometry::new(
+                    *origin,
+                    *extent,
+                    *corner_radii,
+                    *shadow,
+                    scale,
+                );
+                if let Some(quad) = shadow::quad(&geometry, clip.as_deref(), size, scale, stops) {
+                    let index = quads.len() as u32;
+                    quads.push(quad);
+                    batch(batches, Material::Shadow, index);
+                }
+                continue;
+            }
             if let Some(path) = path::Path::from_draw(cmd).map_err(unsupported)? {
                 let first = quads.len();
                 path.record(size, scale, quads, stops)?;
@@ -864,6 +890,19 @@ impl Renderer {
                                     include_str!("path.wgsl")
                                 )
                                 .to_owned(),
+                                "solor_",
+                                wgpu::BlendState::ALPHA_BLENDING,
+                            )
+                        }));
+                    }
+                    Material::Shadow => {
+                        pass.set_pipeline(self.shadow.get_or_insert_with(|| {
+                            module_pipeline(
+                                &self.device,
+                                &self.layout,
+                                self.format,
+                                concat!(include_str!("vertex.wgsl"), include_str!("shadow.wgsl"))
+                                    .to_owned(),
                                 "solor_",
                                 wgpu::BlendState::ALPHA_BLENDING,
                             )

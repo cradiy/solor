@@ -8,7 +8,7 @@ use crate::pixels::{Clip, DeviceSize, RasterScale, Surface, TextRaster, blend, b
 use solor::{
     Draw, Fill, Pixels, ViewFrame,
     layout::{Origin, Size},
-    raster::{Damage, OpaqueLinearGradient},
+    raster::{BoxShadowGeometry, Damage, OpaqueLinearGradient},
     style::Corners,
 };
 
@@ -58,7 +58,7 @@ enum Brush<'a, F> {
 mod backdrop;
 mod border;
 mod repair;
-mod rounded_box;
+
 #[cfg(feature = "shader")]
 mod shader_damage;
 mod shadow;
@@ -286,8 +286,9 @@ impl Surface {
                     shadow,
                     ..
                 } => {
-                    shadow::Geometry::new(*origin, *size, *corner_radii, *shadow, scale)
-                        .draw(self, bounds);
+                    let geometry =
+                        BoxShadowGeometry::new(*origin, *size, *corner_radii, *shadow, scale);
+                    shadow::draw(&geometry, self, bounds);
                 }
                 Draw::Border {
                     origin,
@@ -615,7 +616,7 @@ fn primitive_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
             corner_radii,
             shadow,
             ..
-        } => Ok(shadow::Geometry::new(*origin, *size, *corner_radii, *shadow, scale).bounds()),
+        } => Ok(BoxShadowGeometry::new(*origin, *size, *corner_radii, *shadow, scale).bounds()),
         Draw::Svg { origin, size, .. } | Draw::Text { origin, size, .. } => {
             Ok(scale.bounds(*origin, *size))
         }

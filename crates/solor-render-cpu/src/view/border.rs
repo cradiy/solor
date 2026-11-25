@@ -12,7 +12,7 @@ use std::io::{Error, Result};
 mod pattern;
 use pattern::Pattern;
 
-use super::rounded_box::RoundedBox;
+use solor::raster::RoundedBox;
 
 #[derive(Clone, Copy)]
 struct Event {
