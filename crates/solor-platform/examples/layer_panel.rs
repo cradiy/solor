@@ -76,6 +76,51 @@ fn density_menu(
     component(move |_| {
         let items = [("Compact", 30.0), ("Comfortable", 44.0)]
             .map(|(label, height)| density_item(label, height, panel.clone(), menu.clone()));
+        let child = std::rc::Rc::new(std::cell::RefCell::new(
+            None::<solor_platform::WindowHandle>,
+        ));
+        let open = move |event: &solor::pointer::PointerEvent| -> anyhow::Result<()> {
+            if child
+                .borrow()
+                .as_ref()
+                .is_some_and(|window| window.is_open())
+            {
+                return Ok(());
+            }
+            let panel = panel.clone();
+            let root = menu.clone();
+            let options = PopupOptions {
+                parent: Some(root.clone()),
+                grab: false,
+                ..PopupOptions::beside(event, px(144.0), px(72.0))
+            };
+            let submenu = app.open_popup(options, Ui::new(), move |submenu| {
+                component(move |_| {
+                    div()
+                        .w_full()
+                        .h_full()
+                        .flex_col()
+                        .bg(rgb(0x30383e))
+                        .text_color(rgb(0xf0f3eb))
+                        .child(density_item("Spacious", 54.0, panel, root))
+                        .child(
+                            div()
+                                .w_full()
+                                .h(px(36.0))
+                                .px(px(12.0))
+                                .justify_center()
+                                .child(text("Back"))
+                                .on_click(move |_| {
+                                    submenu.close();
+                                    Ok(())
+                                }),
+                        )
+                })
+            })?;
+            child.replace(Some(submenu));
+            Ok(())
+        };
+        let hover = open.clone();
         let more = div()
             .w_full()
             .h(px(36.0))
@@ -85,37 +130,10 @@ fn density_menu(
             .justify_between()
             .child(text("More sizes"))
             .child(text("›"))
+            .on_pointer_move(move |event, _| hover(event))
             .on_pointer_down(move |event, _| {
                 if event.is_primary_action() {
-                    let panel = panel.clone();
-                    let root = menu.clone();
-                    app.open_popup(
-                        PopupOptions::beside(event, px(144.0), px(72.0)),
-                        Ui::new(),
-                        move |submenu| {
-                            component(move |_| {
-                                div()
-                                    .w_full()
-                                    .h_full()
-                                    .flex_col()
-                                    .bg(rgb(0x30383e))
-                                    .text_color(rgb(0xf0f3eb))
-                                    .child(density_item("Spacious", 54.0, panel, root))
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .h(px(36.0))
-                                            .px(px(12.0))
-                                            .justify_center()
-                                            .child(text("Back"))
-                                            .on_click(move |_| {
-                                                submenu.close();
-                                                Ok(())
-                                            }),
-                                    )
-                            })
-                        },
-                    )?;
+                    open(event)?;
                 }
                 Ok(())
             });

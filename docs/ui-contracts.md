@@ -191,6 +191,10 @@ the same application share a device and queue.
 Run `cargo run -p solor-platform --example layer_panel` to open a 300 × 36
 logical-pixel panel centered on the top edge. Its Density button opens an
 anchored menu with `app.open_popup(PopupOptions::below(event, width, height), ui, root)`.
+Hovering over More sizes opens a submenu under the root menu’s grab. For a
+delayed popup, set `PopupOptions::parent` to the panel or menu’s window handle
+and `grab` to `false`. A native tooltip can also set `input_transparent` to
+let input reach the surface beneath it.
 Set the panel's dimensions in
 `LayerShellOptions`. Its root element receives the configured surface size.
 `LayerShellOptions::new(namespace, layer)` spans the compositor-selected output

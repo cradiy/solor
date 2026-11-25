@@ -62,6 +62,7 @@ pub struct Wayland {
 }
 
 struct Window {
+    popup_parent: Option<std::rc::Rc<menu::Parent>>,
     control: Option<crate::surface_control::Binding>,
     preedit_owner: Option<(u32, u64)>,
     registration: Option<parent::Registration>,
@@ -223,6 +224,12 @@ impl Window {
             Some(_) => return false,
             None => (None, false),
         };
+        if moved
+            && self.mapping == Mapping::Mapped
+            && let Some(parent) = &self.popup_parent
+        {
+            parent.bounds.set(bounds);
+        }
         self.input_region
             .apply(self.mapping, compositor, &self.surface, qh, bounds, moved)
     }
@@ -553,6 +560,19 @@ impl Window {
         Ok(())
     }
     fn mark_mapped(&mut self) {
+        if let Some(parent) = &self.popup_parent {
+            parent.bounds.set(Some(self.floating.as_ref().map_or_else(
+                || {
+                    [
+                        0,
+                        0,
+                        self.size.width.get() as i32,
+                        self.size.height.get() as i32,
+                    ]
+                },
+                |panel| panel.geometry.bounds(),
+            )));
+        }
         if self.mapping != Mapping::Mapped {
             self.mapping = Mapping::Mapped;
             if let Some(registration) = &self.registration {

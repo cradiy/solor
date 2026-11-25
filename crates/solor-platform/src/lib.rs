@@ -60,9 +60,8 @@ impl Application {
         )
     }
 
-    /// Opens a grabbing XDG popup from a panel or menu's pointer press or click handler.
-    /// Opening another popup from the same parent replaces its open child branch.
-    /// The compositor dismisses the popup on an outside click.
+    /// Opens an XDG popup, replacing the previous child of the same parent.
+    /// A grabbing popup must open during a pointer button event on its parent.
     #[cfg(target_os = "linux")]
     pub fn open_popup<R: Render>(
         &self,
@@ -86,6 +85,17 @@ impl Application {
         options: layer_shell::LayerShellOptions<'_>,
         ui: Ui,
         root: impl Render,
+    ) -> Result<layer_shell::LayerSurfaceHandle> {
+        self.open_layer_surface_with(options, ui, |_| root)
+    }
+
+    /// Builds the panel with its UI-thread window handle for anchoring native popups.
+    #[cfg(target_os = "linux")]
+    pub fn open_layer_surface_with<R: Render>(
+        &self,
+        options: layer_shell::LayerShellOptions<'_>,
+        ui: Ui,
+        root: impl FnOnce(WindowHandle) -> R,
     ) -> Result<layer_shell::LayerSurfaceHandle> {
         let handle = match options.handle {
             Some(handle) => handle.clone(),

@@ -103,14 +103,23 @@ impl WaylandApplication {
         options: LayerShellOptions<'_>,
         view: Box<dyn WindowHandler<Rgba8>>,
     ) -> anyhow::Result<WindowHandle> {
+        self.build_layer_surface(options, |_| Ok(view))
+    }
+
+    /// Builds a layer surface with its UI-thread window handle.
+    pub fn build_layer_surface(
+        &self,
+        options: LayerShellOptions<'_>,
+        build: impl FnOnce(WindowHandle) -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
+    ) -> anyhow::Result<WindowHandle> {
         self.factory()?.open(
             Request::Layer(options),
             options.handle.map(|h| h.claim()).transpose()?,
-            |_| Ok(view),
+            build,
         )
     }
 
-    /// Opens an anchored XDG popup from a layer surface or popup's pointer button handler.
+    /// Opens an anchored XDG popup on a mapped layer surface or popup.
     pub fn build_popup(
         &self,
         options: crate::popup::PopupOptions,
@@ -127,7 +136,8 @@ impl WaylandApplication {
         ui: solor::Ui,
         root: impl FnOnce(WindowHandle) -> R,
     ) -> anyhow::Result<WindowHandle> {
-        self.build_gpu(Request::Menu(options), None, options.background, ui, root)
+        let background = options.background;
+        self.build_gpu(Request::Menu(options), None, background, ui, root)
     }
 
     /// Mounts a Solor view on a native GPU surface for an XDG toplevel.
@@ -155,12 +165,23 @@ impl WaylandApplication {
         ui: solor::Ui,
         root: impl solor::Render,
     ) -> anyhow::Result<WindowHandle> {
+        self.build_gpu_layer_surface(options, ui, |_| root)
+    }
+
+    /// Builds a GPU layer surface with its UI-thread window handle.
+    #[cfg(feature = "gpu")]
+    pub fn build_gpu_layer_surface<R: solor::Render>(
+        &self,
+        options: LayerShellOptions<'_>,
+        ui: solor::Ui,
+        root: impl FnOnce(WindowHandle) -> R,
+    ) -> anyhow::Result<WindowHandle> {
         self.build_gpu(
             Request::Layer(options),
             options.handle.map(|h| h.claim()).transpose()?,
             options.background,
             ui,
-            |_| root,
+            root,
         )
     }
 
@@ -508,6 +529,11 @@ impl WindowFactory {
         let life = WindowLife::new(activation, self.revisit.clone(), modal_parent);
         let target = Rc::downgrade(&life);
         let handle = WindowHandle::new(target);
+        if matches!(&request, Request::Menu(options) if options.input_transparent) {
+            let empty = self.compositor.create_region(qh, ());
+            surface.set_input_region(Some(&empty));
+            empty.destroy();
+        }
         let (role, size) = request.create(globals, qh, surface, &self.menus, handle.clone())?;
         if let (Some(control), Role::Layer(layer, placement)) = (&control, &role) {
             control.set_layer_rules(crate::layer_shell::LayerRules {
@@ -551,7 +577,9 @@ impl WindowFactory {
         ))?;
         let viewport = self.viewporter.get_viewport(content, qh, ());
 
+        let popup_parent = self.menus.register(&role, &handle);
         let window = Window {
+            popup_parent,
             control,
             preedit_owner: None,
             role,
@@ -628,7 +656,9 @@ impl EventLoop {
                     .map_or(Some(true), |u| u.visible)
                     .filter(|_| window.life.is_open())
                 else {
-                    self.desktop.menus.dismiss_child(id);
+                    if let Some(parent) = &window.popup_parent {
+                        parent.unmap();
+                    }
                     closed.push(id.clone());
                     continue;
                 };
@@ -649,7 +679,9 @@ impl EventLoop {
                     window.surface.commit();
                 }
                 if !visible && window.mapping == Mapping::Mapped {
-                    self.desktop.menus.dismiss_child(id);
+                    if let Some(parent) = &window.popup_parent {
+                        parent.unmap();
+                    }
                     pointer::cancel_focus(&mut self.desktop.seats, id, window);
                 }
                 if window.mapping == Mapping::Hidden
@@ -728,7 +760,7 @@ impl Drop for WindowFactory {
 
 impl Drop for EventLoop {
     fn drop(&mut self) {
-        self.desktop.menus.dismiss_current();
+        self.desktop.menus.dismiss_all();
         for (_, window) in self.desktop.windows.drain() {
             window.destroy();
         }
@@ -783,6 +815,7 @@ impl Window {
 
     fn destroy(self) {
         drop(self.view);
+        drop(self.popup_parent);
         drop(self.role);
         self.fractional.destroy();
         self.viewport.destroy();

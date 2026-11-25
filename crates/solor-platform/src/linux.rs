@@ -45,25 +45,28 @@ pub(super) fn open_popup<R: Render>(
         ui.set_system_font_provider(solor_linux::system_ui_font);
         return app.build_gpu_popup(options, ui, root);
     }
+    let background = options.background;
     app.build_popup(options, |handle| {
-        Ok(Box::new(mount(ui, root(handle), options.background)?))
+        Ok(Box::new(mount(ui, root(handle), background)?))
     })
 }
 
-pub(super) fn open_layer_surface(
+pub(super) fn open_layer_surface<R: Render>(
     app: &Windows,
     options: LayerShellOptions<'_>,
     ui: Ui,
-    root: impl Render,
+    root: impl FnOnce(WindowHandle) -> R,
 ) -> Result<()> {
     #[cfg(feature = "gpu")]
     if gpu_selected() {
         let mut ui = ui;
         ui.set_system_font_provider(solor_linux::system_ui_font);
-        return app.open_gpu_layer_surface(options, ui, root).map(drop);
+        return app.build_gpu_layer_surface(options, ui, root).map(drop);
     }
-    app.open_layer_surface(options, Box::new(mount(ui, root, options.background)?))
-        .map(drop)
+    app.build_layer_surface(options, |handle| {
+        Ok(Box::new(mount(ui, root(handle), options.background)?))
+    })
+    .map(drop)
 }
 
 #[cfg(feature = "gpu")]

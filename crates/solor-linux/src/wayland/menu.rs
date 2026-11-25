@@ -1,14 +1,10 @@
-use super::{Desktop, Mapping, Role, Window};
+use super::{Desktop, Role, Window};
 use crate::popup::{ConstraintAdjustment, PopupOptions};
 use anyhow::{Context, Result, ensure};
-use solor::{
-    Pixels,
-    layout::Size,
-    platform::{PlatformWindow, WindowHandle},
-    px,
-};
+use solor::{Pixels, layout::Size, platform::WindowHandle, px};
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     rc::{Rc, Weak},
 };
 use wayland_client::{
@@ -29,19 +25,51 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrL
 #[derive(Default)]
 pub(super) struct Menus {
     input: RefCell<Option<Trigger>>,
-    root: RefCell<Weak<Menu>>,
+    parents: RefCell<HashMap<WindowHandle, Weak<Parent>>>,
+    grabbing_root: RefCell<Weak<Menu>>,
 }
 
 struct Trigger {
-    parent: Parent,
-    bounds: [i32; 4],
+    parent: WindowHandle,
     seat: WlSeat,
     serial: u32,
 }
 
-enum Parent {
-    Panel(ObjectId, ZwlrLayerSurfaceV1),
+enum ParentRole {
+    Panel(ZwlrLayerSurfaceV1, RefCell<Weak<Menu>>),
     Menu(Rc<Menu>),
+}
+
+pub(super) struct Parent {
+    menus: Weak<Menus>,
+    handle: WindowHandle,
+    role: ParentRole,
+    pub(super) bounds: Cell<Option<[i32; 4]>>,
+}
+
+impl Parent {
+    fn child(&self) -> &RefCell<Weak<Menu>> {
+        match &self.role {
+            ParentRole::Panel(_, child) => child,
+            ParentRole::Menu(menu) => &menu.child,
+        }
+    }
+
+    pub(super) fn unmap(&self) {
+        self.bounds.set(None);
+        if let Some(child) = self.child().take().upgrade() {
+            child.dismiss();
+        }
+    }
+}
+
+impl Drop for Parent {
+    fn drop(&mut self) {
+        self.unmap();
+        if let Some(menus) = self.menus.upgrade() {
+            menus.parents.borrow_mut().remove(&self.handle);
+        }
+    }
 }
 
 struct MenuShell(XdgWmBase);
@@ -53,48 +81,45 @@ impl Drop for MenuShell {
 }
 
 impl Menus {
-    pub fn input(&self, window: &Window, seat: &WlSeat, serial: u32) {
-        if window.mapping != Mapping::Mapped || !window.life.is_open() {
-            return;
-        }
-        let parent = match &window.role {
-            Role::Layer(layer, _) => Parent::Panel(window.surface.id(), layer.clone()),
-            Role::Menu(menu) => Parent::Menu(menu.clone()),
-            _ => return,
+    pub(super) fn register(
+        self: &Rc<Self>,
+        role: &Role,
+        handle: &WindowHandle,
+    ) -> Option<Rc<Parent>> {
+        let role = match role {
+            Role::Layer(layer, _) => ParentRole::Panel(layer.clone(), Default::default()),
+            Role::Menu(menu) => ParentRole::Menu(menu.clone()),
+            _ => return None,
         };
-        let bounds = window
-            .floating
-            .as_ref()
-            .map(|panel| panel.geometry.bounds())
-            .unwrap_or([
-                0,
-                0,
-                window.size.width.get() as i32,
-                window.size.height.get() as i32,
-            ]);
-        self.input.replace(Some(Trigger {
-            parent,
-            bounds,
-            seat: seat.clone(),
-            serial,
-        }));
+        let parent = Rc::new(Parent {
+            menus: Rc::downgrade(self),
+            handle: handle.clone(),
+            role,
+            bounds: Cell::new(None),
+        });
+        self.parents
+            .borrow_mut()
+            .insert(handle.clone(), Rc::downgrade(&parent));
+        Some(parent)
+    }
+
+    pub fn input(&self, window: &Window, seat: &WlSeat, serial: u32) {
+        if let Some(parent) = &window.popup_parent {
+            self.input.replace(Some(Trigger {
+                parent: parent.handle.clone(),
+                seat: seat.clone(),
+                serial,
+            }));
+        }
     }
 
     pub fn end_input(&self) {
         self.input.take();
     }
 
-    pub fn dismiss_current(&self) {
-        if let Some(menu) = self.root.borrow().upgrade() {
-            menu.dismiss();
-        }
-    }
-
-    pub fn dismiss_child(&self, parent: &ObjectId) {
-        if let Some(menu) = self.root.borrow().upgrade()
-            && &menu.panel == parent
-        {
-            menu.dismiss();
+    pub fn dismiss_all(&self) {
+        for parent in self.parents.borrow().values().filter_map(Weak::upgrade) {
+            parent.unmap();
         }
     }
 
@@ -106,10 +131,36 @@ impl Menus {
         surface: &WlSurface,
         handle: WindowHandle,
     ) -> Result<(Role, Size)> {
-        let trigger = self
-            .input
-            .take()
-            .context("a popup must open during a pointer button event on a mapped panel or menu")?;
+        let input = self.input.borrow();
+        let parent_handle = options
+            .parent
+            .as_ref()
+            .or_else(|| input.as_ref().map(|t| &t.parent))
+            .context("a popup needs a parent window or a current pointer button event")?;
+        let parent = self
+            .parents
+            .borrow()
+            .get(parent_handle)
+            .and_then(Weak::upgrade)
+            .filter(|p| p.handle.is_open())
+            .context("popup parent must be an open panel or popup in this application")?;
+        let bounds = parent.bounds.get().context("popup parent is not mapped")?;
+        let grab = if options.grab {
+            let trigger = input
+                .as_ref()
+                .filter(|t| t.parent == *parent_handle)
+                .context("a popup grab requires a pointer button event on its parent")?;
+            if let ParentRole::Menu(menu) = &parent.role {
+                ensure!(
+                    menu.seat.as_ref() == Some(&trigger.seat),
+                    "a grabbing submenu needs a parent grab on the same seat"
+                );
+            }
+            Some((trigger.seat.clone(), trigger.serial))
+        } else {
+            None
+        };
+        drop(input);
         ensure!(
             ConstraintAdjustment::all().contains(options.constraints),
             "unknown popup constraint adjustment"
@@ -121,18 +172,12 @@ impl Menus {
             "popup size must round to positive logical pixels"
         );
         let (origin, size) = options.anchor_rect;
-        let [ox, oy, pw, ph] = trigger.bounds;
+        let [ox, oy, pw, ph] = bounds;
         let (x, width) = anchor_axis(origin.x, size.width, pw)?;
         let (y, height) = anchor_axis(origin.y, size.height, ph)?;
-        let (shell, panel) = match &trigger.parent {
-            Parent::Panel(id, _) => (Rc::new(MenuShell(globals.bind(qh, 1..=1, ())?)), id.clone()),
-            Parent::Menu(parent) => {
-                ensure!(
-                    parent.seat == trigger.seat,
-                    "a submenu requires its parent's seat"
-                );
-                (parent.shell.clone(), parent.panel.clone())
-            }
+        let shell = match &parent.role {
+            ParentRole::Panel(..) => Rc::new(MenuShell(globals.bind(qh, 1..=1, ())?)),
+            ParentRole::Menu(menu) => menu.shell.clone(),
         };
         let positioner = shell.0.create_positioner(qh, ());
         positioner.set_size(w, h);
@@ -141,28 +186,32 @@ impl Menus {
         positioner.set_gravity(options.gravity);
         positioner.set_constraint_adjustment(options.constraints);
         let xdg = shell.0.get_xdg_surface(surface, qh, surface.id());
-        let slot = match &trigger.parent {
-            Parent::Panel(..) => &self.root,
-            Parent::Menu(parent) => &parent.child,
-        };
-        // A new grab must extend the topmost popup. Retire the previous branch first.
-        if let Some(previous) = slot.borrow().upgrade() {
+        let grabbing_root = grab.is_some() && matches!(parent.role, ParentRole::Panel(..));
+        if grabbing_root && let Some(previous) = self.grabbing_root.take().upgrade() {
             previous.dismiss();
         }
-        let popup = match &trigger.parent {
-            Parent::Panel(_, layer) => {
+        let slot = parent.child();
+        if let Some(previous) = slot.take().upgrade() {
+            previous.dismiss();
+        }
+        let popup = match &parent.role {
+            ParentRole::Panel(layer, _) => {
                 let popup = xdg.get_popup(None, &positioner, qh, surface.id());
                 layer.get_popup(&popup);
                 popup
             }
-            Parent::Menu(parent) => xdg.get_popup(Some(&parent.xdg), &positioner, qh, surface.id()),
+            ParentRole::Menu(parent) => {
+                xdg.get_popup(Some(&parent.xdg), &positioner, qh, surface.id())
+            }
         };
-        popup.grab(&trigger.seat, trigger.serial);
+        if let Some((seat, serial)) = &grab {
+            self.input.take();
+            popup.grab(seat, *serial);
+        }
         positioner.destroy();
         let menu = Rc::new(Menu {
-            panel,
             child: Default::default(),
-            seat: trigger.seat,
+            seat: grab.map(|(seat, _)| seat),
             shell,
             xdg,
             popup,
@@ -170,6 +219,9 @@ impl Menus {
             dismissed: Cell::new(false),
         });
         slot.replace(Rc::downgrade(&menu));
+        if grabbing_root {
+            self.grabbing_root.replace(Rc::downgrade(&menu));
+        }
         Ok((
             Role::Menu(menu),
             Size {
@@ -194,9 +246,8 @@ fn anchor_axis(origin: Pixels, extent: Pixels, limit: i32) -> Result<(i32, i32)>
 }
 
 pub(super) struct Menu {
-    panel: ObjectId,
     child: RefCell<Weak<Menu>>,
-    seat: WlSeat,
+    seat: Option<WlSeat>,
     shell: Rc<MenuShell>,
     xdg: XdgSurface,
     popup: XdgPopup,
