@@ -1,7 +1,8 @@
 use anyhow::{Result, ensure};
 use solor::{
-    ContentClip, Draw, Fill, FillRule, Ink, Rgba,
-    layout::Origin,
+    ContentClip, Draw, Fill, FillRule, Gradient, Ink, Rgba,
+    layout::{Origin, Size},
+    px,
     raster::{Clip, DeviceSize, RasterScale},
 };
 use std::rc::Rc;
@@ -11,17 +12,22 @@ enum Kind {
     Stroke { width: f32, closed: bool },
 }
 
+enum Paint<'a> {
+    Solid(Rgba),
+    Gradient(&'a Gradient),
+}
+
 pub(super) struct Path<'a> {
     origin: Origin,
     contours: &'a [Rc<[Origin]>],
     clip: Option<&'a ContentClip>,
-    color: Rgba,
+    paint: Paint<'a>,
     kind: Kind,
 }
 
 impl<'a> Path<'a> {
     pub(super) fn from_draw(draw: &'a Draw) -> Result<Option<Self>, &'static str> {
-        let (origin, contours, clip, color, kind) = match draw {
+        let (origin, contours, clip, paint, kind) = match draw {
             Draw::Polygon {
                 origin,
                 contours,
@@ -29,14 +35,16 @@ impl<'a> Path<'a> {
                 fill,
                 rule,
             } => {
-                let Fill::Solid(color) = fill else {
-                    return Err("polygon fill requires a solid color");
+                let paint = match fill {
+                    Fill::Solid(color) => Paint::Solid(*color),
+                    Fill::Gradient(gradient) => Paint::Gradient(gradient),
+                    _ => return Err("unsupported polygon fill"),
                 };
                 (
                     *origin,
                     contours.as_slice(),
                     clip.as_deref(),
-                    *color,
+                    paint,
                     Kind::Fill(*rule),
                 )
             }
@@ -48,14 +56,16 @@ impl<'a> Path<'a> {
                 width,
                 closed,
             } => {
-                let Ink::Solid(color) = ink else {
-                    return Err("polyline ink requires a solid color");
+                let paint = match ink {
+                    Ink::Solid(color) => Paint::Solid(*color),
+                    Ink::Gradient(gradient) => Paint::Gradient(gradient),
+                    _ => return Err("unsupported polyline ink"),
                 };
                 (
                     *origin,
                     contours.as_slice(),
                     clip.as_deref(),
-                    *color,
+                    paint,
                     Kind::Stroke {
                         width: width.get(),
                         closed: *closed,
@@ -68,7 +78,7 @@ impl<'a> Path<'a> {
             origin,
             contours,
             clip,
-            color,
+            paint,
             kind,
         }))
     }
@@ -91,7 +101,7 @@ impl<'a> Path<'a> {
                 clip.bottom = clip.bottom.min(scale.edge(y.end.into()));
             }
         }
-        if clip.empty() || self.color.alpha == 0 {
+        if clip.empty() || matches!(self.paint, Paint::Solid(c) if c.alpha == 0) {
             return Ok(());
         }
         let (mode, radius, closed) = match self.kind {
@@ -136,6 +146,44 @@ impl<'a> Path<'a> {
                 a = b;
             }
         }
+        let (params, paint_box, gradient_index) = match self.paint {
+            Paint::Solid(c) => (super::rgba(c), [0.; 4], 0.),
+            Paint::Gradient(gradient) => {
+                if !strips
+                    .iter()
+                    .any(|s| s.top.max(clip.top) < s.bottom.min(clip.bottom))
+                {
+                    return Ok(());
+                }
+                let mut min = [f64::INFINITY; 2];
+                let mut max = [f64::NEG_INFINITY; 2];
+                for p in self.contours.iter().flat_map(|c| c.iter()) {
+                    let [x, y] = device(*p);
+                    min = [min[0].min(x), min[1].min(y)];
+                    max = [max[0].max(x), max[1].max(y)];
+                }
+                let extent = Size {
+                    width: px(((max[0] - min[0] + 2. * radius) / scale.0) as f32),
+                    height: px(((max[1] - min[1] + 2. * radius) / scale.0) as f32),
+                };
+                if extent.width.get() == 0. || extent.height.get() == 0. {
+                    return Ok(());
+                }
+                let brush = super::GradientBrush::prepare(gradient, extent, edges);
+                let index = edges.len();
+                edges.push([brush.ramp, [scale.0 as f32, brush.oklab, 0., 0.]]);
+                (
+                    brush.params,
+                    [
+                        (min[0] - radius) as f32,
+                        (min[1] - radius) as f32,
+                        extent.width.get(),
+                        extent.height.get(),
+                    ],
+                    index as f32,
+                )
+            }
+        };
         for (i, strip) in strips.into_iter().enumerate() {
             let top = strip.top.max(clip.top);
             let bottom = strip.bottom.min(clip.bottom);
@@ -160,11 +208,16 @@ impl<'a> Path<'a> {
                     (right - left) as f32,
                     (bottom - top) as f32,
                 ],
-                [0.; 4],
+                paint_box,
                 [left as f32, top as f32, right as f32, bottom as f32],
-                super::rgba(self.color),
+                params,
                 [size.width as f32, size.height as f32, 1., mode],
-                [base as f32, strip.edges.len() as f32, radius as f32, 0.],
+                [
+                    base as f32,
+                    strip.edges.len() as f32,
+                    radius as f32,
+                    gradient_index,
+                ],
             ]);
         }
         Ok(())

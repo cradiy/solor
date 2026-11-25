@@ -209,6 +209,15 @@ fn compare_paths(
         width: px(80.),
         height: px(48.),
     };
+    let gradient = linear_gradient(
+        33.,
+        [
+            color_stop(rgba(0x419c7890), 0.),
+            color_stop(rgb(0x203772), 0.35),
+            color_stop(rgba(0xdf702799), 1.),
+        ],
+    )?
+    .color_space(solor::ColorSpace::Oklab);
     let mut ui = Ui::new();
     let view = ui.mount(component(move |_| {
         div().w_full().h_full().paint(move |cx| {
@@ -220,9 +229,13 @@ fn compare_paths(
                     height: px(42.),
                 },
                 |cx| {
-                    for (offset, rule) in [
-                        (0., solor::FillRule::EvenOdd),
-                        (40., solor::FillRule::NonZero),
+                    for (offset, rule, fill) in [
+                        (
+                            0.,
+                            solor::FillRule::EvenOdd,
+                            solor::Fill::from(gradient.clone()),
+                        ),
+                        (40., solor::FillRule::NonZero, rgba(0x40ce9480).into()),
                     ] {
                         let rect = |l: f32, t: f32, r: f32, b: f32| {
                             [
@@ -234,10 +247,11 @@ fn compare_paths(
                         };
                         cx.fill_contours(
                             [rect(0., 0., 38., 48.), rect(9., 10., 25., 32.)],
-                            rgba(0x40ce9480),
+                            fill,
                             rule,
                         )?;
                     }
+                    cx.stroke_polyline([at(9., -12.), at(9., 42.)], px(5.5), gradient.clone())?;
                     cx.stroke_polyline(
                         [
                             at(0., 6.),

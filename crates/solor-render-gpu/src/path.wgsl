@@ -46,5 +46,11 @@ fn polygon(p: vec2f, base: u32, count: u32, nonzero: bool) -> f32 {
     } else {
         cover = polygon(v.pos.xy, base, count, q.viewport.w == 1.);
     }
-    return vec4f(q.params.rgb, q.params.a * cover);
+    var color = q.params;
+    if q.ramp.w != 0. {
+        let brush = solor_stops[u32(q.ramp.w)];
+        let local = (v.pos.xy - q.radii.xy) / brush.segment.x;
+        color = gradient_color(local, q.radii.zw, q.params, brush.color, brush.segment.y != 0.);
+    }
+    return vec4f(color.rgb, color.a * cover);
 }

@@ -708,6 +708,8 @@ impl Renderer {
                                 concat!(
                                     include_str!("vertex.wgsl"),
                                     "\n",
+                                    include_str!("gradient.wgsl"),
+                                    "\n",
                                     include_str!("path.wgsl")
                                 )
                                 .to_owned(),
