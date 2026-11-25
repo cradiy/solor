@@ -60,6 +60,23 @@ impl Application {
         )
     }
 
+    /// Opens a grabbing XDG popup during a panel's pointer press or click handler.
+    /// The compositor dismisses the popup on an outside click.
+    #[cfg(target_os = "linux")]
+    pub fn open_popup<R: Render>(
+        &self,
+        options: popup::PopupOptions,
+        ui: Ui,
+        root: impl FnOnce(WindowHandle) -> R,
+    ) -> Result<WindowHandle> {
+        system::open_popup(
+            &self.windows,
+            options,
+            configured_ui(ui, &self.assets),
+            root,
+        )
+    }
+
     /// Opens a Wayland layer surface alongside the application's other windows.
     /// The returned handle controls this surface from any thread.
     #[cfg(target_os = "linux")]

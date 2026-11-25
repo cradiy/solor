@@ -35,6 +35,7 @@ use wayland_protocols::wp::{
 
 #[derive(Default)]
 pub(super) struct Desktop {
+    pub(super) menus: Rc<super::menu::Menus>,
     pub(super) clipboard: Option<Rc<super::clipboard::Clipboard>>,
     pub(super) text_inputs: Option<super::text_input::Manager>,
     pub(super) activation: Option<Rc<Activation>>,
@@ -107,6 +108,26 @@ impl WaylandApplication {
             options.handle.map(|h| h.claim()).transpose()?,
             |_| Ok(view),
         )
+    }
+
+    /// Opens an anchored XDG popup during a layer surface's pointer button handler.
+    pub fn build_popup(
+        &self,
+        options: crate::popup::PopupOptions,
+        build: impl FnOnce(WindowHandle) -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
+    ) -> anyhow::Result<WindowHandle> {
+        self.factory()?.open(Request::Menu(options), None, build)
+    }
+
+    /// Opens an anchored popup using the application's GPU device.
+    #[cfg(feature = "gpu")]
+    pub fn build_gpu_popup<R: solor::Render>(
+        &self,
+        options: crate::popup::PopupOptions,
+        ui: solor::Ui,
+        root: impl FnOnce(WindowHandle) -> R,
+    ) -> anyhow::Result<WindowHandle> {
+        self.build_gpu(Request::Menu(options), None, options.background, ui, root)
     }
 
     /// Mounts a Solor view on a native GPU surface for an XDG toplevel.
@@ -288,6 +309,7 @@ struct EventLoop {
 }
 
 struct WindowFactory {
+    menus: Rc<super::menu::Menus>,
     #[cfg(feature = "gpu")]
     gpu: std::cell::OnceCell<RefCell<super::gpu::GpuContext>>,
     clipboard: Option<Rc<super::clipboard::Clipboard>>,
@@ -376,6 +398,7 @@ impl EventLoop {
             }
         }
         let windows = WindowFactory {
+            menus: desktop.menus.clone(),
             #[cfg(feature = "gpu")]
             gpu: Default::default(),
             clipboard: desktop.clipboard.clone(),
@@ -430,7 +453,7 @@ impl WindowFactory {
                     .transpose()?
                     .filter(|_| options.modal)
             }
-            Request::Layer(_) | Request::Popup(_) => None,
+            Request::Layer(_) | Request::Popup(_) | Request::Menu(_) => None,
         };
         let surface = self.compositor.create_surface(&self.qh, ());
         match self.create_window(
@@ -464,13 +487,14 @@ impl WindowFactory {
     ) -> anyhow::Result<(Window, WindowHandle)> {
         let qh = &self.qh;
         let background = match &request {
+            Request::Menu(options) => options.background,
             Request::Popup(_) => WindowBackground::Transparent,
             Request::Layer(options) => options.background,
             Request::Toplevel(options) => options.background,
         };
         let parent = match &request {
             Request::Toplevel(options) => options.parent,
-            Request::Layer(_) | Request::Popup(_) => None,
+            Request::Layer(_) | Request::Popup(_) | Request::Menu(_) => None,
         };
         let activation = match (&request, &self.activation) {
             (Request::Toplevel(options), Some(activation)) => Some(ActivationTarget {
@@ -481,7 +505,10 @@ impl WindowFactory {
             _ => None,
         };
         let globals = self.globals.as_ref().expect("live window factory");
-        let (role, size) = request.create(globals, qh, surface)?;
+        let life = WindowLife::new(activation, self.revisit.clone(), modal_parent);
+        let target = Rc::downgrade(&life);
+        let handle = WindowHandle::new(target);
+        let (role, size) = request.create(globals, qh, surface, &self.menus, handle.clone())?;
         if let (Some(control), Role::Layer(layer, placement)) = (&control, &role) {
             control.set_layer_rules(crate::layer_shell::LayerRules {
                 anchor: placement.anchor,
@@ -489,14 +516,11 @@ impl WindowFactory {
                 version: layer.version(),
             })?;
         }
-        let life = WindowLife::new(activation, self.revisit.clone(), modal_parent);
-        let target = Rc::downgrade(&life);
-        let handle = WindowHandle::new(target);
         let registration = match &role {
             Role::Toplevel { top, .. } => {
                 Some(self.toplevels.register(handle.clone(), &life, top, parent))
             }
-            Role::Layer(..) | Role::Popup { .. } => None,
+            Role::Layer(..) | Role::Popup { .. } | Role::Menu(_) => None,
         };
         let floating = match &role {
             Role::Layer(_, p) if p.movable => Some(floating::FloatingPanel::new(
@@ -604,6 +628,7 @@ impl EventLoop {
                     .map_or(Some(true), |u| u.visible)
                     .filter(|_| window.life.is_open())
                 else {
+                    self.desktop.menus.dismiss_child(id);
                     closed.push(id.clone());
                     continue;
                 };
@@ -624,6 +649,7 @@ impl EventLoop {
                     window.surface.commit();
                 }
                 if !visible && window.mapping == Mapping::Mapped {
+                    self.desktop.menus.dismiss_child(id);
                     pointer::cancel_focus(&mut self.desktop.seats, id, window);
                 }
                 if window.mapping == Mapping::Hidden
@@ -702,6 +728,7 @@ impl Drop for WindowFactory {
 
 impl Drop for EventLoop {
     fn drop(&mut self) {
+        self.desktop.menus.dismiss_current();
         for (_, window) in self.desktop.windows.drain() {
             window.destroy();
         }

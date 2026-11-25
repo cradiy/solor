@@ -33,6 +33,23 @@ pub(super) fn open_window<R: Render>(
     })
 }
 
+pub(super) fn open_popup<R: Render>(
+    app: &Windows,
+    options: solor_linux::popup::PopupOptions,
+    ui: Ui,
+    root: impl FnOnce(WindowHandle) -> R,
+) -> Result<WindowHandle> {
+    #[cfg(feature = "gpu")]
+    if gpu_selected() {
+        let mut ui = ui;
+        ui.set_system_font_provider(solor_linux::system_ui_font);
+        return app.build_gpu_popup(options, ui, root);
+    }
+    app.build_popup(options, |handle| {
+        Ok(Box::new(mount(ui, root(handle), options.background)?))
+    })
+}
+
 pub(super) fn open_layer_surface(
     app: &Windows,
     options: LayerShellOptions<'_>,

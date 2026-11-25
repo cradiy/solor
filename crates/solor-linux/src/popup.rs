@@ -1,4 +1,4 @@
-//! Client-sized Wayland popups with an application-supplied surface role.
+//! Wayland popup positioning and controls for externally assigned roles.
 use crate::surface_control::{Control, InputRegion};
 use solor::{layout::Size, px};
 use std::io;
@@ -48,5 +48,57 @@ impl PopupHandle {
     /// Closes the popup and wakes the panel thread.
     pub fn close(&self) -> io::Result<()> {
         self.0.close()
+    }
+}
+
+pub use wayland_protocols::xdg::shell::client::xdg_positioner::{
+    Anchor, ConstraintAdjustment, Gravity,
+};
+
+/// Placement of an XDG popup relative to the triggering panel's content.
+#[derive(Clone, Copy, Debug)]
+pub struct PopupOptions {
+    /// Origin and extent of the anchor rectangle in panel-local logical pixels.
+    pub anchor_rect: (solor::layout::Origin, Size),
+    /// Preferred logical popup size.
+    pub size: Size,
+    /// Point on the anchor rectangle used for placement.
+    pub anchor: Anchor,
+    /// Direction in which the popup extends from its anchor.
+    pub gravity: Gravity,
+    /// Adjustments the compositor may make at output edges.
+    pub constraints: ConstraintAdjustment,
+    /// Composition of the popup background with the desktop.
+    pub background: solor::platform::WindowBackground,
+}
+
+impl PopupOptions {
+    /// Places a popup below the anchor rectangle, aligned with its left edge.
+    pub fn new(anchor_rect: (solor::layout::Origin, Size), size: Size) -> Self {
+        Self {
+            anchor_rect,
+            size,
+            anchor: Anchor::BottomLeft,
+            gravity: Gravity::BottomRight,
+            constraints: ConstraintAdjustment::FlipY
+                | ConstraintAdjustment::SlideX
+                | ConstraintAdjustment::SlideY,
+            background: solor::platform::WindowBackground::Opaque,
+        }
+    }
+
+    /// Anchors a popup to the element receiving a pointer event.
+    pub fn below(
+        event: &solor::pointer::PointerEvent,
+        width: solor::Pixels,
+        height: solor::Pixels,
+    ) -> Self {
+        let point = event.sample.position;
+        let local = event.local_position();
+        let origin = solor::layout::Origin {
+            x: point.x - local.x,
+            y: point.y - local.y,
+        };
+        Self::new((origin, event.bounds()), Size { width, height })
     }
 }

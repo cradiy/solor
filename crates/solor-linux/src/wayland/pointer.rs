@@ -89,6 +89,7 @@ pub(super) struct Seat {
     focus: Option<ObjectId>,
     shape_device: Option<WpCursorShapeDeviceV1>,
     enter_serial: Option<u32>,
+    button_presses: smallvec::SmallVec<[(PointerButton, u32); 2]>,
     applied_cursor: Option<Cursor>,
     scroll: Option<(PointerSample, ScrollDelta)>,
 }
@@ -120,6 +121,7 @@ impl Seat {
 
     fn clear_focus(&mut self) {
         self.focus = None;
+        self.button_presses.clear();
         self.enter_serial = None;
         self.applied_cursor = None;
         self.position = None;
@@ -219,6 +221,7 @@ impl Desktop {
                 focus: None,
                 shape_device: None,
                 enter_serial: None,
+                button_presses: Default::default(),
                 applied_cursor: None,
                 scroll: None,
             });
@@ -429,12 +432,24 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
                     .map(|activation| activation.input(&window.surface, &seat.seat, serial));
                 match button_state {
                     wl_pointer::ButtonState::Pressed => {
+                        seat.button_presses.push((button, serial));
+                        state.menus.input(window, &seat.seat, serial);
                         if button == PointerButton::Primary {
                             press = Some((seat.seat.clone(), serial));
                         }
                         PointerInput::Down(p, button)
                     }
-                    wl_pointer::ButtonState::Released => PointerInput::Up(p, button),
+                    wl_pointer::ButtonState::Released => {
+                        if let Some(index) = seat
+                            .button_presses
+                            .iter()
+                            .position(|(pressed, _)| *pressed == button)
+                        {
+                            let (_, press_serial) = seat.button_presses.swap_remove(index);
+                            state.menus.input(window, &seat.seat, press_serial);
+                        }
+                        PointerInput::Up(p, button)
+                    }
                     _ => return,
                 }
             }
@@ -443,6 +458,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
         if !blocked {
             window.dispatch(WindowEvent::Pointer(event), press);
         }
+        state.menus.end_input();
         drop(input);
         state.sync_cursors();
     }

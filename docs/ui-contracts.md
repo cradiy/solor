@@ -189,7 +189,9 @@ windows. Each panel has its own visibility and close handle. GPU surfaces in
 the same application share a device and queue.
 
 Run `cargo run -p solor-platform --example layer_panel` to open a 300 × 36
-logical-pixel panel centered on the top edge. Set the panel's dimensions in
+logical-pixel panel centered on the top edge. Its Density button opens an
+anchored menu with `app.open_popup(PopupOptions::below(event, width, height), ui, root)`.
+Set the panel's dimensions in
 `LayerShellOptions`. Its root element receives the configured surface size.
 `LayerShellOptions::new(namespace, layer)` spans the compositor-selected output
 and leaves keyboard focus with the active application. To target a named output,

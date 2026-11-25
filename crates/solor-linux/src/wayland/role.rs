@@ -29,12 +29,14 @@ use crate::layer_shell::{
 type AssignPopup<'a> = Box<dyn FnOnce(&WlSurface) -> Result<Box<dyn std::any::Any>> + 'a>;
 
 pub(super) enum Request<'a> {
+    Menu(crate::popup::PopupOptions),
     Popup(AssignPopup<'a>),
     Toplevel(WindowOptions<'a>),
     Layer(LayerShellOptions<'a>),
 }
 
 pub(super) enum Role {
+    Menu(std::rc::Rc<super::menu::Menu>),
     Popup {
         _owner: Box<dyn std::any::Any>,
     },
@@ -123,8 +125,11 @@ impl Request<'_> {
         globals: &GlobalList,
         qh: &QueueHandle<Desktop>,
         surface: &WlSurface,
+        menus: &super::menu::Menus,
+        handle: solor::platform::WindowHandle,
     ) -> Result<(Role, Size)> {
         match self {
+            Self::Menu(options) => menus.create(options, globals, qh, surface, handle),
             Self::Popup(assign) => Ok((
                 Role::Popup {
                     _owner: assign(surface)?,
@@ -350,7 +355,7 @@ impl Drop for Role {
                 shell.destroy();
             }
             Self::Layer(surface, _) => surface.destroy(),
-            Self::Popup { .. } => {}
+            Self::Menu(_) | Self::Popup { .. } => {}
         }
     }
 }

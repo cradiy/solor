@@ -11,6 +11,7 @@ mod window_view;
 use window_view::WindowView;
 mod input_region;
 mod keyboard;
+mod menu;
 mod output;
 mod parent;
 mod pointer;
@@ -739,13 +740,19 @@ impl Dispatch<xdg_surface::XdgSurface, ObjectId> for Desktop {
             return;
         };
         if let xdg_surface::Event::Configure { serial } = event {
+            if !state.life.is_open() {
+                return;
+            }
             surface.ack_configure(serial);
             state.mapping.configure();
             state.maximized = state.pending_maximized;
-            let Role::Toplevel { decorations, .. } = &mut state.role else {
-                return;
+            let decorations_configured = match &mut state.role {
+                Role::Toplevel {
+                    decorations: Some(d),
+                    ..
+                } => d.take_configure(),
+                _ => false,
             };
-            let decorations_configured = decorations.as_mut().is_some_and(|d| d.take_configure());
             if let Some(size) = state.pending_size.take() {
                 state.resize(size);
             }
