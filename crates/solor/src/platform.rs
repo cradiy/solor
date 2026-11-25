@@ -2,9 +2,34 @@
 mod mounted;
 pub use mounted::{UiWindow, ViewRenderer};
 
-use crate::{Pixels, layout::Size, pointer::PointerInput, px, raster::RasterScale};
+use crate::{
+    Pixels,
+    layout::{Origin, Size},
+    pointer::PointerInput,
+    px,
+    raster::RasterScale,
+};
 use anyhow::Result;
 use std::rc::Weak;
+
+/// A rectangle in surface-local logical pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SurfaceRect {
+    /// Top-left corner relative to the surface.
+    pub origin: Origin,
+    /// Nonnegative width and height.
+    pub size: Size,
+}
+
+impl SurfaceRect {
+    /// Creates a rectangle with the given offset and extent in logical pixels.
+    pub const fn new(x: Pixels, y: Pixels, width: Pixels, height: Pixels) -> Self {
+        Self {
+            origin: Origin { x, y },
+            size: Size { width, height },
+        }
+    }
+}
 
 /// Host-side lifecycle of a window on its event thread.
 pub trait PlatformWindow {
@@ -12,6 +37,10 @@ pub trait PlatformWindow {
     fn is_open(&self) -> bool;
     /// Asks the host to activate this window if supported.
     fn activate(&self) {}
+    /// Requests compositor blur behind the given surface-local rectangles when supported.
+    fn set_background_blur_region(&self, _rects: &[SurfaceRect]) -> std::io::Result<()> {
+        Ok(())
+    }
     /// Marks the window closed and schedules native teardown before the event loop sleeps.
     fn close(&self);
 }
@@ -40,6 +69,17 @@ impl WindowHandle {
         if let Some(window) = self.0.upgrade().filter(|window| window.is_open()) {
             window.activate();
         }
+    }
+
+    /// Requests compositor blur behind these window-local rectangles. An empty slice clears it.
+    /// The effect is visible through transparent content on hosts that support background blur.
+    pub fn set_background_blur_region(&self, rects: &[SurfaceRect]) -> std::io::Result<()> {
+        let window = self
+            .0
+            .upgrade()
+            .filter(|window| window.is_open())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "window closed"))?;
+        window.set_background_blur_region(rects)
     }
 
     /// Requests closure of this window. All clones immediately observe it as closed.

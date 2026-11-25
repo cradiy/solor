@@ -6,7 +6,7 @@ use solor::{Assets, Render, Ui};
 #[cfg_attr(not(target_os = "linux"), path = "unsupported.rs")]
 mod system;
 
-pub use solor::platform::{WindowBackground, WindowHandle, WindowOptions};
+pub use solor::platform::{SurfaceRect, WindowBackground, WindowHandle, WindowOptions};
 #[cfg(target_os = "linux")]
 pub use solor_linux::{ApplicationSender, layer_shell, popup, session_lock};
 

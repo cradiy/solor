@@ -1,28 +1,6 @@
 use std::io;
 
-use solor::{
-    Pixels,
-    layout::{Origin, Size},
-};
-
-/// A rectangle in surface-local logical pixels.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SurfaceRect {
-    /// Top-left corner relative to the surface.
-    pub origin: Origin,
-    /// Nonnegative width and height.
-    pub size: Size,
-}
-
-impl SurfaceRect {
-    /// Creates a rectangle with the given offset and extent in logical pixels.
-    pub const fn new(x: Pixels, y: Pixels, width: Pixels, height: Pixels) -> Self {
-        Self {
-            origin: Origin { x, y },
-            size: Size { width, height },
-        }
-    }
-}
+use solor::{Pixels, platform::SurfaceRect};
 
 #[derive(Debug, Default, PartialEq)]
 pub(crate) enum InputRegion {

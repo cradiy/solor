@@ -3,12 +3,12 @@ mod input_region;
 use crate::layer_shell::{LayerChanges, LayerRules};
 pub(crate) use input_region::InputRegion;
 pub(crate) use input_region::region_rectangles;
-pub use input_region::{SurfaceRect, SurfaceRect as InputRect};
 use rustix::{
     event::{EventfdFlags, eventfd},
     io::{Errno, retry_on_intr},
 };
 use solor::layout::Size;
+pub use solor::platform::{SurfaceRect, SurfaceRect as InputRect};
 use std::{
     io,
     os::fd::OwnedFd,
@@ -59,6 +59,14 @@ impl Control {
                 },
             }),
         })))
+    }
+
+    pub(crate) fn set_blur(&self, rects: &[SurfaceRect]) -> io::Result<()> {
+        let rects = region_rectangles(rects)?;
+        self.update(|state| {
+            state.blur = Some(rects);
+            true
+        })
     }
 
     pub(crate) fn set_visible(&self, visible: bool) -> io::Result<()> {
@@ -132,6 +140,10 @@ impl Control {
 pub(crate) struct Binding(Arc<Shared>);
 
 impl Binding {
+    pub(crate) fn control(&self) -> Control {
+        Control(self.0.clone())
+    }
+
     pub(crate) fn set_layer_rules(&self, rules: LayerRules) -> io::Result<()> {
         let mut state = self.0.update.lock().expect("surface control lock");
         rules.validate(state.pending.layer)?;

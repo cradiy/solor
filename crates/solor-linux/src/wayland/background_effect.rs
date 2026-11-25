@@ -28,10 +28,7 @@ impl Desktop {
         interface: &str,
         qh: &QueueHandle<Self>,
     ) {
-        if !self.popup_only
-            && self.effects.is_none()
-            && interface == ExtBackgroundEffectManagerV1::interface().name
-        {
+        if self.effects.is_none() && interface == ExtBackgroundEffectManagerV1::interface().name {
             self.effects = Some(Manager {
                 name,
                 proxy: registry.bind(name, 1, qh, ()),

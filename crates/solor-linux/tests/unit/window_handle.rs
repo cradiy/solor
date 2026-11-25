@@ -4,7 +4,7 @@ use super::*;
 fn a_retained_handle_cannot_close_a_replacement_window() {
     let revisit = Rc::new(Cell::new(false));
     let create = || {
-        let life = WindowLife::new(None, revisit.clone(), Weak::new());
+        let life = WindowLife::new(None, revisit.clone(), Weak::new(), None);
         let target = Rc::downgrade(&life);
         (life, WindowHandle::new(target))
     };
@@ -54,6 +54,7 @@ fn open_window(parent: Option<&Rc<WindowLife>>) -> Rc<WindowLife> {
         None,
         Rc::default(),
         parent.map(Rc::downgrade).unwrap_or_default(),
+        None,
     );
     if let Some(parent) = parent {
         window.attach_modal(parent);

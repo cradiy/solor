@@ -3,7 +3,7 @@ use crate::surface_control::{Control, InputRegion};
 use solor::{layout::Size, px};
 use std::io;
 
-pub use crate::surface_control::InputRect;
+pub use crate::surface_control::{InputRect, SurfaceRect};
 pub use wayland_client::{Connection, protocol::wl_surface::WlSurface};
 
 /// Controls one popup from the panel or input-method thread.
@@ -38,6 +38,11 @@ impl PopupHandle {
             state.visible = Some(true);
             true
         })
+    }
+
+    /// Requests compositor blur behind these popup-local rectangles. An empty slice clears it.
+    pub fn set_background_blur_region(&self, rects: &[SurfaceRect]) -> io::Result<()> {
+        self.0.set_blur(rects)
     }
 
     /// Unmaps the popup while retaining its role and mounted UI.

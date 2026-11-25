@@ -7,7 +7,11 @@ use super::{
     pointer,
     role::{Request, Role},
 };
-use crate::{layer_shell::LayerShellOptions, popup::PopupHandle, surface_control::Binding};
+use crate::{
+    layer_shell::LayerShellOptions,
+    popup::PopupHandle,
+    surface_control::{Binding, Control, SurfaceRect, region_rectangles},
+};
 use anyhow::Context as _;
 use rustix::event::PollFlags;
 use solor::{
@@ -261,7 +265,13 @@ impl WaylandApplication {
     }
 }
 
+enum BlurRequests {
+    Local(Cell<Option<Vec<[i32; 4]>>>),
+    Shared(Control),
+}
+
 pub(super) struct WindowLife {
+    blur: BlurRequests,
     pub(super) activation: Option<ActivationTarget>,
     open: Cell<bool>,
     modal_parent: Weak<Self>,
@@ -275,8 +285,13 @@ impl WindowLife {
         activation: Option<ActivationTarget>,
         revisit: Rc<Cell<bool>>,
         modal_parent: Weak<Self>,
+        control: Option<&Binding>,
     ) -> Rc<Self> {
         Rc::new(Self {
+            blur: match control {
+                Some(binding) => BlurRequests::Shared(binding.control()),
+                None => BlurRequests::Local(Cell::default()),
+            },
             activation,
             open: Cell::new(true),
             revisit,
@@ -332,6 +347,17 @@ impl WindowLife {
 impl PlatformWindow for WindowLife {
     fn is_open(&self) -> bool {
         self.open.get()
+    }
+
+    fn set_background_blur_region(&self, rects: &[SurfaceRect]) -> io::Result<()> {
+        match &self.blur {
+            BlurRequests::Shared(control) => control.set_blur(rects),
+            BlurRequests::Local(pending) => {
+                pending.set(Some(region_rectangles(rects)?));
+                self.revisit.set(true);
+                Ok(())
+            }
+        }
     }
 
     fn activate(&self) {
@@ -595,7 +621,12 @@ impl WindowFactory {
             _ => None,
         };
         let globals = self.globals.as_ref().expect("live window factory");
-        let life = WindowLife::new(activation, self.revisit.clone(), modal_parent);
+        let life = WindowLife::new(
+            activation,
+            self.revisit.clone(),
+            modal_parent,
+            control.as_ref(),
+        );
         let target = Rc::downgrade(&life);
         let handle = WindowHandle::new(target);
         let mut input_region = super::input_region::SurfaceInputRegion::default();
@@ -762,30 +793,25 @@ impl EventLoop {
                     }
                     window.update_layer(update.layer, visible);
                 }
+                if let BlurRequests::Local(pending) = &window.life.blur
+                    && let Some(region) = pending.take()
+                {
+                    window.set_blur(region);
+                }
+                let mut commit_state = false;
                 if let Role::Menu(menu) = &window.role {
                     let (region, repositioned) = menu.take_update();
                     window.input_region.update(region);
-                    if window.mapping == Mapping::Mapped
-                        && !window.full_damage
-                        && (window.apply_input_region(&self.windows.compositor, &qh)
-                            || repositioned)
-                    {
-                        window.surface.commit();
+                    if window.mapping == Mapping::Mapped && !window.full_damage {
+                        commit_state = window.apply_input_region(&self.windows.compositor, &qh)
+                            || repositioned;
                     }
                 }
                 if visible
                     && !self.desktop.popup_only
                     && (window.control.is_some() || window.floating.is_some())
                 {
-                    let input_changed = window.apply_input_region(&self.windows.compositor, &qh);
-                    let blur_changed = window.apply_blur(
-                        self.desktop.effects.as_ref(),
-                        &self.windows.compositor,
-                        &qh,
-                    );
-                    if (input_changed || blur_changed) && window.mapping == Mapping::Mapped {
-                        window.surface.commit();
-                    }
+                    commit_state |= window.apply_input_region(&self.windows.compositor, &qh);
                 }
                 if !visible && window.mapping == Mapping::Mapped {
                     if let Some(parent) = &window.popup_parent {
@@ -801,6 +827,17 @@ impl EventLoop {
                 }
                 window.set_visible(visible, &self.connection, &qh);
                 if visible {
+                    commit_state |= window.apply_blur(
+                        self.desktop.effects.as_ref(),
+                        &self.windows.compositor,
+                        &qh,
+                    );
+                    if commit_state
+                        && window.mapping == Mapping::Mapped
+                        && (!window.full_damage || matches!(window.role, Role::Layer(..)))
+                    {
+                        window.surface.commit();
+                    }
                     if let Some(next) = super::keyboard::repeat_keys(
                         &mut self.desktop.seats,
                         id,
