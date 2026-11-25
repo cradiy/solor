@@ -123,6 +123,41 @@ fn interference_matches_native_at_fractional_sample_positions() -> Result<()> {
 }
 
 #[test]
+fn normalized_vectors_and_dot_products_use_every_component() -> Result<()> {
+    let shader = EffectShader::wgsl(
+        "fn effect(uv: vec2<f32>, p: vec4<f32>) -> vec4<f32> {
+            let v = normalize(vec4<f32>(uv - vec2<f32>(0.5), p.zw));
+            let light = 0.5 + 0.5 * dot(v, p);
+            return vec4<f32>(sqrt(uv), light, 1.0);
+        }",
+    )?;
+    let size = DeviceSize {
+        width: 31,
+        height: 17,
+    };
+    let region = normalized(size, full(size));
+    let params = [0.25, -0.5, 0.375, -0.25];
+    let image = render(&shader.with_params(params), size.at_unit_scale(), region)?;
+    assert_eq!(image.dimensions(), size);
+    for (i, pixel) in image.pixels().iter().enumerate() {
+        let u = ((i % size.width as usize) as f32 + 0.5) / size.width as f32;
+        let v = ((i / size.width as usize) as f32 + 0.5) / size.height as f32;
+        let vector = [u - 0.5, v - 0.5, params[2], params[3]];
+        let length = vector.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let projection = vector
+            .into_iter()
+            .zip(params)
+            .map(|(x, y)| (x / length) * y)
+            .sum::<f32>();
+        let expected = [u.sqrt(), v.sqrt(), 0.5 + 0.5 * projection, 1.0].map(unorm);
+        for (&actual, expected) in pixel.iter().zip(expected) {
+            assert!(actual.abs_diff(expected) <= 1, "pixel {i}: {pixel:?}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn nested_helpers_bind_each_calls_own_arguments() -> Result<()> {
     let body = "fn effect(uv: vec2<f32>, p: vec4<f32>) -> vec4<f32>";
     let helper = EffectShader::wgsl(&format!(

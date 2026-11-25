@@ -93,30 +93,6 @@ impl CoordinateAxes {
     }
 }
 
-// WGSL length and distance each reduce all vector components to a single float.
-fn magnitude(ops: &mut Vec<Op>, a: &[Reg], b: Option<&[Reg]>) -> Reg {
-    fn emit(ops: &mut Vec<Op>, op: Op) -> Reg {
-        let reg = ops.len();
-        ops.push(op);
-        reg
-    }
-    let delta = |i: usize, ops: &mut Vec<Op>| match b {
-        Some(other) => emit(ops, Op::Sub(a[i], other[i])),
-        None => a[i],
-    };
-    let first = delta(0, ops);
-    if a.len() == 1 {
-        return emit(ops, Op::Abs(first));
-    }
-    let mut sum = emit(ops, Op::Mul(first, first));
-    for i in 1..a.len() {
-        let d = delta(i, ops);
-        let square = emit(ops, Op::Mul(d, d));
-        sum = emit(ops, Op::Add(sum, square));
-    }
-    emit(ops, Op::Sqrt(sum))
-}
-
 /// A validated, straight-line WGSL fragment effect.
 #[derive(Debug)]
 pub struct Program {
@@ -239,6 +215,29 @@ struct Lowerer<'a> {
 }
 
 impl Lowerer<'_> {
+    fn emit(&mut self, op: Op) -> Reg {
+        let reg = self.ops.len();
+        self.ops.push(op);
+        reg
+    }
+
+    fn dot(&mut self, a: &[Reg], b: &[Reg]) -> Reg {
+        let mut sum = self.emit(Op::Mul(a[0], b[0]));
+        for (&x, &y) in a[1..].iter().zip(&b[1..]) {
+            let product = self.emit(Op::Mul(x, y));
+            sum = self.emit(Op::Add(sum, product));
+        }
+        sum
+    }
+
+    fn magnitude(&mut self, value: &[Reg]) -> Reg {
+        if let &[scalar] = value {
+            return self.emit(Op::Abs(scalar));
+        }
+        let squared = self.dot(value, value);
+        self.emit(Op::Sqrt(squared))
+    }
+
     fn function(
         &mut self,
         id: Handle<naga::Function>,
@@ -318,15 +317,43 @@ impl Lowerer<'_> {
                     Some(self.function(callee, Some(&bindings), depth + 1)?)
                 }
                 Expr::Math {
-                    fun: Math::Length | Math::Distance,
+                    fun: Math::Length,
                     arg,
-                    arg1,
                     ..
-                } => Some(vec![magnitude(
-                    &mut self.ops,
-                    registers(arg),
-                    arg1.map(|handle| registers(handle).as_slice()),
-                )]),
+                } => Some(vec![self.magnitude(registers(arg))]),
+                Expr::Math {
+                    fun: Math::Distance,
+                    arg,
+                    arg1: Some(other),
+                    ..
+                } => {
+                    let a = registers(arg);
+                    let mut delta = [0; 4];
+                    for ((reg, &x), &y) in delta.iter_mut().zip(a).zip(registers(other)) {
+                        *reg = self.emit(Op::Sub(x, y));
+                    }
+                    Some(vec![self.magnitude(&delta[..a.len()])])
+                }
+                Expr::Math {
+                    fun: Math::Dot,
+                    arg,
+                    arg1: Some(other),
+                    ..
+                } => Some(vec![self.dot(registers(arg), registers(other))]),
+                Expr::Math {
+                    fun: Math::Normalize,
+                    arg,
+                    ..
+                } => {
+                    let value = registers(arg);
+                    let length = self.magnitude(value);
+                    Some(
+                        value
+                            .iter()
+                            .map(|&x| self.emit(Op::Div(x, length)))
+                            .collect(),
+                    )
+                }
                 Expr::Compose { ref components, .. } => Some(
                     components
                         .iter()
@@ -390,6 +417,7 @@ impl Lowerer<'_> {
                         let a = lane(arg, i);
                         match fun {
                             Math::Abs => Op::Abs(a),
+                            Math::Sqrt => Op::Sqrt(a),
                             Math::Sin => Op::Sin(a),
                             Math::Cos => Op::Cos(a),
                             _ => return Err(unsupported()),
@@ -425,8 +453,7 @@ impl Lowerer<'_> {
                     }
                     _ => return Err(unsupported()),
                 };
-                output.push(self.ops.len());
-                self.ops.push(op);
+                output.push(self.emit(op));
             }
             values.push(output);
         }
