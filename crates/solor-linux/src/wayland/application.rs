@@ -119,7 +119,7 @@ impl WaylandApplication {
         )
     }
 
-    /// Opens an anchored XDG popup on a mapped layer surface or popup.
+    /// Opens an anchored XDG popup on a mapped toplevel, layer surface or popup.
     pub fn build_popup(
         &self,
         options: crate::popup::PopupOptions,
@@ -497,7 +497,11 @@ impl WindowFactory {
                 );
                 options
                     .parent
-                    .map(|handle| self.toplevels.parent_life(handle))
+                    .map(|handle| {
+                        self.toplevels
+                            .parent_life(handle)
+                            .map(|life| (handle, life))
+                    })
                     .transpose()?
                     .filter(|_| options.modal)
             }
@@ -508,12 +512,18 @@ impl WindowFactory {
             &surface,
             request,
             control,
-            modal_parent.as_ref().map(Rc::downgrade).unwrap_or_default(),
+            modal_parent
+                .as_ref()
+                .map(|(_, life)| Rc::downgrade(life))
+                .unwrap_or_default(),
             build,
         ) {
             Ok((window, handle)) => {
-                if let Some(parent) = modal_parent {
+                if let Some((parent_handle, parent)) = modal_parent {
                     window.life.attach_modal(&parent);
+                    if window.life.is_open() {
+                        self.menus.dismiss_child(parent_handle);
+                    }
                 }
                 self.pending.borrow_mut().push(window);
                 Ok(handle)
@@ -587,7 +597,7 @@ impl WindowFactory {
             _ => None,
         };
         let content = floating.as_ref().map_or(surface, |p| &p.content);
-        let popup_parent = self.menus.register(&role, &handle);
+        let popup_parent = self.menus.register(&role, &handle, &life);
         let mut view = build(handle.clone(), content)?;
         let buffer_size = view
             .buffer_size(120, size)?

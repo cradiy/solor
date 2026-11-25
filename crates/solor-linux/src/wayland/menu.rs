@@ -1,4 +1,4 @@
-use super::{Desktop, Role, Window};
+use super::{Desktop, Role, Window, WindowLife};
 use crate::popup::{ConstraintAdjustment, PopupOptions};
 use crate::surface_control::InputRegion;
 use anyhow::{Context, Result, ensure};
@@ -38,6 +38,7 @@ struct Trigger {
 
 enum ParentRole {
     Panel(ZwlrLayerSurfaceV1, RefCell<Weak<Menu>>),
+    Toplevel(XdgSurface, Weak<WindowLife>, RefCell<Weak<Menu>>),
     Menu(Rc<Menu>),
 }
 
@@ -51,7 +52,7 @@ pub(super) struct Parent {
 impl Parent {
     fn child(&self) -> &RefCell<Weak<Menu>> {
         match &self.role {
-            ParentRole::Panel(_, child) => child,
+            ParentRole::Panel(_, child) | ParentRole::Toplevel(_, _, child) => child,
             ParentRole::Menu(menu) => &menu.child,
         }
     }
@@ -86,10 +87,14 @@ impl Menus {
         self: &Rc<Self>,
         role: &Role,
         handle: &WindowHandle,
+        life: &Rc<WindowLife>,
     ) -> Option<Rc<Parent>> {
         let role = match role {
             Role::Layer(layer, _) => ParentRole::Panel(layer.clone(), Default::default()),
             Role::Menu(menu) => ParentRole::Menu(menu.clone()),
+            Role::Toplevel { surface, .. } => {
+                ParentRole::Toplevel(surface.clone(), Rc::downgrade(life), Default::default())
+            }
             _ => return None,
         };
         let parent = Rc::new(Parent {
@@ -136,6 +141,14 @@ impl Menus {
         self.input.take();
     }
 
+    pub(super) fn dismiss_child(&self, handle: &WindowHandle) {
+        if let Some(parent) = self.parents.borrow().get(handle).and_then(Weak::upgrade)
+            && let Some(child) = parent.child().take().upgrade()
+        {
+            child.dismiss();
+        }
+    }
+
     pub fn dismiss_all(&self) {
         for parent in self.parents.borrow().values().filter_map(Weak::upgrade) {
             parent.unmap();
@@ -162,8 +175,14 @@ impl Menus {
             .get(parent_handle)
             .and_then(Weak::upgrade)
             .filter(|p| p.handle.is_open())
-            .context("popup parent must be an open panel or popup in this application")?;
+            .context("popup parent must be an open window in this application")?;
         let bounds = parent.bounds.get().context("popup parent is not mapped")?;
+        if let ParentRole::Toplevel(_, life, _) = &parent.role {
+            ensure!(
+                life.upgrade().is_some_and(|life| !life.blocked()),
+                "popup parent is blocked by a modal window"
+            );
+        }
         let grab = if options.grab {
             let trigger = input
                 .as_ref()
@@ -185,17 +204,16 @@ impl Menus {
             "unknown popup constraint adjustment"
         );
         let [w, h] = popup_size(options.size)?;
-        let shell = match &parent.role {
-            ParentRole::Panel(..) => Rc::new(MenuShell(globals.bind(
-                qh,
-                1..=xdg_popup::REQ_REPOSITION_SINCE,
-                (),
-            )?)),
-            ParentRole::Menu(menu) => menu.shell.clone(),
-        };
+        let shell =
+            match &parent.role {
+                ParentRole::Panel(..) | ParentRole::Toplevel(..) => Rc::new(MenuShell(
+                    globals.bind(qh, 1..=xdg_popup::REQ_REPOSITION_SINCE, ())?,
+                )),
+                ParentRole::Menu(menu) => menu.shell.clone(),
+            };
         let positioner = positioner(&shell, qh, &options, bounds, [w, h])?;
         let xdg = shell.0.get_xdg_surface(surface, qh, surface.id());
-        let grabbing_root = grab.is_some() && matches!(parent.role, ParentRole::Panel(..));
+        let grabbing_root = grab.is_some() && !matches!(parent.role, ParentRole::Menu(_));
         if grabbing_root && let Some(previous) = self.grabbing_root.take().upgrade() {
             previous.dismiss();
         }
@@ -208,6 +226,9 @@ impl Menus {
                 let popup = xdg.get_popup(None, &positioner, qh, surface.id());
                 layer.get_popup(&popup);
                 popup
+            }
+            ParentRole::Toplevel(parent, ..) => {
+                xdg.get_popup(Some(parent), &positioner, qh, surface.id())
             }
             ParentRole::Menu(parent) => {
                 xdg.get_popup(Some(&parent.xdg), &positioner, qh, surface.id())
@@ -285,7 +306,7 @@ fn anchor_axis(origin: Pixels, extent: Pixels, limit: i32) -> Result<(i32, i32)>
     );
     let end = (start + extent).ceil().min(f64::from(limit));
     let start = start.floor().max(0.);
-    ensure!(end > start, "popup anchor is outside the panel");
+    ensure!(end > start, "popup anchor is outside the parent window");
     Ok((start as i32, (end - start) as i32))
 }
 

@@ -58,7 +58,7 @@ pub use wayland_protocols::xdg::shell::client::xdg_positioner::{
 /// Placement of an XDG popup relative to its parent's content.
 #[derive(Clone, Debug)]
 pub struct PopupOptions {
-    /// Mapped layer surface or popup to anchor to. Defaults to the pointer button event's window.
+    /// Mapped toplevel, layer surface or popup to anchor to. Defaults to the pointer button event's window.
     pub parent: Option<solor::platform::WindowHandle>,
     /// Requests an explicit grab using the current parent pointer button event.
     pub grab: bool,
@@ -94,6 +94,22 @@ impl PopupOptions {
                 | ConstraintAdjustment::SlideY,
             background: solor::platform::WindowBackground::Opaque,
         }
+    }
+
+    /// Opens a context menu at the pointer, allowing it to flip at screen edges.
+    pub fn at_pointer(
+        event: &solor::pointer::PointerEvent,
+        width: solor::Pixels,
+        height: solor::Pixels,
+    ) -> Self {
+        let point = Size {
+            width: px(1.),
+            height: px(1.),
+        };
+        let mut options = Self::new((event.sample.position, point), Size { width, height });
+        options.anchor = Anchor::TopLeft;
+        options.constraints |= ConstraintAdjustment::FlipX;
+        options
     }
 
     /// Anchors a popup to the element receiving a pointer event.
