@@ -55,10 +55,10 @@ pub use wayland_protocols::xdg::shell::client::xdg_positioner::{
     Anchor, ConstraintAdjustment, Gravity,
 };
 
-/// Placement of an XDG popup relative to the triggering panel's content.
+/// Placement of an XDG popup relative to its parent's content.
 #[derive(Clone, Copy, Debug)]
 pub struct PopupOptions {
-    /// Origin and extent of the anchor rectangle in panel-local logical pixels.
+    /// Origin and extent of the anchor rectangle in parent-local logical pixels.
     pub anchor_rect: (solor::layout::Origin, Size),
     /// Preferred logical popup size.
     pub size: Size,
@@ -100,5 +100,21 @@ impl PopupOptions {
             y: point.y - local.y,
         };
         Self::new((origin, event.bounds()), Size { width, height })
+    }
+
+    /// Places a submenu to the right of its triggering item, with aligned top edges.
+    pub fn beside(
+        event: &solor::pointer::PointerEvent,
+        width: solor::Pixels,
+        height: solor::Pixels,
+    ) -> Self {
+        Self {
+            anchor: Anchor::TopRight,
+            gravity: Gravity::BottomRight,
+            constraints: ConstraintAdjustment::FlipX
+                | ConstraintAdjustment::SlideX
+                | ConstraintAdjustment::SlideY,
+            ..Self::below(event, width, height)
+        }
     }
 }

@@ -110,7 +110,7 @@ impl WaylandApplication {
         )
     }
 
-    /// Opens an anchored XDG popup during a layer surface's pointer button handler.
+    /// Opens an anchored XDG popup from a layer surface or popup's pointer button handler.
     pub fn build_popup(
         &self,
         options: crate::popup::PopupOptions,

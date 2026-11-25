@@ -60,7 +60,8 @@ impl Application {
         )
     }
 
-    /// Opens a grabbing XDG popup during a panel's pointer press or click handler.
+    /// Opens a grabbing XDG popup from a panel or menu's pointer press or click handler.
+    /// Opening another popup from the same parent replaces its open child branch.
     /// The compositor dismisses the popup on an outside click.
     #[cfg(target_os = "linux")]
     pub fn open_popup<R: Render>(
