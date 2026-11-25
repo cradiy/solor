@@ -88,14 +88,27 @@ impl WaylandApplication {
         options: WindowOptions<'_>,
         build: impl FnOnce(WindowHandle) -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
     ) -> anyhow::Result<WindowHandle> {
-        let windows = self
-            .0
-            .upgrade()
-            .ok_or_else(|| anyhow::anyhow!("application has exited"))?;
-        windows
-            .open(Request::Toplevel(options), build)
-            .map(|(_, handle)| handle)
+        self.factory()?
+            .open(Request::Toplevel(options), None, build)
     }
+
+    fn factory(&self) -> anyhow::Result<Rc<WindowFactory>> {
+        self.0.upgrade().context("application has exited")
+    }
+
+    /// Opens a layer surface on this event loop.
+    pub fn open_layer_surface(
+        &self,
+        options: LayerShellOptions<'_>,
+        view: Box<dyn WindowHandler<Rgba8>>,
+    ) -> anyhow::Result<WindowHandle> {
+        self.factory()?.open(
+            Request::Layer(options),
+            options.handle.map(|h| h.claim()).transpose()?,
+            |_| Ok(view),
+        )
+    }
+
     /// Mounts a Solor view on a native GPU surface for an XDG toplevel.
     #[cfg(feature = "gpu")]
     pub fn build_gpu_window<R: solor::Render>(
@@ -104,29 +117,59 @@ impl WaylandApplication {
         ui: solor::Ui,
         root: impl FnOnce(WindowHandle) -> R,
     ) -> anyhow::Result<WindowHandle> {
-        let windows = self
-            .0
-            .upgrade()
-            .ok_or_else(|| anyhow::anyhow!("application has exited"))?;
-        windows
-            .open_with_surface(Request::Toplevel(options), |handle, surface| {
-                let presenter = super::gpu::Presenter::new(
-                    &mut windows.gpu.get_or_init(Default::default).borrow_mut(),
-                    surface,
-                    options.background,
-                    windows.trace_submissions,
-                )?;
-                let max_dimension = presenter.max_dimension();
-                Ok(WindowView::Gpu(
-                    Box::new(solor::platform::UiWindow::with_renderer(
-                        ui,
-                        root(handle),
-                        presenter,
-                    )?),
-                    max_dimension,
-                ))
-            })
-            .map(|(_, h)| h)
+        self.build_gpu(
+            Request::Toplevel(options),
+            None,
+            options.background,
+            ui,
+            root,
+        )
+    }
+
+    /// Mounts a GPU view on a layer surface using the application's shared device.
+    #[cfg(feature = "gpu")]
+    pub fn open_gpu_layer_surface(
+        &self,
+        options: LayerShellOptions<'_>,
+        ui: solor::Ui,
+        root: impl solor::Render,
+    ) -> anyhow::Result<WindowHandle> {
+        self.build_gpu(
+            Request::Layer(options),
+            options.handle.map(|h| h.claim()).transpose()?,
+            options.background,
+            ui,
+            |_| root,
+        )
+    }
+
+    #[cfg(feature = "gpu")]
+    fn build_gpu<R: solor::Render>(
+        &self,
+        request: Request<'_>,
+        control: Option<Binding>,
+        background: WindowBackground,
+        ui: solor::Ui,
+        root: impl FnOnce(WindowHandle) -> R,
+    ) -> anyhow::Result<WindowHandle> {
+        let windows = self.factory()?;
+        windows.open_with_surface(request, control, |handle, surface| {
+            let presenter = super::gpu::Presenter::new(
+                &mut windows.gpu.get_or_init(Default::default).borrow_mut(),
+                surface,
+                background,
+                windows.trace_submissions,
+            )?;
+            let max_dimension = presenter.max_dimension();
+            Ok(WindowView::Gpu(
+                Box::new(solor::platform::UiWindow::with_renderer(
+                    ui,
+                    root(handle),
+                    presenter,
+                )?),
+                max_dimension,
+            ))
+        })
     }
 }
 
@@ -271,7 +314,7 @@ impl Wayland {
     ) -> anyhow::Result<()> {
         let mut events = EventLoop::new(self, Connection::connect_to_env()?, false)?;
         setup(WaylandApplication(Rc::downgrade(&events.windows)))?;
-        events.dispatch(None)
+        events.dispatch()
     }
 
     /// Runs a desktop layer surface until the compositor or the application closes it.
@@ -280,10 +323,7 @@ impl Wayland {
         options: LayerShellOptions<'_>,
         view: Box<dyn WindowHandler<Rgba8>>,
     ) -> anyhow::Result<()> {
-        let control = options.handle.map(|h| h.claim()).transpose()?;
-        let mut events = EventLoop::new(self, Connection::connect_to_env()?, false)?;
-        let (id, _) = events.windows.open(Request::Layer(options), |_| Ok(view))?;
-        events.dispatch(control.map(|control| (id, control)))
+        self.run(|app| app.open_layer_surface(options, view).map(drop))
     }
 
     /// Runs a transparent, client-sized popup on the supplied connection. The
@@ -300,8 +340,8 @@ impl Wayland {
         let control = handle.0.claim()?;
         let mut events = EventLoop::new(self, connection, true)?;
         let request = Request::Popup(Box::new(move |surface| Ok(Box::new(assign(surface)?))));
-        let (id, _) = events.windows.open(request, |_| Ok(view))?;
-        events.dispatch(Some((id, control)))
+        events.windows.open(request, Some(control), |_| Ok(view))?;
+        events.dispatch()
     }
 }
 
@@ -366,16 +406,18 @@ impl WindowFactory {
     fn open(
         &self,
         request: Request<'_>,
+        control: Option<Binding>,
         build: impl FnOnce(WindowHandle) -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
-    ) -> anyhow::Result<(ObjectId, WindowHandle)> {
-        self.open_with_surface(request, |h, _| build(h).map(WindowView::Shm))
+    ) -> anyhow::Result<WindowHandle> {
+        self.open_with_surface(request, control, |h, _| build(h).map(WindowView::Shm))
     }
 
     fn open_with_surface(
         &self,
         request: Request<'_>,
+        control: Option<Binding>,
         build: impl FnOnce(WindowHandle, &wl_surface::WlSurface) -> anyhow::Result<WindowView>,
-    ) -> anyhow::Result<(ObjectId, WindowHandle)> {
+    ) -> anyhow::Result<WindowHandle> {
         let modal_parent = match &request {
             Request::Toplevel(options) => {
                 anyhow::ensure!(
@@ -391,10 +433,10 @@ impl WindowFactory {
             Request::Layer(_) | Request::Popup(_) => None,
         };
         let surface = self.compositor.create_surface(&self.qh, ());
-        let id = surface.id();
         match self.create_window(
             &surface,
             request,
+            control,
             modal_parent.as_ref().map(Rc::downgrade).unwrap_or_default(),
             build,
         ) {
@@ -403,7 +445,7 @@ impl WindowFactory {
                     window.life.attach_modal(&parent);
                 }
                 self.pending.borrow_mut().push(window);
-                Ok((id, handle))
+                Ok(handle)
             }
             Err(error) => {
                 surface.destroy();
@@ -416,6 +458,7 @@ impl WindowFactory {
         &self,
         surface: &wl_surface::WlSurface,
         request: Request<'_>,
+        control: Option<Binding>,
         modal_parent: Weak<WindowLife>,
         build: impl FnOnce(WindowHandle, &wl_surface::WlSurface) -> anyhow::Result<WindowView>,
     ) -> anyhow::Result<(Window, WindowHandle)> {
@@ -448,20 +491,6 @@ impl WindowFactory {
             }
             Role::Layer(..) | Role::Popup { .. } => None,
         };
-        let mut view = build(handle.clone(), surface)?;
-        let buffer_size = view
-            .buffer_size(120, size)?
-            .context("initial size exceeds render target limits")?;
-        if let Some(hub) = &self.clipboard {
-            view.set_clipboard(hub.window(surface.id()));
-        }
-        view.set_window_resizable(matches!(
-            &role,
-            Role::Toplevel {
-                resizable: true,
-                ..
-            }
-        ))?;
         let floating = match &role {
             Role::Layer(_, p) if p.movable => Some(floating::FloatingPanel::new(
                 globals,
@@ -475,9 +504,24 @@ impl WindowFactory {
             _ => None,
         };
         let content = floating.as_ref().map_or(surface, |p| &p.content);
+        let mut view = build(handle.clone(), content)?;
+        let buffer_size = view
+            .buffer_size(120, size)?
+            .context("initial size exceeds render target limits")?;
+        if let Some(hub) = &self.clipboard {
+            view.set_clipboard(hub.window(surface.id()));
+        }
+        view.set_window_resizable(matches!(
+            &role,
+            Role::Toplevel {
+                resizable: true,
+                ..
+            }
+        ))?;
         let viewport = self.viewporter.get_viewport(content, qh, ());
 
         let window = Window {
+            control,
             preedit_owner: None,
             role,
             floating,
@@ -520,7 +564,7 @@ impl WindowFactory {
 }
 
 impl EventLoop {
-    fn dispatch(&mut self, control: Option<(ObjectId, Binding<'_>)>) -> anyhow::Result<()> {
+    fn dispatch(&mut self) -> anyhow::Result<()> {
         let qh = self.queue.handle();
         let wake = super::wake::EventWake::new()?;
         let waker = std::task::Waker::from(wake.clone());
@@ -544,14 +588,10 @@ impl EventLoop {
                 if let Some(error) = window.failure.take() {
                     return Err(error);
                 }
-                let handle = control
-                    .as_ref()
-                    .filter(|(target, _)| target == id)
-                    .map(|(_, h)| h);
                 if window.life.is_open() {
                     window.view.poll_tasks(&waker)?;
                 }
-                let update = handle.map(Binding::take);
+                let update = window.control.as_ref().map(Binding::take);
                 let Some(visible) = update
                     .as_ref()
                     .map_or(Some(true), |u| u.visible)
@@ -569,7 +609,7 @@ impl EventLoop {
                 }
                 if visible
                     && !self.desktop.popup_only
-                    && (handle.is_some() || window.floating.is_some())
+                    && (window.control.is_some() || window.floating.is_some())
                     && window.apply_input_region(&self.windows.compositor, &qh)
                     && window.mapping == Mapping::Mapped
                 {
@@ -624,7 +664,6 @@ impl EventLoop {
                 write_interest,
                 deadline,
                 &wake,
-                control.as_ref().map(|(_, h)| h),
             )?;
         }
     }
@@ -736,10 +775,9 @@ fn dispatch_until(
     write_interest: PollFlags,
     deadline: Option<Instant>,
     wake: &super::wake::EventWake,
-    control: Option<&Binding<'_>>,
 ) -> anyhow::Result<()> {
     if desktop.popup_only {
-        wait_for_events(queue, write_interest, deadline, wake, control, None)?;
+        wait_for_events(queue, write_interest, deadline, wake, desktop)?;
         return Ok(());
     }
     if queue.dispatch_pending(desktop)? != 0 {
@@ -751,8 +789,7 @@ fn dispatch_until(
             PollFlags::IN | write_interest,
             deadline,
             wake,
-            control,
-            desktop.clipboard.as_deref(),
+            desktop,
         )?
     {
         match guard.read() {
@@ -770,11 +807,10 @@ fn wait_for_events(
     interest: PollFlags,
     deadline: Option<Instant>,
     wake: &super::wake::EventWake,
-    control: Option<&Binding<'_>>,
-    clipboard: Option<&super::clipboard::Clipboard>,
+    desktop: &Desktop,
 ) -> anyhow::Result<bool> {
     use rustix::event::{PollFd, Timespec, poll};
-    let mut transfers = clipboard.map(|c| c.transfers.borrow_mut());
+    let mut transfers = desktop.clipboard.as_ref().map(|c| c.transfers.borrow_mut());
     if let Some(transfers) = &mut transfers {
         transfers.discard_cancelled();
     }
@@ -782,9 +818,13 @@ fn wait_for_events(
         PollFd::new(queue, interest),
         PollFd::new(&wake.0, PollFlags::IN)
     ];
-    if let Some(control) = control {
-        fds.push(PollFd::new(control.fd(), PollFlags::IN));
-    }
+    let controls = || {
+        desktop
+            .windows
+            .values()
+            .filter_map(|window| window.control.as_ref())
+    };
+    fds.extend(controls().map(|c| PollFd::new(c.fd(), PollFlags::IN)));
     let clipboard_start = fds.len();
     if let Some(transfers) = &transfers {
         fds.extend(transfers.poll_fds());
@@ -800,10 +840,10 @@ fn wait_for_events(
     if !fds[1].revents().is_empty() {
         wake.drain()?;
     }
-    if let Some(control) = control
-        && !fds[2].revents().is_empty()
-    {
-        control.drain()?;
+    for (control, fd) in controls().zip(&fds[2..clipboard_start]) {
+        if !fd.revents().is_empty() {
+            control.drain()?;
+        }
     }
 
     let ready = fds[0].revents();

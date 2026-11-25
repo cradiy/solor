@@ -85,20 +85,20 @@ impl Control {
         }
     }
 
-    pub(crate) fn claim(&self) -> io::Result<Binding<'_>> {
+    pub(crate) fn claim(&self) -> io::Result<Binding> {
         if self.0.claimed.swap(true, Ordering::AcqRel) {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "surface handle already used",
             ));
         }
-        Ok(Binding(&self.0))
+        Ok(Binding(self.0.clone()))
     }
 }
 
-pub(crate) struct Binding<'a>(&'a Shared);
+pub(crate) struct Binding(Arc<Shared>);
 
-impl Binding<'_> {
+impl Binding {
     pub(crate) fn take(&self) -> Update {
         let mut state = self.0.update.lock().expect("surface control lock");
         Update {
@@ -119,7 +119,7 @@ impl Binding<'_> {
     }
 }
 
-impl Drop for Binding<'_> {
+impl Drop for Binding {
     fn drop(&mut self) {
         self.0.update.lock().expect("surface control lock").visible = None;
     }

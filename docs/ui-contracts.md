@@ -183,8 +183,10 @@ window configuration. The gallery uses the top edge and both top corners.
 On Linux, `run_window` opens an XDG toplevel. Use
 `current_platform()?.run_layer_surface(options, ui, root)` for a panel,
 wallpaper or overlay. Both entry points mount the same types of components and
-run until the surface closes. The driver borrows the CPU renderer's output for
-one submission.
+run until the surface closes. Inside `SystemPlatform::run`, use
+`app.open_layer_surface(options, ui, root)?` to open panels alongside ordinary
+windows. Each panel has its own visibility and close handle. GPU surfaces in
+the same application share a device and queue.
 
 Run `cargo run -p solor-platform --example layer_panel` to open a 300 × 36
 logical-pixel panel centered on the top edge. Set the panel's dimensions in

@@ -60,6 +60,7 @@ pub struct Wayland {
 }
 
 struct Window {
+    control: Option<crate::surface_control::Binding>,
     preedit_owner: Option<(u32, u64)>,
     registration: Option<parent::Registration>,
     role: Role,
@@ -393,6 +394,12 @@ impl Window {
                 p.feedback(&self.surface, qh, (self.surface.id(), self.commits + 1));
             }
             queue.present(texture);
+            if let Some(panel) = &self.floating {
+                if self.mapping == Mapping::Ready {
+                    panel.map(&self.surface);
+                }
+                self.surface.commit();
+            }
             self.mark_mapped();
             self.view.frame_submitted()?;
             self.commits += 1;

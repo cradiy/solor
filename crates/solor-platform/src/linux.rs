@@ -23,7 +23,7 @@ pub(super) fn open_window<R: Render>(
     root: impl FnOnce(WindowHandle) -> R,
 ) -> Result<WindowHandle> {
     #[cfg(feature = "gpu")]
-    if std::env::var_os("SOLOR_RENDERER").as_deref() == Some(std::ffi::OsStr::new("gpu")) {
+    if gpu_selected() {
         let mut ui = ui;
         ui.set_system_font_provider(solor_linux::system_ui_font);
         return app.build_gpu_window(options, ui, root);
@@ -33,19 +33,30 @@ pub(super) fn open_window<R: Render>(
     })
 }
 
+pub(super) fn open_layer_surface(
+    app: &Windows,
+    options: LayerShellOptions<'_>,
+    ui: Ui,
+    root: impl Render,
+) -> Result<()> {
+    #[cfg(feature = "gpu")]
+    if gpu_selected() {
+        let mut ui = ui;
+        ui.set_system_font_provider(solor_linux::system_ui_font);
+        return app.open_gpu_layer_surface(options, ui, root).map(drop);
+    }
+    app.open_layer_surface(options, Box::new(mount(ui, root, options.background)?))
+        .map(drop)
+}
+
+#[cfg(feature = "gpu")]
+fn gpu_selected() -> bool {
+    std::env::var_os("SOLOR_RENDERER").as_deref() == Some(std::ffi::OsStr::new("gpu"))
+}
+
 impl Host {
     pub(super) fn run(&self, setup: impl FnOnce(Windows) -> Result<()>) -> Result<()> {
         self.0.run(setup)
-    }
-
-    pub(super) fn run_layer_surface(
-        &self,
-        options: LayerShellOptions<'_>,
-        ui: Ui,
-        root: impl Render,
-    ) -> Result<()> {
-        self.0
-            .run_layer_surface(options, Box::new(mount(ui, root, options.background)?))
     }
 }
 

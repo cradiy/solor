@@ -59,6 +59,32 @@ impl Application {
             root,
         )
     }
+
+    /// Opens a Wayland layer surface alongside the application's other windows.
+    /// The returned handle controls this surface from any thread.
+    #[cfg(target_os = "linux")]
+    pub fn open_layer_surface(
+        &self,
+        options: layer_shell::LayerShellOptions<'_>,
+        ui: Ui,
+        root: impl Render,
+    ) -> Result<layer_shell::LayerSurfaceHandle> {
+        let handle = match options.handle {
+            Some(handle) => handle.clone(),
+            None => layer_shell::LayerSurfaceHandle::new(true)?,
+        };
+        let options = layer_shell::LayerShellOptions {
+            handle: Some(&handle),
+            ..options
+        };
+        system::open_layer_surface(
+            &self.windows,
+            options,
+            configured_ui(ui, &self.assets),
+            root,
+        )?;
+        Ok(handle)
+    }
 }
 
 fn configured_ui(ui: Ui, assets: &Option<Assets>) -> Ui {
@@ -122,7 +148,6 @@ impl SystemPlatform {
         ui: Ui,
         root: impl Render,
     ) -> Result<()> {
-        self.host
-            .run_layer_surface(options, configured_ui(ui, &self.assets), root)
+        self.run(|app| app.open_layer_surface(options, ui, root).map(drop))
     }
 }

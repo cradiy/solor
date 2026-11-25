@@ -58,9 +58,10 @@ impl Host {
         view: impl WindowHandler<Rgba8> + 'static,
     ) -> anyhow::Result<ObjectId> {
         let factory = &self.events.windows;
-        let (id, _) = factory.open(Request::Popup(Box::new(|_| Ok(Box::new(())))), |_| {
+        factory.open(Request::Popup(Box::new(|_| Ok(Box::new(())))), None, |_| {
             Ok(Box::new(view))
         })?;
+        let id = factory.pending.borrow().last().unwrap().surface.id();
         for window in factory.pending.take() {
             self.events
                 .desktop

@@ -32,7 +32,6 @@ fn a_blocked_wayland_writer_services_wakes_and_resumes_on_writable() -> anyhow::
                 write_interest,
                 Some(Instant::now()),
                 &wake,
-                None,
             )
         };
         wake.wake_by_ref();

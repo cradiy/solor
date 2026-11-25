@@ -33,7 +33,7 @@ impl LayerSurfaceHandle {
         self.0.close()
     }
 
-    pub(crate) fn claim(&self) -> io::Result<Binding<'_>> {
+    pub(crate) fn claim(&self) -> io::Result<Binding> {
         self.0.claim()
     }
 }
