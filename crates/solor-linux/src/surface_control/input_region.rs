@@ -5,16 +5,16 @@ use solor::{
     layout::{Origin, Size},
 };
 
-/// A rectangle in surface-local logical pixels that accepts pointer and touch input.
+/// A rectangle in surface-local logical pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct InputRect {
+pub struct SurfaceRect {
     /// Top-left corner relative to the surface.
     pub origin: Origin,
     /// Nonnegative width and height.
     pub size: Size,
 }
 
-impl InputRect {
+impl SurfaceRect {
     /// Creates a rectangle with the given offset and extent in logical pixels.
     pub const fn new(x: Pixels, y: Pixels, width: Pixels, height: Pixels) -> Self {
         Self {
@@ -32,20 +32,24 @@ pub(crate) enum InputRegion {
 }
 
 impl InputRegion {
-    pub(crate) fn from_rects(rects: Option<&[InputRect]>) -> io::Result<Self> {
+    pub(crate) fn from_rects(rects: Option<&[SurfaceRect]>) -> io::Result<Self> {
         let Some(rects) = rects else {
             return Ok(Self::Full);
         };
-        let mut bounds = Vec::with_capacity(rects.len());
-        for rect in rects {
-            let (x, width) = axis(rect.origin.x, rect.size.width)?;
-            let (y, height) = axis(rect.origin.y, rect.size.height)?;
-            if width > 0 && height > 0 {
-                bounds.push([x, y, width, height]);
-            }
-        }
-        Ok(Self::Rects(bounds))
+        Ok(Self::Rects(region_rectangles(rects)?))
     }
+}
+
+pub(crate) fn region_rectangles(rects: &[SurfaceRect]) -> io::Result<Vec<[i32; 4]>> {
+    let mut bounds = Vec::with_capacity(rects.len());
+    for rect in rects {
+        let (x, width) = axis(rect.origin.x, rect.size.width)?;
+        let (y, height) = axis(rect.origin.y, rect.size.height)?;
+        if width > 0 && height > 0 {
+            bounds.push([x, y, width, height]);
+        }
+    }
+    Ok(bounds)
 }
 
 fn axis(origin: Pixels, extent: Pixels) -> io::Result<(i32, i32)> {
@@ -64,7 +68,7 @@ fn axis(origin: Pixels, extent: Pixels) -> io::Result<(i32, i32)> {
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "invalid surface input rectangle",
+            "invalid surface rectangle",
         ));
     }
     Ok((start as i32, length as i32))

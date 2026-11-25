@@ -3,7 +3,7 @@ use solor::{Edges, Pixels, platform::WindowBackground};
 
 mod handle;
 mod placement;
-pub use crate::surface_control::InputRect;
+pub use crate::surface_control::{InputRect, SurfaceRect};
 pub use handle::LayerSurfaceHandle;
 pub(crate) use placement::{LayerChanges, LayerRules, extent, units};
 

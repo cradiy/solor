@@ -244,7 +244,15 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Desktop {
                 interface,
                 version,
             } if interface == "wl_seat" => state.add_seat(registry, name, version, qh),
+            wl_registry::Event::Global {
+                name, interface, ..
+            } => {
+                state.bind_background_effects(registry, name, &interface, qh);
+            }
             wl_registry::Event::GlobalRemove { name } => {
+                if state.effects.as_ref().is_some_and(|m| m.name == name) {
+                    state.effects.take();
+                }
                 if let Some(index) = state.seats.iter().position(|s| s.name == name) {
                     let seat = state.seats.swap_remove(index);
                     if let Some(c) = &state.clipboard {

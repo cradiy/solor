@@ -1,5 +1,7 @@
 use super::{ExclusiveZone, KeyboardInteractivity, extent};
-use crate::surface_control::{Binding, Control, InputRect, InputRegion};
+use crate::surface_control::{
+    Binding, Control, InputRect, InputRegion, SurfaceRect, region_rectangles,
+};
 use solor::Pixels;
 use std::io;
 
@@ -44,6 +46,16 @@ impl LayerSurfaceHandle {
         let region = InputRegion::from_rects(rects)?;
         self.0.update(|state| {
             state.region = Some(region);
+            true
+        })
+    }
+
+    /// Requests compositor blur behind these panel-local rectangles. An empty slice clears it.
+    /// The compositor determines the appearance and may leave the backdrop unchanged.
+    pub fn set_background_blur_region(&self, rects: &[SurfaceRect]) -> io::Result<()> {
+        let rects = region_rectangles(rects)?;
+        self.0.update(|state| {
+            state.blur = Some(rects);
             true
         })
     }

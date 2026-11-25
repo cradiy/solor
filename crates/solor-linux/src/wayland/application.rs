@@ -36,6 +36,7 @@ use wayland_protocols::wp::{
 #[derive(Default)]
 pub(super) struct Desktop {
     pub(super) menus: Rc<super::menu::Menus>,
+    pub(super) effects: Option<super::background_effect::Manager>,
     pub(super) clipboard: Option<Rc<super::clipboard::Clipboard>>,
     pub(super) text_inputs: Option<super::text_input::Manager>,
     pub(super) activation: Option<Rc<Activation>>,
@@ -441,6 +442,12 @@ impl EventLoop {
             ..Desktop::default()
         };
         for global in globals.contents().clone_list() {
+            desktop.bind_background_effects(
+                globals.registry(),
+                global.name,
+                &global.interface,
+                &qh,
+            );
             if global.interface == "wl_seat" {
                 desktop.add_seat(globals.registry(), global.name, global.version, &qh);
             }
@@ -644,6 +651,7 @@ impl WindowFactory {
             pending_size: None,
             mapping: Mapping::Hidden,
             input_region,
+            blur: None,
             dirty: true,
             #[cfg(feature = "gpu")]
             acquire_retry: None,
@@ -704,6 +712,9 @@ impl EventLoop {
                         window.resize(size);
                     }
                     window.input_region.update(update.region);
+                    if let Some(region) = update.blur {
+                        window.set_blur(region);
+                    }
                     window.update_layer(update.layer, visible);
                 }
                 if let Role::Menu(menu) = &window.role {
@@ -720,10 +731,16 @@ impl EventLoop {
                 if visible
                     && !self.desktop.popup_only
                     && (window.control.is_some() || window.floating.is_some())
-                    && window.apply_input_region(&self.windows.compositor, &qh)
-                    && window.mapping == Mapping::Mapped
                 {
-                    window.surface.commit();
+                    let input_changed = window.apply_input_region(&self.windows.compositor, &qh);
+                    let blur_changed = window.apply_blur(
+                        self.desktop.effects.as_ref(),
+                        &self.windows.compositor,
+                        &qh,
+                    );
+                    if (input_changed || blur_changed) && window.mapping == Mapping::Mapped {
+                        window.surface.commit();
+                    }
                 }
                 if !visible && window.mapping == Mapping::Mapped {
                     if let Some(parent) = &window.popup_parent {
@@ -861,6 +878,7 @@ impl Window {
     }
 
     fn destroy(self) {
+        drop(self.blur);
         drop(self.view);
         drop(self.popup_parent);
         drop(self.role);

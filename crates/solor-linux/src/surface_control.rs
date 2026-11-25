@@ -1,8 +1,9 @@
 //! Latest surface state requested by another thread.
 mod input_region;
 use crate::layer_shell::{LayerChanges, LayerRules};
-pub use input_region::InputRect;
 pub(crate) use input_region::InputRegion;
+pub(crate) use input_region::region_rectangles;
+pub use input_region::{SurfaceRect, SurfaceRect as InputRect};
 use rustix::{
     event::{EventfdFlags, eventfd},
     io::{Errno, retry_on_intr},
@@ -23,6 +24,7 @@ pub(crate) struct Update {
     pub(crate) size: Option<Size>,
     pub(crate) layer: LayerChanges,
     pub(crate) region: Option<InputRegion>,
+    pub(crate) blur: Option<Vec<[i32; 4]>>,
 }
 
 #[derive(Clone, Debug)]
@@ -53,6 +55,7 @@ impl Control {
                     visible: Some(visible),
                     size: None,
                     region: None,
+                    blur: None,
                 },
             }),
         })))
@@ -144,6 +147,7 @@ impl Binding {
             visible: state.visible,
             size: state.size.take(),
             region: state.region.take(),
+            blur: state.blur.take(),
         }
     }
 

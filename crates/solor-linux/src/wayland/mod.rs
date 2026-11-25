@@ -1,6 +1,7 @@
 use solor::px;
 mod activation;
 mod application;
+mod background_effect;
 mod buffer;
 mod clipboard;
 mod decorations;
@@ -90,6 +91,7 @@ struct Window {
     pending_size: Option<Size>,
     mapping: Mapping,
     input_region: input_region::SurfaceInputRegion,
+    blur: Option<Box<background_effect::SurfaceBlur>>,
     dirty: bool,
     #[cfg(feature = "gpu")]
     acquire_retry: Option<Instant>,
