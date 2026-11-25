@@ -509,37 +509,100 @@ fn compare_borders(
     queue: &wgpu::Queue,
     renderer: &mut Renderer,
 ) -> Result<()> {
+    use solor::style::BorderStyle;
+    let gradient = linear_gradient(
+        47.,
+        [
+            color_stop(rgba(0x9f426585), 0.),
+            color_stop(rgb(0xf5b267), 0.3),
+            color_stop(rgba(0x295f996c), 1.),
+        ],
+    )?
+    .color_space(solor::ColorSpace::Oklab);
+    let radial = gradient
+        .clone()
+        .gradient_kind(solor::GradientKind::Radial)
+        .phase(0.27)?;
     let mut ui = Ui::new();
-    let view = ui.mount(component(|_| {
-        div().size(px(36.)).p(px(1.5)).child(
-            div()
-                .w_full()
-                .h_full()
-                .rounded(px(8.))
-                .border(px(1.))
-                .border_l(px(4.5))
-                .border_b(px(2.25))
-                .border_color(rgba(0x30629185))
-                .border_left_color(rgba(0xaf3546bc))
-                .border_right_style(solor::style::BorderStyle::None),
-        )
+    let style = ui.context().signal(BorderStyle::Solid);
+    let view = ui.mount(component(move |_| {
+        div()
+            .w_full()
+            .h_full()
+            .child(
+                div().size(px(36.)).p(px(1.5)).child(
+                    div()
+                        .w_full()
+                        .h_full()
+                        .rounded(px(8.))
+                        .border(px(1.))
+                        .border_l(px(4.5))
+                        .border_b(px(2.25))
+                        .border_color(rgba(0x30629185))
+                        .border_left_color(rgba(0xaf3546bc))
+                        .border_top_style(style)
+                        .border_left_style(BorderStyle::Dotted)
+                        .border_right_style(solor::style::BorderStyle::None),
+                ),
+            )
+            .children([(2., 30., 0.125), (35., 34., 4.), (73., 3., 4.)].map(
+                |(left, length, width)| {
+                    div()
+                        .absolute()
+                        .left(px(left))
+                        .top(px(38.))
+                        .w(px(length))
+                        .h(px(6.))
+                        .border_t(px(width))
+                        .border_top_color(rgb(0x291c37))
+                        .border_top_style(style)
+                },
+            ))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(38.))
+                    .top(px(2.))
+                    .w(px(41.))
+                    .h(px(32.))
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(-3.5))
+                            .top(px(0.75))
+                            .w(px(46.25))
+                            .h(px(34.))
+                            .rounded(px(8.5))
+                            .border(px(3.25))
+                            .border_l(px(5.75))
+                            .border_style(style)
+                            .border_fill(gradient)
+                            .border_right_fill(radial)
+                            .border_bottom_color(rgba(0x4272a5b2)),
+                    ),
+            )
     }))?;
     let size = Size {
-        width: px(36.),
-        height: px(36.),
+        width: px(82.),
+        height: px(47.),
     };
     ui.layout(view, size)?;
-    let frame = ui.record_frame(view)?;
-    for scale in [1., 1.25, 2.].map(RasterScale) {
-        let physical = scale.buffer_size(size)?;
-        let cpu = Surface::draw_view(&frame, physical, scale)?;
-        let gpu = pixels(device, queue, renderer, &frame, physical, scale)?;
-        for (i, (a, b)) in gpu.iter().zip(&cpu.rgba).enumerate() {
-            assert!(
-                a.abs_diff(*b) <= 3,
-                "border byte {i} at scale {}: GPU={a} CPU={b}",
-                scale.0
-            );
+    for pattern in [BorderStyle::Solid, BorderStyle::Dashed, BorderStyle::Dotted] {
+        ui.context().set(style, pattern)?;
+        ui.flush()?;
+        let frame = ui.record_frame(view)?;
+        for scale in [1., 1.25, 2.].map(RasterScale) {
+            let physical = scale.buffer_size(size)?;
+            let cpu = Surface::draw_view(&frame, physical, scale)?;
+            let gpu = pixels(device, queue, renderer, &frame, physical, scale)?;
+            for (i, (a, b)) in gpu.iter().zip(&cpu.rgba).enumerate() {
+                assert!(
+                    a.abs_diff(*b) <= 3,
+                    "{pattern:?} border byte {i} at scale {}: GPU={a} CPU={b}",
+                    scale.0
+                );
+            }
         }
     }
     Ok(())

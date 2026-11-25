@@ -1,5 +1,6 @@
 //! Draws Solor frames into a GPU texture.
 mod backdrop;
+mod border;
 mod effect;
 mod images;
 mod layers;
@@ -24,7 +25,7 @@ pub struct Renderer {
     bindings: wgpu::BindGroupLayout,
     texture_layout: wgpu::PipelineLayout,
     brush: wgpu::RenderPipeline,
-    border: Option<wgpu::RenderPipeline>,
+    border: [Option<wgpu::RenderPipeline>; 2],
     shadow: Option<wgpu::RenderPipeline>,
     path: Option<wgpu::RenderPipeline>,
     composite: Option<wgpu::RenderPipeline>,
@@ -46,7 +47,7 @@ enum Material {
     Brush,
     Composite,
     Blur,
-    Border,
+    Border { patterned: bool },
     Shadow,
     Path,
     Underline,
@@ -194,7 +195,7 @@ impl Renderer {
         Ok(Self {
             mask_pipeline,
             underline: None,
-            border: None,
+            border: [None, None],
             shadow: None,
             path: None,
             composite: None,
@@ -534,45 +535,12 @@ impl Renderer {
                 else {
                     continue;
                 };
-                let styles = paint.styles;
-                let mut colors = [[0.; 4]; 4];
-                for ((out, fill), style) in colors.iter_mut().zip(paint.visible_fills()).zip([
-                    styles.top,
-                    styles.right,
-                    styles.bottom,
-                    styles.left,
-                ]) {
-                    let Some(fill) = fill else { continue };
-                    let Fill::Solid(color) = fill else {
-                        return Err(unsupported("borders require solid colors"));
-                    };
-                    if style != solor::style::BorderStyle::Solid {
-                        return Err(unsupported(&format!("unsupported border style {style:?}")));
-                    }
-                    let [r, g, b, a] = rgba(*color);
-                    *out = [r * a, g * a, b * a, a];
-                }
+                let (quad, material) =
+                    border::quad(*origin, *extent, paint, bounds, size, scale, stops)
+                        .map_err(unsupported)?;
                 let index = quads.len() as u32;
-                let colors_start = stops.len() as f32;
-                let [t, r, b, l] = colors;
-                stops.extend([[t, r], [b, l]]);
-                let r = paint.radii.fit_to(*extent);
-                let w = paint.widths;
-                quads.push([
-                    [
-                        origin.x.get(),
-                        origin.y.get(),
-                        extent.width.get(),
-                        extent.height.get(),
-                    ],
-                    [r.top_left, r.top_right, r.bottom_right, r.bottom_left]
-                        .map(solor::Pixels::get),
-                    bounds,
-                    [w.top, w.right, w.bottom, w.left].map(solor::Pixels::get),
-                    [size.width as f32, size.height as f32, scale.0 as f32, 0.],
-                    [colors_start, 0., 0., 0.],
-                ]);
-                batch(batches, Material::Border, index);
+                quads.push(quad);
+                batch(batches, material, index);
                 continue;
             }
             let underline_fill;
@@ -908,22 +876,30 @@ impl Renderer {
                             )
                         }));
                     }
-                    Material::Border => {
-                        pass.set_pipeline(self.border.get_or_insert_with(|| {
-                            module_pipeline(
-                                &self.device,
-                                &self.layout,
-                                self.format,
-                                concat!(
-                                    include_str!("vertex.wgsl"),
-                                    "\n",
-                                    include_str!("border.wgsl")
+                    Material::Border { patterned } => {
+                        pass.set_pipeline(self.border[usize::from(patterned)].get_or_insert_with(
+                            || {
+                                let coverage = if patterned {
+                                    include_str!("border_pattern.wgsl")
+                                } else {
+                                    include_str!("border_solid.wgsl")
+                                };
+                                module_pipeline(
+                                    &self.device,
+                                    &self.layout,
+                                    self.format,
+                                    [
+                                        include_str!("vertex.wgsl"),
+                                        include_str!("gradient.wgsl"),
+                                        coverage,
+                                        include_str!("border.wgsl"),
+                                    ]
+                                    .join("\n"),
+                                    "solor_",
+                                    wgpu::BlendState::ALPHA_BLENDING,
                                 )
-                                .to_owned(),
-                                "solor_",
-                                wgpu::BlendState::ALPHA_BLENDING,
-                            )
-                        }));
+                            },
+                        ));
                     }
                     Material::Underline => {
                         pass.set_pipeline(self.underline.get_or_insert_with(|| {

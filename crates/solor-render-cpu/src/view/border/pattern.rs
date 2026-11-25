@@ -1,6 +1,6 @@
 //! Distance along a side runs clockwise, including its portions of the corner arcs.
-use solor::style::BorderStyle;
-use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
+use solor::{raster::BorderMarks, style::BorderStyle};
+use std::f64::consts::FRAC_PI_4;
 
 pub(super) struct Pattern {
     side: usize,
@@ -9,9 +9,7 @@ pub(super) struct Pattern {
     length: f64,
     start_radius: f64,
     end_radius: f64,
-    first: f64,
-    period: f64,
-    intervals: f64,
+    marks: BorderMarks,
     dotted: bool,
 }
 
@@ -23,15 +21,7 @@ impl Pattern {
         widths: [f64; 4],
         radii: [f64; 4],
     ) -> Option<Self> {
-        let dotted = match style {
-            BorderStyle::Dotted => true,
-            BorderStyle::Dashed => false,
-            _ => return None,
-        };
         let width = widths[side];
-        if width <= 0.0 {
-            return None;
-        }
         let [left, top, right, bottom] = bounds;
         let length = if side.is_multiple_of(2) {
             right - left
@@ -40,34 +30,13 @@ impl Pattern {
         };
         let start_radius = radii[side];
         let end_radius = radii[(side + 1) % 4];
-        let half = width * 0.5;
-        // Put a mark at each join. On an open square end, inset it by half its length.
-        let end_distance = |radius: f64, neighbor: f64| {
-            if radius > half {
-                let angle = if neighbor == 0.0 {
-                    FRAC_PI_2
-                } else {
-                    FRAC_PI_4
-                };
-                radius - (radius - half) * angle
-            } else if neighbor > 0.0 {
-                neighbor * 0.5
-            } else if dotted {
-                half
-            } else {
-                width
-            }
-        };
-        let start = end_distance(start_radius, widths[(side + 3) % 4]);
-        let end = length - end_distance(end_radius, widths[(side + 1) % 4]);
-        let span = (end - start).max(0.0);
-        let target = width * if dotted { 2.0 } else { 3.0 };
-        let intervals = (span / target).round();
-        let (first, period) = if intervals >= 1.0 {
-            (start, span / intervals)
-        } else {
-            ((start + end) * 0.5, target)
-        };
+        let marks = BorderMarks::fit(
+            style,
+            length,
+            width,
+            [start_radius, end_radius],
+            [widths[(side + 3) % 4], widths[(side + 1) % 4]],
+        )?;
         Some(Self {
             side,
             bounds,
@@ -75,10 +44,8 @@ impl Pattern {
             length,
             start_radius,
             end_radius,
-            first,
-            period,
-            intervals,
-            dotted,
+            marks,
+            dotted: style == BorderStyle::Dotted,
         })
     }
 
@@ -125,31 +92,33 @@ impl Pattern {
     }
 
     fn nearest_mark(&self, along: f64) -> f64 {
-        let index = ((along - self.first) / self.period)
+        let index = ((along - self.marks.first) / self.marks.period)
             .round()
-            .clamp(0.0, self.intervals);
-        self.first + index * self.period
+            .clamp(0.0, self.marks.intervals);
+        self.marks.first + index * self.marks.period
     }
 
     fn straight_marks(&self, low: f64, high: f64, chord: f64, mut emit: impl FnMut(f64, f64)) {
         if low >= high || chord <= 0.0 {
             return;
         }
-        if 2.0 * chord >= self.period {
-            let start = low.max(self.first - chord);
-            let end = high.min(self.first + self.period * self.intervals + chord);
+        if 2.0 * chord >= self.marks.period {
+            let start = low.max(self.marks.first - chord);
+            let end = high.min(self.marks.first + self.marks.period * self.marks.intervals + chord);
             if start < end {
                 emit(start, end);
             }
             return;
         }
-        let first = ((low - self.first - chord) / self.period).ceil().max(0.0);
-        let last = ((high - self.first + chord) / self.period)
+        let first = ((low - self.marks.first - chord) / self.marks.period)
+            .ceil()
+            .max(0.0);
+        let last = ((high - self.marks.first + chord) / self.marks.period)
             .floor()
-            .min(self.intervals);
+            .min(self.marks.intervals);
         if first <= last {
             for offset in 0..=(last - first) as u64 {
-                let center = self.first + (first + offset as f64) * self.period;
+                let center = self.marks.first + (first + offset as f64) * self.marks.period;
                 emit(low.max(center - chord), high.min(center + chord));
             }
         }
@@ -172,8 +141,9 @@ impl Pattern {
             return;
         }
         // Unresolvable periods use the mean ink coverage, independent of sample phase.
-        if self.period < 0.5 && self.intervals >= 1.0 {
-            let fraction = self.width / self.period * if self.dotted { FRAC_PI_4 } else { 2.0 };
+        if self.marks.period < 0.5 && self.marks.intervals >= 1.0 {
+            let fraction =
+                self.width / self.marks.period * if self.dotted { FRAC_PI_4 } else { 2.0 };
             emit(from, to, fraction.min(1.0));
             return;
         }

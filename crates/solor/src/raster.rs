@@ -1,5 +1,7 @@
 //! Device pixel coordinates shared by renderers and presentation targets.
+mod border_marks;
 mod box_shadow;
+pub use border_marks::BorderMarks;
 pub use box_shadow::{BoxShadowGeometry, RoundedBox};
 #[cfg(feature = "glyph-raster")]
 pub mod glyphs;

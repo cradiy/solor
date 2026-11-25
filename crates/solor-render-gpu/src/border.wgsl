@@ -5,32 +5,12 @@ fn inset(rx: f32, ry: f32, dy: f32) -> f32 {
     return rx * (1. - sqrt(max(0., 1. - k*k)));
 }
 
-// Pixel area belonging to each edge, in top, right, bottom, left order.
-fn edge_areas(pixel: vec2f, size: vec2f, widths: vec4f, box: vec4f, rx: vec4f, ry: vec4f) -> vec4f {
-    var areas = vec4f(0.);
-    if any(box.xy >= box.zw) { return areas; }
-    for (var i = 0u; i < 4u; i++) {
-        let start = pixel.y + f32(i) * 0.25;
-        let lo = max(start, box.y);
-        let hi = min(start + 0.25, box.w);
-        if lo >= hi { continue; }
-        let y = (lo + hi) * 0.5;
-        let t = y - box.y;
-        let b = box.w - y;
-        let left = max(pixel.x, box.x + max(inset(rx.x, ry.x, t), inset(rx.w, ry.w, b)));
-        let right = min(pixel.x + 1., box.z - max(inset(rx.y, ry.y, t), inset(rx.z, ry.z, b)));
-        if left >= right { continue; }
-        let upper = select(1e30, y / widths.x, widths.x > 0.);
-        let lower = select(1e30, (size.y - y) / widths.z, widths.z > 0.);
-        let depth = min(upper, lower);
-        let split = size.x * widths.w / max(widths.w + widths.y, 1e-30);
-        let a = clamp(min(widths.w * depth, split), left, right);
-        let z = clamp(max(size.x - widths.y * depth, split), left, right);
-        let middle = z - a;
-        areas += (hi - lo) * vec4f(select(0., middle, upper <= lower), right - z,
-                                  select(middle, 0., upper <= lower), a - left);
-    }
-    return areas;
+fn edge_color(paint: vec4f, coverage: f32, gradient: bool, local: vec2f, size: vec2f) -> vec4f {
+    if !gradient { return paint * coverage; }
+    if coverage <= 0. { return vec4f(0.); }
+    let brush = solor_stops[u32(paint.x)];
+    let color = gradient_color(local, size, brush.color, brush.segment, paint.y != 0.);
+    return vec4f(color.rgb, 1.) * (color.a * coverage);
 }
 
 @fragment fn solor_fragment(v: solor_Vertex) -> @location(0) vec4f {
@@ -46,12 +26,16 @@ fn edge_areas(pixel: vec2f, size: vec2f, widths: vec4f, box: vec4f, rx: vec4f, r
     let ry = max(r - w.xxzz, vec4f(0.));
     if all(pixel >= inner.xy + vec2f(max(rx.x, rx.w), max(ry.x, ry.y))) &&
        all(pixel + 1. <= inner.zw - vec2f(max(rx.y, rx.z), max(ry.z, ry.w))) { discard; }
-    let cover = max(vec4f(0.), edge_areas(pixel, size, w, vec4f(0., 0., size), r, r)
-                              - edge_areas(pixel, size, w, inner, rx, ry));
+    let cover = border_coverage(pixel, size, w, r, inner, rx, ry, u32(q.ramp.z));
     let index = u32(q.ramp.x);
     let tr = solor_stops[index];
     let bl = solor_stops[index + 1u];
-    let c = tr.color * cover.x + tr.segment * cover.y + bl.color * cover.z + bl.segment * cover.w;
+    let mask = u32(q.ramp.y);
+    let local = (v.pos.xy - q.rect.xy * scale) / scale;
+    let c = edge_color(tr.color,   cover.x, (mask & 1u) != 0u, local, q.rect.zw)
+          + edge_color(tr.segment, cover.y, (mask & 2u) != 0u, local, q.rect.zw)
+          + edge_color(bl.color,   cover.z, (mask & 4u) != 0u, local, q.rect.zw)
+          + edge_color(bl.segment, cover.w, (mask & 8u) != 0u, local, q.rect.zw);
     if c.a <= 0. { discard; }
     return vec4f(c.rgb / c.a, min(c.a, 1.));
 }
