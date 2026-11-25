@@ -158,6 +158,66 @@ fn normalized_vectors_and_dot_products_use_every_component() -> Result<()> {
 }
 
 #[test]
+fn reflection_flips_the_normal_component_and_preserves_the_tangent() -> Result<()> {
+    let shader = EffectShader::wgsl(
+        "fn effect(uv: vec2<f32>, incident: vec4<f32>) -> vec4<f32> {
+            let r = reflect(incident, vec4<f32>(0.5));
+            return vec4<f32>(0.5 * r.xyz + vec3<f32>(0.5), 1.0);
+        }",
+    )?;
+    let size = DeviceSize {
+        width: 1,
+        height: 1,
+    };
+    for (incident, expected) in [
+        ([0.5; 4], [64, 64, 64, 255]),
+        ([0.0, 0.0, 1.0, -1.0], [128, 128, 255, 255]),
+        ([0.0, 0.0, 0.0, -1.0], [191, 191, 191, 255]),
+    ] {
+        let image = render(
+            &shader.with_params(incident),
+            size.at_unit_scale(),
+            full(size),
+        )?;
+        assert_eq!(image.pixels(), &[expected]);
+    }
+    Ok(())
+}
+
+#[test]
+fn refraction_spans_transmission_grazing_and_total_internal_reflection() -> Result<()> {
+    let shader = EffectShader::wgsl(
+        "fn effect(uv: vec2<f32>, incident: vec4<f32>) -> vec4<f32> {
+            let ray = refract(incident, vec4<f32>(0.0, 0.0, 0.0, 1.0), uv.x * 2.0);
+            return vec4<f32>(ray.xy, -ray.w, 1.0);
+        }",
+    )?;
+    let size = DeviceSize {
+        width: 3,
+        height: 1,
+    };
+    // Across the row the index ratio is 1/3, 1, then 5/3.
+    for (incident, expected) in [
+        (
+            [1.0, 0.0, 0.0, 0.0],
+            [[85, 0, 240, 255], [255, 0, 0, 255], [0, 0, 0, 255]],
+        ),
+        (
+            [0.8, 0.0, 0.0, -0.6],
+            [[68, 0, 246, 255], [204, 0, 153, 255], [0, 0, 0, 255]],
+        ),
+    ] {
+        let image = render(
+            &shader.with_params(incident),
+            size.at_unit_scale(),
+            normalized(size, full(size)),
+        )?;
+        assert_eq!(image.pixels(), &expected);
+    }
+    Ok(())
+}
+
+#[test]
 fn nested_helpers_bind_each_calls_own_arguments() -> Result<()> {
     let body = "fn effect(uv: vec2<f32>, p: vec4<f32>) -> vec4<f32>";
     let helper = EffectShader::wgsl(&format!(

@@ -41,6 +41,8 @@ pub enum Op {
     Abs(Reg),
     /// Square root.
     Sqrt(Reg),
+    /// Zero when the first operand is negative, otherwise the second operand.
+    ZeroIfNegative(Reg, Reg),
     /// Sine of an angle in radians.
     Sin(Reg),
     /// Cosine of an angle in radians.
@@ -76,7 +78,8 @@ impl CoordinateAxes {
                 | Op::Mul(a, b)
                 | Op::Div(a, b)
                 | Op::Min(a, b)
-                | Op::Max(a, b) => axes[a] | axes[b],
+                | Op::Max(a, b)
+                | Op::ZeroIfNegative(a, b) => axes[a] | axes[b],
                 Op::Clamp(a, b, c) | Op::Mix(a, b, c) | Op::SmoothStep(a, b, c) => {
                     axes[a] | axes[b] | axes[c]
                 }
@@ -238,6 +241,30 @@ impl Lowerer<'_> {
         self.emit(Op::Sqrt(squared))
     }
 
+    fn refract(&mut self, incident: &[Reg], normal: &[Reg], eta: Reg) -> Vec<Reg> {
+        let projection = self.dot(normal, incident);
+        let one = self.emit(Op::Constant(1.0));
+        let cos_squared = self.emit(Op::Mul(projection, projection));
+        let sin_squared = self.emit(Op::Sub(one, cos_squared));
+        let eta_squared = self.emit(Op::Mul(eta, eta));
+        let transmitted_sin_squared = self.emit(Op::Mul(eta_squared, sin_squared));
+        let k = self.emit(Op::Sub(one, transmitted_sin_squared));
+        let nonnegative_k = self.emit(Op::ZeroIfNegative(k, k));
+        let transmitted_cos = self.emit(Op::Sqrt(nonnegative_k));
+        let scaled_cos = self.emit(Op::Mul(eta, projection));
+        let normal_scale = self.emit(Op::Add(scaled_cos, transmitted_cos));
+        incident
+            .iter()
+            .zip(normal)
+            .map(|(&i, &n)| {
+                let ray = self.emit(Op::Mul(eta, i));
+                let offset = self.emit(Op::Mul(normal_scale, n));
+                let component = self.emit(Op::Sub(ray, offset));
+                self.emit(Op::ZeroIfNegative(k, component))
+            })
+            .collect()
+    }
+
     fn function(
         &mut self,
         id: Handle<naga::Function>,
@@ -340,6 +367,34 @@ impl Lowerer<'_> {
                     arg1: Some(other),
                     ..
                 } => Some(vec![self.dot(registers(arg), registers(other))]),
+                Expr::Math {
+                    fun: Math::Reflect,
+                    arg,
+                    arg1: Some(normal),
+                    ..
+                } => {
+                    let incident = registers(arg);
+                    let normal = registers(normal);
+                    let projection = self.dot(normal, incident);
+                    let twice = self.emit(Op::Add(projection, projection));
+                    Some(
+                        incident
+                            .iter()
+                            .zip(normal)
+                            .map(|(&i, &n)| {
+                                let offset = self.emit(Op::Mul(twice, n));
+                                self.emit(Op::Sub(i, offset))
+                            })
+                            .collect(),
+                    )
+                }
+                Expr::Math {
+                    fun: Math::Refract,
+                    arg,
+                    arg1: Some(normal),
+                    arg2: Some(eta),
+                    ..
+                } => Some(self.refract(registers(arg), registers(normal), registers(eta)[0])),
                 Expr::Math {
                     fun: Math::Normalize,
                     arg,

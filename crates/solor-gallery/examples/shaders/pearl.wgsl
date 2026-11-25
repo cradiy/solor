@@ -18,7 +18,7 @@ fn effect(uv: vec2<f32>, position: f32, size: vec2<f32>) -> vec4<f32> {
     let refracted = studio((0.87 - 2.35 * z) * p + vec2<f32>(0.15, -0.22) * z, sweep);
 
     let n = vec3<f32>(p, z);
-    let reflected = 2.0 * z * n - vec3<f32>(0.0, 0.0, 1.0);
+    let reflected = reflect(vec3<f32>(0.0, 0.0, -1.0), n);
     let softbox = normalize(vec3<f32>(-0.66 + 0.30 * sweep, -0.75, -0.23));
     let arc = dot(reflected, softbox);
     let strip = reflected.y + 0.66 - 0.16 * reflected.x;

@@ -24,6 +24,9 @@ pub(super) fn render(fill: &ShaderFill, size: Size, region: ImageRegion) -> Resu
                 Op::Constant(value) => [value; LANES],
                 Op::Abs(a) => r[a].map(f32::abs),
                 Op::Sqrt(a) => r[a].map(f32::sqrt),
+                Op::ZeroIfNegative(test, value) => {
+                    std::array::from_fn(|i| if r[test][i] < 0.0 { 0.0 } else { r[value][i] })
+                }
                 Op::Sin(a) if !program.varies_across_row(a) => [r[a][0].sin(); LANES],
                 Op::Cos(a) if !program.varies_across_row(a) => [r[a][0].cos(); LANES],
                 Op::Sin(a) => r[a].map(f32::sin),
