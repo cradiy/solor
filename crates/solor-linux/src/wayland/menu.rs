@@ -1,5 +1,6 @@
 use super::{Desktop, Role, Window};
 use crate::popup::{ConstraintAdjustment, PopupOptions};
+use crate::surface_control::InputRegion;
 use anyhow::{Context, Result, ensure};
 use solor::{Pixels, layout::Size, platform::WindowHandle, px};
 use std::{
@@ -103,6 +104,24 @@ impl Menus {
         Some(parent)
     }
 
+    pub(super) fn menu(&self, handle: &WindowHandle, mapped: bool) -> Result<Rc<Menu>> {
+        let parent = self
+            .parents
+            .borrow()
+            .get(handle)
+            .and_then(Weak::upgrade)
+            .filter(|_| handle.is_open())
+            .context("popup is closed or belongs to another application")?;
+        let ParentRole::Menu(menu) = &parent.role else {
+            anyhow::bail!("window is not an anchored popup");
+        };
+        ensure!(
+            !mapped || parent.bounds.get().is_some(),
+            "popup has not been mapped"
+        );
+        Ok(menu.clone())
+    }
+
     pub fn input(&self, window: &Window, seat: &WlSeat, serial: u32) {
         if let Some(parent) = &window.popup_parent {
             self.input.replace(Some(Trigger {
@@ -165,26 +184,16 @@ impl Menus {
             ConstraintAdjustment::all().contains(options.constraints),
             "unknown popup constraint adjustment"
         );
-        let w = crate::layer_shell::units(options.size.width)?;
-        let h = crate::layer_shell::units(options.size.height)?;
-        ensure!(
-            w > 0 && h > 0,
-            "popup size must round to positive logical pixels"
-        );
-        let (origin, size) = options.anchor_rect;
-        let [ox, oy, pw, ph] = bounds;
-        let (x, width) = anchor_axis(origin.x, size.width, pw)?;
-        let (y, height) = anchor_axis(origin.y, size.height, ph)?;
+        let [w, h] = popup_size(options.size)?;
         let shell = match &parent.role {
-            ParentRole::Panel(..) => Rc::new(MenuShell(globals.bind(qh, 1..=1, ())?)),
+            ParentRole::Panel(..) => Rc::new(MenuShell(globals.bind(
+                qh,
+                1..=xdg_popup::REQ_REPOSITION_SINCE,
+                (),
+            )?)),
             ParentRole::Menu(menu) => menu.shell.clone(),
         };
-        let positioner = shell.0.create_positioner(qh, ());
-        positioner.set_size(w, h);
-        positioner.set_anchor_rect(ox + x, oy + y, width, height);
-        positioner.set_anchor(options.anchor);
-        positioner.set_gravity(options.gravity);
-        positioner.set_constraint_adjustment(options.constraints);
+        let positioner = positioner(&shell, qh, &options, bounds, [w, h])?;
         let xdg = shell.0.get_xdg_surface(surface, qh, surface.id());
         let grabbing_root = grab.is_some() && matches!(parent.role, ParentRole::Panel(..));
         if grabbing_root && let Some(previous) = self.grabbing_root.take().upgrade() {
@@ -217,6 +226,12 @@ impl Menus {
             popup,
             handle,
             dismissed: Cell::new(false),
+            parent: Rc::downgrade(&parent),
+            placement: options,
+            requested_size: Cell::new([w, h]),
+            token: Cell::new(0),
+            reposition: Cell::new(Reposition::Idle),
+            region: Default::default(),
         });
         slot.replace(Rc::downgrade(&menu));
         if grabbing_root {
@@ -230,6 +245,35 @@ impl Menus {
             },
         ))
     }
+}
+
+fn popup_size(size: Size) -> Result<[i32; 2]> {
+    let w = crate::layer_shell::units(size.width)?;
+    let h = crate::layer_shell::units(size.height)?;
+    ensure!(
+        w > 0 && h > 0,
+        "popup size must round to positive logical pixels"
+    );
+    Ok([w, h])
+}
+
+fn positioner(
+    shell: &MenuShell,
+    qh: &QueueHandle<Desktop>,
+    options: &PopupOptions,
+    [ox, oy, pw, ph]: [i32; 4],
+    [w, h]: [i32; 2],
+) -> Result<XdgPositioner> {
+    let (origin, size) = options.anchor_rect;
+    let (x, width) = anchor_axis(origin.x, size.width, pw)?;
+    let (y, height) = anchor_axis(origin.y, size.height, ph)?;
+    let positioner = shell.0.create_positioner(qh, ());
+    positioner.set_size(w, h);
+    positioner.set_anchor_rect(ox + x, oy + y, width, height);
+    positioner.set_anchor(options.anchor);
+    positioner.set_gravity(options.gravity);
+    positioner.set_constraint_adjustment(options.constraints);
+    Ok(positioner)
 }
 
 fn anchor_axis(origin: Pixels, extent: Pixels, limit: i32) -> Result<(i32, i32)> {
@@ -253,9 +297,67 @@ pub(super) struct Menu {
     popup: XdgPopup,
     handle: WindowHandle,
     dismissed: Cell<bool>,
+    parent: Weak<Parent>,
+    placement: PopupOptions,
+    requested_size: Cell<[i32; 2]>,
+    token: Cell<u32>,
+    reposition: Cell<Reposition>,
+    pub(super) region: RefCell<Option<InputRegion>>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Reposition {
+    Idle,
+    Waiting(u32),
+    Configuring,
+    Configured,
 }
 
 impl Menu {
+    pub(super) fn resize(&self, size: Size, qh: &QueueHandle<Desktop>) -> Result<()> {
+        if self.popup.version() < xdg_popup::REQ_REPOSITION_SINCE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "resizing a popup requires xdg-shell v3",
+            )
+            .into());
+        }
+        let size = popup_size(size)?;
+        if self.requested_size.get() == size {
+            return Ok(());
+        }
+        let bounds = self
+            .parent
+            .upgrade()
+            .and_then(|p| p.bounds.get())
+            .context("popup parent is not mapped")?;
+        let positioner = positioner(&self.shell, qh, &self.placement, bounds, size)?;
+        let token = self.token.get().wrapping_add(1);
+        self.popup.reposition(&positioner, token);
+        positioner.destroy();
+        self.token.set(token);
+        self.reposition.set(Reposition::Waiting(token));
+        self.requested_size.set(size);
+        Ok(())
+    }
+
+    pub(super) fn take_update(&self) -> (Option<InputRegion>, bool) {
+        match self.reposition.get() {
+            Reposition::Waiting(_) | Reposition::Configuring => (None, false),
+            Reposition::Idle => (self.region.take(), false),
+            Reposition::Configured => {
+                self.reposition.set(Reposition::Idle);
+                (self.region.take(), true)
+            }
+        }
+    }
+
+    pub(super) fn finish_configure(&self) {
+        if self.reposition.get() == Reposition::Configuring {
+            self.reposition.set(Reposition::Configured);
+        }
+    }
+
     pub fn dismiss(&self) {
         if !self.dismissed.replace(true) {
             if let Some(child) = self.child.take().upgrade() {
@@ -297,6 +399,11 @@ impl Dispatch<XdgPopup, ObjectId> for Desktop {
                     width: px(width as f32),
                     height: px(height as f32),
                 });
+            }
+            xdg_popup::Event::Repositioned { token }
+                if menu.reposition.get() == Reposition::Waiting(token) =>
+            {
+                menu.reposition.set(Reposition::Configuring);
             }
             xdg_popup::Event::PopupDone => menu.dismiss(),
             _ => {}

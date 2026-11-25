@@ -77,6 +77,24 @@ impl Application {
         )
     }
 
+    /// Requests a new logical size for a mapped popup, keeping its anchor and edge adjustments.
+    /// Requires xdg-shell v3. The compositor determines the final placement and size.
+    #[cfg(target_os = "linux")]
+    pub fn resize_popup(&self, popup: &WindowHandle, size: solor::layout::Size) -> Result<()> {
+        self.windows.resize_popup(popup, size)
+    }
+
+    /// Sets the popup's input rectangles in surface-local logical pixels.
+    /// `None` accepts the entire surface and an empty slice passes all input through.
+    #[cfg(target_os = "linux")]
+    pub fn set_popup_input_region(
+        &self,
+        popup: &WindowHandle,
+        rects: Option<&[popup::InputRect]>,
+    ) -> Result<()> {
+        self.windows.set_popup_input_region(popup, rects)
+    }
+
     /// Opens a Wayland layer surface alongside the application's other windows.
     /// The returned handle controls this surface from any thread.
     #[cfg(target_os = "linux")]

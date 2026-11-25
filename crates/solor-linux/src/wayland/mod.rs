@@ -422,6 +422,10 @@ impl Window {
             if let Some(p) = &self.presentation {
                 p.feedback(&self.surface, qh, (self.surface.id(), self.commits + 1));
             }
+            if matches!(self.role, Role::Menu(_)) && self.input_region.changed() {
+                self.input_region
+                    .apply(self.mapping, compositor, &self.surface, qh, None, false);
+            }
             queue.present(texture);
             if let Some(panel) = &self.floating {
                 if self.mapping == Mapping::Ready {
@@ -445,8 +449,8 @@ impl Window {
             }
             return Ok(());
         };
-        let region_changed =
-            matches!(self.role, Role::Popup { .. }) && self.apply_input_region(compositor, qh);
+        let region_changed = matches!(self.role, Role::Popup { .. } | Role::Menu(_))
+            && self.apply_input_region(compositor, qh);
         let mut frame = match &mut self.view {
             WindowView::Shm(view) => view.frame(self.size, scale)?,
             #[cfg(feature = "gpu")]
@@ -771,6 +775,10 @@ impl Dispatch<xdg_surface::XdgSurface, ObjectId> for Desktop {
                     decorations: Some(d),
                     ..
                 } => d.take_configure(),
+                Role::Menu(menu) => {
+                    menu.finish_configure();
+                    false
+                }
                 _ => false,
             };
             if let Some(size) = state.pending_size.take() {

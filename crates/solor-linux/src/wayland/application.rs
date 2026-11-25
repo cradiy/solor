@@ -128,6 +128,33 @@ impl WaylandApplication {
         self.factory()?.open(Request::Menu(options), None, build)
     }
 
+    /// Requests a new logical size for a mapped anchored popup using xdg-shell v3.
+    pub fn resize_popup(
+        &self,
+        popup: &WindowHandle,
+        size: solor::layout::Size,
+    ) -> anyhow::Result<()> {
+        let factory = self.factory()?;
+        factory.menus.menu(popup, true)?.resize(size, &factory.qh)
+    }
+
+    /// Sets the pointer and touch region of an anchored popup in surface-local logical pixels.
+    /// Use `None` for the full surface or an empty slice to pass all input through.
+    pub fn set_popup_input_region(
+        &self,
+        popup: &WindowHandle,
+        rects: Option<&[crate::popup::InputRect]>,
+    ) -> anyhow::Result<()> {
+        let factory = self.factory()?;
+        let menu = factory.menus.menu(popup, false)?;
+        menu.region
+            .replace(Some(crate::surface_control::InputRegion::from_rects(
+                rects,
+            )?));
+        factory.revisit.set(true);
+        Ok(())
+    }
+
     /// Opens an anchored popup using the application's GPU device.
     #[cfg(feature = "gpu")]
     pub fn build_gpu_popup<R: solor::Render>(
@@ -529,10 +556,9 @@ impl WindowFactory {
         let life = WindowLife::new(activation, self.revisit.clone(), modal_parent);
         let target = Rc::downgrade(&life);
         let handle = WindowHandle::new(target);
+        let mut input_region = super::input_region::SurfaceInputRegion::default();
         if matches!(&request, Request::Menu(options) if options.input_transparent) {
-            let empty = self.compositor.create_region(qh, ());
-            surface.set_input_region(Some(&empty));
-            empty.destroy();
+            input_region.update(Some(crate::surface_control::InputRegion::Rects(Vec::new())));
         }
         let (role, size) = request.create(globals, qh, surface, &self.menus, handle.clone())?;
         if let (Some(control), Role::Layer(layer, placement)) = (&control, &role) {
@@ -561,6 +587,7 @@ impl WindowFactory {
             _ => None,
         };
         let content = floating.as_ref().map_or(surface, |p| &p.content);
+        let popup_parent = self.menus.register(&role, &handle);
         let mut view = build(handle.clone(), content)?;
         let buffer_size = view
             .buffer_size(120, size)?
@@ -577,7 +604,6 @@ impl WindowFactory {
         ))?;
         let viewport = self.viewporter.get_viewport(content, qh, ());
 
-        let popup_parent = self.menus.register(&role, &handle);
         let window = Window {
             popup_parent,
             control,
@@ -607,7 +633,7 @@ impl WindowFactory {
             size,
             pending_size: None,
             mapping: Mapping::Hidden,
-            input_region: Default::default(),
+            input_region,
             dirty: true,
             #[cfg(feature = "gpu")]
             acquire_retry: None,
@@ -669,6 +695,17 @@ impl EventLoop {
                     }
                     window.input_region.update(update.region);
                     window.update_layer(update.layer, visible);
+                }
+                if let Role::Menu(menu) = &window.role {
+                    let (region, repositioned) = menu.take_update();
+                    window.input_region.update(region);
+                    if window.mapping == Mapping::Mapped
+                        && !window.full_damage
+                        && (window.apply_input_region(&self.windows.compositor, &qh)
+                            || repositioned)
+                    {
+                        window.surface.commit();
+                    }
                 }
                 if visible
                     && !self.desktop.popup_only
