@@ -6,6 +6,7 @@ pub(super) enum Target {
     Fill,
     Underline,
     Mask,
+    Path,
 }
 
 pub(super) struct Pipeline {
@@ -18,6 +19,7 @@ pub(super) struct Pipeline {
 impl Target {
     pub(super) fn module(self, body: &str) -> String {
         let fragment = match self {
+            Self::Path => include_str!("path.wgsl"),
             Self::Underline => include_str!("underline.wgsl"),
             Self::Fill | Self::Mask => {
                 concat!(include_str!("coverage.wgsl"), include_str!("quad.wgsl"))
@@ -35,17 +37,24 @@ pub(super) fn pipeline(
     target: Target,
 ) -> Result<wgpu::RenderPipeline> {
     let call = program.wgsl_call("uv", "q.params", "size");
-    let (signature, mask) = match target {
+    let (signature, wrapper) = match target {
         Target::Fill | Target::Underline => {
             ("solor_paint(local: vec2f, size: vec2f, q: solor_Quad)", "")
         }
+        Target::Path => (
+            "solor_paint(local: vec2f, size: vec2f, q: solor_Quad)",
+            "fn solor_path_color(point: vec2f, q: solor_Quad) -> vec4f {
+                let local = (point - q.radii.xy) / q.ramp.w;
+                return clamp(solor_paint(local, q.radii.zw, q), vec4f(0.), vec4f(1.));
+            }",
+        ),
         Target::Mask => (
             "solor_foreground(local: vec2f, size: vec2f, q: solor_Quad, ramp: vec4f)",
             include_str!("mask.wgsl"),
         ),
     };
     let paint = format!(
-        "fn {signature} -> vec4f {{ let uv = clamp(local / size, vec2f(0), vec2f(1)); return {call}; }}\n{mask}"
+        "fn {signature} -> vec4f {{ let uv = clamp(local / size, vec2f(0), vec2f(1)); return {call}; }}\n{wrapper}"
     );
     let mut host = target.module(&paint);
     let mut prefix = String::from("solor_");

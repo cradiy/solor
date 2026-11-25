@@ -1,6 +1,7 @@
 //! Draws Solor frames into a GPU texture.
 mod backdrop;
 mod border;
+mod brush;
 mod effect;
 mod images;
 mod layers;
@@ -67,11 +68,6 @@ struct Buffers {
     quads: wgpu::Buffer,
     stops: wgpu::Buffer,
     group: wgpu::BindGroup,
-}
-
-// Leave room for the full pattern period and its neighboring band in shader arithmetic.
-fn pattern_span(device_pixels: f64) -> f32 {
-    device_pixels.min(f64::from(f32::MAX) / 4.) as f32
 }
 
 fn rgba(color: Rgba) -> [f32; 4] {
@@ -243,7 +239,7 @@ impl Renderer {
             return Ok(index);
         }
         let layout = match target {
-            effect::Target::Fill | effect::Target::Underline => &self.layout,
+            effect::Target::Fill | effect::Target::Underline | effect::Target::Path => &self.layout,
             effect::Target::Mask => &self.texture_layout,
         };
         let pipeline = effect::pipeline(
@@ -345,7 +341,13 @@ impl Renderer {
                 let first = quads.len();
                 path.record(size, scale, quads, stops)?;
                 if quads.len() > first {
-                    batches.push((Material::Path, first as u32..quads.len() as u32));
+                    let material = match path.shader() {
+                        Some(shader) => {
+                            Material::Effect(self.effect_pipeline(shader, effect::Target::Path)?)
+                        }
+                        None => Material::Path,
+                    };
+                    batches.push((material, first as u32..quads.len() as u32));
                 }
                 continue;
             }
@@ -590,39 +592,9 @@ impl Renderer {
             else {
                 continue;
             };
-            let mut material_option = 0.;
-            let mut ramp = [0.; 4];
             let fill = self.files.resolve(fill)?;
-            let params = match fill.as_ref() {
-                Fill::Solid(color) => rgba(*color),
-                Fill::Checkerboard(pattern) => {
-                    material_option = 2.;
-                    ramp[0] = pattern_span(f64::from(pattern.cell_size()) * scale.0);
-                    rgba(pattern.color)
-                }
-                Fill::DiagonalStripes(pattern) => {
-                    material_option = 3.;
-                    let axis = scale.0 * std::f64::consts::SQRT_2;
-                    let width = f64::from(pattern.width()) * axis;
-                    let gap = f64::from(pattern.gap()) * axis;
-                    let period = width + gap;
-                    let side = 1. % period;
-                    // Full periods in a device pixel contribute their mean density.
-                    let whole = (1. - side * side) * (width / period);
-                    ramp = [
-                        pattern_span(width),
-                        pattern_span(gap),
-                        side as f32,
-                        whole as f32,
-                    ];
-                    rgba(pattern.color)
-                }
-                Fill::Gradient(g) => {
-                    let brush = GradientBrush::prepare(g, *extent, stops);
-                    material_option = brush.oklab;
-                    ramp = brush.ramp;
-                    brush.params
-                }
+            let (params, ramp, material_option) = match fill.as_ref() {
+                Fill::Solid(color) => (rgba(*color), [0.; 4], 0.),
                 Fill::Shader(f) => {
                     let target = if material == Material::Underline {
                         effect::Target::Underline
@@ -630,7 +602,7 @@ impl Renderer {
                         effect::Target::Fill
                     };
                     material = Material::Effect(self.effect_pipeline(&f.shader, target)?);
-                    f.params
+                    (f.params, [0.; 4], 0.)
                 }
                 Fill::Image(image) => {
                     let (offset, fit) = image.bounds(*extent)?;
@@ -638,24 +610,32 @@ impl Renderer {
                         continue;
                     }
                     let src = image.source_bounds();
-                    ramp = [
+                    let ramp = [
                         src.left as f32,
                         src.top as f32,
                         src.right as f32,
                         src.bottom as f32,
                     ];
-                    material_option = f32::from(image.sampling() == solor::ImageSampling::Nearest);
+                    let nearest = f32::from(image.sampling() == solor::ImageSampling::Nearest);
                     material = Material::Image(
                         frame_images.index(TextureSource::Bitmap(image.asset().clone())),
                     );
-                    [
-                        offset.x.get(),
-                        offset.y.get(),
-                        fit.width.get(),
-                        fit.height.get(),
-                    ]
+                    (
+                        [
+                            offset.x.get(),
+                            offset.y.get(),
+                            fit.width.get(),
+                            fit.height.get(),
+                        ],
+                        ramp,
+                        nearest,
+                    )
                 }
-                _ => return Err(unsupported("unsupported fill")),
+                other => {
+                    let brush = brush::Brush::from_fill(other)
+                        .ok_or_else(|| unsupported("unsupported fill"))?;
+                    brush.parameters(*extent, scale, stops)
+                }
             };
             let index = quads.len() as u32;
             quads.push([
@@ -854,6 +834,10 @@ impl Renderer {
                                     include_str!("vertex.wgsl"),
                                     "\n",
                                     include_str!("gradient.wgsl"),
+                                    "\n",
+                                    include_str!("brush.wgsl"),
+                                    "\n",
+                                    include_str!("path_brush.wgsl"),
                                     "\n",
                                     include_str!("path.wgsl")
                                 )

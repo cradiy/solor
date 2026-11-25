@@ -1,6 +1,7 @@
+use super::brush::Brush;
 use anyhow::{Result, ensure};
 use solor::{
-    ContentClip, Draw, Fill, FillRule, Gradient, Ink, Rgba,
+    ContentClip, Draw, Fill, FillRule, Ink, Rgba,
     layout::{Origin, Size},
     px,
     raster::{Clip, DeviceSize, RasterScale},
@@ -14,7 +15,8 @@ enum Kind {
 
 enum Paint<'a> {
     Solid(Rgba),
-    Gradient(&'a Gradient),
+    Brush(Brush<'a>),
+    Shader(&'a solor::ShaderFill),
 }
 
 pub(super) struct Path<'a> {
@@ -37,8 +39,10 @@ impl<'a> Path<'a> {
             } => {
                 let paint = match fill {
                     Fill::Solid(color) => Paint::Solid(*color),
-                    Fill::Gradient(gradient) => Paint::Gradient(gradient),
-                    _ => return Err("unsupported polygon fill"),
+                    Fill::Shader(fill) => Paint::Shader(fill),
+                    other => {
+                        Paint::Brush(Brush::from_fill(other).ok_or("unsupported polygon fill")?)
+                    }
                 };
                 (
                     *origin,
@@ -58,7 +62,8 @@ impl<'a> Path<'a> {
             } => {
                 let paint = match ink {
                     Ink::Solid(color) => Paint::Solid(*color),
-                    Ink::Gradient(gradient) => Paint::Gradient(gradient),
+                    Ink::Gradient(gradient) => Paint::Brush(Brush::Gradient(gradient)),
+                    Ink::Shader(fill) => Paint::Shader(fill),
                     _ => return Err("unsupported polyline ink"),
                 };
                 (
@@ -81,6 +86,13 @@ impl<'a> Path<'a> {
             paint,
             kind,
         }))
+    }
+
+    pub(super) fn shader(&self) -> Option<&solor::EffectShader> {
+        match self.paint {
+            Paint::Shader(fill) => Some(&fill.shader),
+            _ => None,
+        }
     }
 
     pub(super) fn record(
@@ -129,7 +141,7 @@ impl<'a> Path<'a> {
             let mut a = device(*first);
             for &point in contour.iter().skip(1).chain(closed.then_some(first)) {
                 let b = device(point);
-                if mode == 2. || a[0] != b[0] {
+                if mode == 2. || a != b {
                     let left = ((a[0].min(b[0]) - reach).floor() as i64).max(clip.left);
                     let right = ((a[0].max(b[0]) + reach).ceil() as i64).min(clip.right);
                     if left < right {
@@ -146,9 +158,9 @@ impl<'a> Path<'a> {
                 a = b;
             }
         }
-        let (params, paint_box, gradient_index) = match self.paint {
-            Paint::Solid(c) => (super::rgba(c), [0.; 4], 0.),
-            Paint::Gradient(gradient) => {
+        let paint_box = match self.paint {
+            Paint::Solid(_) => [0.; 4],
+            _ => {
                 if !strips
                     .iter()
                     .any(|s| s.top.max(clip.top) < s.bottom.min(clip.bottom))
@@ -162,27 +174,30 @@ impl<'a> Path<'a> {
                     min = [min[0].min(x), min[1].min(y)];
                     max = [max[0].max(x), max[1].max(y)];
                 }
-                let extent = Size {
-                    width: px(((max[0] - min[0] + 2. * radius) / scale.0) as f32),
-                    height: px(((max[1] - min[1] + 2. * radius) / scale.0) as f32),
-                };
-                if extent.width.get() == 0. || extent.height.get() == 0. {
+                if radius == 0. && (min[0] == max[0] || min[1] == max[1]) {
                     return Ok(());
                 }
-                let brush = super::GradientBrush::prepare(gradient, extent, edges);
-                let index = edges.len();
-                edges.push([brush.ramp, [scale.0 as f32, brush.oklab, 0., 0.]]);
-                (
-                    brush.params,
-                    [
-                        (min[0] - radius) as f32,
-                        (min[1] - radius) as f32,
-                        extent.width.get(),
-                        extent.height.get(),
-                    ],
-                    index as f32,
-                )
+                [
+                    (min[0] - radius) as f32,
+                    (min[1] - radius) as f32,
+                    ((max[0] - min[0] + 2. * radius) / scale.0) as f32,
+                    ((max[1] - min[1] + 2. * radius) / scale.0) as f32,
+                ]
             }
+        };
+        let (params, paint_arg) = match self.paint {
+            Paint::Solid(c) => (super::rgba(c), 0.),
+            Paint::Brush(brush) => {
+                let extent = Size {
+                    width: px(paint_box[2]),
+                    height: px(paint_box[3]),
+                };
+                let (color, ramp, kind) = brush.parameters(extent, scale, edges);
+                let index = edges.len();
+                edges.push([ramp, [scale.0 as f32, kind, 0., 0.]]);
+                (color, index as f32)
+            }
+            Paint::Shader(fill) => (fill.params, scale.0 as f32),
         };
         for (i, strip) in strips.into_iter().enumerate() {
             let top = strip.top.max(clip.top);
@@ -216,7 +231,7 @@ impl<'a> Path<'a> {
                     base as f32,
                     strip.edges.len() as f32,
                     radius as f32,
-                    gradient_index,
+                    paint_arg,
                 ],
             ]);
         }

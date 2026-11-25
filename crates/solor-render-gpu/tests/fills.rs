@@ -438,6 +438,11 @@ fn compare_paths(
         ],
     )?
     .color_space(solor::ColorSpace::Oklab);
+    let shader = EffectShader::wgsl(
+        "fn effect(uv: vec2f, p: vec4f, size: vec2f) -> vec4f {
+            return vec4f(uv * p.xy, size.x / 128., p.a);
+        }",
+    )?;
     let mut ui = Ui::new();
     let view = ui.mount(component(move |_| {
         div().w_full().h_full().paint(move |cx| {
@@ -457,20 +462,42 @@ fn compare_paths(
                         ),
                         (40., solor::FillRule::NonZero, rgba(0x40ce9480).into()),
                     ] {
-                        let rect = |l: f32, t: f32, r: f32, b: f32| {
-                            [
-                                at(l + offset, t),
-                                at(r + offset, t),
-                                at(r + offset, b),
-                                at(l + offset, b),
-                            ]
-                        };
+                        let point = |x: f32, y| at(x + offset, y);
                         cx.fill_contours(
-                            [rect(0., 0., 38., 48.), rect(9., 10., 25., 32.)],
+                            [
+                                [
+                                    point(0., 0.),
+                                    point(38., 0.),
+                                    point(38., 48.),
+                                    point(0., 48.),
+                                ],
+                                [
+                                    point(9.125, 10.125),
+                                    point(25.75, 32.),
+                                    point(9.125, 32.),
+                                    point(25.75, 10.125),
+                                ],
+                                [
+                                    point(9.45, 10.125),
+                                    point(26.075, 32.),
+                                    point(9.45, 32.),
+                                    point(26.075, 10.125),
+                                ],
+                            ],
                             fill,
                             rule,
                         )?;
                     }
+                    let fill = shader.with_params([0.8, 0.6, 0., 0.7]);
+                    cx.fill_contours(
+                        [
+                            [at(23., -4.), at(69., -4.), at(69., 21.), at(23., 21.)],
+                            [at(35., 4.), at(49., 4.), at(49., 13.), at(35., 13.)],
+                        ],
+                        fill.clone(),
+                        solor::FillRule::EvenOdd,
+                    )?;
+                    cx.stroke_polyline([at(-6., 34.), at(55., 32.), at(80., 40.)], px(4.), fill)?;
                     cx.stroke_polyline([at(9., -12.), at(9., 42.)], px(5.5), gradient.clone())?;
                     cx.stroke_polyline(
                         [
@@ -628,7 +655,7 @@ fn compare_patterns(
     };
     let viewport = Size {
         width: size.width,
-        height: size.height * fills.len() as f32,
+        height: size.height * (2 * fills.len()) as f32,
     };
     let mut ui = Ui::new();
     let view = ui.mount(component(move |_| {
@@ -649,6 +676,19 @@ fn compare_patterns(
                             size,
                             px(3.),
                             fill.clone(),
+                        )?;
+                        let top = size.height * (fills.len() + i) as f32;
+                        let at = |x, y| Origin {
+                            x: px(x),
+                            y: top + px(y),
+                        };
+                        cx.fill_contours(
+                            [
+                                [at(-2.25, 0.5), at(38.5, 0.5), at(35., 11.5), at(0., 11.5)],
+                                [at(14., 3.), at(24., 3.), at(24., 9.), at(14., 9.)],
+                            ],
+                            fill.clone(),
+                            solor::FillRule::EvenOdd,
                         )?;
                     }
                     Ok(())

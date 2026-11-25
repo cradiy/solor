@@ -32,12 +32,11 @@ fn stripe_coverage(pixel: vec2f, band: vec4f) -> f32 {
     return area;
 }
 
-fn solor_paint(local: vec2f, size: vec2f, q: solor_Quad) -> vec4f {
-    if q.viewport.w >= 2. {
-        let pixel = local * q.viewport.z - 0.5;
+fn brush_color(local: vec2f, size: vec2f, pixel: vec2f, params: vec4f, ramp: vec4f, kind: f32) -> vec4f {
+    if kind >= 2. {
         var coverage: f32;
-        if q.viewport.w == 2. {
-            let cell = q.ramp.x;
+        if kind == 2. {
+            let cell = ramp.x;
             // Below this size the alternating area differs from half by less than one alpha level.
             coverage = 0.5;
             if cell > 0.001 {
@@ -45,10 +44,14 @@ fn solor_paint(local: vec2f, size: vec2f, q: solor_Quad) -> vec4f {
                 coverage -= 0.5 * delta.x * delta.y;
             }
         } else {
-            coverage = stripe_coverage(pixel, q.ramp);
+            coverage = stripe_coverage(pixel, ramp);
         }
-        return vec4f(q.params.rgb, q.params.a * clamp(coverage, 0., 1.));
+        return vec4f(params.rgb, params.a * clamp(coverage, 0., 1.));
     }
-    if q.ramp.y == 0. { return q.params; }
-    return gradient_color(local, size, q.params, q.ramp, q.viewport.w != 0.);
+    if ramp.y == 0. { return params; }
+    return gradient_color(local, size, params, ramp, kind != 0.);
+}
+
+fn solor_paint(local: vec2f, size: vec2f, q: solor_Quad) -> vec4f {
+    return brush_color(local, size, local * q.viewport.z - 0.5, q.params, q.ramp, q.viewport.w);
 }
