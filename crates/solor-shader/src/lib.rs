@@ -29,6 +29,16 @@ pub enum Op {
     Mul(Reg, Reg),
     /// Quotient.
     Div(Reg, Reg),
+    /// One when the operands are equal, zero otherwise.
+    Equal(Reg, Reg),
+    /// One when the operands differ, zero otherwise.
+    NotEqual(Reg, Reg),
+    /// One when the first operand is smaller, zero otherwise.
+    Less(Reg, Reg),
+    /// One when the first operand is smaller than or equal to the second, zero otherwise.
+    LessEqual(Reg, Reg),
+    /// Selects the second operand when the third is true, otherwise the first.
+    Select(Reg, Reg, Reg),
     /// Arithmetic negation.
     Neg(Reg),
     /// Smaller operand.
@@ -92,10 +102,15 @@ impl CoordinateAxes {
                 | Op::Pow(a, b)
                 | Op::Min(a, b)
                 | Op::Max(a, b)
+                | Op::Equal(a, b)
+                | Op::NotEqual(a, b)
+                | Op::Less(a, b)
+                | Op::LessEqual(a, b)
                 | Op::ZeroIfNegative(a, b) => axes[a] | axes[b],
-                Op::Clamp(a, b, c) | Op::Mix(a, b, c) | Op::SmoothStep(a, b, c) => {
-                    axes[a] | axes[b] | axes[c]
-                }
+                Op::Clamp(a, b, c)
+                | Op::Mix(a, b, c)
+                | Op::SmoothStep(a, b, c)
+                | Op::Select(a, b, c) => axes[a] | axes[b] | axes[c],
             };
             axes.push(mask);
         }
@@ -338,10 +353,10 @@ impl Lowerer<'_> {
                 )
             };
             let width = match self.info[id][handle].ty.inner_with(&module.types) {
-                TypeInner::Scalar(Scalar::F32) => 1,
+                TypeInner::Scalar(Scalar::F32 | Scalar::BOOL) => 1,
                 TypeInner::Vector {
                     size,
-                    scalar: Scalar::F32,
+                    scalar: Scalar::F32 | Scalar::BOOL,
                 } => *size as usize,
                 _ => return Err(unsupported()),
             };
@@ -462,6 +477,12 @@ impl Lowerer<'_> {
                     Expr::FunctionArgument(1) => Op::Param(i),
                     Expr::FunctionArgument(2) => Op::Size(i),
                     Expr::Literal(Literal::F32(v)) => Op::Constant(v),
+                    Expr::Literal(Literal::Bool(v)) => Op::Constant(f32::from(v)),
+                    Expr::Select {
+                        condition,
+                        accept,
+                        reject,
+                    } => Op::Select(lane(reject, i), lane(accept, i), lane(condition, i)),
                     Expr::Unary {
                         op: UnaryOperator::Negate,
                         expr,
@@ -473,6 +494,12 @@ impl Lowerer<'_> {
                             Binary::Subtract => Op::Sub(a, b),
                             Binary::Multiply => Op::Mul(a, b),
                             Binary::Divide => Op::Div(a, b),
+                            Binary::Equal => Op::Equal(a, b),
+                            Binary::NotEqual => Op::NotEqual(a, b),
+                            Binary::Less => Op::Less(a, b),
+                            Binary::LessEqual => Op::LessEqual(a, b),
+                            Binary::Greater => Op::Less(b, a),
+                            Binary::GreaterEqual => Op::LessEqual(b, a),
                             _ => return Err(unsupported()),
                         }
                     }

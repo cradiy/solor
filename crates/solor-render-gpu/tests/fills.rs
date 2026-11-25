@@ -20,7 +20,10 @@ fn scene(phase: f32) -> Result<(Size, ViewFrame)> {
         ],
     )?;
     let shader = EffectShader::wgsl(
-        "fn effect(uv:vec2f, t:f32, size:vec2f)->vec4f {return vec4f(uv.x,t,uv.y,0.67);}",
+        "fn effect(uv: vec2f, t: f32, size: vec2f) -> vec4f {
+            let axes = select(uv, 1.0 - uv, uv >= vec2f(t));
+            return select(vec4f(axes, t, 0.67), vec4f(t, axes.yx, 0.48), uv.x < t);
+        }",
     )?;
     let size = |w, h| Size {
         width: px(w),

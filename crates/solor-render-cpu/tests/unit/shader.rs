@@ -40,6 +40,43 @@ fn full(size: DeviceSize) -> ImageRegion {
 }
 
 #[test]
+fn select_uses_the_condition_axes_and_vector_lanes() -> Result<()> {
+    let shader = EffectShader::wgsl(
+        "fn orient(color: vec2f, swap: bool) -> vec2f {
+            return select(color, color.yx, swap);
+        }
+        fn effect(uv: vec2f, edge: f32) -> vec4f {
+            let color = select(vec2f(0.), vec2f(1.), uv <= vec2f(edge, 0.25));
+            return vec4f(orient(color, uv.y > 0.5), select(0., 1., uv.x != edge), 1.);
+        }",
+    )?;
+    let size = DeviceSize {
+        width: 4,
+        height: 2,
+    };
+    for edge in [0.375, 0.625] {
+        let image = render(
+            &shader.with_params([edge, 0., 0., 0.]),
+            size.at_unit_scale(),
+            normalized(size, full(size)),
+        )?;
+        assert_eq!(image.dimensions(), size);
+        for (i, pixel) in image.pixels().iter().enumerate() {
+            let u = ((i % 4) as f32 + 0.5) / 4.;
+            let left = if u <= edge { 255 } else { 0 };
+            let blue = if u != edge { 255 } else { 0 };
+            let expected = if i < 4 {
+                [left, 255, blue, 255]
+            } else {
+                [0, left, blue, 255]
+            };
+            assert_eq!(*pixel, expected);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn wgsl_matches_native_for_full_and_fractional_damage() -> Result<()> {
     let program = EffectShader::wgsl(SWEEP)?;
     let size = DeviceSize {

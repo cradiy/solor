@@ -16,7 +16,8 @@ impl EffectShader {
     /// UV runs from the top left to the bottom right of the fill. Return straight sRGB and alpha.
     /// The second argument may also be a single float. Declare an optional third
     /// `size: vec2<f32>` argument to read the full fill dimensions in logical pixels.
-    /// The effect can call straight-line WGSL helpers with float or vector parameters and results.
+    /// Helpers can use float and boolean scalars or vectors. Comparisons and `select` may
+    /// choose a whole color or individual channels.
     /// Supported operations include float and vector arithmetic, swizzles,
     /// `abs`, `floor`, `fract`, `min`, `max`, `clamp`, `sqrt`, `pow`, `length`, `distance`, `dot`, `normalize`,
     /// `reflect`, `refract`, `sin`, `cos`, `mix` and `smoothstep`.

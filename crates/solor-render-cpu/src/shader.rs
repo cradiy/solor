@@ -71,6 +71,17 @@ fn sample(
                 Op::Sub(a, b) => std::array::from_fn(|i| r[a][i] - r[b][i]),
                 Op::Mul(a, b) => std::array::from_fn(|i| r[a][i] * r[b][i]),
                 Op::Div(a, b) => std::array::from_fn(|i| r[a][i] / r[b][i]),
+                Op::Equal(a, b) => std::array::from_fn(|i| f32::from(r[a][i] == r[b][i])),
+                Op::NotEqual(a, b) => std::array::from_fn(|i| f32::from(r[a][i] != r[b][i])),
+                Op::Less(a, b) => std::array::from_fn(|i| f32::from(r[a][i] < r[b][i])),
+                Op::LessEqual(a, b) => std::array::from_fn(|i| f32::from(r[a][i] <= r[b][i])),
+                Op::Select(a, b, condition) => std::array::from_fn(|i| {
+                    if r[condition][i] != 0. {
+                        r[b][i]
+                    } else {
+                        r[a][i]
+                    }
+                }),
                 Op::Min(a, b) => std::array::from_fn(|i| r[a][i].min(r[b][i])),
                 Op::Max(a, b) => std::array::from_fn(|i| r[a][i].max(r[b][i])),
                 Op::Clamp(a, lo, hi) => {
