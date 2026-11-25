@@ -40,6 +40,29 @@ impl WindowView {
         }
     }
 
+    /// A lock must cover the configured output even if its preferred pixel density exceeds the budget.
+    pub(super) fn lock_buffer_size(
+        &self,
+        preferred: u32,
+        logical: solor::layout::Size,
+    ) -> std::io::Result<(u32, Option<solor::raster::DeviceSize>)> {
+        if let Some(size) = self.buffer_size(preferred, logical)? {
+            return Ok((preferred, Some(size)));
+        }
+        let (mut low, mut high) = (0, preferred);
+        let mut best = None;
+        while high - low > 1 {
+            let scale = low + (high - low) / 2;
+            if let Some(size) = self.buffer_size(scale, logical)? {
+                low = scale;
+                best = Some(size);
+            } else {
+                high = scale;
+            }
+        }
+        Ok((low, best))
+    }
+
     delegate! {
         fn surrounding_text([&mut] self,max:usize)->Option<SurroundingText<'_>>;
         fn event([&mut] self,event:WindowEvent)->Result<EventResponse>;

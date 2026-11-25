@@ -3,6 +3,8 @@ mod activation;
 mod application;
 mod background_effect;
 mod buffer;
+mod channel;
+pub use channel::ApplicationSender;
 mod clipboard;
 mod decorations;
 mod floating;
@@ -18,6 +20,7 @@ mod parent;
 mod pointer;
 mod presentation;
 mod role;
+pub mod session_lock;
 mod stacking;
 mod text_input;
 mod wake;
@@ -330,7 +333,17 @@ impl Window {
         self.scale_120 = scale_120;
         self.full_damage = true;
         self.dirty = true;
-        match self.view.buffer_size(scale_120, size) {
+        let target = if let Role::Lock { raster_scale, .. } = &mut self.role {
+            self.view
+                .lock_buffer_size(scale_120, size)
+                .map(|(scale, target)| {
+                    *raster_scale = scale;
+                    target
+                })
+        } else {
+            self.view.buffer_size(scale_120, size)
+        };
+        match target {
             Ok(target) => self.buffer_size = target,
             Err(error) => {
                 self.buffer_size = None;
@@ -406,7 +419,11 @@ impl Window {
         {
             return Ok(());
         }
-        let scale = RasterScale(f64::from(self.scale_120) / 120.0);
+        let scale_120 = match &self.role {
+            Role::Lock { raster_scale, .. } => *raster_scale,
+            _ => self.scale_120,
+        };
+        let scale = RasterScale(f64::from(scale_120) / 120.0);
         #[cfg(feature = "gpu")]
         if let WindowView::Gpu(view, _) = &mut self.view {
             let output = view.frame(self.size, scale)?;
@@ -554,7 +571,7 @@ impl Window {
                 self.size.height.get(),
                 size.width,
                 size.height,
-                self.scale_120,
+                scale_120,
                 index,
                 reuse,
                 self.audit.is_some(),

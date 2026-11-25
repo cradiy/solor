@@ -26,9 +26,15 @@ use crate::layer_shell::{
     units,
 };
 
+use wayland_client::protocol::wl_output::WlOutput;
+use wayland_protocols::ext::session_lock::v1::client::{
+    ext_session_lock_surface_v1::ExtSessionLockSurfaceV1, ext_session_lock_v1::ExtSessionLockV1,
+};
+
 type AssignPopup<'a> = Box<dyn FnOnce(&WlSurface) -> Result<Box<dyn std::any::Any>> + 'a>;
 
 pub(super) enum Request<'a> {
+    Lock(&'a ExtSessionLockV1, &'a WlOutput),
     Menu(crate::popup::PopupOptions),
     Popup(AssignPopup<'a>),
     Toplevel(WindowOptions<'a>),
@@ -36,6 +42,10 @@ pub(super) enum Request<'a> {
 }
 
 pub(super) enum Role {
+    Lock {
+        surface: ExtSessionLockSurfaceV1,
+        raster_scale: u32,
+    },
     Menu(std::rc::Rc<super::menu::Menu>),
     Popup {
         _owner: Box<dyn std::any::Any>,
@@ -129,6 +139,16 @@ impl Request<'_> {
         handle: solor::platform::WindowHandle,
     ) -> Result<(Role, Size)> {
         match self {
+            Self::Lock(lock, output) => Ok((
+                Role::Lock {
+                    surface: lock.get_lock_surface(surface, output, qh, surface.id()),
+                    raster_scale: 120,
+                },
+                Size {
+                    width: px(1.),
+                    height: px(1.),
+                },
+            )),
             Self::Menu(options) => menus.create(options, globals, qh, surface, handle),
             Self::Popup(assign) => Ok((
                 Role::Popup {
@@ -355,6 +375,7 @@ impl Drop for Role {
                 shell.destroy();
             }
             Self::Layer(surface, _) => surface.destroy(),
+            Self::Lock { surface, .. } => surface.destroy(),
             Self::Menu(_) | Self::Popup { .. } => {}
         }
     }

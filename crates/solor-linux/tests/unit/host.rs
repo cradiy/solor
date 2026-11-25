@@ -30,16 +30,13 @@ impl Host {
             .into_iter()
             .enumerate()
             {
-                let len = interface.len() + 1;
-                let padded = len.next_multiple_of(4);
-                let mut event = Vec::from(registry_id);
-                event.extend_from_slice(&(((20 + padded) as u32) << 16).to_ne_bytes());
-                event.extend_from_slice(&(i as u32 + 1).to_ne_bytes());
-                event.extend_from_slice(&(len as u32).to_ne_bytes());
-                event.extend_from_slice(interface.as_bytes());
-                event.resize(16 + padded, 0);
-                event.extend_from_slice(&version.to_ne_bytes());
-                peer.write_all(&event)?;
+                advertise(
+                    &mut peer,
+                    u32::from_ne_bytes(registry_id.try_into().unwrap()),
+                    i as u32 + 1,
+                    interface,
+                    version,
+                )?;
             }
             peer.write_all(&requests[20..24])?;
             peer.write_all(&(12u32 << 16).to_ne_bytes())?;
@@ -87,4 +84,23 @@ impl Host {
             &self.events.windows.qh,
         );
     }
+}
+
+pub(super) fn advertise(
+    peer: &mut UnixStream,
+    registry_id: u32,
+    name: u32,
+    interface: &str,
+    version: u32,
+) -> io::Result<()> {
+    let len = interface.len() + 1;
+    let padded = len.next_multiple_of(4);
+    let mut event = Vec::from(registry_id.to_ne_bytes());
+    event.extend_from_slice(&(((20 + padded) as u32) << 16).to_ne_bytes());
+    event.extend_from_slice(&name.to_ne_bytes());
+    event.extend_from_slice(&(len as u32).to_ne_bytes());
+    event.extend_from_slice(interface.as_bytes());
+    event.resize(16 + padded, 0);
+    event.extend_from_slice(&version.to_ne_bytes());
+    peer.write_all(&event)
 }

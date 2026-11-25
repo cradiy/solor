@@ -8,7 +8,7 @@ mod system;
 
 pub use solor::platform::{WindowBackground, WindowHandle, WindowOptions};
 #[cfg(target_os = "linux")]
-pub use solor_linux::{layer_shell, popup};
+pub use solor_linux::{ApplicationSender, layer_shell, popup, session_lock};
 
 /// Hosts application windows with the window system and renderer selected for this target.
 pub struct SystemPlatform {
@@ -34,6 +34,18 @@ pub struct Application {
 }
 
 impl Application {
+    /// Delivers messages on the UI thread. Each sender keeps the application running.
+    #[cfg(target_os = "linux")]
+    pub fn channel<T: Send + 'static>(
+        &self,
+        capacity: usize,
+        mut receive: impl FnMut(&Application, T) + 'static,
+    ) -> Result<ApplicationSender<T>> {
+        let app = self.clone();
+        self.windows
+            .channel(capacity, move |_, msg| receive(&app, msg))
+    }
+
     /// Mounts an independent view and opens a window on the current event loop.
     /// Returns an error if the application has exited or window creation fails.
     pub fn open_window(
@@ -57,6 +69,25 @@ impl Application {
             options,
             configured_ui(ui, &self.assets),
             root,
+        )
+    }
+
+    /// Builds one opaque lock view per output, using the host renderer and shared assets.
+    /// The callback receives the Wayland output registry name and this session's lock handle.
+    #[cfg(target_os = "linux")]
+    pub fn lock_session<R: Render>(
+        &self,
+        mut build: impl FnMut(u32, &session_lock::SessionLock) -> Result<(Ui, R)> + 'static,
+        notify: impl FnMut(session_lock::SessionLockState) + 'static,
+    ) -> Result<session_lock::SessionLock> {
+        let assets = self.assets.clone();
+        system::lock_session(
+            &self.windows,
+            move |output, lock| {
+                let (ui, root) = build(output, lock)?;
+                Ok((configured_ui(ui, &assets), root))
+            },
+            notify,
         )
     }
 
@@ -148,7 +179,7 @@ impl SystemPlatform {
     }
 
     /// Calls the setup function once, then runs the windows together on the calling thread
-    /// until the last one closes. Each window owns its UI and frame schedule.
+    /// until all windows, application channels and session locks close.
     pub fn run(&self, setup: impl FnOnce(Application) -> Result<()>) -> Result<()> {
         self.host.run(|windows| {
             setup(Application {

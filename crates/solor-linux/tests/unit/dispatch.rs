@@ -40,7 +40,7 @@ fn a_blocked_wayland_writer_services_wakes_and_resumes_on_writable() -> anyhow::
 
         // Leave the pending wl_display.sync request for the writable turn.
         let request_len = 12;
-        io::copy(&mut peer.by_ref().take(sent * request_len), &mut io::sink())?;
+        io::copy(&mut (&mut peer).take(sent * request_len), &mut io::sink())?;
         dispatch()?;
         let mut request = [0; 12];
         peer.read_exact(&mut request)?;
@@ -50,37 +50,38 @@ fn a_blocked_wayland_writer_services_wakes_and_resumes_on_writable() -> anyhow::
     Ok(())
 }
 
+use solor::{
+    layout::Size,
+    platform::{EventResponse, WindowEvent},
+    px,
+    raster::{Clip, Damage, RasterFrame, RasterScale},
+};
+use std::io::Write;
+
+#[derive(Default)]
+struct Redraw(Vec<u8>);
+impl WindowHandler<Rgba8> for Redraw {
+    fn event(&mut self, _: WindowEvent) -> anyhow::Result<EventResponse> {
+        Ok(Default::default())
+    }
+    fn next_redraw(&self) -> Option<Instant> {
+        Some(Instant::now())
+    }
+    fn frame(&mut self, size: Size, scale: RasterScale) -> anyhow::Result<RasterFrame<'_>> {
+        let size = scale.buffer_size(size)?;
+        self.0
+            .resize(size.width as usize * size.height as usize * 4, 255);
+        Ok(RasterFrame {
+            size,
+            rgba: &self.0,
+            damage: Damage::from_rect(Clip::canvas(size)),
+            request_callback: false,
+        })
+    }
+}
+
 #[test]
 fn oversized_surface_waits_while_a_second_window_keeps_submitting() -> anyhow::Result<()> {
-    use solor::{
-        layout::Size,
-        platform::{EventResponse, WindowEvent},
-        px,
-        raster::{Clip, Damage, RasterFrame, RasterScale},
-    };
-    use std::io::Write;
-
-    #[derive(Default)]
-    struct Redraw(Vec<u8>);
-    impl WindowHandler<Rgba8> for Redraw {
-        fn event(&mut self, _: WindowEvent) -> anyhow::Result<EventResponse> {
-            Ok(Default::default())
-        }
-        fn next_redraw(&self) -> Option<Instant> {
-            Some(Instant::now())
-        }
-        fn frame(&mut self, size: Size, scale: RasterScale) -> anyhow::Result<RasterFrame<'_>> {
-            let size = scale.buffer_size(size)?;
-            self.0
-                .resize(size.width as usize * size.height as usize * 4, 255);
-            Ok(RasterFrame {
-                size,
-                rgba: &self.0,
-                damage: Damage::from_rect(Clip::canvas(size)),
-                request_callback: false,
-            })
-        }
-    }
     let mut host = fixture::Host::new()?;
     let large = host.open(Redraw::default())?;
     let small = host.open(Redraw::default())?;
@@ -120,5 +121,92 @@ fn oversized_surface_waits_while_a_second_window_keeps_submitting() -> anyhow::R
         assert_eq!(events.desktop.windows[&large].commits, expected_large);
         assert_eq!(events.desktop.windows[&small].commits, expected_small);
     }
+    Ok(())
+}
+
+#[test]
+fn windowless_application_drains_messages_from_a_disconnected_worker() -> anyhow::Result<()> {
+    let mut host = fixture::Host::new()?;
+    let app = WaylandApplication(Rc::downgrade(&host.events.windows));
+    let received = Rc::new(RefCell::new(Vec::new()));
+    let ui_thread = std::thread::current().id();
+    let sender = app.channel(128, {
+        let received = received.clone();
+        move |app, message| {
+            assert_eq!(std::thread::current().id(), ui_thread);
+            assert!(app.factory().is_ok());
+            received.borrow_mut().push(message);
+        }
+    })?;
+    std::thread::spawn(move || {
+        for i in 0..128 {
+            sender.try_send(i).unwrap();
+        }
+    })
+    .join()
+    .unwrap();
+    host.events.dispatch()?;
+    assert_eq!(*received.borrow(), (0..128).collect::<Vec<_>>());
+    Ok(())
+}
+
+#[test]
+fn lock_surfaces_follow_output_hotplug_and_fit_large_outputs() -> anyhow::Result<()> {
+    let mut host = fixture::Host::new()?;
+    let events = &mut host.events;
+    let globals = events.windows.globals.as_ref().unwrap();
+    let registry = globals.registry().id().protocol_id();
+    fixture::advertise(
+        &mut host.peer,
+        registry,
+        20,
+        "ext_session_lock_manager_v1",
+        1,
+    )?;
+    fixture::advertise(&mut host.peer, registry, 21, "wl_output", 3)?;
+    events.queue.blocking_dispatch(&mut events.desktop)?;
+    let app = WaylandApplication(Rc::downgrade(&events.windows));
+    let built = Rc::new(RefCell::new(Vec::new()));
+    app.lock_session(
+        {
+            let built = built.clone();
+            move |id, _| {
+                built.borrow_mut().push(id);
+                Ok(Box::new(Redraw::default()))
+            }
+        },
+        |_| {},
+    )?;
+    events.windows.locks.sync_outputs(globals);
+    let mut first = events.windows.pending.borrow_mut().pop().unwrap();
+    first.resize(Size {
+        width: px(3840.),
+        height: px(2160.),
+    });
+    let Role::Lock { raster_scale, .. } = first.role else {
+        unreachable!()
+    };
+    let buffer = first.buffer_size.unwrap();
+    assert!(u64::from(buffer.width) * u64::from(buffer.height) <= 4 * 1024 * 1024);
+    assert!(
+        first
+            .view
+            .buffer_size(raster_scale + 1, first.size)?
+            .is_none()
+    );
+
+    fixture::advertise(&mut host.peer, registry, 22, "wl_output", 3)?;
+    events.queue.blocking_dispatch(&mut events.desktop)?;
+    events.windows.locks.sync_outputs(globals);
+    let second = events.windows.pending.borrow_mut().pop().unwrap();
+    host.peer.write_all(&registry.to_ne_bytes())?;
+    host.peer.write_all(&((12u32 << 16) | 1).to_ne_bytes())?;
+    host.peer.write_all(&21u32.to_ne_bytes())?;
+    events.queue.blocking_dispatch(&mut events.desktop)?;
+    events.windows.locks.sync_outputs(globals);
+    assert_eq!(*built.borrow(), [21, 22]);
+    assert!(!first.life.is_open() && second.life.is_open());
+    first.destroy();
+    second.destroy();
     Ok(())
 }

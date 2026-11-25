@@ -33,6 +33,31 @@ pub(super) fn open_window<R: Render>(
     })
 }
 
+pub(super) fn lock_session<R: Render>(
+    app: &Windows,
+    mut build: impl FnMut(u32, &super::session_lock::SessionLock) -> Result<(Ui, R)> + 'static,
+    notify: impl FnMut(super::session_lock::SessionLockState) + 'static,
+) -> Result<super::session_lock::SessionLock> {
+    #[cfg(feature = "gpu")]
+    if gpu_selected() {
+        return app.lock_gpu_session(
+            move |output, lock| {
+                let (mut ui, root) = build(output, lock)?;
+                ui.set_system_font_provider(solor_linux::system_ui_font);
+                Ok((ui, root))
+            },
+            notify,
+        );
+    }
+    app.lock_session(
+        move |output, lock| {
+            let (ui, root) = build(output, lock)?;
+            Ok(Box::new(mount(ui, root, WindowBackground::Opaque)?))
+        },
+        notify,
+    )
+}
+
 pub(super) fn open_popup<R: Render>(
     app: &Windows,
     options: solor_linux::popup::PopupOptions,

@@ -247,9 +247,13 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Desktop {
             wl_registry::Event::Global {
                 name, interface, ..
             } => {
+                if interface == "wl_output" {
+                    state.locks.outputs_dirty.set(true);
+                }
                 state.bind_background_effects(registry, name, &interface, qh);
             }
             wl_registry::Event::GlobalRemove { name } => {
+                state.locks.remove_global(name);
                 if state.effects.as_ref().is_some_and(|m| m.name == name) {
                     state.effects.take();
                 }

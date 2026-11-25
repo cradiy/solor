@@ -36,6 +36,7 @@ use wayland_protocols::wp::{
 #[derive(Default)]
 pub(super) struct Desktop {
     pub(super) menus: Rc<super::menu::Menus>,
+    pub(super) locks: Rc<super::session_lock::Locks>,
     pub(super) effects: Option<super::background_effect::Manager>,
     pub(super) clipboard: Option<Rc<super::clipboard::Clipboard>>,
     pub(super) text_inputs: Option<super::text_input::Manager>,
@@ -65,6 +66,23 @@ impl Desktop {
 pub struct WaylandApplication(Weak<WindowFactory>);
 
 impl WaylandApplication {
+    /// Delivers background messages on the UI thread, including while no windows are open.
+    /// Dropping the last sender drains queued messages and releases the channel.
+    pub fn channel<T: Send + 'static>(
+        &self,
+        capacity: usize,
+        receive: impl FnMut(&WaylandApplication, T) + 'static,
+    ) -> anyhow::Result<super::ApplicationSender<T>> {
+        anyhow::ensure!(
+            capacity > 0,
+            "application channel requires a positive capacity"
+        );
+        let factory = self.factory()?;
+        let (sender, inbox) = super::channel::channel(capacity, &factory.wake, receive);
+        factory.inboxes.borrow_mut().push(inbox);
+        Ok(sender)
+    }
+
     /// Creates an XDG toplevel and schedules it for dispatch after the current callback.
     /// Returns an error if the application has exited or window creation fails.
     pub fn open_window(
@@ -94,7 +112,7 @@ impl WaylandApplication {
             .open(Request::Toplevel(options), None, build)
     }
 
-    fn factory(&self) -> anyhow::Result<Rc<WindowFactory>> {
+    pub(super) fn factory(&self) -> anyhow::Result<Rc<WindowFactory>> {
         self.0.upgrade().context("application has exited")
     }
 
@@ -214,7 +232,7 @@ impl WaylandApplication {
     }
 
     #[cfg(feature = "gpu")]
-    fn build_gpu<R: solor::Render>(
+    pub(super) fn build_gpu<R: solor::Render>(
         &self,
         request: Request<'_>,
         control: Option<Binding>,
@@ -357,17 +375,20 @@ struct EventLoop {
     desktop: Desktop,
 }
 
-struct WindowFactory {
+pub(super) struct WindowFactory {
+    pub(super) locks: Rc<super::session_lock::Locks>,
+    wake: std::sync::Arc<super::wake::EventWake>,
+    inboxes: RefCell<Vec<super::channel::Inbox>>,
     menus: Rc<super::menu::Menus>,
     #[cfg(feature = "gpu")]
     gpu: std::cell::OnceCell<RefCell<super::gpu::GpuContext>>,
     clipboard: Option<Rc<super::clipboard::Clipboard>>,
     toplevels: Toplevels,
     activation: Option<Rc<Activation>>,
-    qh: QueueHandle<Desktop>,
+    pub(super) qh: QueueHandle<Desktop>,
     pending: RefCell<Vec<Window>>,
-    revisit: Rc<Cell<bool>>,
-    globals: Option<GlobalList>,
+    pub(super) revisit: Rc<Cell<bool>>,
+    pub(super) globals: Option<GlobalList>,
     compositor: wl_compositor::WlCompositor,
     shm: wl_shm::WlShm,
     viewporter: wp_viewporter::WpViewporter,
@@ -378,7 +399,7 @@ struct WindowFactory {
 }
 
 impl Wayland {
-    /// Opens the initial windows, then dispatches events until the last window closes.
+    /// Opens the initial windows, then dispatches until all windows, channels and session locks close.
     pub fn run(
         &self,
         setup: impl FnOnce(WaylandApplication) -> anyhow::Result<()>,
@@ -453,6 +474,9 @@ impl EventLoop {
             }
         }
         let windows = WindowFactory {
+            locks: desktop.locks.clone(),
+            wake: super::wake::EventWake::new()?,
+            inboxes: Default::default(),
             menus: desktop.menus.clone(),
             #[cfg(feature = "gpu")]
             gpu: Default::default(),
@@ -481,7 +505,7 @@ impl EventLoop {
 }
 
 impl WindowFactory {
-    fn open(
+    pub(super) fn open(
         &self,
         request: Request<'_>,
         control: Option<Binding>,
@@ -512,7 +536,7 @@ impl WindowFactory {
                     .transpose()?
                     .filter(|_| options.modal)
             }
-            Request::Layer(_) | Request::Popup(_) | Request::Menu(_) => None,
+            Request::Layer(_) | Request::Popup(_) | Request::Menu(_) | Request::Lock(..) => None,
         };
         let surface = self.compositor.create_surface(&self.qh, ());
         match self.create_window(
@@ -554,12 +578,13 @@ impl WindowFactory {
         let background = match &request {
             Request::Menu(options) => options.background,
             Request::Popup(_) => WindowBackground::Transparent,
+            Request::Lock(..) => WindowBackground::Opaque,
             Request::Layer(options) => options.background,
             Request::Toplevel(options) => options.background,
         };
         let parent = match &request {
             Request::Toplevel(options) => options.parent,
-            Request::Layer(_) | Request::Popup(_) | Request::Menu(_) => None,
+            Request::Layer(_) | Request::Popup(_) | Request::Menu(_) | Request::Lock(..) => None,
         };
         let activation = match (&request, &self.activation) {
             (Request::Toplevel(options), Some(activation)) => Some(ActivationTarget {
@@ -589,7 +614,7 @@ impl WindowFactory {
             Role::Toplevel { top, .. } => {
                 Some(self.toplevels.register(handle.clone(), &life, top, parent))
             }
-            Role::Layer(..) | Role::Popup { .. } | Role::Menu(_) => None,
+            Role::Layer(..) | Role::Popup { .. } | Role::Menu(_) | Role::Lock { .. } => None,
         };
         let floating = match &role {
             Role::Layer(_, p) if p.movable => Some(floating::FloatingPanel::new(
@@ -621,6 +646,11 @@ impl WindowFactory {
         ))?;
         let viewport = self.viewporter.get_viewport(content, qh, ());
 
+        let mapping = if matches!(role, Role::Lock { .. }) {
+            Mapping::AwaitingConfigure
+        } else {
+            Mapping::Hidden
+        };
         let window = Window {
             popup_parent,
             control,
@@ -649,7 +679,7 @@ impl WindowFactory {
             trace: self.trace_submissions,
             size,
             pending_size: None,
-            mapping: Mapping::Hidden,
+            mapping,
             input_region,
             blur: None,
             dirty: true,
@@ -669,10 +699,25 @@ impl WindowFactory {
 impl EventLoop {
     fn dispatch(&mut self) -> anyhow::Result<()> {
         let qh = self.queue.handle();
-        let wake = super::wake::EventWake::new()?;
+        let wake = &self.windows.wake;
+        let app = WaylandApplication(Rc::downgrade(&self.windows));
+        let mut inboxes = Vec::new();
         let waker = std::task::Waker::from(wake.clone());
         loop {
             self.windows.revisit.set(false);
+            inboxes.append(&mut self.windows.inboxes.borrow_mut());
+            let mut more = false;
+            inboxes.retain_mut(|receive| match receive(&app) {
+                super::channel::Poll::More => {
+                    more = true;
+                    true
+                }
+                super::channel::Poll::Idle => true,
+                super::channel::Poll::Closed => false,
+            });
+            if let Some(globals) = &self.windows.globals {
+                self.windows.locks.sync_outputs(globals);
+            }
             for mut window in self.windows.pending.take() {
                 window.pixel_order = self.desktop.order(window.background);
                 self.desktop.windows.insert(window.surface.id(), window);
@@ -685,7 +730,7 @@ impl EventLoop {
                     match result? {}
                 }
             }
-            let mut deadline = None;
+            let mut deadline = more.then(Instant::now);
             let mut closed = Vec::new();
             for (id, window) in &mut self.desktop.windows {
                 if let Some(error) = window.failure.take() {
@@ -781,11 +826,15 @@ impl EventLoop {
             self.desktop.sync_cursors();
             self.desktop.sync_text_inputs();
             // A newly mapped parent or a callback can make another window ready.
-            if self.windows.revisit.get() || !self.windows.pending.borrow().is_empty() {
+            if self.windows.revisit.get()
+                || !self.windows.pending.borrow().is_empty()
+                || !self.windows.inboxes.borrow().is_empty()
+            {
                 continue;
             }
             let write_interest = flush_interest(&self.queue)?;
-            if self.desktop.windows.is_empty() {
+            if self.desktop.windows.is_empty() && inboxes.is_empty() && !self.windows.locks.active()
+            {
                 return Ok(());
             }
             dispatch_until(
@@ -793,7 +842,7 @@ impl EventLoop {
                 &mut self.desktop,
                 write_interest,
                 deadline,
-                &wake,
+                wake,
             )?;
         }
     }
