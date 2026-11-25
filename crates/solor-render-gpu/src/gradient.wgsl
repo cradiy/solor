@@ -46,8 +46,6 @@ fn oklab_to_srgb(lab: vec3f) -> vec3f {
 }
 
 fn gradient_color(local: vec2f, size: vec2f, params: vec4f, ramp: vec4f, oklab: bool) -> vec4f {
-    let first = u32(ramp.x);
-    let count = u32(ramp.y);
     let centered = local - size * 0.5;
     let unit = (2. * centered) / size;
     var t: f32;
@@ -64,12 +62,18 @@ fn gradient_color(local: vec2f, size: vec2f, params: vec4f, ramp: vec4f, oklab: 
         }
         default: { t = 0.5 + dot(centered, params.xy); }
     }
+    return sample_gradient_ramp(t, ramp, params.z, params.w == 2., oklab);
+}
+
+fn sample_gradient_ramp(t: f32, ramp: vec4f, opacity: f32, angular: bool, oklab: bool) -> vec4f {
+    let first = u32(ramp.x);
+    let count = u32(ramp.y);
     let phase = ramp.z;
     let half_seam = ramp.w * 0.5;
     var color: vec4f;
     if phase >= 0. {
         color = ramp_color(fract(fract(t) + phase), first, count, true);
-    } else if params.w == 2. && half_seam > 0. && (t < half_seam || t > 1. - half_seam) {
+    } else if angular && half_seam > 0. && (t < half_seam || t > 1. - half_seam) {
         let wrapped = select(t - 1., t, t < half_seam);
         color = mix(ramp_color(1. - half_seam, first, count, false),
                     ramp_color(half_seam, first, count, false),
@@ -79,5 +83,5 @@ fn gradient_color(local: vec2f, size: vec2f, params: vec4f, ramp: vec4f, oklab: 
     }
     var rgb = color.rgb / max(color.a, 1e-8);
     if oklab { rgb = oklab_to_srgb(rgb); }
-    return vec4f(rgb, color.a * params.z);
+    return vec4f(rgb, color.a * opacity);
 }

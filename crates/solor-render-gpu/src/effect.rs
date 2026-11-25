@@ -19,7 +19,9 @@ impl Target {
     pub(super) fn module(self, body: &str) -> String {
         let fragment = match self {
             Self::Underline => include_str!("underline.wgsl"),
-            Self::Fill | Self::Mask => include_str!("quad.wgsl"),
+            Self::Fill | Self::Mask => {
+                concat!(include_str!("coverage.wgsl"), include_str!("quad.wgsl"))
+            }
         };
         [include_str!("vertex.wgsl"), body, fragment].join("\n")
     }
@@ -78,6 +80,11 @@ pub(super) fn pipeline(
         }
     }
     Ok(super::module_pipeline(
-        device, layout, format, source, &prefix,
+        device,
+        layout,
+        format,
+        source,
+        &prefix,
+        wgpu::BlendState::ALPHA_BLENDING,
     ))
 }

@@ -150,6 +150,8 @@ fn ordered_fills_match_cpu_across_scales() -> Result<()> {
         }
     }
     draw_gpu_only_effect(&device, &queue, &mut renderer)?;
+    compare_backdrop_blur(&device, &queue, &mut renderer)?;
+    compare_groups(&device, &queue, &mut renderer)?;
     compare_paths(&device, &queue, &mut renderer)?;
     compare_borders(&device, &queue, &mut renderer)?;
     compare_patterns(&device, &queue, &mut renderer)?;
@@ -197,6 +199,148 @@ fn draw_gpu_only_effect(
         pixels(device, queue, renderer, &frame, size, scale)?,
         [255, 0, 0, 255, 255, 255, 0, 255, 255, 255, 255, 255]
     );
+    Ok(())
+}
+
+fn compare_backdrop_blur(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut Renderer,
+) -> Result<()> {
+    let logical = DeviceSize {
+        width: 40,
+        height: 24,
+    }
+    .at_unit_scale();
+    for opacity in [1., 0.55] {
+        let mut ui = Ui::new();
+        let view = ui.mount(component(move |_| {
+            div().bg(rgb(0x18426a)).child(
+                div()
+                    .w_full()
+                    .h_full()
+                    .opacity(opacity)
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(5.))
+                            .w(px(4.))
+                            .h_full()
+                            .bg(rgba(0xf68039bf)),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(7.))
+                            .h(px(5.))
+                            .w_full()
+                            .bg(rgba(0x41cd81aa)),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(1.))
+                            .top(px(-2.))
+                            .size(px(19.5))
+                            .rounded(px(4.5))
+                            .backdrop_blur(px(2.75)),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(10.))
+                            .top(px(3.))
+                            .size(px(13.))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left(px(-4.))
+                                    .top(px(-2.))
+                                    .size(px(22.))
+                                    .backdrop_blur(px(4.5)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(12.))
+                            .top(px(6.))
+                            .size(px(3.))
+                            .bg(rgb(0xec3058)),
+                    ),
+            )
+        }))?;
+        ui.layout(view, logical)?;
+        let frame = ui.record_frame(view)?;
+        for scale in [1., 1.25, 2.].map(RasterScale) {
+            let physical = scale.buffer_size(logical)?;
+            let cpu = Surface::draw_view(&frame, physical, scale)?;
+            let gpu = pixels(device, queue, renderer, &frame, physical, scale)?;
+            for (offset, (&c, &g)) in cpu.rgba.iter().zip(&gpu).enumerate() {
+                assert!(
+                    c.abs_diff(g) <= 2,
+                    "blur at opacity {opacity}, scale {}, byte {offset}: {c} / {g}",
+                    scale.0
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn compare_groups(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut Renderer,
+) -> Result<()> {
+    let palette = linear_gradient(
+        90.,
+        [
+            color_stop(rgba(0xd0295254), 0.),
+            color_stop(rgba(0xe880259b), 0.35),
+            color_stop(rgb(0x57c5bb), 1.),
+        ],
+    )?
+    .color_space(solor::ColorSpace::Oklab);
+    let map = solor::GradientMap::new(palette, 0.72)?;
+    let mut ui = Ui::new();
+    let size = |w, h| Size {
+        width: px(w),
+        height: px(h),
+    };
+    let at = |x, y| Origin { x: px(x), y: px(y) };
+    let view = ui.mount(component(move |_| {
+        div().w_full().h_full().paint(move |cx| {
+            cx.fill(cx.size, rgb(0x293c46));
+            cx.with_opacity(0.55, |cx| {
+                cx.fill_rect(at(2., 1.), size(19., 14.), rgba(0x1285e39a))?;
+                cx.with_gradient_map(&map, |cx| {
+                    cx.fill_rect(at(5., 5.), size(17., 11.), rgb(0xecb250))?;
+                    cx.fill_rect(at(9., 1.), size(16., 10.), rgba(0x62c83582))
+                })
+            })?;
+            cx.fill_rect(at(6., 7.), size(5., 7.), rgb(0x714c63))?;
+            cx.with_opacity(0.4, |cx| {
+                cx.fill_rect(at(1., 9.), size(12., 8.), rgb(0xff7540))
+            })
+        })
+    }))?;
+    let logical = size(29., 18.);
+    ui.layout(view, logical)?;
+    let frame = ui.record_frame(view)?;
+    for scale in [1., 1.25, 2.].map(RasterScale) {
+        let physical = scale.buffer_size(logical)?;
+        let cpu = Surface::draw_view(&frame, physical, scale)?;
+        let gpu = pixels(device, queue, renderer, &frame, physical, scale)?;
+        for (offset, (&c, &g)) in cpu.rgba.iter().zip(&gpu).enumerate() {
+            assert!(
+                c.abs_diff(g) <= 2,
+                "group scale {} byte {offset}: {c} / {g}",
+                scale.0
+            );
+        }
+    }
     Ok(())
 }
 

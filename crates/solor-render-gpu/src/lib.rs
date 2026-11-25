@@ -1,6 +1,8 @@
 //! Draws Solor frames into a GPU texture.
+mod backdrop;
 mod effect;
 mod images;
+mod layers;
 mod masks;
 mod path;
 use anyhow::{Result, ensure};
@@ -23,6 +25,9 @@ pub struct Renderer {
     brush: wgpu::RenderPipeline,
     border: Option<wgpu::RenderPipeline>,
     path: Option<wgpu::RenderPipeline>,
+    composite: Option<wgpu::RenderPipeline>,
+    backdrop: Option<backdrop::Filter>,
+    layers: Vec<layers::Layer>,
     underline: Option<wgpu::RenderPipeline>,
     images: Images,
     masks: masks::Atlas,
@@ -37,12 +42,21 @@ pub struct Renderer {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Material {
     Brush,
+    Composite,
+    Blur,
     Border,
     Path,
     Underline,
     Effect(usize),
     Image(usize),
     Mask { page: usize, effect: Option<usize> },
+}
+
+struct FrameData {
+    quads: Vec<[[f32; 4]; 6]>,
+    stops: Vec<[[f32; 4]; 2]>,
+    images: FrameImages,
+    passes: Vec<layers::Pass>,
 }
 
 struct Buffers {
@@ -75,20 +89,7 @@ impl GradientBrush {
         let (w, h) = (size.width.get(), size.height.get());
         let space = g.interpolation_space();
         let oklab = f32::from(space == ColorSpace::Oklab);
-        let mut ramp = [0.; 4];
-        ramp[0] = stops.len() as f32;
-        ramp[1] = g.stops().len() as f32;
-        for (index, s) in g.stops().iter().enumerate() {
-            let color = color::AlphaColor::<color::Srgb>::new(rgba(s.color));
-            let components = match space {
-                ColorSpace::Srgb => color.premultiply().components,
-                ColorSpace::Oklab => color.convert::<color::Oklab>().premultiply().components,
-            };
-            let midpoint = g.gradient_midpoint_at(index).unwrap_or(0.5);
-            stops.push([components, [s.offset, 0.5f32.ln() / midpoint.ln(), 0., 0.]]);
-        }
-        ramp[2] = g.repeat_phase().unwrap_or(-1.);
-        ramp[3] = g.seam_width();
+        let ramp = Self::prepare_ramp(g, stops);
         let angle = (g.angle_degrees() - 90.).to_radians();
         let (sin, cos) = angle.sin_cos();
         let opacity = g.alpha_multiplier();
@@ -107,6 +108,24 @@ impl GradientBrush {
             ramp,
             oklab,
         }
+    }
+
+    fn prepare_ramp(g: &solor::Gradient, stops: &mut Vec<[[f32; 4]; 2]>) -> [f32; 4] {
+        let mut ramp = [0.; 4];
+        ramp[0] = stops.len() as f32;
+        ramp[1] = g.stops().len() as f32;
+        for (index, s) in g.stops().iter().enumerate() {
+            let color = color::AlphaColor::<color::Srgb>::new(rgba(s.color));
+            let components = match g.interpolation_space() {
+                ColorSpace::Srgb => color.premultiply().components,
+                ColorSpace::Oklab => color.convert::<color::Oklab>().premultiply().components,
+            };
+            let midpoint = g.gradient_midpoint_at(index).unwrap_or(0.5);
+            stops.push([components, [s.offset, 0.5f32.ln() / midpoint.ln(), 0., 0.]]);
+        }
+        ramp[2] = g.repeat_phase().unwrap_or(-1.);
+        ramp[3] = g.seam_width();
+        ramp
     }
 }
 
@@ -174,6 +193,9 @@ impl Renderer {
             underline: None,
             border: None,
             path: None,
+            composite: None,
+            backdrop: None,
+            layers: Vec::new(),
             masks: Default::default(),
             rasterizer: Default::default(),
             images,
@@ -191,7 +213,7 @@ impl Renderer {
         })
     }
 
-    /// Clears the target and draws fills, solid borders, paths, text, wavy underlines and SVGs in paint order.
+    /// Clears the target and draws the frame in paint order.
     pub fn draw(
         &mut self,
         frame: &ViewFrame,
@@ -236,19 +258,55 @@ impl Renderer {
         Ok(index)
     }
 
-    fn draw_frame(
+    fn record_draws(
         &mut self,
-        frame: &ViewFrame,
-        target: &wgpu::TextureView,
+        draws: &[Draw],
         size: DeviceSize,
         scale: RasterScale,
-        clear: wgpu::Color,
+        depth: usize,
+        frame: &mut FrameData,
     ) -> Result<()> {
-        let mut quads = Vec::<[[f32; 4]; 6]>::new();
-        let mut stops = vec![[[0f32; 4]; 2]];
-        let mut frame_images = FrameImages::default();
-        let mut batches: Vec<(Material, Range<u32>)> = Vec::new();
-        for (index, cmd) in frame.draws().iter().enumerate() {
+        for (index, cmd) in draws.iter().enumerate() {
+            if let Draw::Group {
+                alpha,
+                gradient_map,
+                draws,
+            } = cmd
+            {
+                let parent_passes = frame.passes.len();
+                let first = frame.quads.len();
+                frame.passes.push(layers::Pass::new(
+                    depth + 1,
+                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                ));
+                self.record_draws(draws, size, scale, depth + 1, frame)?;
+                if frame.quads.len() == first {
+                    frame.passes.truncate(parent_passes);
+                    continue;
+                }
+                let index = frame.quads.len() as u32;
+                frame.quads.push(layers::composite_quad(
+                    size,
+                    *alpha,
+                    gradient_map.as_ref(),
+                    &mut frame.stops,
+                ));
+                let mut parent = layers::Pass::new(depth, wgpu::LoadOp::Load);
+                batch(&mut parent.batches, Material::Composite, index);
+                frame.passes.push(parent);
+                continue;
+            }
+            if matches!(cmd, Draw::BackdropBlur { .. }) {
+                backdrop::Blur::record(cmd, size, scale, depth, frame);
+                continue;
+            }
+            let FrameData {
+                quads,
+                stops,
+                images: frame_images,
+                passes,
+            } = frame;
+            let batches = &mut passes.last_mut().expect("active paint pass").batches;
             let unsupported = |reason: &str| {
                 anyhow::anyhow!(
                     "GPU draw #{} (Draw::{}): {reason}",
@@ -258,7 +316,7 @@ impl Renderer {
             };
             if let Some(path) = path::Path::from_draw(cmd).map_err(unsupported)? {
                 let first = quads.len();
-                path.record(size, scale, &mut quads, &mut stops)?;
+                path.record(size, scale, quads, stops)?;
                 if quads.len() > first {
                     batches.push((Material::Path, first as u32..quads.len() as u32));
                 }
@@ -283,17 +341,7 @@ impl Renderer {
             };
             if let Some((clip, origin, extent, ink)) = raster {
                 let viewport = scale.bounds(*origin, *extent);
-                let mut bounds = viewport.intersect(Clip::canvas(size));
-                if let Some(clip) = clip {
-                    if let Some(x) = &clip.x {
-                        bounds.left = bounds.left.max(scale.edge(x.start.into()));
-                        bounds.right = bounds.right.min(scale.edge(x.end.into()));
-                    }
-                    if let Some(y) = &clip.y {
-                        bounds.top = bounds.top.max(scale.edge(y.start.into()));
-                        bounds.bottom = bounds.bottom.min(scale.edge(y.end.into()));
-                    }
-                }
+                let bounds = clipped_pixels(viewport, clip.as_deref(), size, scale);
                 if bounds.empty() {
                     continue;
                 }
@@ -343,7 +391,7 @@ impl Renderer {
                             [size.width as f32, size.height as f32, 1., 1.],
                             [0., 0., width, height],
                         ]);
-                        batch(&mut batches, Material::Image(image), index);
+                        batch(batches, Material::Image(image), index);
                         continue;
                     }
                     Some((region, rect, radii))
@@ -355,7 +403,7 @@ impl Renderer {
                     Some(solor::Ink::Solid(color)) if color.alpha == 0 => continue,
                     Some(solor::Ink::Solid(color)) => (rgba(*color), None, 0.),
                     Some(solor::Ink::Gradient(g)) => {
-                        let brush = GradientBrush::prepare(g, *extent, &mut stops);
+                        let brush = GradientBrush::prepare(g, *extent, stops);
                         (brush.params, Some(brush.ramp), brush.oklab)
                     }
                     Some(solor::Ink::Shader(fill)) => {
@@ -387,7 +435,7 @@ impl Renderer {
                         [size.width as f32, size.height as f32, 1., oklab],
                         [uv[0], uv[1], paint_box, scale.0 as f32],
                     ]);
-                    batch(&mut batches, Material::Mask { page, effect }, index);
+                    batch(batches, Material::Mask { page, effect }, index);
                 };
                 if let Some((region, rect, radii)) = svg {
                     let tile = self
@@ -498,7 +546,7 @@ impl Renderer {
                     [size.width as f32, size.height as f32, scale.0 as f32, 0.],
                     [colors_start, 0., 0., 0.],
                 ]);
-                batch(&mut batches, Material::Border, index);
+                batch(batches, Material::Border, index);
                 continue;
             }
             let underline_fill;
@@ -576,7 +624,7 @@ impl Renderer {
                     rgba(pattern.color)
                 }
                 Fill::Gradient(g) => {
-                    let brush = GradientBrush::prepare(g, *extent, &mut stops);
+                    let brush = GradientBrush::prepare(g, *extent, stops);
                     material_option = brush.oklab;
                     ramp = brush.ramp;
                     brush.params
@@ -629,7 +677,70 @@ impl Renderer {
                 ],
                 ramp,
             ]);
-            batch(&mut batches, material, index);
+            batch(batches, material, index);
+        }
+        Ok(())
+    }
+
+    fn draw_frame(
+        &mut self,
+        frame: &ViewFrame,
+        target: &wgpu::TextureView,
+        size: DeviceSize,
+        scale: RasterScale,
+        clear: wgpu::Color,
+    ) -> Result<()> {
+        let mut frame_data = FrameData {
+            quads: Vec::new(),
+            stops: vec![[[0.; 4]; 2]],
+            images: FrameImages::default(),
+            passes: vec![layers::Pass::new(0, wgpu::LoadOp::Clear(clear))],
+        };
+        self.record_draws(frame.draws(), size, scale, 0, &mut frame_data)?;
+        // A presentation view may be render-only. A root blur needs a sampleable backdrop.
+        if frame_data
+            .passes
+            .iter()
+            .any(|p| p.depth == 0 && p.blur.is_some())
+        {
+            for p in &mut frame_data.passes {
+                p.depth += 1;
+            }
+            let index = frame_data.quads.len() as u32;
+            frame_data.quads.push(layers::composite_quad(
+                size,
+                255,
+                None,
+                &mut frame_data.stops,
+            ));
+            let mut present = layers::Pass::new(0, wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT));
+            batch(&mut present.batches, Material::Composite, index);
+            frame_data.passes.push(present);
+        }
+        let FrameData {
+            quads,
+            stops,
+            images: frame_images,
+            passes,
+        } = frame_data;
+        let depth = passes.iter().map(|pass| pass.depth).max().unwrap_or(0);
+        self.layers.retain(|layer| layer.size == size);
+        self.layers.truncate(depth);
+        self.layers.resize_with(depth, || {
+            layers::Layer::new(&self.device, &self.images, size, self.format)
+        });
+        if passes.iter().any(|p| p.blur.is_some()) {
+            self.backdrop.get_or_insert_with(|| {
+                backdrop::Filter::new(
+                    &self.device,
+                    &self.bindings,
+                    &self.texture_layout,
+                    self.format,
+                )
+            });
+        }
+        if let Some(filter) = &mut self.backdrop {
+            filter.prepare(&self.device, &passes, size);
         }
         let image_groups = self
             .images
@@ -682,23 +793,63 @@ impl Renderer {
         self.queue.write_buffer(&buffers.quads, 0, quad_bytes);
         self.queue.write_buffer(&buffers.stops, 0, stop_bytes);
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        {
+        for layer_pass in passes {
+            if let Some(blur) = &layer_pass.blur {
+                self.backdrop
+                    .as_ref()
+                    .expect("prepared backdrop filter")
+                    .filter_rows(
+                        &mut encoder,
+                        &buffers.group,
+                        &self.layers[layer_pass.depth - 1].binding,
+                        blur,
+                    );
+            }
+            let view = match layer_pass.depth.checked_sub(1) {
+                Some(index) => &self.layers[index].view,
+                None => target,
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
+                    view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear),
+                        load: layer_pass.load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
                 ..Default::default()
             });
             pass.set_bind_group(0, &buffers.group, &[]);
-            for (id, range) in batches {
+            for (id, range) in layer_pass.batches {
                 match id {
                     Material::Brush => pass.set_pipeline(&self.brush),
+                    Material::Blur => {
+                        let filter = self.backdrop.as_ref().expect("prepared backdrop filter");
+                        pass.set_pipeline(&filter.vertical);
+                        pass.set_bind_group(1, filter.rows(), &[]);
+                    }
+                    Material::Composite => {
+                        pass.set_pipeline(self.composite.get_or_insert_with(|| {
+                            module_pipeline(
+                                &self.device,
+                                &self.texture_layout,
+                                self.format,
+                                concat!(
+                                    include_str!("vertex.wgsl"),
+                                    "\n",
+                                    include_str!("gradient.wgsl"),
+                                    "\n",
+                                    include_str!("layer.wgsl")
+                                )
+                                .to_owned(),
+                                "solor_",
+                                wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+                            )
+                        }));
+                        pass.set_bind_group(1, &self.layers[layer_pass.depth].binding, &[]);
+                    }
                     Material::Path => {
                         pass.set_pipeline(self.path.get_or_insert_with(|| {
                             module_pipeline(
@@ -714,6 +865,7 @@ impl Renderer {
                                 )
                                 .to_owned(),
                                 "solor_",
+                                wgpu::BlendState::ALPHA_BLENDING,
                             )
                         }));
                     }
@@ -730,6 +882,7 @@ impl Renderer {
                                 )
                                 .to_owned(),
                                 "solor_",
+                                wgpu::BlendState::ALPHA_BLENDING,
                             )
                         }));
                     }
@@ -777,6 +930,26 @@ fn draw_name(draw: &Draw) -> &'static str {
         Draw::Polygon { .. } => "Polygon",
         Draw::Polyline { .. } => "Polyline",
     }
+}
+
+fn clipped_pixels(
+    bounds: Clip,
+    clip: Option<&solor::ContentClip>,
+    size: DeviceSize,
+    scale: RasterScale,
+) -> Clip {
+    let mut bounds = bounds.intersect(Clip::canvas(size));
+    if let Some(clip) = clip {
+        if let Some(x) = &clip.x {
+            bounds.left = bounds.left.max(scale.edge(x.start.into()));
+            bounds.right = bounds.right.min(scale.edge(x.end.into()));
+        }
+        if let Some(y) = &clip.y {
+            bounds.top = bounds.top.max(scale.edge(y.start.into()));
+            bounds.bottom = bounds.bottom.min(scale.edge(y.end.into()));
+        }
+    }
+    bounds
 }
 
 fn visible_bounds(
@@ -828,7 +1001,14 @@ fn pipeline(
     body: &str,
     target: effect::Target,
 ) -> wgpu::RenderPipeline {
-    module_pipeline(device, layout, format, target.module(body), "solor_")
+    module_pipeline(
+        device,
+        layout,
+        format,
+        target.module(body),
+        "solor_",
+        wgpu::BlendState::ALPHA_BLENDING,
+    )
 }
 
 fn module_pipeline(
@@ -837,6 +1017,7 @@ fn module_pipeline(
     format: TextureFormat,
     source: String,
     prefix: &str,
+    blend: impl Into<Option<wgpu::BlendState>>,
 ) -> wgpu::RenderPipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Solor quad"),
@@ -860,7 +1041,7 @@ fn module_pipeline(
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                blend: blend.into(),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),
