@@ -95,6 +95,14 @@ impl PartialEq for ImageAsset {
     }
 }
 
+impl Eq for ImageAsset {}
+
+impl std::hash::Hash for ImageAsset {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::ptr::hash(Arc::as_ptr(&self.0), state);
+    }
+}
+
 /// How a bitmap is sampled between source pixel centers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ImageSampling {

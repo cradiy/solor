@@ -1,13 +1,14 @@
 use super::{
-    DamageAudit, Mapping, Wayland, Window,
+    DamageAudit, Mapping, Wayland, Window, WindowView,
     activation::{Activation, ActivationTarget},
     buffer::PixelOrder,
-    buffer_size, floating,
+    floating,
     parent::Toplevels,
     pointer,
     role::{Request, Role},
 };
 use crate::{layer_shell::LayerShellOptions, popup::PopupHandle, surface_control::Binding};
+use anyhow::Context as _;
 use rustix::event::PollFlags;
 use solor::{
     platform::{PlatformWindow, WindowBackground, WindowHandle, WindowHandler, WindowOptions},
@@ -94,6 +95,38 @@ impl WaylandApplication {
         windows
             .open(Request::Toplevel(options), build)
             .map(|(_, handle)| handle)
+    }
+    /// Mounts a Solor view on a native GPU surface for an XDG toplevel.
+    #[cfg(feature = "gpu")]
+    pub fn build_gpu_window<R: solor::Render>(
+        &self,
+        options: WindowOptions<'_>,
+        ui: solor::Ui,
+        root: impl FnOnce(WindowHandle) -> R,
+    ) -> anyhow::Result<WindowHandle> {
+        let windows = self
+            .0
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("application has exited"))?;
+        windows
+            .open_with_surface(Request::Toplevel(options), |handle, surface| {
+                let presenter = super::gpu::Presenter::new(
+                    &mut windows.gpu.get_or_init(Default::default).borrow_mut(),
+                    surface,
+                    options.background,
+                    windows.trace_submissions,
+                )?;
+                let max_dimension = presenter.max_dimension();
+                Ok(WindowView::Gpu(
+                    Box::new(solor::platform::UiWindow::with_renderer(
+                        ui,
+                        root(handle),
+                        presenter,
+                    )?),
+                    max_dimension,
+                ))
+            })
+            .map(|(_, h)| h)
     }
 }
 
@@ -212,6 +245,8 @@ struct EventLoop {
 }
 
 struct WindowFactory {
+    #[cfg(feature = "gpu")]
+    gpu: std::cell::OnceCell<RefCell<super::gpu::GpuContext>>,
     clipboard: Option<Rc<super::clipboard::Clipboard>>,
     toplevels: Toplevels,
     activation: Option<Rc<Activation>>,
@@ -301,6 +336,8 @@ impl EventLoop {
             }
         }
         let windows = WindowFactory {
+            #[cfg(feature = "gpu")]
+            gpu: Default::default(),
             clipboard: desktop.clipboard.clone(),
             toplevels: Toplevels::default(),
             activation: desktop.activation.clone(),
@@ -330,6 +367,14 @@ impl WindowFactory {
         &self,
         request: Request<'_>,
         build: impl FnOnce(WindowHandle) -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
+    ) -> anyhow::Result<(ObjectId, WindowHandle)> {
+        self.open_with_surface(request, |h, _| build(h).map(WindowView::Shm))
+    }
+
+    fn open_with_surface(
+        &self,
+        request: Request<'_>,
+        build: impl FnOnce(WindowHandle, &wl_surface::WlSurface) -> anyhow::Result<WindowView>,
     ) -> anyhow::Result<(ObjectId, WindowHandle)> {
         let modal_parent = match &request {
             Request::Toplevel(options) => {
@@ -372,7 +417,7 @@ impl WindowFactory {
         surface: &wl_surface::WlSurface,
         request: Request<'_>,
         modal_parent: Weak<WindowLife>,
-        build: impl FnOnce(WindowHandle) -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
+        build: impl FnOnce(WindowHandle, &wl_surface::WlSurface) -> anyhow::Result<WindowView>,
     ) -> anyhow::Result<(Window, WindowHandle)> {
         let qh = &self.qh;
         let background = match &request {
@@ -394,7 +439,6 @@ impl WindowFactory {
         };
         let globals = self.globals.as_ref().expect("live window factory");
         let (role, size) = request.create(globals, qh, surface)?;
-        let buffer_size = buffer_size(120, size)?;
         let life = WindowLife::new(activation, self.revisit.clone(), modal_parent);
         let target = Rc::downgrade(&life);
         let handle = WindowHandle::new(target);
@@ -404,7 +448,10 @@ impl WindowFactory {
             }
             Role::Layer(..) | Role::Popup { .. } => None,
         };
-        let mut view = build(handle.clone())?;
+        let mut view = build(handle.clone(), surface)?;
+        let buffer_size = view
+            .buffer_size(120, size)?
+            .context("initial size exceeds render target limits")?;
         if let Some(hub) = &self.clipboard {
             view.set_clipboard(hub.window(surface.id()));
         }
@@ -459,6 +506,8 @@ impl WindowFactory {
             mapping: Mapping::Hidden,
             input_region: Default::default(),
             dirty: true,
+            #[cfg(feature = "gpu")]
+            acquire_retry: None,
             waiting: None,
             life,
             registration,
@@ -628,6 +677,13 @@ impl Window {
         let Some(size) = self.buffer_size else {
             return Ok(None);
         };
+        #[cfg(feature = "gpu")]
+        if let Some(deadline) = self.acquire_retry.take()
+            && Instant::now() < deadline
+        {
+            self.acquire_retry = Some(deadline);
+            return Ok(Some(deadline));
+        }
         let next = self.deadline();
         if next.is_some_and(|deadline| deadline <= Instant::now()) {
             self.dirty = true;
@@ -640,6 +696,10 @@ impl Window {
     }
 
     fn deadline(&self) -> Option<Instant> {
+        #[cfg(feature = "gpu")]
+        if let Some(deadline) = self.acquire_retry {
+            return Some(deadline);
+        }
         if self.mapping == Mapping::Mapped && !self.dirty && self.waiting.is_none() {
             self.view.next_redraw()
         } else {
@@ -648,6 +708,7 @@ impl Window {
     }
 
     fn destroy(self) {
+        drop(self.view);
         drop(self.role);
         self.fractional.destroy();
         self.viewport.destroy();

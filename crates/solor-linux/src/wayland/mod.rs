@@ -5,6 +5,10 @@ mod buffer;
 mod clipboard;
 mod decorations;
 mod floating;
+#[cfg(feature = "gpu")]
+mod gpu;
+mod window_view;
+use window_view::WindowView;
 mod input_region;
 mod keyboard;
 mod parent;
@@ -73,7 +77,7 @@ struct Window {
     pixel_order: PixelOrder,
     slots: [Option<Buffer>; 2],
     next_slot: usize,
-    view: Box<dyn WindowHandler<Rgba8>>,
+    view: WindowView,
     fractional: wp_fractional_scale_v1::WpFractionalScaleV1,
     full_damage: bool,
     failure: Option<anyhow::Error>,
@@ -83,6 +87,8 @@ struct Window {
     mapping: Mapping,
     input_region: input_region::SurfaceInputRegion,
     dirty: bool,
+    #[cfg(feature = "gpu")]
+    acquire_retry: Option<Instant>,
     waiting: Option<wl_callback::WlCallback>,
     life: std::rc::Rc<WindowLife>,
     commits: usize,
@@ -312,7 +318,7 @@ impl Window {
         self.scale_120 = scale_120;
         self.full_damage = true;
         self.dirty = true;
-        match budgeted_buffer_size(scale_120, size) {
+        match self.view.buffer_size(scale_120, size) {
             Ok(target) => self.buffer_size = target,
             Err(error) => {
                 self.buffer_size = None;
@@ -368,6 +374,32 @@ impl Window {
         {
             return Ok(());
         }
+        let scale = RasterScale(f64::from(self.scale_120) / 120.0);
+        #[cfg(feature = "gpu")]
+        if let WindowView::Gpu(view, _) = &mut self.view {
+            let output = view.frame(self.size, scale)?;
+            self.viewport
+                .set_destination(self.size.width.get() as i32, self.size.height.get() as i32);
+            let Some((queue, texture)) = output else {
+                // An unmapped surface may never receive a frame callback.
+                self.acquire_retry = Some(Instant::now() + std::time::Duration::from_millis(100));
+                return Ok(());
+            };
+            self.waiting = Some(
+                self.surface
+                    .frame(qh, (self.surface.id(), Some(self.commits + 1))),
+            );
+            if let Some(p) = &self.presentation {
+                p.feedback(&self.surface, qh, (self.surface.id(), self.commits + 1));
+            }
+            queue.present(texture);
+            self.mark_mapped();
+            self.view.frame_submitted()?;
+            self.commits += 1;
+            self.dirty = false;
+            self.full_damage = false;
+            return Ok(());
+        }
         let Some(index) = [self.next_slot, 1 - self.next_slot]
             .into_iter()
             .find(|&i| self.slots[i].as_ref().is_none_or(|slot| !slot.busy))
@@ -379,8 +411,11 @@ impl Window {
         };
         let region_changed =
             matches!(self.role, Role::Popup { .. }) && self.apply_input_region(compositor, qh);
-        let scale = RasterScale(f64::from(self.scale_120) / 120.0);
-        let mut frame = self.view.frame(self.size, scale)?;
+        let mut frame = match &mut self.view {
+            WindowView::Shm(view) => view.frame(self.size, scale)?,
+            #[cfg(feature = "gpu")]
+            WindowView::Gpu(..) => unreachable!(),
+        };
         frame.validate(size)?;
         if self.full_damage {
             frame.damage = Damage::from_rect(Clip::canvas(size));
@@ -461,18 +496,9 @@ impl Window {
             }
         }
         self.surface.commit();
-        if self.mapping != Mapping::Mapped {
-            self.mapping = Mapping::Mapped;
-            if let Some(registration) = &self.registration {
-                registration.mapped();
-                self.life.revisit.set(true);
-            }
-            if let Some(target) = &self.life.activation {
-                target.activation.apply(&self.surface);
-            }
-        }
         let queued_ns = self.trace.then(presentation::monotonic_ns);
         slot.busy = true;
+        self.mark_mapped();
         self.next_slot = 1 - index;
         self.dirty = false;
         self.full_damage = false;
@@ -496,6 +522,18 @@ impl Window {
             );
         }
         Ok(())
+    }
+    fn mark_mapped(&mut self) {
+        if self.mapping != Mapping::Mapped {
+            self.mapping = Mapping::Mapped;
+            if let Some(registration) = &self.registration {
+                registration.mapped();
+                self.life.revisit.set(true);
+            }
+            if let Some(target) = &self.life.activation {
+                target.activation.apply(&self.surface);
+            }
+        }
     }
 }
 

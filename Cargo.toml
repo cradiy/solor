@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/solor", "crates/solor-gallery", "crates/solor-linux", "crates/solor-platform", "crates/solor-render-cpu", "crates/solor-shader"]
+members = ["crates/solor", "crates/solor-gallery", "crates/solor-linux", "crates/solor-platform", "crates/solor-render-cpu", "crates/solor-shader", "crates/solor-render-gpu"]
 resolver = "3"
 
 [workspace.package]
@@ -12,13 +12,16 @@ solor-linux = { path = "crates/solor-linux" }
 solor-platform = { path = "crates/solor-platform" }
 solor-render-cpu = { path = "crates/solor-render-cpu" }
 solor-shader = { path = "crates/solor-shader" }
+solor-render-gpu = { path = "crates/solor-render-gpu" }
+wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
+pollster = "0.4"
 anyhow = "1"
 log = "0.4"
 slotmap = "1.1.1"
 smallvec = "1"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 missing_docs = "deny"
 
 [workspace.lints.clippy]

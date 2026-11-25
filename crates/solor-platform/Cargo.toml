@@ -9,6 +9,7 @@ description = "System platform selection and window hosting for Solor"
 workspace = true
 
 [features]
+gpu = ["solor-linux/gpu"]
 shader = ["solor/shader", "solor-render-cpu/shader"]
 
 [dependencies]

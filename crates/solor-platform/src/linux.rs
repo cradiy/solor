@@ -22,6 +22,12 @@ pub(super) fn open_window<R: Render>(
     ui: Ui,
     root: impl FnOnce(WindowHandle) -> R,
 ) -> Result<WindowHandle> {
+    #[cfg(feature = "gpu")]
+    if std::env::var_os("SOLOR_RENDERER").as_deref() == Some(std::ffi::OsStr::new("gpu")) {
+        let mut ui = ui;
+        ui.set_system_font_provider(solor_linux::system_ui_font);
+        return app.build_gpu_window(options, ui, root);
+    }
     app.build_window(options, |handle| {
         Ok(Box::new(mount(ui, root(handle), options.background)?))
     })

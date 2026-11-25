@@ -1,0 +1,32 @@
+[package]
+name = "solor-render-gpu"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+description = "GPU rendering of Solor view frames"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+solor = { workspace = true, features = ["shader"] }
+wgpu.workspace = true
+bytemuck = "1"
+solor-shader.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+wgpu = { workspace = true, features = ["vulkan"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { workspace = true, features = ["webgpu"] }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+wgpu = { workspace = true, features = ["metal"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { workspace = true, features = ["dx12"] }
+
+[dev-dependencies]
+pollster.workspace = true
+solor-render-cpu = { workspace = true, features = ["shader"] }

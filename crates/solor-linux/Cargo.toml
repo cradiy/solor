@@ -5,10 +5,16 @@ edition.workspace = true
 publish.workspace = true
 description = "Linux platform implementation for Solor"
 
+[features]
+gpu = ["dep:solor-render-gpu", "dep:wgpu", "dep:pollster", "wayland-client/system"]
+
 [lints]
 workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+solor-render-gpu = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
 xkbcommon = { version = "0.9", default-features = false }
 dbus = "0.9"
 solor.workspace = true

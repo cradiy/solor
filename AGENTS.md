@@ -35,7 +35,7 @@
 - Use the workspace edition and shared lint configuration.
 - Prefer clear ownership, explicit lifetimes of resources, and small APIs.
 - Do not introduce unsafe code without a concrete need and an explicitly reviewed
-  safety contract. The current workspace forbids it.
+  safety contract. Keep native handle interop scoped to its platform bridge.
 - Handle recoverable errors explicitly. Avoid panics for ordinary input failures.
 - Use English for identifiers, comments, documentation, agent instructions, and
   default user interface text. Use Unix LF and standard rustfmt formatting.

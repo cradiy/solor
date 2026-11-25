@@ -241,41 +241,52 @@ fn scene(cx: &mut solor::Context<'_>, materials: Materials) -> Div {
         })
 }
 
-fn view(materials: Materials) -> impl Render {
+fn view(materials: Materials, scene_only: bool) -> impl Render {
     component(move |cx| {
-        div()
+        let panel = div()
             .w_full()
             .h_full()
             .flex_col()
             .bg(rgb(0xe9e3d7))
-            .child(scene(cx, materials))
-            .child(
-                div()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .px(px(18.))
-                    .py(px(10.))
-                    .child(
-                        text("Stillwater")
-                            .text_size(px(18.))
-                            .text_color(rgb(0x23443f)),
-                    )
-                    .child(
-                        text("Drag a stone into the water")
-                            .text_size(px(14.))
-                            .text_color(rgb(0x43534b)),
-                    ),
-            )
+            .child(scene(cx, materials));
+        if scene_only {
+            return panel;
+        }
+        panel.child(
+            div()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .px(px(18.))
+                .py(px(10.))
+                .child(
+                    text("Stillwater")
+                        .text_size(px(18.))
+                        .text_color(rgb(0x23443f)),
+                )
+                .child(
+                    text("Drag a stone into the water")
+                        .text_size(px(14.))
+                        .text_color(rgb(0x43534b)),
+                ),
+        )
     })
 }
 
 fn main() -> Result<()> {
+    let args = clap::Command::new("pool")
+        .arg(
+            clap::Arg::new("scene-only")
+                .long("scene-only")
+                .action(clap::ArgAction::SetTrue)
+                .help("Measure the interactive water scene without the text footer"),
+        )
+        .get_matches();
     current_platform()?.run_window(
         WindowOptions::new("Stillwater")
             .app_id("org.solor.Stillwater")
             .size(px(680.), px(454.)),
         Ui::new(),
-        view(Materials::load()?),
+        view(Materials::load()?, args.get_flag("scene-only")),
     )
 }

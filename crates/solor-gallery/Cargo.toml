@@ -9,6 +9,7 @@ description = "An interactive gallery of Solor interface primitives"
 workspace = true
 
 [features]
+gpu = ["shader", "solor-platform/gpu"]
 shader = ["solor-platform/shader", "solor-render-cpu/shader"]
 
 [dependencies]
@@ -18,6 +19,7 @@ solor = { workspace = true, default-features = true }
 solor-platform.workspace = true
 
 [dev-dependencies]
+clap = { version = "4", default-features = false, features = ["std", "help", "usage"] }
 solor-render-cpu.workspace = true
 
 [[example]]
@@ -27,3 +29,7 @@ required-features = ["shader"]
 [[example]]
 name = "pool"
 required-features = ["shader"]
+
+[[example]]
+name = "gpu_fills"
+required-features = ["gpu"]

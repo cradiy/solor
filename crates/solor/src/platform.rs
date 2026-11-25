@@ -1,4 +1,7 @@
 //! Window lifecycle and input shared by platform implementations.
+mod mounted;
+pub use mounted::{UiWindow, ViewRenderer};
+
 use crate::{Pixels, layout::Size, pointer::PointerInput, px, raster::RasterScale};
 use anyhow::Result;
 use std::rc::Weak;

@@ -61,6 +61,13 @@ pub(super) struct SeatInput {
     batch: Batch,
 }
 
+#[cfg_attr(
+    feature = "gpu",
+    allow(
+        clippy::mutable_key_type,
+        reason = "libwayland ObjectId hashes stable identity independently of its liveness flag"
+    )
+)]
 impl SeatInput {
     pub(super) fn new(device: ZwpTextInputV3, seat: u32) -> Self {
         Self {

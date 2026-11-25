@@ -1,0 +1,259 @@
+//! Compare both renderers on a clipped, translucent paint stack.
+use anyhow::Result;
+use solor::{
+    EffectShader, Styled, Ui, ViewFrame, color_stop, component, div,
+    layout::{Origin, Size},
+    linear_gradient, px,
+    raster::{DeviceSize, RasterScale},
+    rgb, rgba,
+};
+use solor_render_cpu::pixels::Surface;
+use solor_render_gpu::Renderer;
+
+fn scene(phase: f32) -> Result<(Size, ViewFrame)> {
+    let gradient = linear_gradient(
+        114.,
+        [
+            color_stop(rgb(0x18364e), 0.),
+            color_stop(rgba(0xe696a0bb), 0.38),
+            color_stop(rgb(0xf8eeb5), 1.),
+        ],
+    )?;
+    let shader = EffectShader::wgsl(
+        "fn effect(uv:vec2f, t:f32, size:vec2f)->vec4f {return vec4f(uv.x,t,uv.y,0.67);}",
+    )?;
+    let size = |w, h| Size {
+        width: px(w),
+        height: px(h),
+    };
+    let at = |x, y| Origin { x: px(x), y: px(y) };
+    let mut ui = Ui::new();
+    let view = ui.mount(component(move |_| {
+        div().w_full().h_full().paint(move |cx| {
+            cx.fill(cx.size, gradient.clone());
+            cx.fill_rounded_rect(at(4., 5.), size(35., 20.), px(6.), rgba(0x2b6fb583))?;
+            cx.with_clip(at(24.36, 12.75), size(34., 30.), |cx| {
+                cx.fill_rounded_rect(
+                    at(17., 8.),
+                    size(34., 22.),
+                    px(3.),
+                    shader.with_params(phase),
+                )
+            })
+        })
+    }))?;
+    let logical = size(64., 48.);
+    ui.layout(view, logical)?;
+    Ok((logical, ui.record_frame(view)?))
+}
+
+fn pixels(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut Renderer,
+    frame: &ViewFrame,
+    size: DeviceSize,
+    scale: RasterScale,
+) -> Result<Vec<u8>> {
+    let extent = wgpu::Extent3d {
+        width: size.width,
+        height: size.height,
+        depth_or_array_layers: 1,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: extent,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    renderer.draw(
+        frame,
+        &texture.create_view(&Default::default()),
+        size,
+        scale,
+        wgpu::Color::WHITE,
+    )?;
+    let stride = (size.width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: u64::from(stride) * u64::from(size.height),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(stride),
+                rows_per_image: None,
+            },
+        },
+        extent,
+    );
+    queue.submit([encoder.finish()]);
+    let (send, recv) = std::sync::mpsc::channel();
+    buffer
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, move |result| {
+            let _ = send.send(result);
+        });
+    device.poll(wgpu::PollType::wait_indefinitely())?;
+    recv.recv()??;
+    let mapped = buffer.slice(..).get_mapped_range()?;
+    Ok(mapped
+        .chunks_exact(stride as usize)
+        .flat_map(|row| row[..size.width as usize * 4].iter().copied())
+        .collect())
+}
+
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn ordered_fills_match_cpu_across_scales() -> Result<()> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default()))?;
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default()))?;
+    let mut renderer = Renderer::new(&device, &queue, wgpu::TextureFormat::Rgba8Unorm)?;
+    for phase in [0.15, 0.85] {
+        let (size, frame) = scene(phase)?;
+        for scale in [1., 1.25, 2.].map(RasterScale) {
+            let physical = scale.buffer_size(size)?;
+            let cpu = Surface::draw_view(&frame, physical, scale)?;
+            let gpu = pixels(&device, &queue, &mut renderer, &frame, physical, scale)?;
+            let errors: Vec<_> = cpu
+                .rgba
+                .iter()
+                .zip(&gpu)
+                .map(|(c, g)| c.abs_diff(*g))
+                .collect();
+            let max = errors.iter().max().copied().unwrap();
+            let above_two = errors.iter().filter(|e| **e > 2).count();
+            eprintln!(
+                "scale={} max={max} above_two={above_two}/{}",
+                scale.0,
+                errors.len()
+            );
+            assert!(max <= 16 && above_two * 500 < errors.len());
+        }
+    }
+    compare_replaced_images(&device, &queue, &mut renderer)
+}
+
+fn compare_replaced_images(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut Renderer,
+) -> Result<()> {
+    use solor::{
+        ImageAsset, ImageFill, ImageSampling, image, percent, raster::Clip, style::ObjectFit,
+    };
+
+    let asset = |t: u8| {
+        let row = [
+            [255, 0, 255, 255],
+            [t, 44, 99, 255],
+            [0, 255, 183, 96],
+            [200, 0, 31, 0],
+            [255, 0, 255, 255],
+        ];
+        ImageAsset::from_rgba8(5, 2, row.repeat(2).into_flattened())
+    };
+    let first = asset(200)?;
+    let second = asset(40)?;
+    let tile = first.region(Clip {
+        left: 1,
+        top: 0,
+        right: 4,
+        bottom: 2,
+    })?;
+    let mut ui = Ui::new();
+    let current = ui.context().signal(first.clone());
+    let fit = ui.context().signal(ObjectFit::Contain);
+    let viewport = Size {
+        width: px(48.),
+        height: px(32.),
+    };
+    let view = ui.mount(component(move |_| {
+        div()
+            .w_full()
+            .h_full()
+            .bg(rgb(0x192b31))
+            .child(
+                image(current)
+                    .absolute()
+                    .left(px(1.))
+                    .top(px(2.))
+                    .w(px(19.))
+                    .h(px(17.))
+                    .object_fit(fit),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(14.))
+                    .top(px(12.))
+                    .w(px(21.))
+                    .h(px(15.))
+                    .bg(current)
+                    .object_position_x(percent(100.))
+                    .object_fit(ObjectFit::Cover),
+            )
+            .child(div().w_full().h_full().paint(move |cx| {
+                for (y, sampling) in [(3., ImageSampling::Linear), (17., ImageSampling::Nearest)] {
+                    let region: ImageFill = tile.clone().with_sampling(sampling);
+                    cx.paint_image(
+                        Origin {
+                            x: px(32.),
+                            y: px(y),
+                        },
+                        Size {
+                            width: px(14.),
+                            height: px(12.),
+                        },
+                        region,
+                        ObjectFit::Fill,
+                    )?;
+                }
+                Ok(())
+            }))
+    }))?;
+    for (next, mode) in [
+        (first.clone(), ObjectFit::Contain),
+        (second, ObjectFit::Cover),
+        (asset(130)?, ObjectFit::ScaleDown),
+        (first, ObjectFit::None),
+    ] {
+        ui.context().set(current, next)?;
+        ui.context().set(fit, mode)?;
+        ui.flush()?;
+        ui.layout(view, viewport)?;
+        let frame = ui.record_frame(view)?;
+        for scale in [1., 1.25, 2.].map(RasterScale) {
+            let size = scale.buffer_size(viewport)?;
+            let expected = Surface::draw_view(&frame, size, scale)?;
+            let actual = pixels(device, queue, renderer, &frame, size, scale)?;
+            for (i, (a, b)) in actual
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(expected.rgba.as_chunks::<4>().0)
+                .enumerate()
+            {
+                assert!(
+                    a.iter().zip(b).all(|(a, b)| a.abs_diff(*b) <= 3),
+                    "fit={mode:?}, scale={}, pixel=({},{}), GPU={a:?}, CPU={b:?}",
+                    scale.0,
+                    i % size.width as usize,
+                    i / size.width as usize
+                );
+            }
+        }
+    }
+    Ok(())
+}
