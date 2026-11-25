@@ -255,9 +255,19 @@ fn single_axis_alpha_uses_the_requested_pixel_centers() -> Result<()> {
             )?
             .unwrap();
             let mut row = vec![[0; 4]; (clip.right - clip.left) as usize];
+            let mut masked = vec![[0; 4]; row.len() + 2];
+            let coverage: Vec<_> = [128, 0, 255]
+                .into_iter()
+                .cycle()
+                .take(masked.len())
+                .collect();
             for (y, device_y) in (clip.top..clip.bottom).enumerate() {
                 row.fill([0; 4]);
                 sampler.blend_span(&mut row, clip.left, device_y, scale);
+                masked.fill([0; 4]);
+                sampler.blend_shader_mask(&mut masked, &coverage, clip.left - 1, device_y);
+                assert_eq!(masked[0], [0; 4]);
+                assert_eq!(masked[row.len() + 1], [0; 4]);
                 for (x, pixel) in row.iter().enumerate() {
                     let coordinate = match axis {
                         0 => (13.25 + (x as f64 + 0.5) * 0.8) / 151.0,
@@ -266,9 +276,8 @@ fn single_axis_alpha_uses_the_requested_pixel_centers() -> Result<()> {
                     };
                     let alpha = ((coordinate as f32 * 0.5 + position) * 255.).round() as u8;
                     assert_eq!(*pixel, [alpha; 4]);
-                    let mut masked = [0; 4];
-                    sampler.blend(&mut masked, clip.left + x as i64, device_y, scale, 128);
-                    assert_eq!(masked, [((u16::from(alpha) * 128 + 127) / 255) as u8; 4]);
+                    let expected = (u16::from(alpha) * u16::from(coverage[x + 1]) + 127) / 255;
+                    assert_eq!(masked[x + 1], [expected as u8; 4]);
                 }
             }
         }

@@ -405,6 +405,39 @@ impl RegionSampler {
         &self.pixels.pixels()[row * width..(row + 1) * width]
     }
 
+    fn row_span(&self, x: i64, y: i64, len: usize) -> Option<(std::ops::Range<usize>, &[[u8; 4]])> {
+        let left = x.max(self.bounds.left);
+        let right = (x + len as i64).min(self.bounds.right);
+        if left >= right || !(self.bounds.top..self.bounds.bottom).contains(&y) {
+            return None;
+        }
+        let row = self.sample_row(y);
+        let span = (left - x) as usize..(right - x) as usize;
+        let src = if row.len() == 1 {
+            row
+        } else {
+            let first = (left - self.bounds.left) as usize;
+            &row[first..first + span.len()]
+        };
+        Some((span, src))
+    }
+
+    #[cfg(feature = "shader")]
+    pub(super) fn blend_shader_mask(&self, dst: &mut [[u8; 4]], mask: &[u8], x: i64, y: i64) {
+        let Some((span, src)) = self.row_span(x, y, dst.len().min(mask.len())) else {
+            return;
+        };
+        let masked = dst[span.clone()].iter_mut().zip(&mask[span]);
+        for (i, (pixel, &coverage)) in masked.enumerate() {
+            if coverage != 0 {
+                let color = src[i.min(src.len() - 1)];
+                if color[3] != 0 {
+                    blend_sample(pixel, color, coverage);
+                }
+            }
+        }
+    }
+
     pub(super) fn blend_span(&self, dst: &mut [[u8; 4]], x: i64, y: i64, scale: RasterScale) {
         if self.x.start > 0.0
             || self.x.end < self.x.target
@@ -416,14 +449,11 @@ impl RegionSampler {
             }
             return;
         }
-        let left = x.max(self.bounds.left);
-        let right = (x + dst.len() as i64).min(self.bounds.right);
-        if left >= right || !(self.bounds.top..self.bounds.bottom).contains(&y) {
+        let Some((span, src)) = self.row_span(x, y, dst.len()) else {
             return;
-        }
-        let dst = &mut dst[(left - x) as usize..(right - x) as usize];
-        let row = self.sample_row(y);
-        if let &[color] = row {
+        };
+        let dst = &mut dst[span];
+        if let &[color] = src {
             if color[3] == 255 {
                 dst.fill(color);
             } else {
@@ -433,8 +463,6 @@ impl RegionSampler {
             }
             return;
         }
-        let first = (left - self.bounds.left) as usize;
-        let src = &row[first..first + dst.len()];
         if src.iter().fold(255, |alpha, p| alpha & p[3]) == 255 {
             dst.copy_from_slice(src);
         } else {
@@ -468,11 +496,6 @@ impl RegionSampler {
         .round() as u8;
         let row = self.sample_row(y);
         let src = row[((x - self.bounds.left) as usize).min(row.len() - 1)];
-        let src = if coverage == 255 {
-            src
-        } else {
-            src.map(|v| ((u16::from(v) * u16::from(coverage) + 127) / 255) as u8)
-        };
-        crate::pixels::blend_premultiplied(dst, src);
+        blend_sample(dst, src, coverage);
     }
 }

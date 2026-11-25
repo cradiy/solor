@@ -14,7 +14,7 @@ enum Brush<F> {
     Solid(Rgba),
     Gradient(F),
     #[cfg(feature = "shader")]
-    Shader(Option<crate::bitmap::RegionSampler>, RasterScale),
+    Shader(Option<crate::bitmap::RegionSampler>),
 }
 
 impl<F: FnMut(i64, i64) -> Result<Rgba>> MaskPainter for Brush<F> {
@@ -22,13 +22,9 @@ impl<F: FnMut(i64, i64) -> Result<Rgba>> MaskPainter for Brush<F> {
         match self {
             Self::Solid(color) => tint_row(pixels, mask, *color),
             #[cfg(feature = "shader")]
-            Self::Shader(shader, scale) => {
+            Self::Shader(shader) => {
                 if let Some(shader) = shader {
-                    for (i, (dst, &coverage)) in pixels.iter_mut().zip(mask).enumerate() {
-                        if coverage != 0 {
-                            shader.blend(dst, x + i as i64, y, *scale, coverage);
-                        }
-                    }
+                    shader.blend_shader_mask(pixels, mask, x, y);
                 }
             }
             Self::Gradient(sample) => {
@@ -60,10 +56,9 @@ pub(super) fn painter(
                 f64::from(at.x) * scale.0 - offset.0 as f64,
                 f64::from(at.y) * scale.0 - offset.1 as f64,
             ];
-            Ok(Brush::Shader(
-                crate::bitmap::RegionSampler::shader(fill, origin, size, scale, _clip)?,
-                scale,
-            ))
+            Ok(Brush::Shader(crate::bitmap::RegionSampler::shader(
+                fill, origin, size, scale, _clip,
+            )?))
         }
         Ink::Gradient(g) => {
             let mut sample = g.sampler(size).map_err(Error::other)?;
