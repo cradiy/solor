@@ -22,6 +22,7 @@ pub(super) fn select() -> Result<Host> {
 pub(super) type Windows = Host;
 
 pub(super) fn open_window<R: Render>(
+    _: super::Renderer,
     app: &Windows,
     _: WindowOptions<'_>,
     _: Ui,

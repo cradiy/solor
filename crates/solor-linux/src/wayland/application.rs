@@ -455,10 +455,47 @@ impl Wayland {
         assign: impl FnOnce(&wl_surface::WlSurface) -> anyhow::Result<R>,
         view: Box<dyn WindowHandler<Rgba8>>,
     ) -> anyhow::Result<()> {
+        self.run_popup_with(connection, handle, assign, |app, request, control| {
+            app.factory()?.open(request, Some(control), |_| Ok(view))
+        })
+    }
+
+    /// Runs a GPU-rendered transparent popup on the supplied host connection.
+    #[cfg(feature = "gpu")]
+    pub fn run_gpu_popup<R: 'static>(
+        &self,
+        connection: Connection,
+        handle: &PopupHandle,
+        assign: impl FnOnce(&wl_surface::WlSurface) -> anyhow::Result<R>,
+        ui: solor::Ui,
+        root: impl solor::Render,
+    ) -> anyhow::Result<()> {
+        self.run_popup_with(connection, handle, assign, |app, request, control| {
+            app.build_gpu(
+                request,
+                Some(control),
+                WindowBackground::Transparent,
+                ui,
+                |_| root,
+            )
+        })
+    }
+
+    fn run_popup_with<'a, R: 'static>(
+        &self,
+        connection: Connection,
+        handle: &PopupHandle,
+        assign: impl FnOnce(&wl_surface::WlSurface) -> anyhow::Result<R> + 'a,
+        open: impl FnOnce(&WaylandApplication, Request<'a>, Binding) -> anyhow::Result<WindowHandle>,
+    ) -> anyhow::Result<()> {
         let control = handle.0.claim()?;
         let mut events = EventLoop::new(self, connection, true)?;
         let request = Request::Popup(Box::new(move |surface| Ok(Box::new(assign(surface)?))));
-        events.windows.open(request, Some(control), |_| Ok(view))?;
+        open(
+            &WaylandApplication(Rc::downgrade(&events.windows)),
+            request,
+            control,
+        )?;
         events.dispatch()
     }
 }

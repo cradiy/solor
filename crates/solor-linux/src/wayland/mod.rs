@@ -441,7 +441,9 @@ impl Window {
             if let Some(p) = &self.presentation {
                 p.feedback(&self.surface, qh, (self.surface.id(), self.commits + 1));
             }
-            if matches!(self.role, Role::Menu(_)) && self.input_region.changed() {
+            if matches!(self.role, Role::Menu(_) | Role::Popup { .. })
+                && self.input_region.changed()
+            {
                 self.input_region
                     .apply(self.mapping, compositor, &self.surface, qh, None, false);
             }

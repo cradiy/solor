@@ -10,9 +10,30 @@ pub use solor::platform::{SurfaceRect, WindowBackground, WindowHandle, WindowOpt
 #[cfg(target_os = "linux")]
 pub use solor_linux::{ApplicationSender, layer_shell, popup, session_lock};
 
+/// Rendering backend used for surfaces opened by a platform instance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Renderer {
+    /// Rasterize on the CPU.
+    Cpu,
+    /// Render with the GPU backend. Requires the `gpu` Cargo feature.
+    #[cfg(feature = "gpu")]
+    Gpu,
+}
+
+impl Renderer {
+    fn from_env() -> Self {
+        #[cfg(feature = "gpu")]
+        if std::env::var_os("SOLOR_RENDERER").as_deref() == Some(std::ffi::OsStr::new("gpu")) {
+            return Self::Gpu;
+        }
+        Self::Cpu
+    }
+}
+
 /// Hosts application windows with the window system and renderer selected for this target.
 pub struct SystemPlatform {
     host: system::Host,
+    renderer: Renderer,
     assets: Option<Assets>,
 }
 
@@ -20,6 +41,7 @@ pub struct SystemPlatform {
 /// on targets without a window implementation.
 pub fn current_platform() -> Result<SystemPlatform> {
     Ok(SystemPlatform {
+        renderer: Renderer::from_env(),
         host: system::select()?,
         assets: None,
     })
@@ -30,6 +52,7 @@ pub fn current_platform() -> Result<SystemPlatform> {
 #[derive(Clone)]
 pub struct Application {
     windows: system::Windows,
+    renderer: Renderer,
     assets: Option<Assets>,
 }
 
@@ -65,6 +88,7 @@ impl Application {
         root: impl FnOnce(WindowHandle) -> R,
     ) -> Result<WindowHandle> {
         system::open_window(
+            self.renderer,
             &self.windows,
             options,
             configured_ui(ui, &self.assets),
@@ -82,6 +106,7 @@ impl Application {
     ) -> Result<session_lock::SessionLock> {
         let assets = self.assets.clone();
         system::lock_session(
+            self.renderer,
             &self.windows,
             move |output, lock| {
                 let (ui, root) = build(output, lock)?;
@@ -101,6 +126,7 @@ impl Application {
         root: impl FnOnce(WindowHandle) -> R,
     ) -> Result<WindowHandle> {
         system::open_popup(
+            self.renderer,
             &self.windows,
             options,
             configured_ui(ui, &self.assets),
@@ -155,6 +181,7 @@ impl Application {
             ..options
         };
         system::open_layer_surface(
+            self.renderer,
             &self.windows,
             options,
             configured_ui(ui, &self.assets),
@@ -172,6 +199,13 @@ fn configured_ui(ui: Ui, assets: &Option<Assets>) -> Ui {
 }
 
 impl SystemPlatform {
+    /// Selects the renderer for all windows on this host, overriding `SOLOR_RENDERER`.
+    #[must_use]
+    pub fn with_renderer(mut self, renderer: Renderer) -> Self {
+        self.renderer = renderer;
+        self
+    }
+
     /// Supplies the shared resource pack for all windows and layer surfaces on this host.
     pub fn with_assets(mut self, source: impl Into<Assets>) -> Self {
         self.assets = Some(source.into());
@@ -184,6 +218,7 @@ impl SystemPlatform {
         self.host.run(|windows| {
             setup(Application {
                 windows,
+                renderer: self.renderer,
                 assets: self.assets.clone(),
             })
         })
@@ -208,6 +243,7 @@ impl SystemPlatform {
         root: impl Render,
     ) -> Result<()> {
         self.host.run_popup(
+            self.renderer,
             connection,
             control,
             assign,
