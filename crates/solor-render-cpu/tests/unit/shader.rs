@@ -123,6 +123,38 @@ fn interference_matches_native_at_fractional_sample_positions() -> Result<()> {
 }
 
 #[test]
+fn translated_grid_wraps_at_negative_and_positive_cell_boundaries() -> Result<()> {
+    let shader = EffectShader::wgsl(
+        "fn effect(uv: vec2<f32>, offset: vec4<f32>, size: vec2<f32>) -> vec4<f32> {
+            let p = uv * size * 0.5 - offset.xy;
+            let cell = floor(p);
+            return vec4<f32>(fract(p), 0.5 + 0.25 * (cell.x + cell.y), 1.0);
+        }",
+    )?;
+    let size = DeviceSize {
+        width: 6,
+        height: 2,
+    };
+    let image = render(
+        &shader.with_params([1.25, 0.75, 0., 0.]),
+        size.at_unit_scale(),
+        normalized(size, full(size)),
+    )?;
+    assert_eq!(image.dimensions(), size);
+    // Columns sample -1, -0.5, 0, 0.5, 1, 1.5. Rows sample -0.5 and 0.
+    for (row, (green, blue)) in image.pixels().as_chunks::<6>().0.iter().zip([
+        (128, [0, 0, 64, 64, 128, 128]),
+        (0, [64, 64, 128, 128, 191, 191]),
+    ]) {
+        let red = [0, 128, 0, 128, 0, 128];
+        for (x, pixel) in row.iter().enumerate() {
+            assert_eq!(*pixel, [red[x], green, blue[x], 255]);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn power_curves_preserve_each_channels_coordinate_dependencies() -> Result<()> {
     let shader = EffectShader::wgsl(
         "fn effect(uv: vec2<f32>, p: f32) -> vec4<f32> {

@@ -39,6 +39,10 @@ pub enum Op {
     Clamp(Reg, Reg, Reg),
     /// Absolute value.
     Abs(Reg),
+    /// Greatest integer less than or equal to the operand.
+    Floor(Reg),
+    /// Fractional part measured from the floor of the operand.
+    Fract(Reg),
     /// Square root.
     Sqrt(Reg),
     /// Base raised to an exponent.
@@ -74,7 +78,13 @@ impl CoordinateAxes {
                 Op::U => Self::X,
                 Op::V => Self::Y,
                 Op::Size(_) | Op::Param(_) | Op::Constant(_) => 0,
-                Op::Neg(a) | Op::Abs(a) | Op::Sqrt(a) | Op::Sin(a) | Op::Cos(a) => axes[a],
+                Op::Neg(a)
+                | Op::Abs(a)
+                | Op::Floor(a)
+                | Op::Fract(a)
+                | Op::Sqrt(a)
+                | Op::Sin(a)
+                | Op::Cos(a) => axes[a],
                 Op::Add(a, b)
                 | Op::Sub(a, b)
                 | Op::Mul(a, b)
@@ -475,6 +485,8 @@ impl Lowerer<'_> {
                         let a = lane(arg, i);
                         match fun {
                             Math::Abs => Op::Abs(a),
+                            Math::Floor => Op::Floor(a),
+                            Math::Fract => Op::Fract(a),
                             Math::Sqrt => Op::Sqrt(a),
                             Math::Sin => Op::Sin(a),
                             Math::Cos => Op::Cos(a),

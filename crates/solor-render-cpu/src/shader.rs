@@ -23,6 +23,8 @@ pub(super) fn render(fill: &ShaderFill, size: Size, region: ImageRegion) -> Resu
                 Op::Param(index) => [params[index]; LANES],
                 Op::Constant(value) => [value; LANES],
                 Op::Abs(a) => r[a].map(f32::abs),
+                Op::Floor(a) => r[a].map(f32::floor),
+                Op::Fract(a) => r[a].map(|x| x - x.floor()),
                 Op::Sqrt(a) => r[a].map(f32::sqrt),
                 Op::Pow(a, b) if !program.varies_across_row(dst) => [r[a][0].powf(r[b][0]); LANES],
                 Op::Pow(a, b) => std::array::from_fn(|i| r[a][i].powf(r[b][i])),
