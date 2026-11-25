@@ -21,10 +21,7 @@ struct Vertex {
     let p = q.rect.xy*q.viewport.z - 1.0 + corners[v]*(q.rect.zw*q.viewport.z + 2.0);
     return Vertex(vec4f(p / q.viewport.xy * vec2f(2,-2) + vec2f(-1,1), 0, 1), i);
 }
-fn paint(local: vec2f, size: vec2f, q: Quad) -> vec4f {
-    let uv = clamp(local / size, vec2f(0), vec2f(1));
-    // PAINT
-}
+// PAINT
 @fragment fn fragment(v: Vertex) -> @location(0) vec4f {
     let q = quads[v.index];
     let p = v.pos.xy / q.viewport.z;

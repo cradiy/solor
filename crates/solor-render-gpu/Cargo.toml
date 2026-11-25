@@ -13,6 +13,7 @@ anyhow.workspace = true
 solor = { workspace = true, features = ["shader", "glyph-raster"] }
 wgpu.workspace = true
 bytemuck = "1"
+color.workspace = true
 solor-shader.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]

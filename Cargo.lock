@@ -1645,6 +1645,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytemuck",
+ "color",
  "pollster",
  "solor",
  "solor-render-cpu",

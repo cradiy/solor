@@ -14,6 +14,7 @@ solor-render-cpu = { path = "crates/solor-render-cpu" }
 solor-shader = { path = "crates/solor-shader" }
 solor-render-gpu = { path = "crates/solor-render-gpu" }
 wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
+color = "=0.3.3"
 pollster = "0.4"
 anyhow = "1"
 log = "0.4"

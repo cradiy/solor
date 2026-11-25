@@ -142,8 +142,96 @@ fn ordered_fills_match_cpu_across_scales() -> Result<()> {
             assert!(max <= 16 && above_two * 500 < errors.len());
         }
     }
+    compare_gradients(&device, &queue, &mut renderer)?;
     compare_replaced_images(&device, &queue, &mut renderer)?;
     compare_text(&device, &queue, &mut renderer)
+}
+
+fn compare_gradients(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut Renderer,
+) -> Result<()> {
+    use solor::{
+        ColorSpace, Gradient,
+        GradientKind::{Angular, Diamond, Linear, Radial},
+    };
+
+    // Odd, rectangular bounds put a device sample exactly at the angular center at 1x.
+    let tile = Size {
+        width: px(37.),
+        height: px(21.),
+    };
+    let viewport = Size {
+        width: tile.width * 8.,
+        height: tile.height * 4.,
+    };
+    let mut tiles = Vec::new();
+    let rows = [
+        (0., None, 0.),
+        (90., None, 0.18),
+        (37., Some(0.), 0.),
+        (37., Some(0.73), 0.),
+    ];
+    for (row, (angle, phase, seam)) in rows.into_iter().enumerate() {
+        for (col, kind) in [Linear, Radial, Angular, Diamond].into_iter().enumerate() {
+            let mut gradient = Gradient::new(
+                kind,
+                angle,
+                [
+                    color_stop(rgb(0x040119), 0.08),
+                    color_stop(rgba(0xfea61691), 0.46),
+                    color_stop(rgba(0x12856237), 0.46),
+                    color_stop(rgba(0x00ff1100), 0.68),
+                    color_stop(rgb(0x65aabc), 0.87),
+                ],
+            )?
+            .gradient_midpoint(2, 0.27)?
+            .opacity(0.82)?;
+            if let Some(phase) = phase {
+                gradient = gradient.phase(phase)?;
+            }
+            if kind == Angular {
+                gradient = gradient.angular_seam_width(seam)?;
+            }
+            for (index, space) in [ColorSpace::Srgb, ColorSpace::Oklab]
+                .into_iter()
+                .enumerate()
+            {
+                let origin = Origin {
+                    x: tile.width * (2 * col + index) as f32,
+                    y: tile.height * row as f32,
+                };
+                tiles.push((origin, gradient.clone().color_space(space)));
+            }
+        }
+    }
+    let mut ui = Ui::new();
+    let view = ui.mount(component(move |_| {
+        div().w_full().h_full().paint(move |cx| {
+            for (origin, gradient) in &tiles {
+                cx.fill_rect(*origin, tile, gradient.clone())?;
+            }
+            Ok(())
+        })
+    }))?;
+    ui.layout(view, viewport)?;
+    let frame = ui.record_frame(view)?;
+    for scale in [1., 1.25, 2.].map(RasterScale) {
+        let size = scale.buffer_size(viewport)?;
+        let cpu = Surface::draw_view(&frame, size, scale)?;
+        let gpu = pixels(device, queue, renderer, &frame, size, scale)?;
+        for (i, (actual, expected)) in gpu.iter().zip(&cpu.rgba).enumerate() {
+            assert!(
+                actual.abs_diff(*expected) <= 2,
+                "gradient at ({}, {}), scale={}, GPU={actual}, CPU={expected}",
+                i / 4 % size.width as usize,
+                i / 4 / size.width as usize,
+                scale.0
+            );
+        }
+    }
+    Ok(())
 }
 
 fn compare_replaced_images(

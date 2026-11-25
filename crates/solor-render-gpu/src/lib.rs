@@ -89,7 +89,10 @@ impl Renderer {
             device,
             &image_layout,
             format,
-            "let alpha = textureLoad(bitmap, vec2i(q.ramp.xy + floor(local)), 0).r; return vec4f(q.params.rgb, q.params.a * alpha);",
+            "fn paint(local: vec2f, size: vec2f, q: Quad) -> vec4f {
+                let alpha = textureLoad(bitmap, vec2i(q.ramp.xy + floor(local)), 0).r;
+                return vec4f(q.params.rgb, q.params.a * alpha);
+            }",
         );
         Ok(Self {
             glyph_pipeline,
@@ -109,7 +112,7 @@ impl Renderer {
         })
     }
 
-    /// Clears and draws a frame in paint order. Supports solid text and solid, linear sRGB gradient, image and WGSL fills.
+    /// Clears and draws a frame in paint order. Supports solid text and solid, gradient, image and WGSL fills.
     pub fn draw(
         &mut self,
         frame: &ViewFrame,
@@ -261,38 +264,48 @@ impl Renderer {
                 continue;
             }
             let fill = self.files.resolve(fill)?;
-            let mut nearest = 0.;
+            let mut material_option = 0.;
             let mut ramp = [0.; 4];
             let mut material = Material::Brush;
             let params = match fill.as_ref() {
                 Fill::Solid(color) => rgba(*color),
                 Fill::Gradient(g) => {
-                    ensure!(
-                        g.kind() == GradientKind::Linear
-                            && g.interpolation_space() == ColorSpace::Srgb
-                            && g.repeat_phase().is_none(),
-                        "GPU renderer requires a non-repeating linear sRGB gradient"
-                    );
+                    let space = g.interpolation_space();
+                    material_option = f32::from(space == ColorSpace::Oklab);
                     ramp[0] = stops.len() as f32;
                     ramp[1] = g.stops().len() as f32;
                     for (index, s) in g.stops().iter().enumerate() {
-                        let [r, gc, b, a] = rgba(s.color);
+                        let color = color::AlphaColor::<color::Srgb>::new(rgba(s.color));
+                        let components = match space {
+                            ColorSpace::Srgb => color.premultiply().components,
+                            ColorSpace::Oklab => {
+                                color.convert::<color::Oklab>().premultiply().components
+                            }
+                        };
                         let midpoint = g.gradient_midpoint_at(index).unwrap_or(0.5);
-                        stops.push([
-                            [r * a, gc * a, b * a, a],
-                            [s.offset, 0.5f32.ln() / midpoint.ln(), 0., 0.],
-                        ]);
+                        stops.push([components, [s.offset, 0.5f32.ln() / midpoint.ln(), 0., 0.]]);
                     }
-                    let (sin, cos) = (g.angle_degrees() - 90.).to_radians().sin_cos();
-                    let (dx, dy) = (cos * w / w.max(h), sin * h / w.max(h));
-                    let length = dx.hypot(dy) * if dx.abs() > dy.abs() { w } else { h };
-                    [dx / length, dy / length, g.alpha_multiplier(), 0.]
+                    ramp[2] = g.repeat_phase().unwrap_or(-1.);
+                    ramp[3] = g.seam_width();
+                    let angle = (g.angle_degrees() - 90.).to_radians();
+                    let (sin, cos) = angle.sin_cos();
+                    let opacity = g.alpha_multiplier();
+                    match g.kind() {
+                        GradientKind::Linear => {
+                            let (dx, dy) = (cos * w / w.max(h), sin * h / w.max(h));
+                            let length = dx.hypot(dy) * if dx.abs() > dy.abs() { w } else { h };
+                            [dx / length, dy / length, opacity, 0.]
+                        }
+                        GradientKind::Radial => [0., 0., opacity, 1.],
+                        GradientKind::Angular => [angle, 0., opacity, 2.],
+                        GradientKind::Diamond => [cos, sin, opacity, 3.],
+                    }
                 }
                 Fill::Shader(f) => {
                     let i = if let Some(i) = self.effects.iter().position(|(s, _)| s == &f.shader) {
                         i
                     } else {
-                        let body = effect::body(solor::raster::shader_program(&f.shader));
+                        let body = effect::paint(solor::raster::shader_program(&f.shader));
                         let i = self.effects.len();
                         self.effects.push((
                             f.shader.clone(),
@@ -315,7 +328,7 @@ impl Renderer {
                         src.right as f32,
                         src.bottom as f32,
                     ];
-                    nearest = f32::from(image.sampling() == solor::ImageSampling::Nearest);
+                    material_option = f32::from(image.sampling() == solor::ImageSampling::Nearest);
                     material = Material::Image(frame_images.index(image.asset()));
                     [
                         offset.x.get(),
@@ -341,7 +354,7 @@ impl Renderer {
                     size.width as f32,
                     size.height as f32,
                     scale.0 as f32,
-                    nearest,
+                    material_option,
                 ],
                 ramp,
             ]);

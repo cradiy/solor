@@ -2,8 +2,10 @@ use solor_shader::{Op, Program};
 use std::fmt::Write;
 
 // Locals are generated from validated scalar IR, independent of user function names and signatures.
-pub(super) fn body(program: &Program) -> String {
-    let mut code = String::new();
+pub(super) fn paint(program: &Program) -> String {
+    let mut code = String::from(
+        "fn paint(local: vec2f, size: vec2f, q: Quad) -> vec4f {\nlet uv = clamp(local / size, vec2f(0), vec2f(1));\n",
+    );
     for (i, op) in program.instructions().iter().copied().enumerate() {
         let expr = match op {
             Op::U => "uv.x".into(),
@@ -33,6 +35,6 @@ pub(super) fn body(program: &Program) -> String {
         writeln!(code, "let r{i}: f32 = {expr};").unwrap();
     }
     let [r, g, b, a] = program.outputs();
-    write!(code, "return vec4f(r{r},r{g},r{b},r{a});").unwrap();
+    write!(code, "return vec4f(r{r},r{g},r{b},r{a}); }}").unwrap();
     code
 }

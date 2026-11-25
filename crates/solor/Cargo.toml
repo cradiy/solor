@@ -37,7 +37,7 @@ slotmap.workspace = true
 smallvec.workspace = true
 ttf-parser = { version = "0.25", default-features = false }
 anyhow.workspace = true
-color = "=0.3.3"
+color.workspace = true
 smol_str = { version = "=0.3.7", default-features = false }
 sys-locale = "0.3"
 unicode-segmentation = "1"
