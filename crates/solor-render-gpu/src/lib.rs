@@ -20,6 +20,7 @@ pub struct Renderer {
     bindings: wgpu::BindGroupLayout,
     texture_layout: wgpu::PipelineLayout,
     brush: wgpu::RenderPipeline,
+    underline: Option<wgpu::RenderPipeline>,
     images: Images,
     masks: masks::Atlas,
     rasterizer: GlyphRasterizer,
@@ -33,6 +34,7 @@ pub struct Renderer {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Material {
     Brush,
+    Underline,
     Effect(usize),
     Image(usize),
     Mask { page: usize, effect: Option<usize> },
@@ -42,6 +44,11 @@ struct Buffers {
     quads: wgpu::Buffer,
     stops: wgpu::Buffer,
     group: wgpu::BindGroup,
+}
+
+// Leave room for the full pattern period and its neighboring band in shader arithmetic.
+fn pattern_span(device_pixels: f64) -> f32 {
+    device_pixels.min(f64::from(f32::MAX) / 4.) as f32
 }
 
 fn rgba(color: Rgba) -> [f32; 4] {
@@ -98,6 +105,8 @@ impl GradientBrush {
     }
 }
 
+const BRUSH: &str = concat!(include_str!("gradient.wgsl"), include_str!("brush.wgsl"));
+
 impl Renderer {
     /// Creates a renderer for an RGBA8 or BGRA8 unorm target using encoded sRGB colors.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: TextureFormat) -> Result<Self> {
@@ -129,18 +138,19 @@ impl Renderer {
             bind_group_layouts: &[Some(&bindings)],
             ..Default::default()
         });
-        let brush = pipeline(
-            device,
-            &layout,
-            format,
-            concat!(include_str!("gradient.wgsl"), include_str!("brush.wgsl")),
-        );
+        let brush = pipeline(device, &layout, format, BRUSH, effect::Target::Fill);
         let images = Images::new(device);
         let texture_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             bind_group_layouts: &[Some(&bindings), Some(images.layout())],
             ..Default::default()
         });
-        let image_pipeline = pipeline(device, &texture_layout, format, include_str!("image.wgsl"));
+        let image_pipeline = pipeline(
+            device,
+            &texture_layout,
+            format,
+            include_str!("image.wgsl"),
+            effect::Target::Fill,
+        );
         let mask_pipeline = pipeline(
             device,
             &texture_layout,
@@ -152,9 +162,11 @@ impl Renderer {
                 }",
                 include_str!("mask.wgsl")
             ),
+            effect::Target::Mask,
         );
         Ok(Self {
             mask_pipeline,
+            underline: None,
             masks: Default::default(),
             rasterizer: Default::default(),
             images,
@@ -172,7 +184,7 @@ impl Renderer {
         })
     }
 
-    /// Clears and draws a frame in paint order. Supports solid, gradient and WGSL text and fills, as well as image fills and SVGs.
+    /// Clears the target and draws fills, text, wavy underlines and SVGs in paint order.
     pub fn draw(
         &mut self,
         frame: &ViewFrame,
@@ -197,7 +209,7 @@ impl Renderer {
             return index;
         }
         let layout = match target {
-            effect::Target::Fill => &self.layout,
+            effect::Target::Fill | effect::Target::Underline => &self.layout,
             effect::Target::Mask => &self.texture_layout,
         };
         let body = effect::paint(solor::raster::shader_program(shader), target);
@@ -205,7 +217,7 @@ impl Renderer {
         self.effects.push(effect::Pipeline {
             shader: shader.clone(),
             target,
-            pipeline: pipeline(&self.device, layout, self.format, &body),
+            pipeline: pipeline(&self.device, layout, self.format, &body, target),
             used: true,
         });
         index
@@ -409,15 +421,44 @@ impl Renderer {
                 }
                 continue;
             }
-            let Draw::Fill {
-                origin,
-                size: extent,
-                clip,
-                fill,
-                corner_radii: r,
-            } = cmd
-            else {
-                bail!("GPU fill renderer cannot draw this command yet")
+            let underline_fill;
+            let (origin, extent, clip, radii, fill, mut material) = match cmd {
+                Draw::Fill {
+                    origin,
+                    size,
+                    clip,
+                    corner_radii: r,
+                    fill,
+                } => (
+                    origin,
+                    size,
+                    clip,
+                    [
+                        r.top_left.get(),
+                        r.top_right.get(),
+                        r.bottom_right.get(),
+                        r.bottom_left.get(),
+                    ],
+                    fill,
+                    Material::Brush,
+                ),
+                Draw::WavyUnderline {
+                    origin,
+                    size,
+                    clip,
+                    color,
+                } => {
+                    underline_fill = color.clone().into();
+                    (
+                        origin,
+                        size,
+                        clip,
+                        [0.; 4],
+                        &underline_fill,
+                        Material::Underline,
+                    )
+                }
+                _ => bail!("unsupported GPU draw command"),
             };
             let [w, h] = [extent.width.get(), extent.height.get()];
             if w == 0. || h == 0. {
@@ -444,12 +485,33 @@ impl Renderer {
             {
                 continue;
             }
-            let fill = self.files.resolve(fill)?;
             let mut material_option = 0.;
             let mut ramp = [0.; 4];
-            let mut material = Material::Brush;
+            let fill = self.files.resolve(fill)?;
             let params = match fill.as_ref() {
                 Fill::Solid(color) => rgba(*color),
+                Fill::Checkerboard(pattern) => {
+                    material_option = 2.;
+                    ramp[0] = pattern_span(f64::from(pattern.cell_size()) * scale.0);
+                    rgba(pattern.color)
+                }
+                Fill::DiagonalStripes(pattern) => {
+                    material_option = 3.;
+                    let axis = scale.0 * std::f64::consts::SQRT_2;
+                    let width = f64::from(pattern.width()) * axis;
+                    let gap = f64::from(pattern.gap()) * axis;
+                    let period = width + gap;
+                    let side = 1. % period;
+                    // Full periods in a device pixel contribute their mean density.
+                    let whole = (1. - side * side) * (width / period);
+                    ramp = [
+                        pattern_span(width),
+                        pattern_span(gap),
+                        side as f32,
+                        whole as f32,
+                    ];
+                    rgba(pattern.color)
+                }
                 Fill::Gradient(g) => {
                     let brush = GradientBrush::prepare(g, *extent, &mut stops);
                     material_option = brush.oklab;
@@ -457,8 +519,12 @@ impl Renderer {
                     brush.params
                 }
                 Fill::Shader(f) => {
-                    material =
-                        Material::Effect(self.effect_pipeline(&f.shader, effect::Target::Fill));
+                    let target = if material == Material::Underline {
+                        effect::Target::Underline
+                    } else {
+                        effect::Target::Fill
+                    };
+                    material = Material::Effect(self.effect_pipeline(&f.shader, target));
                     f.params
                 }
                 Fill::Image(image) => {
@@ -489,12 +555,7 @@ impl Renderer {
             let index = quads.len() as u32;
             quads.push([
                 [origin.x.get(), origin.y.get(), w, h],
-                [
-                    r.top_left.get(),
-                    r.top_right.get(),
-                    r.bottom_right.get(),
-                    r.bottom_left.get(),
-                ],
+                radii,
                 bounds,
                 params,
                 [
@@ -575,6 +636,17 @@ impl Renderer {
             for (id, range) in batches {
                 match id {
                     Material::Brush => pass.set_pipeline(&self.brush),
+                    Material::Underline => {
+                        pass.set_pipeline(self.underline.get_or_insert_with(|| {
+                            pipeline(
+                                &self.device,
+                                &self.layout,
+                                self.format,
+                                BRUSH,
+                                effect::Target::Underline,
+                            )
+                        }))
+                    }
                     Material::Effect(i) => pass.set_pipeline(&self.effects[i].pipeline),
                     Material::Mask { page, effect } => {
                         pass.set_pipeline(
@@ -610,8 +682,13 @@ fn pipeline(
     layout: &wgpu::PipelineLayout,
     format: TextureFormat,
     body: &str,
+    target: effect::Target,
 ) -> wgpu::RenderPipeline {
-    let source = include_str!("quad.wgsl").replace("// PAINT", body);
+    let fragment = match target {
+        effect::Target::Underline => include_str!("underline.wgsl"),
+        effect::Target::Fill | effect::Target::Mask => include_str!("quad.wgsl"),
+    };
+    let source = [include_str!("vertex.wgsl"), body, fragment].join("\n");
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Solor quad"),
         source: wgpu::ShaderSource::Wgsl(source.into()),

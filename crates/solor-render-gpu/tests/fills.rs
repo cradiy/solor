@@ -142,10 +142,78 @@ fn ordered_fills_match_cpu_across_scales() -> Result<()> {
             assert!(max <= 16 && above_two * 500 < errors.len());
         }
     }
+    compare_patterns(&device, &queue, &mut renderer)?;
     compare_gradients(&device, &queue, &mut renderer)?;
     compare_replaced_images(&device, &queue, &mut renderer)?;
     compare_text(&device, &queue, &mut renderer)?;
     compare_svg(&device, &queue, &mut renderer)
+}
+
+fn compare_patterns(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut Renderer,
+) -> Result<()> {
+    use solor::{Fill, checkerboard, diagonal_stripes};
+    let ink = rgba(0x2a449bd3);
+    let fills: [Fill; 5] = [
+        checkerboard(ink, px(3.25))?.into(),
+        checkerboard(ink, px(0.34))?.into(),
+        diagonal_stripes(ink, px(1.8), px(3.1))?.into(),
+        diagonal_stripes(ink, px(0.09), px(0.24))?.into(),
+        diagonal_stripes(ink, px(1.15), px(0.))?.into(),
+    ];
+    let size = Size {
+        width: px(40.),
+        height: px(12.),
+    };
+    let viewport = Size {
+        width: size.width,
+        height: size.height * fills.len() as f32,
+    };
+    let mut ui = Ui::new();
+    let view = ui.mount(component(move |_| {
+        div().w_full().h_full().bg(rgb(0xd4c1ae)).paint(move |cx| {
+            cx.with_clip(
+                Origin {
+                    x: px(2.4),
+                    y: px(0.),
+                },
+                viewport,
+                |cx| {
+                    for (i, fill) in fills.iter().enumerate() {
+                        cx.fill_rounded_rect(
+                            Origin {
+                                x: px(-0.35),
+                                y: px(0.25) + size.height * i as f32,
+                            },
+                            size,
+                            px(3.),
+                            fill.clone(),
+                        )?;
+                    }
+                    Ok(())
+                },
+            )
+        })
+    }))?;
+    ui.layout(view, viewport)?;
+    let frame = ui.record_frame(view)?;
+    for scale in [1., 1.25, 2.].map(RasterScale) {
+        let physical = scale.buffer_size(viewport)?;
+        let cpu = Surface::draw_view(&frame, physical, scale)?;
+        let gpu = pixels(device, queue, renderer, &frame, physical, scale)?;
+        for (i, (a, b)) in gpu.iter().zip(&cpu.rgba).enumerate() {
+            let x = i / 4 % physical.width as usize;
+            let y = i / 4 / physical.width as usize;
+            assert!(
+                a.abs_diff(*b) <= 2,
+                "pattern at ({x},{y}) scale={} GPU={a} CPU={b}",
+                scale.0
+            );
+        }
+    }
+    Ok(())
 }
 
 fn compare_gradients(
@@ -377,8 +445,12 @@ fn compare_text(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &mut Rende
                 .overflow_hidden()
                 .child(
                     solor::text("Ag 中 Ag Ag 中 Ag Ag")
+                        .relative()
+                        .left(px(-6.25))
                         .w(px(67.))
                         .text_size(px(18.))
+                        .underline_wavy()
+                        .underline_thickness(px(1.35))
                         .text_color(tint),
                 ),
         )
@@ -411,6 +483,12 @@ fn compare_text(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &mut Rende
         assert!(frame.draws().iter().any(
             |d| matches!(d, solor::Draw::Text { paragraph, .. } if paragraph.lines.len() > 1)
         ));
+        assert!(
+            frame
+                .draws()
+                .iter()
+                .any(|d| matches!(d, solor::Draw::WavyUnderline { .. }))
+        );
         for scale in [1., 1.25, 2.].map(RasterScale) {
             let physical = scale.buffer_size(size)?;
             let cpu = Surface::draw_view(&frame, physical, scale)?;

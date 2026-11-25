@@ -4,6 +4,7 @@ use std::fmt::Write;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Target {
     Fill,
+    Underline,
     Mask,
 }
 
@@ -17,7 +18,9 @@ pub(super) struct Pipeline {
 // Locals are generated from validated scalar IR, independent of user function names and signatures.
 pub(super) fn paint(program: &Program, target: Target) -> String {
     let mut code = String::from(match target {
-        Target::Fill => "fn paint(local: vec2f, size: vec2f, q: Quad) -> vec4f {\n",
+        Target::Fill | Target::Underline => {
+            "fn paint(local: vec2f, size: vec2f, q: Quad) -> vec4f {\n"
+        }
         Target::Mask => {
             "fn foreground(local: vec2f, size: vec2f, q: Quad, ramp: vec4f) -> vec4f {\n"
         }
