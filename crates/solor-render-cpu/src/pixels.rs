@@ -1,8 +1,6 @@
 use std::io::{Error, Result};
 
-use swash::FontRef;
-use swash::scale::image::Image;
-use swash::scale::{Render, ScaleContext, Source};
+use solor::raster::glyphs::{GlyphMask as Image, GlyphRasterizer};
 
 use crate::frame::Frame;
 use crate::glyph_masks::GlyphMasks;
@@ -212,7 +210,7 @@ pub(super) fn blend_solid_span(pixels: &mut [[u8; 4]], color: solor::Rgba, cover
 }
 
 pub(super) struct TextRaster<'a> {
-    context: ScaleContext,
+    glyphs: GlyphRasterizer,
     scratch: Image,
     scale: RasterScale,
     origin: (i64, i64),
@@ -226,7 +224,7 @@ impl<'a> TextRaster<'a> {
         cache: Option<&'a mut GlyphMasks>,
     ) -> Self {
         Self {
-            context: ScaleContext::new(),
+            glyphs: GlyphRasterizer::default(),
             scratch: Image::new(),
             scale,
             origin,
@@ -256,90 +254,43 @@ impl<'a> TextRaster<'a> {
             return Ok(());
         }
         let mut paint = crate::mask::painter(color, at, allocated, scale, origin, bounds)?;
-        let mut renderer = Render::new(&[Source::Outline]);
-        let em = paragraph.style.size.get();
-        let factor = scale.0 as f32;
-        let device_em = em * factor;
-        for line in &paragraph.lines {
-            for run in line.glyphs.chunk_by(|a, b| a.face == b.face) {
-                let face = paragraph
-                    .faces
-                    .get(run[0].face)
-                    .ok_or_else(|| Error::other("invalid glyph face index"))?;
-                let font = FontRef::from_index(face.data(), face.index() as usize)
-                    .ok_or_else(|| Error::other("invalid paragraph font"))?;
-                let mut scaler = self
-                    .context
-                    .builder_with_id(font, [face.cache_key(), 0])
-                    .size(device_em)
-                    .variations([("wght", f32::from(face.weight()))])
-                    .hint(false)
-                    .build();
-                // Invert the clip using the full outline box, including overhang and
-                // a device pixel of raster rounding on either edge.
-                let visible_origins = face.horizontal_outline_bounds().map(|(left, right)| {
-                    let min = bounds
-                        .left
-                        .saturating_sub((right * device_em).ceil() as i64)
-                        .saturating_sub(1);
-                    let max = bounds
-                        .right
-                        .saturating_sub((left * device_em).floor() as i64)
-                        .saturating_add(1);
-                    min..max
-                });
-                for glyph in run {
-                    let glyph_x = scale
-                        .edge(f64::from(at.x) + f64::from(glyph.x + em * glyph.x_offset))
-                        .saturating_sub(origin.0);
-                    if visible_origins
-                        .as_ref()
-                        .is_some_and(|range| !range.contains(&glyph_x))
-                    {
-                        continue;
+        let document_clip = Clip {
+            left: bounds.left.saturating_add(origin.0),
+            right: bounds.right.saturating_add(origin.0),
+            top: bounds.top.saturating_add(origin.1),
+            bottom: bounds.bottom.saturating_add(origin.1),
+        };
+        self.glyphs.visit(
+            paragraph,
+            at,
+            scale,
+            document_clip,
+            |key, [x, y], rasterize| {
+                let mask = match self.cache.as_deref_mut() {
+                    Some(cache) => cache.resolve(
+                        key.face,
+                        key.size_bits,
+                        key.glyph,
+                        key.y_phase,
+                        &mut self.scratch,
+                        rasterize,
+                    )?,
+                    None => {
+                        rasterize(&mut self.scratch)?;
+                        &self.scratch
                     }
-                    const Y_PHASES: i64 = 32;
-                    let baseline =
-                        f64::from(at.y) + f64::from(line.baseline + glyph.y - em * glyph.y_offset);
-                    let fixed_y = (baseline * scale.0 * Y_PHASES as f64).round() as i64;
-                    let baseline_y = fixed_y.div_euclid(Y_PHASES);
-                    let y_phase = fixed_y.rem_euclid(Y_PHASES) as u8;
-                    let mut rasterize = |mask: &mut Image| {
-                        mask.clear();
-                        // Outline coordinates grow upward from the baseline.
-                        renderer.offset(swash::zeno::Vector::new(
-                            0.,
-                            -f32::from(y_phase) / Y_PHASES as f32,
-                        ));
-                        if renderer.render_into(&mut scaler, glyph.id, mask) {
-                            Ok(())
-                        } else {
-                            Err(Error::other("glyph outline unavailable"))
-                        }
-                    };
-                    let mask = match self.cache.as_deref_mut() {
-                        Some(cache) => cache.resolve(
-                            face.cache_key(),
-                            device_em.to_bits(),
-                            glyph.id,
-                            y_phase,
-                            &mut self.scratch,
-                            rasterize,
-                        )?,
-                        None => {
-                            rasterize(&mut self.scratch)?;
-                            &self.scratch
-                        }
-                    };
-                    let x = glyph_x.saturating_add(i64::from(mask.placement.left));
-                    let y = baseline_y
-                        .saturating_sub(origin.1)
-                        .saturating_sub(i64::from(mask.placement.top));
-                    surface.composite(mask, x, y, bounds, &mut paint)?;
-                }
-            }
-        }
-        Ok(())
+                };
+                surface.composite(
+                    mask,
+                    x.saturating_sub(origin.0)
+                        .saturating_add(i64::from(mask.placement.left)),
+                    y.saturating_sub(origin.1)
+                        .saturating_sub(i64::from(mask.placement.top)),
+                    bounds,
+                    &mut paint,
+                )
+            },
+        )
     }
 }
 

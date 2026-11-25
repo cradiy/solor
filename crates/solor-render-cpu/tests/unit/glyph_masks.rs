@@ -1,7 +1,7 @@
 #[test]
 fn budgets_retain_small_masks_bypass_large_masks_and_distinguish_faces() {
     use crate::glyph_masks::GlyphMasks;
-    use swash::scale::image::Image;
+    use solor::raster::glyphs::GlyphMask as Image;
     let mut cache = GlyphMasks::new(3, 32);
     let mut scratch = Image::new();
     for glyph in 1..=3 {

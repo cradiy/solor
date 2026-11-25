@@ -1,11 +1,12 @@
-//! Ordered rendering of Solor fills into a device texture.
+//! Draws Solor frames into a GPU texture.
 mod effect;
+mod glyphs;
 mod images;
 use anyhow::{Result, bail, ensure};
 use images::{FrameImages, Images};
 use solor::{
     ColorSpace, Draw, EffectShader, Fill, GradientKind, Rgba, ViewFrame,
-    raster::{DeviceSize, RasterScale},
+    raster::{Clip, DeviceSize, RasterScale, glyphs::GlyphRasterizer},
 };
 use std::ops::Range;
 use wgpu::{BufferUsages, ShaderStages, TextureFormat};
@@ -19,6 +20,9 @@ pub struct Renderer {
     bindings: wgpu::BindGroupLayout,
     brush: wgpu::RenderPipeline,
     images: Images,
+    glyphs: glyphs::Atlas,
+    rasterizer: GlyphRasterizer,
+    glyph_pipeline: wgpu::RenderPipeline,
     files: solor::ImageCache,
     image_pipeline: wgpu::RenderPipeline,
     effects: Vec<(EffectShader, wgpu::RenderPipeline)>,
@@ -30,6 +34,7 @@ enum Material {
     Brush,
     Effect(usize),
     Image(usize),
+    Glyph(usize),
 }
 
 struct Buffers {
@@ -80,7 +85,16 @@ impl Renderer {
             ..Default::default()
         });
         let image_pipeline = pipeline(device, &image_layout, format, include_str!("image.wgsl"));
+        let glyph_pipeline = pipeline(
+            device,
+            &image_layout,
+            format,
+            "let alpha = textureLoad(bitmap, vec2i(q.ramp.xy + floor(local)), 0).r; return vec4f(q.params.rgb, q.params.a * alpha);",
+        );
         Ok(Self {
+            glyph_pipeline,
+            glyphs: Default::default(),
+            rasterizer: Default::default(),
             images,
             files: Default::default(),
             image_pipeline,
@@ -95,8 +109,21 @@ impl Renderer {
         })
     }
 
-    /// Clears and draws a frame in paint order. Supports solid, linear sRGB gradient, image and WGSL fills.
+    /// Clears and draws a frame in paint order. Supports solid text and solid, linear sRGB gradient, image and WGSL fills.
     pub fn draw(
+        &mut self,
+        frame: &ViewFrame,
+        target: &wgpu::TextureView,
+        size: DeviceSize,
+        scale: RasterScale,
+        clear: wgpu::Color,
+    ) -> Result<()> {
+        let result = self.draw_frame(frame, target, size, scale, clear);
+        self.glyphs.trim();
+        result
+    }
+
+    fn draw_frame(
         &mut self,
         frame: &ViewFrame,
         target: &wgpu::TextureView,
@@ -116,6 +143,88 @@ impl Renderer {
                 .any(|d| matches!(d,Draw::Fill{fill:Fill::Shader(f),..} if f.shader==*shader))
         });
         for cmd in frame.draws() {
+            if let Draw::Text {
+                clip,
+                origin,
+                size: extent,
+                paragraph,
+                color,
+            } = cmd
+            {
+                let mut bounds = scale.bounds(*origin, *extent).intersect(Clip::canvas(size));
+                if let Some(clip) = clip {
+                    if let Some(x) = &clip.x {
+                        bounds.left = bounds.left.max(scale.edge(x.start.into()));
+                        bounds.right = bounds.right.min(scale.edge(x.end.into()));
+                    }
+                    if let Some(y) = &clip.y {
+                        bounds.top = bounds.top.max(scale.edge(y.start.into()));
+                        bounds.bottom = bounds.bottom.min(scale.edge(y.end.into()));
+                    }
+                }
+                if bounds.empty() {
+                    continue;
+                }
+                let solor::Ink::Solid(color) = color else {
+                    bail!("GPU text requires solid ink")
+                };
+                if color.alpha == 0 {
+                    continue;
+                }
+                self.rasterizer.visit(
+                    paragraph,
+                    *origin,
+                    scale,
+                    bounds,
+                    |key, [x, y], rasterize| {
+                        let Some(tile) = self.glyphs.resolve(
+                            &self.device,
+                            &self.queue,
+                            &self.images,
+                            key,
+                            rasterize,
+                        )?
+                        else {
+                            return Ok(());
+                        };
+                        let left = x.saturating_add(i64::from(tile.offset[0]));
+                        let top = y.saturating_add(i64::from(tile.offset[1]));
+                        if (Clip {
+                            left,
+                            top,
+                            right: left.saturating_add(tile.size[0].into()),
+                            bottom: top.saturating_add(tile.size[1].into()),
+                        })
+                        .intersect(bounds)
+                        .empty()
+                        {
+                            return Ok(());
+                        }
+                        let index = quads.len() as u32;
+                        quads.push([
+                            [
+                                left as f32,
+                                top as f32,
+                                tile.size[0] as f32,
+                                tile.size[1] as f32,
+                            ],
+                            [0.; 4],
+                            [
+                                bounds.left as f32,
+                                bounds.top as f32,
+                                bounds.right as f32,
+                                bounds.bottom as f32,
+                            ],
+                            rgba(*color),
+                            [size.width as f32, size.height as f32, 1., 0.],
+                            [tile.uv[0] as f32, tile.uv[1] as f32, 0., 0.],
+                        ]);
+                        batch(&mut batches, Material::Glyph(tile.page), index);
+                        Ok(())
+                    },
+                )?;
+                continue;
+            }
             let Draw::Fill {
                 origin,
                 size: extent,
@@ -236,13 +345,7 @@ impl Renderer {
                 ],
                 ramp,
             ]);
-            if let Some((id, span)) = batches.last_mut()
-                && *id == material
-            {
-                span.end += 1;
-            } else {
-                batches.push((material, index..index + 1));
-            }
+            batch(&mut batches, material, index);
         }
         let image_groups = self
             .images
@@ -313,6 +416,10 @@ impl Renderer {
                 match id {
                     Material::Brush => pass.set_pipeline(&self.brush),
                     Material::Effect(i) => pass.set_pipeline(&self.effects[i].1),
+                    Material::Glyph(page) => {
+                        pass.set_pipeline(&self.glyph_pipeline);
+                        pass.set_bind_group(1, self.glyphs.group(page), &[]);
+                    }
                     Material::Image(i) => {
                         pass.set_pipeline(&self.image_pipeline);
                         pass.set_bind_group(1, &image_groups[i], &[]);
@@ -323,6 +430,16 @@ impl Renderer {
         }
         self.queue.submit([encoder.finish()]);
         Ok(())
+    }
+}
+
+fn batch(batches: &mut Vec<(Material, Range<u32>)>, material: Material, index: u32) {
+    if let Some((id, span)) = batches.last_mut()
+        && *id == material
+    {
+        span.end += 1;
+    } else {
+        batches.push((material, index..index + 1));
     }
 }
 

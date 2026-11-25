@@ -17,8 +17,7 @@ solor-shader = { workspace = true, optional = true }
 rayon = { version = "1", optional = true }
 resvg = { version = "=0.48.1", default-features = false }
 anyhow.workspace = true
-solor.workspace = true
-swash = "=0.2.10"
+solor = { workspace = true, features = ["glyph-raster"] }
 
 [dev-dependencies]
 png = "0.18"

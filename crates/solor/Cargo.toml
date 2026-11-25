@@ -6,6 +6,7 @@ publish.workspace = true
 description = "Platform-independent Solor GUI framework"
 
 [features]
+glyph-raster = ["dep:swash"]
 shader = ["dep:solor-shader"]
 default = ["png", "jpeg"]
 image-full = ["png", "jpeg", "webp", "gif", "bmp", "ico", "tiff"]
@@ -20,6 +21,7 @@ network = ["url", "dep:ureq", "dep:event-listener", "image"]
 layout-audit = []
 
 [dependencies]
+swash = { version = "=0.2.10", optional = true }
 solor-shader = { workspace = true, optional = true }
 event-listener = { version = "5.4", optional = true }
 url = { version = "2.5", optional = true }

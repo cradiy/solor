@@ -1570,6 +1570,7 @@ dependencies = [
  "smallvec",
  "smol_str",
  "solor-shader",
+ "swash",
  "sys-locale",
  "ttf-parser",
  "unicode-segmentation",
@@ -1636,7 +1637,6 @@ dependencies = [
  "solor",
  "solor-linux",
  "solor-shader",
- "swash",
 ]
 
 [[package]]

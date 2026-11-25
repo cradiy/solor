@@ -13,6 +13,30 @@ struct Texture {
     group: wgpu::BindGroup,
 }
 
+fn bind_texture(
+    device: &wgpu::Device,
+    bindings: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    pixels: &wgpu::Texture,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Solor image"),
+        layout: bindings,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(
+                    &pixels.create_view(&Default::default()),
+                ),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
 impl Texture {
     fn new(
         device: &wgpu::Device,
@@ -30,22 +54,7 @@ impl Texture {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Solor image"),
-            layout: bindings,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(
-                        &pixels.create_view(&Default::default()),
-                    ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-            ],
-        });
+        let group = bind_texture(device, bindings, sampler, &pixels);
         Texture { pixels, group }
     }
 }
@@ -102,6 +111,10 @@ impl Images {
             sampler,
             resident: HashMap::new(),
         }
+    }
+
+    pub(super) fn bind(&self, device: &wgpu::Device, pixels: &wgpu::Texture) -> wgpu::BindGroup {
+        bind_texture(device, &self.bindings, &self.sampler, pixels)
     }
 
     pub(super) fn layout(&self) -> &wgpu::BindGroupLayout {

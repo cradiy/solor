@@ -1,4 +1,6 @@
 //! Device pixel coordinates shared by renderers and presentation targets.
+#[cfg(feature = "glyph-raster")]
+pub mod glyphs;
 pub use crate::fill::OpaqueLinearGradient;
 
 /// Returns the immutable fragment program for a renderer drawing this effect.

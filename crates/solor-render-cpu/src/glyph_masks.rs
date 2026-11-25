@@ -2,7 +2,7 @@
 use std::collections::VecDeque;
 use std::io::Result;
 
-use swash::scale::image::Image;
+use solor::raster::glyphs::GlyphMask as Image;
 
 struct Entry {
     face: u64,

@@ -142,7 +142,8 @@ fn ordered_fills_match_cpu_across_scales() -> Result<()> {
             assert!(max <= 16 && above_two * 500 < errors.len());
         }
     }
-    compare_replaced_images(&device, &queue, &mut renderer)
+    compare_replaced_images(&device, &queue, &mut renderer)?;
+    compare_text(&device, &queue, &mut renderer)
 }
 
 fn compare_replaced_images(
@@ -251,6 +252,54 @@ fn compare_replaced_images(
                     scale.0,
                     i % size.width as usize,
                     i / size.width as usize
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn compare_text(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &mut Renderer) -> Result<()> {
+    let mut ui = Ui::with_font(
+        include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf").to_vec(),
+    )?;
+    let tint = ui.context().signal(rgb(0x143a91));
+    let size = Size {
+        width: px(72.),
+        height: px(38.),
+    };
+    let view = ui.mount(component(move |_| {
+        div().w_full().h_full().bg(rgb(0xffffff)).child(
+            div()
+                .absolute()
+                .left(px(5.25))
+                .top(px(4.5))
+                .w(px(54.))
+                .h(px(21.))
+                .overflow_hidden()
+                .child(
+                    solor::text("Ag 中 Ag Ag")
+                        .whitespace_nowrap()
+                        .text_size(px(18.))
+                        .text_color(tint),
+                ),
+        )
+    }))?;
+    for color in [rgb(0x143a91), rgba(0xad153fa0)] {
+        ui.context().set(tint, color)?;
+        ui.flush()?;
+        ui.layout(view, size)?;
+        let frame = ui.record_frame(view)?;
+        for scale in [1., 1.25, 2.].map(RasterScale) {
+            let physical = scale.buffer_size(size)?;
+            let cpu = Surface::draw_view(&frame, physical, scale)?;
+            let gpu = pixels(device, queue, renderer, &frame, physical, scale)?;
+            assert!(cpu.rgba.iter().any(|c| *c < 180));
+            for (i, (a, b)) in gpu.iter().zip(&cpu.rgba).enumerate() {
+                assert!(
+                    a.abs_diff(*b) <= 2,
+                    "scale={}, byte={i}, GPU={a}, CPU={b}",
+                    scale.0
                 );
             }
         }
