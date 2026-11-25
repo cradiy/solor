@@ -9,7 +9,7 @@ description = "An interactive gallery of Solor interface primitives"
 workspace = true
 
 [features]
-shader = ["solor-platform/shader"]
+shader = ["solor-platform/shader", "solor-render-cpu/shader"]
 
 [dependencies]
 anyhow.workspace = true
@@ -22,4 +22,8 @@ solor-render-cpu.workspace = true
 
 [[example]]
 name = "timed_text"
+required-features = ["shader"]
+
+[[example]]
+name = "pool"
 required-features = ["shader"]

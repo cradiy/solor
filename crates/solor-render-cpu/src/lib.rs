@@ -15,6 +15,8 @@ mod polygon;
 mod polyline;
 #[cfg(feature = "shader")]
 mod shader;
+#[cfg(feature = "shader")]
+pub use shader::rasterize_shader;
 mod stripes;
 mod svg;
 mod view;

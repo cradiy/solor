@@ -7,11 +7,42 @@ use std::sync::OnceLock;
 const LANES: usize = 32;
 type Batch = [f32; LANES];
 
+/// Samples a WGSL fill over its full UV rectangle into an image of the given resolution.
+/// The shader receives `size` in logical pixels independently of the texture resolution.
+pub fn rasterize_shader(fill: &ShaderFill, size: Size, output: DeviceSize) -> Result<ImageAsset> {
+    anyhow::ensure!(
+        output.width > 0
+            && output.height > 0
+            && u64::from(output.width) * u64::from(output.height) <= 4 * 1024 * 1024,
+        "invalid shader texture dimensions"
+    );
+    anyhow::ensure!(
+        size.width.is_extent() && size.height.is_extent(),
+        "invalid shader dimensions"
+    );
+    let region = ImageRegion {
+        output,
+        source_origin: [0.; 2],
+        source_step: [1. / f64::from(output.width), 1. / f64::from(output.height)],
+    };
+    sample(fill, size, region, output)
+}
+
 pub(super) fn render(fill: &ShaderFill, size: Size, region: ImageRegion) -> Result<ImageAsset> {
+    let program = solor::raster::shader_program(&fill.shader);
+    let [width, height] = program.sample_extent(region.output.width, region.output.height);
+    sample(fill, size, region, DeviceSize { width, height })
+}
+
+fn sample(
+    fill: &ShaderFill,
+    size: Size,
+    region: ImageRegion,
+    samples: DeviceSize,
+) -> Result<ImageAsset> {
     let program = solor::raster::shader_program(&fill.shader);
     let params = fill.params;
     let size = [size.width.get(), size.height.get()];
-    let [width, height] = program.sample_extent(region.output.width, region.output.height);
     let (column_ops, row_ops) = program.column_plan();
     let execute = |registers: &mut [Batch], ops: &[usize], u: Batch, v: f32| {
         for &dst in ops {
@@ -57,7 +88,7 @@ pub(super) fn render(fill: &ShaderFill, size: Size, region: ImageRegion) -> Resu
     };
     rasterize(
         region,
-        DeviceSize { width, height },
+        samples,
         || vec![[0.; LANES]; program.instructions().len()],
         |registers, u| execute(registers, column_ops, u, 0.),
         |registers, v, out| {

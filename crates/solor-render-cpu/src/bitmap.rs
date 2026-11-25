@@ -65,6 +65,32 @@ struct Column {
     coverage: f64,
 }
 
+#[derive(Default)]
+struct HorizontalRow {
+    source: Option<usize>,
+    samples: Vec<[u16; 4]>,
+    opaque: bool,
+}
+
+impl HorizontalRow {
+    fn prepare(&mut self, y: usize, source: &[[u8; 4]], columns: &[Column]) {
+        if self.source == Some(y) {
+            return;
+        }
+        self.source = Some(y);
+        self.samples.clear();
+        self.opaque = true;
+        self.samples.extend(columns.iter().map(|col| {
+            let a = source[col.left];
+            let b = source[col.right];
+            let t = col.weight as u16;
+            let sample = std::array::from_fn(|i| u16::from(a[i]) * (256 - t) + u16::from(b[i]) * t);
+            self.opaque &= sample[3] == 255 * 256;
+            sample
+        }));
+    }
+}
+
 enum RowSampling {
     Scalar,
     Native(Clip),
@@ -73,6 +99,7 @@ enum RowSampling {
 
 pub(super) struct ImageSampler<'a> {
     rows: RowSampling,
+    upscale: Option<Box<[HorizontalRow; 2]>>,
     sampling: ImageSampling,
     pixels: &'a [[u8; 4]],
     stride: usize,
@@ -89,6 +116,7 @@ impl<'a> ImageSampler<'a> {
         let first = source.top as usize * stride + source.left as usize;
         Ok(Self {
             rows: RowSampling::Scalar,
+            upscale: None,
             sampling: fill.sampling(),
             pixels: &fill.asset().pixels()[first..],
             stride,
@@ -138,7 +166,7 @@ impl<'a> ImageSampler<'a> {
         if clip.bottom - clip.top < 2 || clip.right - clip.left > 8192 {
             return;
         }
-        let columns = (clip.left..clip.right)
+        let columns: Vec<_> = (clip.left..clip.right)
             .map(|x| {
                 let center = (x as f64 + 0.5 - origin[0]) / scale.0;
                 let (left, right, weight) = self.x.coordinate(center, self.sampling);
@@ -150,6 +178,12 @@ impl<'a> ImageSampler<'a> {
                 }
             })
             .collect();
+        if self.sampling == ImageSampling::Linear
+            && self.y.density < scale.0
+            && columns.iter().all(|c| c.coverage == 1.)
+        {
+            self.upscale = Some(Box::default());
+        }
         self.rows = RowSampling::Filtered {
             first: clip.left,
             columns,
@@ -157,7 +191,7 @@ impl<'a> ImageSampler<'a> {
     }
 
     pub(super) fn blend_span(
-        &self,
+        &mut self,
         dst: &mut [[u8; 4]],
         x: i64,
         y: i64,
@@ -183,6 +217,38 @@ impl<'a> ImageSampler<'a> {
                     return;
                 }
                 let (top, bottom, wy) = self.y.coordinate(center_y, self.sampling);
+                if y_coverage == 1.
+                    && let Some(rows) = &mut self.upscale
+                {
+                    for index in [top, bottom] {
+                        let start = index * self.stride;
+                        rows[index % 2].prepare(
+                            index,
+                            &self.pixels[start..start + self.x.texels],
+                            columns,
+                        );
+                    }
+                    let upper = &rows[top % 2];
+                    let lower = &rows[bottom % 2];
+                    let offset = (x - first) as usize;
+                    let pairs = upper.samples[offset..].iter().zip(&lower.samples[offset..]);
+                    let filter = |(a, b): (&[u16; 4], &[u16; 4])| {
+                        std::array::from_fn(|i| {
+                            ((u32::from(a[i]) * (256 - wy) + u32::from(b[i]) * wy + 32768) >> 16)
+                                as u8
+                        })
+                    };
+                    if upper.opaque && lower.opaque {
+                        for (dst, pair) in dst.iter_mut().zip(pairs) {
+                            *dst = filter(pair);
+                        }
+                    } else {
+                        for (dst, pair) in dst.iter_mut().zip(pairs) {
+                            crate::pixels::blend_premultiplied(dst, filter(pair));
+                        }
+                    }
+                    return;
+                }
                 let (upper, lower) = self.source_rows(top, bottom);
                 for (pixel, column) in dst.iter_mut().zip(&columns[(x - first) as usize..]) {
                     let coverage = (255.0 * column.coverage * y_coverage).round() as u8;
