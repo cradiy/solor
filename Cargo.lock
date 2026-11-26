@@ -1603,6 +1603,7 @@ dependencies = [
  "dbus",
  "futures-channel",
  "log",
+ "percent-encoding",
  "pollster",
  "rustix",
  "smallvec",

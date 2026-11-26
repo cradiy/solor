@@ -68,6 +68,14 @@ impl<R: ViewRenderer> WindowHandler<R::Target> for UiWindow<R> {
         self.ui.set_clipboard(clipboard);
     }
 
+    fn file_drop_target(&self, position: crate::layout::Origin) -> Option<crate::NodeId> {
+        self.ui.file_drop_target(self.view, position)
+    }
+
+    fn drop_files(&mut self, target: crate::NodeId, paths: &[std::path::PathBuf]) -> Result<bool> {
+        self.ui.drop_files(self.view, target, paths)
+    }
+
     fn text_input_session(&self) -> Option<u64> {
         self.ui
             .text_input_session(self.view)

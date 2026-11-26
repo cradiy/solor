@@ -24,7 +24,7 @@ enum Transfer {
         bytes: Vec<u8>,
         max_bytes: Option<usize>,
         reply: oneshot::Sender<Result<String>>,
-        focus: std::rc::Weak<()>,
+        focus: Option<std::rc::Weak<()>>,
     },
     Write {
         file: File,
@@ -36,7 +36,7 @@ enum Transfer {
 impl Transfers {
     pub(super) fn read(
         &mut self,
-        focus: std::rc::Weak<()>,
+        focus: Option<std::rc::Weak<()>>,
         max_bytes: Option<usize>,
     ) -> Result<(OwnedFd, oneshot::Receiver<Result<String>>)> {
         ensure!(
@@ -80,7 +80,7 @@ impl Transfers {
     pub(in crate::wayland) fn discard_cancelled(&mut self) {
         self.0.retain(|transfer| match transfer {
             Transfer::Read { reply, focus, .. } => {
-                !reply.is_canceled() && focus.strong_count() != 0
+                !reply.is_canceled() && focus.as_ref().is_none_or(|focus| focus.strong_count() != 0)
             }
             Transfer::Write { .. } => true,
         });

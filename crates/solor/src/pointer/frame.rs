@@ -31,6 +31,7 @@ pub(super) struct Recipients {
     pub focus: Option<NodeId>,
     pub pointer: Option<NodeId>,
     pub scroll: Option<NodeId>,
+    pub file_drop: Option<NodeId>,
     pub(super) hover: Option<NodeId>,
     pub(super) cursor: Option<crate::style::Cursor>,
 }
@@ -388,6 +389,9 @@ impl HitGeometry {
                 {
                     frame.hover_parents.insert(id, recipients.hover);
                     recipients.hover = Some(id);
+                }
+                if handlers.file_drop.is_some() {
+                    recipients.file_drop = Some(id);
                 }
                 if handlers.handles_pointer() {
                     recipients.pointer = Some(id);

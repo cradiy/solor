@@ -65,6 +65,7 @@ impl WindowView {
 
     delegate! {
         fn surrounding_text([&mut] self,max:usize)->Option<SurroundingText<'_>>;
+        fn drop_files([&mut] self,target:solor::NodeId,paths:&[std::path::PathBuf])->Result<bool>;
         fn event([&mut] self,event:WindowEvent)->Result<EventResponse>;
         fn poll_tasks([&mut] self,waker:&Waker)->Result<()>;
         fn set_clipboard([&mut] self,clipboard:Rc<dyn solor::clipboard::PlatformClipboard>)->();
@@ -72,6 +73,7 @@ impl WindowView {
         fn frame_submitted([&mut] self)->Result<()>;
     }
     delegate! {
+        fn file_drop_target([&] self,position:solor::layout::Origin)->Option<solor::NodeId>;
         fn pointer_cursor([&] self,id:PointerId)->Cursor;
         fn text_input_session([&] self)->Option<u64>;
 

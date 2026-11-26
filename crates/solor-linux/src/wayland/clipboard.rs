@@ -6,7 +6,10 @@ use std::{
     collections::HashMap,
     os::fd::AsFd,
     rc::{Rc, Weak},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle,
@@ -22,16 +25,27 @@ use wayland_client::{
     },
 };
 
+mod file_drop;
+use file_drop::Drag;
+pub(super) use file_drop::PendingDrop;
 mod transfers;
 use transfers::Transfers;
 
 const MIME: [&str; 3] = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"];
 
 #[derive(Default)]
-struct TextFormat(Mutex<Option<(usize, String)>>);
+struct OfferFormats {
+    text: Mutex<Option<(usize, String)>>,
+    files: AtomicBool,
+    copy: AtomicBool,
+}
 
-impl TextFormat {
+impl OfferFormats {
     fn offer(&self, mime: String) {
+        if mime == file_drop::MIME {
+            self.files.store(true, Ordering::Relaxed);
+            return;
+        }
         let rank = if let Some((base, params)) = mime.split_once(';') {
             let Some((key, value)) = params.split_once('=') else {
                 return;
@@ -50,7 +64,7 @@ impl TextFormat {
         } else {
             return;
         };
-        let mut best = self.0.lock().expect("clipboard offer lock");
+        let mut best = self.text.lock().expect("clipboard offer lock");
         if best.as_ref().is_none_or(|(prior, _)| rank < *prior) {
             *best = Some((rank, mime));
         }
@@ -61,7 +75,7 @@ struct Seat {
     device: WlDataDevice,
     selection: Option<Offer>,
     source: RefCell<Option<Source>>,
-    drag: Option<Offer>,
+    drag: Option<Drag>,
     focus: Option<(ObjectId, Rc<()>)>,
     serial: Option<u32>,
 }
@@ -187,8 +201,8 @@ impl PlatformClipboard for WindowClipboard {
             let Some((offer, mime)) = seat.selection.as_ref().and_then(|offer| {
                 let format = offer
                     .0
-                    .data::<TextFormat>()?
-                    .0
+                    .data::<OfferFormats>()?
+                    .text
                     .lock()
                     .expect("clipboard offer lock");
                 Some((&offer.0, format.as_ref()?.1.clone()))
@@ -196,7 +210,10 @@ impl PlatformClipboard for WindowClipboard {
                 return Ok(Box::pin(async { Ok(None) }));
             };
             let focus = Rc::downgrade(&seat.focus.as_ref().unwrap().1);
-            let (write, result) = hub.transfers.borrow_mut().read(focus.clone(), max_bytes)?;
+            let (write, result) = hub
+                .transfers
+                .borrow_mut()
+                .read(Some(focus.clone()), max_bytes)?;
             offer.receive(mime, write.as_fd());
             Ok(Box::pin(async move {
                 let text = result.await;
@@ -210,17 +227,22 @@ impl PlatformClipboard for WindowClipboard {
 }
 
 delegate_noop!(Desktop: ignore WlDataDeviceManager);
-impl Dispatch<WlDataOffer, TextFormat> for Desktop {
+impl Dispatch<WlDataOffer, OfferFormats> for Desktop {
     fn event(
         _: &mut Self,
         _: &WlDataOffer,
         event: wl_data_offer::Event,
-        formats: &TextFormat,
+        formats: &OfferFormats,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let wl_data_offer::Event::Offer { mime_type } = event {
-            formats.offer(mime_type);
+        match event {
+            wl_data_offer::Event::Offer { mime_type } => formats.offer(mime_type),
+            wl_data_offer::Event::Action { dnd_action } => formats.copy.store(
+                dnd_action == wayland_client::WEnum::Value(file_drop::COPY),
+                Ordering::Relaxed,
+            ),
+            _ => {}
         }
     }
 }
@@ -245,22 +267,43 @@ impl Dispatch<WlDataDevice, u32> for Desktop {
                     s.selection = offer;
                 }
             }
-            wl_data_device::Event::Enter { id, .. } => {
+            wl_data_device::Event::Enter {
+                serial,
+                surface,
+                x,
+                y,
+                id,
+            } => {
                 let offer = id.map(Offer);
                 if let Some(s) = seat {
-                    s.drag = offer;
+                    s.drag = offer
+                        .and_then(|offer| Drag::enter(offer, serial, surface.id(), x, y, state));
                 }
             }
-            wl_data_device::Event::Leave | wl_data_device::Event::Drop => {
+            wl_data_device::Event::Motion { x, y, .. } => {
+                if let Some(drag) = seat.and_then(|s| s.drag.as_mut()) {
+                    drag.motion(x, y, state);
+                }
+            }
+            wl_data_device::Event::Leave => {
                 if let Some(s) = seat {
                     s.drag = None;
+                }
+            }
+            wl_data_device::Event::Drop => {
+                if let Some(drag) = seat.and_then(|s| s.drag.take()) {
+                    match drag.receive(state, hub) {
+                        Ok(Some(pending)) => state.file_drops.push(pending),
+                        Ok(None) => {}
+                        Err(error) => log::warn!("file drop transfer failed: {error}"),
+                    }
                 }
             }
             _ => {}
         }
     }
     event_created_child!(Desktop, WlDataDevice, [
-        wl_data_device::EVT_DATA_OFFER_OPCODE => (WlDataOffer, TextFormat::default())
+        wl_data_device::EVT_DATA_OFFER_OPCODE => (WlDataOffer, OfferFormats::default())
     ]);
 }
 impl Dispatch<WlDataSource, Arc<str>> for Desktop {

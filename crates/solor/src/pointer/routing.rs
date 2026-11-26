@@ -99,6 +99,20 @@ fn context_and_handlers<'a>(
     )
 }
 
+impl Instance {
+    fn hit_recipient(
+        &self,
+        position: crate::layout::Origin,
+        select: impl FnOnce(Recipients) -> Option<NodeId>,
+    ) -> Option<NodeId> {
+        let (leaf, recipients) = self.pointer.frame.as_ref()?.hit(position)?;
+        let recipient = select(recipients)?;
+        // A retired frontmost hit blocks everything underneath, even if its ancestor survives.
+        (self.bodies.contains_key(&leaf) && self.bodies.contains_key(&recipient))
+            .then_some(recipient)
+    }
+}
+
 impl Delivery<'_> {
     fn hover_changed(&mut self) -> Result<()> {
         let router = &mut self.instance.pointer;
@@ -133,18 +147,6 @@ impl Delivery<'_> {
             }
         }
         result
-    }
-
-    fn hit(
-        &self,
-        sample: PointerSample,
-        select: impl FnOnce(Recipients) -> Option<NodeId>,
-    ) -> Option<NodeId> {
-        let (leaf, recipients) = self.instance.pointer.frame.as_ref()?.hit(sample.position)?;
-        let recipient = select(recipients)?;
-        // A retired frontmost hit blocks everything underneath, even if its ancestor survives.
-        (self.instance.bodies.contains_key(&leaf) && self.instance.bodies.contains_key(&recipient))
-            .then_some(recipient)
     }
 
     fn event(
@@ -259,7 +261,7 @@ impl Delivery<'_> {
     }
 
     fn scroll(&mut self, sample: PointerSample, mut delta: ScrollDelta) -> Result<()> {
-        let Some(mut owner) = self.hit(sample, |r| r.scroll) else {
+        let Some(mut owner) = self.instance.hit_recipient(sample.position, |r| r.scroll) else {
             return Ok(());
         };
         let vertical_input = delta.x == crate::px(0.0);
@@ -310,7 +312,8 @@ impl Delivery<'_> {
 
     fn moved(&mut self, sample: PointerSample) -> Result<()> {
         let capture = self.instance.pointer.capture(sample.id);
-        let target = capture.or_else(|| self.hit(sample, |r| r.pointer));
+        let target =
+            capture.or_else(|| self.instance.hit_recipient(sample.position, |r| r.pointer));
         if let Some(presses) = self.instance.pointer.presses.get_mut(&sample.id) {
             for press in presses {
                 press.eligible &= target == Some(press.owner);
@@ -341,7 +344,9 @@ impl Delivery<'_> {
         let Some(press) = self.instance.pointer.release(sample.id, button) else {
             return Ok(None);
         };
-        let Some(target) = capture.or_else(|| self.hit(sample, |r| r.pointer)) else {
+        let Some(target) =
+            capture.or_else(|| self.instance.hit_recipient(sample.position, |r| r.pointer))
+        else {
             return Ok(None);
         };
         let event = self.event(target, sample, Some(button))?;
@@ -432,6 +437,36 @@ impl Ui {
             state: self.state.get_mut(),
             engine: &self.engine,
         })
+    }
+
+    pub(crate) fn file_drop_target(
+        &self,
+        view: ViewId,
+        position: crate::layout::Origin,
+    ) -> Option<NodeId> {
+        self.instances
+            .get(&view)?
+            .hit_recipient(position, |r| r.file_drop)
+    }
+
+    pub(crate) fn drop_files(
+        &mut self,
+        view: ViewId,
+        target: NodeId,
+        paths: &[std::path::PathBuf],
+    ) -> Result<bool> {
+        let delivery = self.pointer_delivery(view)?;
+        if let Some(node) = delivery.instance.bodies.get_mut(&target)
+            && node.handlers.is_some()
+        {
+            let (handlers, mut cx) =
+                context_and_handlers(node, delivery.state, delivery.engine, delivery.tasks);
+            if let Some(handler) = &handlers.file_drop {
+                handler(paths, &mut cx)?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Enables or disables native resize and maximize actions for a mounted window.

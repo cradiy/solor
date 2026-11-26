@@ -6,7 +6,7 @@ fn counts_utf8_bytes_across_pipe_reads() -> Result<()> {
     let focus = Rc::new(());
     for limit in [Some(6), Some(5), None] {
         let mut transfers = Transfers::default();
-        let (fd, mut result) = transfers.read(Rc::downgrade(&focus), limit)?;
+        let (fd, mut result) = transfers.read(Some(Rc::downgrade(&focus)), limit)?;
         let mut writer = File::from(fd);
         for part in ["你", "好"] {
             writer.write_all(part.as_bytes())?;

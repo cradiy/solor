@@ -333,6 +333,20 @@ pub struct EventResponse {
 
 /// Application side of a single window. All calls are serialized on its event thread.
 pub trait WindowHandler<T: Presentation> {
+    /// Finds a file-drop recipient at a logical position in the submitted frame.
+    fn file_drop_target(&self, _position: crate::layout::Origin) -> Option<crate::NodeId> {
+        None
+    }
+
+    /// Delivers local paths to the recipient captured at release. Returns whether it handled the drop.
+    fn drop_files(
+        &mut self,
+        _target: crate::NodeId,
+        _paths: &[std::path::PathBuf],
+    ) -> Result<bool> {
+        Ok(false)
+    }
+
     /// Identifies the current text-input focus within this window. The token changes
     /// when a field regains focus so queued edits can be matched to their session.
     fn text_input_session(&self) -> Option<u64> {

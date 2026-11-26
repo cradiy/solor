@@ -42,6 +42,7 @@ pub(super) struct Desktop {
     pub(super) menus: Rc<super::menu::Menus>,
     pub(super) locks: Rc<super::session_lock::Locks>,
     pub(super) effects: Option<super::background_effect::Manager>,
+    pub(super) file_drops: Vec<super::clipboard::PendingDrop>,
     pub(super) clipboard: Option<Rc<super::clipboard::Clipboard>>,
     pub(super) text_inputs: Option<super::text_input::Manager>,
     pub(super) activation: Option<Rc<Activation>>,
@@ -799,6 +800,7 @@ impl EventLoop {
                     match result? {}
                 }
             }
+            self.desktop.deliver_file_drops();
             let mut deadline = more.then(Instant::now);
             let mut closed = Vec::new();
             for (id, window) in &mut self.desktop.windows {

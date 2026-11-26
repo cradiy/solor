@@ -206,6 +206,7 @@ type HoverPositionHandler = Box<dyn Fn(Option<HoverPosition>, &mut Context<'_>) 
 
 type DownHandler = Box<dyn Fn(&PointerEvent, &mut PointerDownContext<'_>) -> Result<()>>;
 type PositionHandler = Box<dyn Fn(&PointerEvent, &mut Context<'_>) -> Result<()>>;
+type FileDropHandler = Box<dyn Fn(&[std::path::PathBuf], &mut Context<'_>) -> Result<()>>;
 type ScrollHandler = Box<dyn Fn(&ScrollEvent, &mut ScrollContext<'_>) -> Result<()>>;
 type CancelHandler = Box<dyn Fn(PointerId, &mut Context<'_>) -> Result<()>>;
 
@@ -224,6 +225,7 @@ pub(crate) struct Handlers {
     down: Option<DownHandler>,
     moved: Option<PositionHandler>,
     scroll: Option<ScrollHandler>,
+    file_drop: Option<FileDropHandler>,
     up: Option<PositionHandler>,
     cancel: Option<CancelHandler>,
     pub(crate) key_context: Option<crate::SharedString>,
@@ -313,6 +315,9 @@ impl<E: crate::Element> crate::Node<E> {
         /// Reports changes in content coordinates or dimensions after input or frame acceptance,
         /// and reports `None` when the last mouse leaves.
         on_hover_position => hover_position (Option<HoverPosition>, &mut Context<'_>);
+        /// Receives local paths dropped on this element or its descendants.
+        /// The nearest listening ancestor of the hit element receives the drop.
+        on_file_drop => file_drop (&[std::path::PathBuf], &mut Context<'_>);
         /// Overrides wheel scrolling on this element. Call `cx.propagate()` to pass the delta to an ancestor.
         on_scroll => scroll (&ScrollEvent, &mut ScrollContext<'_>);
         /// Handles a button press on this element. The callback can capture the pointer.
