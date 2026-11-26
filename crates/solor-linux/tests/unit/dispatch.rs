@@ -58,6 +58,105 @@ use solor::{
 };
 use std::io::Write;
 
+#[test]
+fn a_failed_foreground_task_leaves_sibling_input_and_submission_live() -> anyhow::Result<()> {
+    use std::{cell::OnceCell, time::Duration};
+    use wayland_client::{WEnum, protocol::wl_seat};
+
+    struct Probe {
+        ui: solor::Ui,
+        raster: Redraw,
+        handle: Rc<OnceCell<WindowHandle>>,
+        moved: bool,
+        submitted: Rc<Cell<bool>>,
+        deadline: Instant,
+    }
+
+    impl WindowHandler<Rgba8> for Probe {
+        fn poll_tasks(&mut self, waker: &std::task::Waker) -> anyhow::Result<()> {
+            self.ui.poll_tasks(waker)
+        }
+        fn event(&mut self, event: WindowEvent) -> anyhow::Result<EventResponse> {
+            self.moved |= matches!(
+                event,
+                WindowEvent::Pointer(solor::pointer::PointerInput::Move(_))
+            );
+            Ok(EventResponse {
+                redraw: self.moved,
+                ..Default::default()
+            })
+        }
+        fn next_redraw(&self) -> Option<Instant> {
+            Some(self.deadline)
+        }
+        fn frame(&mut self, size: Size, scale: RasterScale) -> anyhow::Result<RasterFrame<'_>> {
+            anyhow::ensure!(
+                Instant::now() < self.deadline,
+                "timed out waiting for pointer"
+            );
+            self.raster.frame(size, scale)
+        }
+        fn frame_submitted(&mut self) -> anyhow::Result<()> {
+            if self.moved {
+                self.submitted.set(true);
+                self.handle.get().unwrap().close();
+            }
+            Ok(())
+        }
+    }
+
+    let mut host = fixture::Host::new()?;
+    let make = |ui, handle, submitted| Probe {
+        ui,
+        handle,
+        submitted,
+        moved: false,
+        raster: Redraw::default(),
+        deadline: Instant::now() + Duration::from_secs(3),
+    };
+    let mut ui = solor::Ui::new();
+    ui.context()
+        .spawn(|_| async { anyhow::bail!("settings task failed") });
+    let failed = host.open(make(ui, Rc::default(), Rc::default()))?;
+    let settings = host.desktop().windows[&failed].life.handle();
+    let handle = Rc::new(OnceCell::new());
+    let submitted = Rc::new(Cell::new(false));
+    let live = host.open(make(solor::Ui::new(), handle.clone(), submitted.clone()))?;
+    handle
+        .set(host.desktop().windows[&live].life.handle())
+        .unwrap();
+
+    let seat = host.desktop().seats[0].seat.clone();
+    host.deliver(
+        &seat,
+        wl_seat::Event::Capabilities {
+            capabilities: WEnum::Value(wl_seat::Capability::Pointer),
+        },
+    );
+    let pointer = host.desktop().seats[0]
+        .pointer
+        .as_ref()
+        .unwrap()
+        .id()
+        .protocol_id();
+    let peer = host.peer.try_clone()?;
+    let app = WaylandApplication(Rc::downgrade(&host.events.windows));
+    app.on_window_error(move |window, error| {
+        assert_eq!(window, settings);
+        assert!(!window.is_open());
+        assert_eq!(error.root_cause().to_string(), "settings task failed");
+        // wl_pointer.enter on the surviving surface after the failure notification.
+        let enter = [pointer, 24 << 16, 1, live.protocol_id(), 256, 256];
+        for word in enter {
+            (&peer).write_all(&word.to_ne_bytes()).unwrap();
+        }
+    })?;
+    let error = host.events.dispatch().unwrap_err();
+    assert_eq!(error.root_cause().to_string(), "settings task failed");
+    assert!(submitted.get());
+    Ok(())
+}
+
 #[derive(Default)]
 struct Redraw(Vec<u8>);
 impl WindowHandler<Rgba8> for Redraw {

@@ -32,6 +32,13 @@ pub(super) fn open_window<R: Render>(
 }
 
 impl Host {
+    pub(super) fn on_window_error(
+        &self,
+        _: impl Fn(WindowHandle, &anyhow::Error) + 'static,
+    ) -> Result<()> {
+        match *self {}
+    }
+
     pub(super) fn set_gpu_memory_policy(&mut self, _: super::GpuMemoryPolicy) {
         match *self {}
     }

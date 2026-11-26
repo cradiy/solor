@@ -84,7 +84,7 @@ pub(super) struct Seat {
     pub(super) keyboard: Option<Keyboard>,
     name: u32,
     pub(super) seat: wl_seat::WlSeat,
-    pointer: Option<wl_pointer::WlPointer>,
+    pub(super) pointer: Option<wl_pointer::WlPointer>,
     position: Option<PointerSample>,
     focus: Option<ObjectId>,
     shape_device: Option<WpCursorShapeDeviceV1>,

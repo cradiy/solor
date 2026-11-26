@@ -241,6 +241,11 @@ impl Window {
             .apply(self.mapping, compositor, &self.surface, qh, bounds, moved)
     }
 
+    fn record_failure(&mut self, error: anyhow::Error) {
+        self.failure.get_or_insert(error);
+        self.life.revisit.set(true);
+    }
+
     fn event(&mut self, event: WindowEvent) {
         self.dispatch(event, None);
     }
@@ -271,7 +276,7 @@ impl Window {
                     }
                 }
             }
-            Err(error) => self.failure = Some(error),
+            Err(error) => self.record_failure(error),
         }
     }
 
@@ -349,8 +354,7 @@ impl Window {
             Ok(target) => self.buffer_size = target,
             Err(error) => {
                 self.buffer_size = None;
-                self.failure.get_or_insert(error.into());
-                self.life.revisit.set(true);
+                self.record_failure(error.into());
             }
         }
     }

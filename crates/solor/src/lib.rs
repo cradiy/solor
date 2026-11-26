@@ -755,11 +755,14 @@ impl Instance {
         self.nodes.insert(path.to_vec(), id);
         self.tab_order = None;
         self.invalidate_geometry();
-        self.finish_attachment(id, path, watches, children, scroll_handle, cx)?;
+        if let Err(error) = self.finish_attachment(id, path, watches, children, scroll_handle, cx) {
+            self.remove(path, cx)?;
+            return Err(error);
+        }
         Ok(())
     }
 
-    fn remove(&mut self, path: &Path, cx: &mut Attachment<'_>) -> Result<()> {
+    fn remove(&mut self, path: &[usize], cx: &mut Attachment<'_>) -> Result<()> {
         let Some(node) = self.nodes.get(path) else {
             return Ok(());
         };
@@ -781,34 +784,38 @@ impl Instance {
         }
         for key in subtree_keys(&self.nodes, path) {
             let node = self.nodes.remove(&key).expect("mounted node");
-            if self.focused == Some(node) {
-                self.set_focus(None, false, cx.state);
-            }
-            let mut node = self.bodies.remove(&node).expect("mounted body");
-            if let Some(handle) = node.handlers.as_deref().and_then(|h| h.focus_handle)
-                && self.focus_targets.get(&handle) == Some(&node.id)
-            {
-                self.focus_targets.remove(&handle);
-            }
-            self.visible_nodes -= usize::from(node.visible);
-            if let Some(tracked) = self.tracked_scroll.remove(&node.id) {
-                tracked.detach(cx.state);
-            }
-            self.pointer.retire(node.id);
-            self.frame_handlers.remove(&node.id);
-            self.transitions.remove(node.id);
-            self.unobserve_paint(node.id, cx.state);
-            self.repaints.borrow_mut().dirty.remove(&node.id);
-            if let Some(target) = node.binding_target {
-                cx.state.remove_subtree(target)?;
-                cx.styles.borrow_mut().remove(&(ViewId(cx.scope), node.id));
-                cx.content_updates
-                    .borrow_mut()
-                    .remove(&(ViewId(cx.scope), node.id));
-            }
-            node.owned.release_state(cx.state)?;
+            self.retire_node(node, cx)?;
         }
         Ok(())
+    }
+
+    fn retire_node(&mut self, node: NodeId, cx: &mut Attachment<'_>) -> Result<()> {
+        if self.focused == Some(node) {
+            self.set_focus(None, false, cx.state);
+        }
+        let mut node = self.bodies.remove(&node).expect("mounted body");
+        if let Some(handle) = node.handlers.as_deref().and_then(|h| h.focus_handle)
+            && self.focus_targets.get(&handle) == Some(&node.id)
+        {
+            self.focus_targets.remove(&handle);
+        }
+        self.visible_nodes -= usize::from(node.visible);
+        if let Some(tracked) = self.tracked_scroll.remove(&node.id) {
+            tracked.detach(cx.state);
+        }
+        self.pointer.retire(node.id);
+        self.frame_handlers.remove(&node.id);
+        self.transitions.remove(node.id);
+        self.unobserve_paint(node.id, cx.state);
+        self.repaints.borrow_mut().dirty.remove(&node.id);
+        if let Some(target) = node.binding_target {
+            cx.state.remove_subtree(target)?;
+            cx.styles.borrow_mut().remove(&(ViewId(cx.scope), node.id));
+            cx.content_updates
+                .borrow_mut()
+                .remove(&(ViewId(cx.scope), node.id));
+        }
+        node.owned.release_state(cx.state)
     }
 
     fn reconcile(&mut self, path: &Path, open: bool, cx: &mut Attachment<'_>) -> Result<()> {
@@ -840,16 +847,12 @@ impl Instance {
                 end = mid;
             }
         }
-        if let Err(error) = self.insert(parent, index, path, element, cx) {
-            self.remove(path, cx)?;
-            return Err(error);
-        }
-        Ok(())
+        self.insert(parent, index, path, element, cx)
     }
 }
 
-fn subtree_keys<V>(map: &BTreeMap<Path, V>, path: &Path) -> Vec<Path> {
-    map.range(path.clone()..)
+fn subtree_keys<V>(map: &BTreeMap<Path, V>, path: &[usize]) -> Vec<Path> {
+    map.range(path.to_vec()..)
         .map(|(key, _)| key)
         .take_while(|key| key.starts_with(path))
         .cloned()

@@ -47,6 +47,15 @@ pub struct Application {
 }
 
 impl Application {
+    /// Sets the callback invoked when an individual window closes due to an error.
+    /// The event loop also returns its first window error when it exits normally.
+    pub fn on_window_error(
+        &self,
+        handler: impl Fn(WindowHandle, &anyhow::Error) + 'static,
+    ) -> Result<()> {
+        self.windows.on_window_error(handler)
+    }
+
     /// Delivers messages on the UI thread. Each sender keeps the application running.
     #[cfg(target_os = "linux")]
     pub fn channel<T: Send + 'static>(

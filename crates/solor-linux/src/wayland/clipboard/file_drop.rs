@@ -192,7 +192,7 @@ impl Desktop {
                                 }
                             }
                             Ok(false) => {}
-                            Err(error) => window.failure = Some(error),
+                            Err(error) => window.record_failure(error),
                         }
                     }
                 }

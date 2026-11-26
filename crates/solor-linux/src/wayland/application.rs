@@ -72,7 +72,20 @@ impl Desktop {
 #[derive(Clone)]
 pub struct WaylandApplication(Weak<WindowFactory>);
 
+type WindowErrorHandler = dyn Fn(WindowHandle, &anyhow::Error);
+
 impl WaylandApplication {
+    /// Sets the UI-thread callback for failures that close an ordinary window.
+    pub fn on_window_error(
+        &self,
+        handler: impl Fn(WindowHandle, &anyhow::Error) + 'static,
+    ) -> anyhow::Result<()> {
+        self.factory()?
+            .error_handler
+            .replace(Some(Rc::new(handler)));
+        Ok(())
+    }
+
     /// Delivers background messages on the UI thread, including while no windows are open.
     /// Dropping the last sender drains queued messages and releases the channel.
     pub fn channel<T: Send + 'static>(
@@ -323,6 +336,11 @@ impl WindowLife {
         true
     }
 
+    fn handle(self: &Rc<Self>) -> WindowHandle {
+        let target = Rc::downgrade(self);
+        WindowHandle::new(target)
+    }
+
     fn attach_modal(self: &Rc<Self>, parent: &Self) {
         if !parent.is_open() {
             self.close();
@@ -432,6 +450,7 @@ struct EventLoop {
 }
 
 pub(super) struct WindowFactory {
+    error_handler: RefCell<Option<Rc<WindowErrorHandler>>>,
     pub(super) locks: Rc<super::session_lock::Locks>,
     wake: std::sync::Arc<super::wake::EventWake>,
     inboxes: RefCell<Vec<super::channel::Inbox>>,
@@ -567,6 +586,7 @@ impl EventLoop {
             }
         }
         let windows = WindowFactory {
+            error_handler: Default::default(),
             locks: desktop.locks.clone(),
             wake: super::wake::EventWake::new()?,
             inboxes: Default::default(),
@@ -598,6 +618,26 @@ impl EventLoop {
 }
 
 impl WindowFactory {
+    fn fail_window(
+        &self,
+        window: &Window,
+        error: anyhow::Error,
+        first_error: &mut Option<anyhow::Error>,
+    ) -> anyhow::Result<()> {
+        let error = error.context(format!("window {}", window.surface.id()));
+        if matches!(window.role, Role::Lock { .. }) {
+            return Err(error);
+        }
+        window.life.close();
+        log::error!("{error:#}");
+        let handler = self.error_handler.borrow().clone();
+        if let Some(handler) = handler {
+            handler(window.life.handle(), &error);
+        }
+        first_error.get_or_insert(error);
+        Ok(())
+    }
+
     pub(super) fn open(
         &self,
         request: Request<'_>,
@@ -694,8 +734,7 @@ impl WindowFactory {
             modal_parent,
             control.as_ref(),
         );
-        let target = Rc::downgrade(&life);
-        let handle = WindowHandle::new(target);
+        let handle = life.handle();
         let mut input_region = super::input_region::SurfaceInputRegion::default();
         if matches!(&request, Request::Menu(options) if options.input_transparent) {
             input_region.update(Some(crate::surface_control::InputRegion::Rects(Vec::new())));
@@ -813,7 +852,7 @@ impl EventLoop {
         let wake = &self.windows.wake;
         let app = WaylandApplication(Rc::downgrade(&self.windows));
         let mut inboxes = Vec::new();
-        let mut first_frame_error = None;
+        let mut first_window_error = None;
         let waker = std::task::Waker::from(wake.clone());
         loop {
             self.windows.revisit.set(false);
@@ -846,11 +885,15 @@ impl EventLoop {
             let mut deadline = more.then(Instant::now);
             let mut closed = Vec::new();
             for (id, window) in &mut self.desktop.windows {
-                if let Some(error) = window.failure.take() {
-                    return Err(error);
+                if window.failure.is_none()
+                    && window.life.is_open()
+                    && let Err(error) = window.view.poll_tasks(&waker)
+                {
+                    window.record_failure(error.context("polling foreground tasks"));
                 }
-                if window.life.is_open() {
-                    window.view.poll_tasks(&waker)?;
+                if let Some(error) = window.failure.take() {
+                    self.windows
+                        .fail_window(window, error, &mut first_window_error)?;
                 }
                 let update = window.control.as_ref().map(Binding::take);
                 let Some(visible) = update
@@ -935,13 +978,11 @@ impl EventLoop {
                         Ok(Some(next)) => deadline = Some(deadline.map_or(next, |d| d.min(next))),
                         Ok(None) => {}
                         Err(error) => {
-                            let error = error.context(format!("presenting window {id}"));
-                            if matches!(window.role, Role::Lock { .. }) {
-                                return Err(error);
-                            }
-                            log::error!("{error:#}");
-                            first_frame_error.get_or_insert(error);
-                            window.life.close();
+                            self.windows.fail_window(
+                                window,
+                                error.context("presenting frame"),
+                                &mut first_window_error,
+                            )?;
                         }
                     }
                 }
@@ -965,7 +1006,7 @@ impl EventLoop {
             let write_interest = flush_interest(&self.queue)?;
             if self.desktop.windows.is_empty() && inboxes.is_empty() && !self.windows.locks.active()
             {
-                return first_frame_error.map_or(Ok(()), Err);
+                return first_window_error.map_or(Ok(()), Err);
             }
             dispatch_until(
                 &mut self.queue,
@@ -1023,6 +1064,9 @@ impl Window {
         compositor: &wl_compositor::WlCompositor,
         qh: &QueueHandle<Desktop>,
     ) -> anyhow::Result<Option<Instant>> {
+        if self.failure.is_some() {
+            return Ok(None);
+        }
         let Some(size) = self.buffer_size else {
             return Ok(None);
         };

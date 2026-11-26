@@ -658,7 +658,6 @@ impl<K: Eq + Hash + Clone> MountedRows<K> {
                 if let Err(error) =
                     instance.insert(parent, end, &child, build(key.clone()).into_element(), cx)
                 {
-                    instance.remove(&child, cx)?;
                     for (key, slot) in added {
                         self.slots.remove(key);
                         child[depth] = slot;
