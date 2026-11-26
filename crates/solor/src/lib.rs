@@ -124,7 +124,20 @@ struct Mount<'a> {
 #[derive(Default)]
 struct Owned {
     signals: Vec<SignalId>,
+    subscriptions: Option<NodeId>,
     tasks: TaskScope,
+}
+
+impl Owned {
+    fn release_state(&mut self, state: &mut Runtime<()>) -> Result<()> {
+        if let Some(target) = self.subscriptions.take() {
+            state.remove_subtree(target)?;
+        }
+        for signal in self.signals.drain(..) {
+            state.remove_signal_by_id(signal)?;
+        }
+        Ok(())
+    }
 }
 
 impl Mount<'_> {
@@ -140,11 +153,9 @@ impl Mount<'_> {
 
 impl Drop for Mount<'_> {
     fn drop(&mut self) {
-        for signal in self.owned.signals.drain(..) {
-            self.state
-                .remove_signal_by_id(signal)
-                .expect("live mount signal");
-        }
+        self.owned
+            .release_state(self.state)
+            .expect("live mount state");
     }
 }
 
@@ -190,6 +201,37 @@ impl Context<'_> {
     /// Borrows the signal's current value.
     pub fn read<T: 'static>(&self, signal: Signal<T>) -> Result<&T> {
         Ok(self.state.read(signal)?)
+    }
+
+    /// Subscribes to future changes. A batch of writes delivers the latest value once.
+    /// Removing the signal, unmounting the owning element or closing the UI cancels it.
+    /// Keep the returned handle to unsubscribe earlier.
+    pub fn subscribe<T: 'static>(
+        &mut self,
+        signal: Signal<T>,
+        mut changed: impl FnMut(&T) + 'static,
+    ) -> Result<BindingId> {
+        let root = self.state.tree().root();
+        let target = match &mut self.owned {
+            None => root,
+            Some(owner) => match owner.subscriptions {
+                Some(target) => target,
+                None => {
+                    self.state.read(signal)?;
+                    let target = self.state.append(root, ())?;
+                    owner.subscriptions = Some(target);
+                    target
+                }
+            },
+        };
+        Ok(self
+            .state
+            .bind_value(signal, target, false, move |value, _| changed(value))?)
+    }
+
+    /// Cancels a live subscription, including a queued notification.
+    pub fn unsubscribe(&mut self, subscription: BindingId) -> Result<()> {
+        Ok(self.state.unbind(subscription)?)
     }
 
     /// Writes a value and queues subscribers when it differs.
@@ -574,10 +616,8 @@ impl Instance {
         for handle in self.lists.values().filter_map(|list| list.scroll.as_ref()) {
             handle.detach(state);
         }
-        for node in self.bodies.into_values() {
-            for signal in node.owned.signals {
-                state.remove_signal_by_id(signal)?;
-            }
+        for mut node in self.bodies.into_values() {
+            node.owned.release_state(state)?;
         }
         Ok(())
     }
@@ -718,7 +758,7 @@ impl Instance {
             if self.focused == Some(node) {
                 self.set_focus(None, false, cx.state);
             }
-            let node = self.bodies.remove(&node).expect("mounted body");
+            let mut node = self.bodies.remove(&node).expect("mounted body");
             self.visible_nodes -= usize::from(node.visible);
             if let Some(tracked) = self.tracked_scroll.remove(&node.id) {
                 tracked.detach(cx.state);
@@ -735,9 +775,7 @@ impl Instance {
                     .borrow_mut()
                     .remove(&(ViewId(cx.scope), node.id));
             }
-            for signal in node.owned.signals {
-                cx.state.remove_signal_by_id(signal)?;
-            }
+            node.owned.release_state(cx.state)?;
         }
         Ok(())
     }

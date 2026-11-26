@@ -347,12 +347,22 @@ impl<N> Runtime<N> {
         &mut self,
         signal: Signal<S>,
         node: NodeId,
+        apply: impl FnMut(&S, &mut N) + 'static,
+    ) -> Result<BindingId, StateError> {
+        self.bind_value(signal, node, true, apply)
+    }
+
+    pub(crate) fn bind_value<S: 'static>(
+        &mut self,
+        signal: Signal<S>,
+        node: NodeId,
+        initial: bool,
         mut apply: impl FnMut(&S, &mut N) + 'static,
     ) -> Result<BindingId, StateError> {
         self.register_binding(
             signal.id,
             node,
-            true,
+            initial,
             Box::new(move |value, node| {
                 apply(
                     value
