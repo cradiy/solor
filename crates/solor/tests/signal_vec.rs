@@ -45,6 +45,43 @@ fn capacity_reserves_handle_space_without_creating_rows_or_limiting_growth() -> 
 }
 
 #[test]
+fn order_and_item_subscribers_follow_their_own_changes() -> Result<()> {
+    let mut ui = Ui::new();
+    let rows = ui.context().signal_vec([10, 20]);
+    let item = rows.item(0, &ui.context())?;
+    let orders = Rc::new(RefCell::new(Vec::new()));
+    let edits = Rc::new(RefCell::new(Vec::new()));
+    let seen = orders.clone();
+    let order_watch = rows.subscribe_order(&mut ui.context(), move |items| {
+        seen.borrow_mut().push(items.to_vec());
+    })?;
+    let seen = edits.clone();
+    ui.context()
+        .subscribe(item, move |n| seen.borrow_mut().push(*n))?;
+
+    rows.set(0, 11, &mut ui.context())?;
+    ui.flush()?;
+    assert!(orders.borrow().is_empty());
+    assert_eq!(*edits.borrow(), [11]);
+
+    rows.move_item(0, 1, &mut ui.context())?;
+    rows.splice(0..1, [30, 40], &mut ui.context())?;
+    ui.flush()?;
+    assert_eq!(orders.borrow().len(), 1);
+    assert_eq!(orders.borrow()[0], rows.items(&ui.context())?);
+    assert_eq!(orders.borrow()[0][2], item);
+    assert_eq!(*edits.borrow(), [11]);
+
+    rows.update_in_place(2, &mut ui.context(), |n| *n += 1)?;
+    rows.remove(0, &mut ui.context())?;
+    ui.context().unsubscribe(order_watch)?;
+    ui.flush()?;
+    assert_eq!(orders.borrow().len(), 1);
+    assert_eq!(*edits.borrow(), [11, 12]);
+    Ok(())
+}
+
+#[test]
 fn edits_notify_one_mounted_item_and_moves_preserve_its_identity() -> Result<()> {
     #[derive(PartialEq)]
     struct Row(usize);

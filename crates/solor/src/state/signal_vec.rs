@@ -1,5 +1,5 @@
 //! An ordered collection with independent item and membership notifications.
-use super::{Runtime, Signal};
+use super::{BindingId, Runtime, Signal};
 use crate::Context;
 use anyhow::{Context as _, Result, ensure};
 use std::{any::Any, ops::Range};
@@ -89,6 +89,17 @@ impl<N> Runtime<N> {
 }
 
 impl<T: 'static> SignalVec<T> {
+    /// Observes insertions, removals and moves. Each batch delivers the final
+    /// order as a borrowed slice of stable item handles. Subscribe to an item
+    /// with `cx.subscribe(item, ...)` to observe edits to its value.
+    pub fn subscribe_order(
+        self,
+        cx: &mut Context<'_>,
+        mut changed: impl FnMut(&[Signal<T>]) + 'static,
+    ) -> Result<BindingId> {
+        cx.subscribe(self.order, move |items| changed(items.as_slice()))
+    }
+
     /// Borrows the ordered item handles without cloning their values.
     pub fn items<'a>(self, cx: &'a Context<'_>) -> Result<&'a [Signal<T>]> {
         Ok(cx.read(self.order)?.as_slice())
