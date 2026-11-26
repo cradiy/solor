@@ -13,6 +13,10 @@ pub(in crate::wayland) struct Host {
 
 impl Host {
     pub(in crate::wayland) fn new() -> anyhow::Result<Self> {
+        Self::without(&["wl_output"])
+    }
+
+    pub(super) fn without(omitted: &'static [&'static str]) -> anyhow::Result<Self> {
         let (socket, mut peer) = UnixStream::pair()?;
         let registry = std::thread::spawn(move || -> io::Result<_> {
             // Answer wl_display.get_registry and the initial wl_display.sync.
@@ -26,10 +30,15 @@ impl Host {
                 ("wp_fractional_scale_manager_v1", 1),
                 ("zwp_text_input_manager_v3", 1),
                 ("wl_seat", 5),
+                ("xdg_wm_base", 1),
+                ("wl_output", 3),
             ]
             .into_iter()
             .enumerate()
             {
+                if omitted.contains(&interface) {
+                    continue;
+                }
                 advertise(
                     &mut peer,
                     u32::from_ne_bytes(registry_id.try_into().unwrap()),

@@ -1,7 +1,7 @@
 # Wayland text window
 
 Run the two-row CPU text fixture in a Linux Wayland session with
-`wl_compositor` version 4 or later, XDG shell, viewporter and fractional scale.
+`wl_compositor` version 4 or later and XDG shell.
 
 ```sh
 cargo run --offline --release --example text_window
@@ -14,10 +14,11 @@ close action to exit. Set `SOLOR_VERIFY_SHM=1` to read each submitted file back
 before attaching it and compare every pixel with an uncached full redraw.
 The audit also compares consecutive full redraws outside the reported damage.
 
-Layout uses logical units. The surface uses the compositor's preferred scale
+Layout uses logical units. With viewporter and fractional scale, the surface uses the compositor's preferred scale
 in 120ths to size the physical buffer and rasterize each glyph outline. At
 150%, a 16-unit font uses a 24-pixel mask and a 320 by 100 window uses a
 480 by 150 buffer. The viewport maps the buffer to the logical window size.
+With integer scaling, the surface uses the highest scale among its current outputs and starts at 1×.
 Mask keys include the physical font size. A scale change invalidates retained
 pixels even if rounding leaves the physical buffer dimensions unchanged.
 

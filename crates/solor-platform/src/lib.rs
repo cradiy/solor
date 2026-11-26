@@ -8,6 +8,7 @@ mod system;
 
 pub use solor::platform::{
     GpuMemoryPolicy, Renderer, SurfaceRect, WindowBackground, WindowHandle, WindowOptions,
+    WindowState,
 };
 #[cfg(target_os = "linux")]
 pub use solor_linux::{ApplicationSender, layer_shell, popup, session_lock};

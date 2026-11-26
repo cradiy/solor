@@ -251,7 +251,7 @@ Mouse capture redirects event delivery while the cursor follows the physical hit
 event or an accepted geometry change. A stationary mouse follows the newly
 accepted layout. Changing only the cursor requires no application redraw.
 On Wayland, compositors advertising `wp_cursor_shape_manager_v1` supply the
-system shapes. Without the extension the host leaves the cursor unchanged.
+system shapes. Without the extension the host loads the shape from the system Xcursor theme.
 
 ## Routing and lifetime
 

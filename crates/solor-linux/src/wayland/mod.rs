@@ -6,6 +6,7 @@ mod buffer;
 mod channel;
 pub use channel::ApplicationSender;
 mod clipboard;
+mod cursor;
 mod decorations;
 mod floating;
 #[cfg(feature = "gpu")]
@@ -74,11 +75,11 @@ struct Window {
     registration: Option<parent::Registration>,
     role: Role,
     floating: Option<floating::FloatingPanel>,
-    maximized: bool,
-    pending_maximized: bool,
+    pending_state: Option<solor::platform::WindowState>,
     presentation: Option<wp_presentation::WpPresentation>,
     frame_clock: presentation::FrameClock,
-    viewport: wp_viewport::WpViewport,
+    viewport: Option<wp_viewport::WpViewport>,
+    entered_outputs: smallvec::SmallVec<[u32; 2]>,
     scale_120: u32,
     buffer_size: Option<DeviceSize>,
     surface: wl_surface::WlSurface,
@@ -88,7 +89,7 @@ struct Window {
     slots: [Option<Buffer>; 2],
     next_slot: usize,
     view: WindowView,
-    fractional: wp_fractional_scale_v1::WpFractionalScaleV1,
+    fractional: Option<wp_fractional_scale_v1::WpFractionalScaleV1>,
     full_damage: bool,
     failure: Option<anyhow::Error>,
     trace: bool,
@@ -323,7 +324,9 @@ impl Window {
             }
             WindowControl::Close => self.life.close(),
             WindowControl::Minimize => top.set_minimized(),
-            WindowControl::ToggleMaximize if self.maximized => top.unset_maximized(),
+            WindowControl::ToggleMaximize if self.life.state().is_some_and(|s| s.maximized) => {
+                top.unset_maximized()
+            }
             WindowControl::ToggleMaximize => top.set_maximized(),
         }
     }
@@ -433,8 +436,6 @@ impl Window {
         #[cfg(feature = "gpu")]
         if let WindowView::Gpu(view, _) = &mut self.view {
             let output = view.frame(self.size, scale)?;
-            self.viewport
-                .set_destination(self.size.width.get() as i32, self.size.height.get() as i32);
             let Some((queue, texture)) = output else {
                 // An unmapped surface may never receive a frame callback.
                 self.acquire_retry = Some(Instant::now() + std::time::Duration::from_millis(100));
@@ -453,6 +454,12 @@ impl Window {
                 self.input_region
                     .apply(self.mapping, compositor, &self.surface, qh, None, false);
             }
+            set_surface_size(
+                self.viewport.as_ref(),
+                self.floating.as_ref().map_or(&self.surface, |p| &p.content),
+                self.size,
+                scale_120,
+            );
             queue.present(texture);
             if let Some(panel) = &self.floating {
                 if self.mapping == Mapping::Ready {
@@ -535,9 +542,8 @@ impl Window {
         if self.audit.is_some() {
             slot.verify(&frame)?;
         }
-        self.viewport
-            .set_destination(self.size.width.get() as i32, self.size.height.get() as i32);
         let content = self.floating.as_ref().map_or(&self.surface, |p| &p.content);
+        set_surface_size(self.viewport.as_ref(), content, self.size, scale_120);
         content.attach(Some(&slot.handle), 0, 0);
         for &area in frame.damage.rects() {
             content.damage_buffer(
@@ -617,6 +623,19 @@ impl Window {
     }
 }
 
+fn set_surface_size(
+    viewport: Option<&wp_viewport::WpViewport>,
+    surface: &wl_surface::WlSurface,
+    size: Size,
+    scale_120: u32,
+) {
+    if let Some(viewport) = viewport {
+        viewport.set_destination(size.width.get() as i32, size.height.get() as i32);
+    } else {
+        surface.set_buffer_scale((scale_120 / 120) as i32);
+    }
+}
+
 delegate_noop!(Desktop: ignore wp_viewporter::WpViewporter);
 delegate_noop!(Desktop: ignore wp_viewport::WpViewport);
 delegate_noop!(Desktop: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
@@ -640,7 +659,7 @@ impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for Desktop
 }
 
 delegate_noop!(Desktop: ignore wl_compositor::WlCompositor);
-delegate_noop!(Desktop: ignore wl_surface::WlSurface);
+
 impl Dispatch<wl_shm::WlShm, ()> for Desktop {
     fn event(
         state: &mut Self,
@@ -755,10 +774,13 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for Desktop {
                 states,
                 ..
             } => {
-                state.pending_maximized = states
-                    .as_chunks::<4>()
-                    .0
-                    .contains(&(xdg_toplevel::State::Maximized as u32).to_ne_bytes());
+                let flags = states.as_chunks::<4>().0;
+                let has = |s: xdg_toplevel::State| flags.contains(&(s as u32).to_ne_bytes());
+                state.pending_state = Some(solor::platform::WindowState {
+                    active: has(xdg_toplevel::State::Activated),
+                    maximized: has(xdg_toplevel::State::Maximized),
+                    fullscreen: has(xdg_toplevel::State::Fullscreen),
+                });
                 state.pending_size = Some(Size {
                     width: if width > 0 {
                         px(width as f32)
@@ -796,7 +818,7 @@ impl Dispatch<xdg_surface::XdgSurface, ObjectId> for Desktop {
             }
             surface.ack_configure(serial);
             state.mapping.configure();
-            state.maximized = state.pending_maximized;
+
             let (decorations_configured, decoration_mode) = match &mut state.role {
                 Role::Toplevel {
                     decorations: Some(d),
@@ -820,6 +842,11 @@ impl Dispatch<xdg_surface::XdgSurface, ObjectId> for Desktop {
             }
             if let Some(size) = state.pending_size.take() {
                 state.resize(size);
+            }
+            if let Some(confirmed) = state.pending_state.take()
+                && state.life.confirm_state(confirmed)
+            {
+                state.event(WindowEvent::StateChanged(confirmed));
             }
             if decorations_configured && state.commits != 0 && !state.full_damage {
                 // Apply a decoration-only configure even when the retained view is idle.

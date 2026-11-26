@@ -234,6 +234,10 @@ impl WaylandApplication {
         notify: impl FnMut(SessionLockState) + 'static,
     ) -> Result<SessionLock> {
         let factory = self.factory()?;
+        ensure!(
+            factory.viewporter.is_some(),
+            "session lock rendering requires wp_viewporter"
+        );
         ensure!(!factory.locks.active(), "session lock already requested");
         let globals = factory.globals.as_ref().context("application has exited")?;
         let manager: ExtSessionLockManagerV1 = globals

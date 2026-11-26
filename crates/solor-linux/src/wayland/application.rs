@@ -15,7 +15,9 @@ use crate::{
 use anyhow::Context as _;
 use rustix::event::PollFlags;
 use solor::{
-    platform::{PlatformWindow, WindowBackground, WindowHandle, WindowHandler, WindowOptions},
+    platform::{
+        PlatformWindow, WindowBackground, WindowHandle, WindowHandler, WindowOptions, WindowState,
+    },
     raster::Rgba8,
 };
 use std::{
@@ -53,6 +55,7 @@ pub(super) struct Desktop {
     pub(super) trace_submissions: bool,
     pub(super) windows: HashMap<ObjectId, Window>,
     pub(super) seats: Vec<pointer::Seat>,
+    pub(super) outputs: Option<super::output::OutputScales>,
     pub(super) cursor_shapes: Option<WpCursorShapeManagerV1>,
     pub(super) rgb_opaque: bool,
     pub(super) rgb_transparent: bool,
@@ -286,12 +289,15 @@ enum BlurRequests {
     Shared(Control),
 }
 
+type StateListener = Box<dyn FnMut(WindowState)>;
 type DecorationListener = Box<dyn FnMut(bool)>;
 
 pub(super) struct WindowLife {
     blur: BlurRequests,
     pub(super) activation: Option<ActivationTarget>,
     open: Cell<bool>,
+    state: Cell<Option<WindowState>>,
+    state_listeners: RefCell<Vec<StateListener>>,
     client_decorations: Cell<bool>,
     decoration_listeners: RefCell<Vec<DecorationListener>>,
     modal_parent: Weak<Self>,
@@ -314,6 +320,8 @@ impl WindowLife {
             },
             activation,
             open: Cell::new(true),
+            state: Default::default(),
+            state_listeners: Default::default(),
             client_decorations: Cell::new(false),
             decoration_listeners: RefCell::default(),
             revisit,
@@ -321,6 +329,18 @@ impl WindowLife {
             modal_children: RefCell::default(),
             cancel_pointer: Cell::default(),
         })
+    }
+
+    pub(super) fn confirm_state(&self, state: WindowState) -> bool {
+        if self.state.replace(Some(state)) == Some(state) {
+            return false;
+        }
+        let mut listeners = self.state_listeners.take();
+        for listener in &mut listeners {
+            listener(state);
+        }
+        self.state_listeners.borrow_mut().extend(listeners);
+        true
     }
 
     pub(super) fn set_client_decorations(&self, enabled: bool) -> bool {
@@ -385,6 +405,13 @@ impl WindowLife {
 }
 
 impl PlatformWindow for WindowLife {
+    fn state(&self) -> Option<WindowState> {
+        self.state.get()
+    }
+    fn on_state_changed(&self, listener: StateListener) {
+        self.state_listeners.borrow_mut().push(listener);
+    }
+
     fn is_open(&self) -> bool {
         self.open.get()
     }
@@ -466,8 +493,8 @@ pub(super) struct WindowFactory {
     pub(super) globals: Option<GlobalList>,
     compositor: wl_compositor::WlCompositor,
     shm: wl_shm::WlShm,
-    viewporter: wp_viewporter::WpViewporter,
-    scale_manager: wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
+    pub(super) viewporter: Option<wp_viewporter::WpViewporter>,
+    scale_manager: Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     presentation: Option<wp_presentation::WpPresentation>,
     verify_shm: bool,
     trace_submissions: bool,
@@ -553,7 +580,12 @@ impl EventLoop {
     fn new(host: &Wayland, connection: Connection, guest: bool) -> anyhow::Result<Self> {
         let (globals, queue) = registry_queue_init::<Desktop>(&connection)?;
         let qh = queue.handle();
+        let viewporter = globals.bind(&qh, 1..=1, ()).ok();
+        let scale_manager = viewporter
+            .as_ref()
+            .and_then(|_| globals.bind(&qh, 1..=1, ()).ok());
         let mut desktop = Desktop {
+            outputs: scale_manager.is_none().then(Default::default),
             popup_only: guest,
             trace_submissions: host.trace_submissions,
             clipboard: if guest {
@@ -575,6 +607,11 @@ impl EventLoop {
             ..Desktop::default()
         };
         for global in globals.contents().clone_list() {
+            if global.interface == "wl_output"
+                && let Some(outputs) = &mut desktop.outputs
+            {
+                outputs.bind(globals.registry(), global.name, global.version, &qh);
+            }
             desktop.bind_background_effects(
                 globals.registry(),
                 global.name,
@@ -598,8 +635,8 @@ impl EventLoop {
             activation: desktop.activation.clone(),
             compositor: globals.bind(&qh, 4..=4, ())?,
             shm: globals.bind(&qh, 1..=1, ())?,
-            viewporter: globals.bind(&qh, 1..=1, ())?,
-            scale_manager: globals.bind(&qh, 1..=1, ())?,
+            viewporter,
+            scale_manager,
             presentation: globals.bind(&qh, 1..=1, ()).ok(),
             trace_submissions: host.trace_submissions,
             verify_shm: host.verify_shm,
@@ -771,7 +808,9 @@ impl WindowFactory {
                 globals,
                 &self.compositor,
                 &self.shm,
-                &self.viewporter,
+                self.viewporter
+                    .as_ref()
+                    .context("movable layer surfaces require wp_viewporter")?,
                 surface,
                 floating::Geometry::new(size, p.anchor, p.margin),
                 qh,
@@ -794,7 +833,10 @@ impl WindowFactory {
                 ..
             }
         ))?;
-        let viewport = self.viewporter.get_viewport(content, qh, ());
+        let viewport = self
+            .viewporter
+            .as_ref()
+            .map(|v| v.get_viewport(content, qh, ()));
 
         let mapping = if matches!(role, Role::Lock { .. }) {
             Mapping::AwaitingConfigure
@@ -807,13 +849,14 @@ impl WindowFactory {
             preedit_owner: None,
             role,
             floating,
-            maximized: false,
-            pending_maximized: false,
+            pending_state: None,
             presentation: self.presentation.clone(),
             frame_clock: Default::default(),
             fractional: self
                 .scale_manager
-                .get_fractional_scale(surface, qh, surface.id()),
+                .as_ref()
+                .map(|m| m.get_fractional_scale(surface, qh, surface.id())),
+            entered_outputs: Default::default(),
             viewport,
             scale_120: 120,
             buffer_size: Some(buffer_size),
@@ -993,7 +1036,7 @@ impl EventLoop {
                     window.destroy();
                 }
             }
-            self.desktop.sync_cursors();
+            self.desktop.sync_cursors(&self.windows.compositor, &qh);
             self.desktop.sync_text_inputs();
             // A newly mapped parent or a callback can make another window ready.
             if self.desktop.sync_file_drop_hover()
@@ -1021,8 +1064,12 @@ impl EventLoop {
 
 impl Drop for WindowFactory {
     fn drop(&mut self) {
-        self.scale_manager.destroy();
-        self.viewporter.destroy();
+        if let Some(m) = self.scale_manager.take() {
+            m.destroy();
+        }
+        if let Some(v) = self.viewporter.take() {
+            v.destroy();
+        }
         if let Some(presentation) = self.presentation.take() {
             presentation.destroy();
         }
@@ -1105,8 +1152,12 @@ impl Window {
         drop(self.view);
         drop(self.popup_parent);
         drop(self.role);
-        self.fractional.destroy();
-        self.viewport.destroy();
+        if let Some(f) = self.fractional {
+            f.destroy();
+        }
+        if let Some(v) = self.viewport {
+            v.destroy();
+        }
         drop(self.floating);
         self.surface.destroy();
         if self.trace {

@@ -193,7 +193,12 @@ fn oversized_surface_waits_while_a_second_window_keeps_submitting() -> anyhow::R
         });
         window.set_visible(true, &events.connection, &events.windows.qh);
     }
-    let fractional = events.desktop.windows[&large].fractional.id().protocol_id();
+    let fractional = events.desktop.windows[&large]
+        .fractional
+        .as_ref()
+        .unwrap()
+        .id()
+        .protocol_id();
     for (scale, expected_large, expected_small) in [(150u32, 1, 1), (180, 1, 2), (150, 2, 3)] {
         host.peer.write_all(&fractional.to_ne_bytes())?;
         host.peer.write_all(&(12u32 << 16).to_ne_bytes())?;
@@ -307,5 +312,145 @@ fn lock_surfaces_follow_output_hotplug_and_fit_large_outputs() -> anyhow::Result
     assert!(!first.life.is_open() && second.life.is_open());
     first.destroy();
     second.destroy();
+    Ok(())
+}
+
+#[test]
+fn toplevel_follows_integer_outputs_when_scaling_extensions_are_incomplete() -> anyhow::Result<()> {
+    use wayland_client::{
+        Dispatch,
+        protocol::{wl_output, wl_surface},
+    };
+    for omitted in [
+        &["wp_viewporter", "wp_fractional_scale_manager_v1"][..],
+        &["wp_fractional_scale_manager_v1"],
+        &["wp_viewporter"],
+    ] {
+        let mut host = fixture::Host::without(omitted)?;
+        let factory = &host.events.windows;
+        factory.open(
+            Request::Toplevel(WindowOptions::new("Scale").size(px(80.), px(40.))),
+            None,
+            |_| Ok(Box::new(Redraw::default())),
+        )?;
+        let window = factory.pending.take().pop().unwrap();
+        let surface = window.surface.clone();
+        let id = surface.id();
+        host.events.desktop.windows.insert(id.clone(), window);
+        let output = host.desktop().outputs.as_ref().unwrap().0[&8].0.clone();
+        host.deliver(&output, wl_output::Event::Scale { factor: 2 });
+        for (event, expected_width) in [
+            (
+                wl_surface::Event::Enter {
+                    output: output.clone(),
+                },
+                160,
+            ),
+            (
+                wl_surface::Event::Leave {
+                    output: output.clone(),
+                },
+                80,
+            ),
+        ] {
+            Desktop::event(
+                &mut host.events.desktop,
+                &surface,
+                event,
+                &(),
+                &host.events.connection,
+                &host.events.windows.qh,
+            );
+            let window = &host.events.desktop.windows[&id];
+            assert_eq!(window.size.width, px(80.));
+            assert_eq!(window.buffer_size.unwrap().width, expected_width);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn window_state_is_published_once_per_confirmed_change() -> anyhow::Result<()> {
+    use solor::platform::WindowState;
+    use wayland_client::Dispatch;
+    use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel};
+
+    let mut host = fixture::Host::new()?;
+    let events = &mut host.events;
+    let factory = &events.windows;
+    let handle = factory.open(Request::Toplevel(WindowOptions::new("State")), None, |_| {
+        Ok(Box::new(Redraw::default()))
+    })?;
+    let window = factory.pending.take().pop().unwrap();
+    let id = window.surface.id();
+    let Role::Toplevel { top, surface, .. } = &window.role else {
+        unreachable!()
+    };
+    let (top, xdg) = (top.clone(), surface.clone());
+    events.desktop.windows.insert(id.clone(), window);
+    let updates = Rc::new(RefCell::new(Vec::new()));
+    handle.on_state_changed({
+        let updates = updates.clone();
+        let handle = handle.clone();
+        move |state| {
+            assert_eq!(handle.state(), Some(state));
+            updates.borrow_mut().push(state);
+        }
+    });
+    let active = xdg_toplevel::State::Activated as u32;
+    let max = xdg_toplevel::State::Maximized as u32;
+    let full = xdg_toplevel::State::Fullscreen as u32;
+    for (serial, flags) in [
+        vec![active],
+        vec![active, max],
+        vec![active, max],
+        vec![full],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let old = handle.state();
+        Desktop::event(
+            &mut events.desktop,
+            &top,
+            xdg_toplevel::Event::Configure {
+                width: 80,
+                height: 40,
+                states: flags.into_iter().flat_map(u32::to_ne_bytes).collect(),
+            },
+            &id,
+            &events.connection,
+            &factory.qh,
+        );
+        assert_eq!(handle.state(), old);
+        Desktop::event(
+            &mut events.desktop,
+            &xdg,
+            xdg_surface::Event::Configure {
+                serial: serial as u32 + 1,
+            },
+            &id,
+            &events.connection,
+            &factory.qh,
+        );
+    }
+    assert_eq!(
+        &*updates.borrow(),
+        &[
+            WindowState {
+                active: true,
+                ..Default::default()
+            },
+            WindowState {
+                active: true,
+                maximized: true,
+                fullscreen: false
+            },
+            WindowState {
+                fullscreen: true,
+                ..Default::default()
+            },
+        ]
+    );
     Ok(())
 }

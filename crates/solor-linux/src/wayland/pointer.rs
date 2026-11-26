@@ -1,3 +1,4 @@
+mod touch;
 use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle, WEnum,
     backend::ObjectId,
@@ -37,43 +38,48 @@ fn sample(id: u32, x: f64, y: f64, modifiers: Modifiers) -> PointerSample {
 delegate_noop!(Desktop: ignore WpCursorShapeDeviceV1);
 delegate_noop!(Desktop: ignore WpCursorShapeManagerV1);
 
-fn native_shape(cursor: Cursor) -> Option<Shape> {
+fn cursor_shapes(cursor: Cursor) -> Option<(Shape, cursor_icon::CursorIcon)> {
+    macro_rules! shape {
+        ($variant:ident) => {
+            (Shape::$variant, cursor_icon::CursorIcon::$variant)
+        };
+    }
     Some(match cursor {
-        Cursor::Auto | Cursor::Default => Shape::Default,
-        Cursor::Pointer => Shape::Pointer,
-        Cursor::ContextMenu => Shape::ContextMenu,
-        Cursor::Help => Shape::Help,
-        Cursor::Cell => Shape::Cell,
-        Cursor::Text => Shape::Text,
-        Cursor::VerticalText => Shape::VerticalText,
-        Cursor::Crosshair => Shape::Crosshair,
-        Cursor::Move => Shape::Move,
-        Cursor::Grab => Shape::Grab,
-        Cursor::Grabbing => Shape::Grabbing,
-        Cursor::Alias => Shape::Alias,
-        Cursor::Copy => Shape::Copy,
-        Cursor::NoDrop => Shape::NoDrop,
-        Cursor::NotAllowed => Shape::NotAllowed,
-        Cursor::Wait => Shape::Wait,
-        Cursor::Progress => Shape::Progress,
-        Cursor::ColResize => Shape::ColResize,
-        Cursor::RowResize => Shape::RowResize,
-        Cursor::EwResize => Shape::EwResize,
-        Cursor::NsResize => Shape::NsResize,
-        Cursor::NeswResize => Shape::NeswResize,
-        Cursor::NwseResize => Shape::NwseResize,
-        Cursor::AllScroll => Shape::AllScroll,
-        Cursor::ZoomIn => Shape::ZoomIn,
-        Cursor::ZoomOut => Shape::ZoomOut,
+        Cursor::Auto | Cursor::Default => shape!(Default),
+        Cursor::Pointer => shape!(Pointer),
+        Cursor::ContextMenu => shape!(ContextMenu),
+        Cursor::Help => shape!(Help),
+        Cursor::Cell => shape!(Cell),
+        Cursor::Text => shape!(Text),
+        Cursor::VerticalText => shape!(VerticalText),
+        Cursor::Crosshair => shape!(Crosshair),
+        Cursor::Move => shape!(Move),
+        Cursor::Grab => shape!(Grab),
+        Cursor::Grabbing => shape!(Grabbing),
+        Cursor::Alias => shape!(Alias),
+        Cursor::Copy => shape!(Copy),
+        Cursor::NoDrop => shape!(NoDrop),
+        Cursor::NotAllowed => shape!(NotAllowed),
+        Cursor::Wait => shape!(Wait),
+        Cursor::Progress => shape!(Progress),
+        Cursor::ColResize => shape!(ColResize),
+        Cursor::RowResize => shape!(RowResize),
+        Cursor::EwResize => shape!(EwResize),
+        Cursor::NsResize => shape!(NsResize),
+        Cursor::NeswResize => shape!(NeswResize),
+        Cursor::NwseResize => shape!(NwseResize),
+        Cursor::AllScroll => shape!(AllScroll),
+        Cursor::ZoomIn => shape!(ZoomIn),
+        Cursor::ZoomOut => shape!(ZoomOut),
         Cursor::Resize(edge) => match edge {
-            ResizeEdge::Top => Shape::NResize,
-            ResizeEdge::TopRight => Shape::NeResize,
-            ResizeEdge::Right => Shape::EResize,
-            ResizeEdge::BottomRight => Shape::SeResize,
-            ResizeEdge::Bottom => Shape::SResize,
-            ResizeEdge::BottomLeft => Shape::SwResize,
-            ResizeEdge::Left => Shape::WResize,
-            ResizeEdge::TopLeft => Shape::NwResize,
+            ResizeEdge::Top => shape!(NResize),
+            ResizeEdge::TopRight => shape!(NeResize),
+            ResizeEdge::Right => shape!(EResize),
+            ResizeEdge::BottomRight => shape!(SeResize),
+            ResizeEdge::Bottom => shape!(SResize),
+            ResizeEdge::BottomLeft => shape!(SwResize),
+            ResizeEdge::Left => shape!(WResize),
+            ResizeEdge::TopLeft => shape!(NwResize),
         },
         Cursor::None => return None,
     })
@@ -83,6 +89,7 @@ pub(super) struct Seat {
     pub(super) text_input: Option<super::text_input::SeatInput>,
     pub(super) keyboard: Option<Keyboard>,
     name: u32,
+    touch: Option<touch::Touch>,
     pub(super) seat: wl_seat::WlSeat,
     pub(super) pointer: Option<wl_pointer::WlPointer>,
     position: Option<PointerSample>,
@@ -90,13 +97,15 @@ pub(super) struct Seat {
     shape_device: Option<WpCursorShapeDeviceV1>,
     enter_serial: Option<u32>,
     button_presses: smallvec::SmallVec<[(PointerButton, u32); 2]>,
-    applied_cursor: Option<Cursor>,
+    applied_cursor: Option<(Cursor, u32)>,
+    themed_cursor: Option<super::cursor::ThemedCursor>,
     scroll: Option<(PointerSample, ScrollDelta)>,
 }
 
 impl Drop for Seat {
     fn drop(&mut self) {
         self.release_pointer();
+        self.touch.take();
         self.keyboard.take();
         self.text_input.take();
         if self.seat.version() >= 5 {
@@ -133,6 +142,7 @@ impl Seat {
             device.destroy();
         }
         self.clear_focus();
+        self.themed_cursor.take();
         if let Some(pointer) = self.pointer.take()
             && pointer.version() >= 3
         {
@@ -143,6 +153,9 @@ impl Seat {
 
 pub(super) fn cancel_focus(seats: &mut [Seat], id: &ObjectId, window: &mut Window) {
     for seat in seats {
+        if let Some(touch) = &mut seat.touch {
+            touch.cancel_window(id, window);
+        }
         if seat.focus.as_ref() == Some(id) {
             seat.clear_focus();
             window.event(WindowEvent::Pointer(PointerInput::Cancel(PointerId(
@@ -158,10 +171,13 @@ pub(super) fn cancel_focus(seats: &mut [Seat], id: &ObjectId, window: &mut Windo
 /// Clear UI captures and partial axis frames while retaining the seat's native focus.
 pub(super) fn cancel_modal_gestures(seats: &mut [Seat], id: &ObjectId, window: &mut Window) {
     if window.life.take_pointer_cancel() {
-        for seat in seats
-            .iter_mut()
-            .filter(|seat| seat.focus.as_ref() == Some(id))
-        {
+        for seat in seats {
+            if let Some(touch) = &mut seat.touch {
+                touch.cancel_window(id, window);
+            }
+            if seat.focus.as_ref() != Some(id) {
+                continue;
+            }
             seat.scroll = None;
             window.event(WindowEvent::Pointer(PointerInput::Cancel(PointerId(
                 seat.name.into(),
@@ -171,11 +187,13 @@ pub(super) fn cancel_modal_gestures(seats: &mut [Seat], id: &ObjectId, window: &
 }
 
 impl Desktop {
-    pub(super) fn sync_cursors(&mut self) {
+    pub(super) fn sync_cursors(
+        &mut self,
+        compositor: &wayland_client::protocol::wl_compositor::WlCompositor,
+        qh: &QueueHandle<Self>,
+    ) {
         for seat in &mut self.seats {
-            let (Some(device), Some(pointer), Some(serial)) =
-                (&seat.shape_device, &seat.pointer, seat.enter_serial)
-            else {
+            let (Some(pointer), Some(serial)) = (&seat.pointer, seat.enter_serial) else {
                 continue;
             };
             let Some(window) = seat.focus.as_ref().and_then(|id| self.windows.get(id)) else {
@@ -186,14 +204,27 @@ impl Desktop {
             } else {
                 window.view.pointer_cursor(PointerId(seat.name.into()))
             };
-            if seat.applied_cursor == Some(cursor) {
+            let scale = if seat.shape_device.is_some() {
+                1
+            } else {
+                window.scale_120.div_ceil(120)
+            };
+            if seat.applied_cursor == Some((cursor, scale)) {
                 continue;
             }
-            match native_shape(cursor) {
-                Some(shape) => device.set_shape(serial, shape),
-                None => pointer.set_cursor(serial, None, 0, 0),
+            match (cursor_shapes(cursor), &seat.shape_device) {
+                (None, _) => pointer.set_cursor(serial, None, 0, 0),
+                (Some((shape, _)), Some(device)) => device.set_shape(serial, shape),
+                (Some((_, icon)), None) => {
+                    let theme = seat
+                        .themed_cursor
+                        .get_or_insert_with(|| super::cursor::ThemedCursor::new(compositor, qh));
+                    if let Err(error) = theme.apply(icon, scale, pointer, serial, &window.shm, qh) {
+                        log::warn!("setting cursor {icon}: {error}");
+                    }
+                }
             }
-            seat.applied_cursor = Some(cursor);
+            seat.applied_cursor = Some((cursor, scale));
         }
     }
 
@@ -216,6 +247,7 @@ impl Desktop {
                 }),
                 seat,
                 pointer: None,
+                touch: None,
                 keyboard: None,
                 position: None,
                 focus: None,
@@ -223,6 +255,7 @@ impl Desktop {
                 enter_serial: None,
                 button_presses: Default::default(),
                 applied_cursor: None,
+                themed_cursor: None,
                 scroll: None,
             });
         }
@@ -245,20 +278,31 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Desktop {
                 version,
             } if interface == "wl_seat" => state.add_seat(registry, name, version, qh),
             wl_registry::Event::Global {
-                name, interface, ..
+                name,
+                interface,
+                version,
             } => {
                 if interface == "wl_output" {
                     state.locks.outputs_dirty.set(true);
+                    if let Some(outputs) = &mut state.outputs {
+                        outputs.bind(registry, name, version, qh);
+                    }
                 }
                 state.bind_background_effects(registry, name, &interface, qh);
             }
             wl_registry::Event::GlobalRemove { name } => {
                 state.locks.remove_global(name);
+                if let Some(outputs) = &mut state.outputs {
+                    outputs.remove(name, state.windows.values_mut());
+                }
                 if state.effects.as_ref().is_some_and(|m| m.name == name) {
                     state.effects.take();
                 }
                 if let Some(index) = state.seats.iter().position(|s| s.name == name) {
-                    let seat = state.seats.swap_remove(index);
+                    let mut seat = state.seats.swap_remove(index);
+                    if let Some(touch) = &mut seat.touch {
+                        touch.cancel_all(state.windows.values_mut());
+                    }
                     state.file_drags.remove(&name);
                     if let Some(c) = &state.clipboard {
                         c.remove_seat(name);
@@ -305,6 +349,13 @@ impl Dispatch<wl_seat::WlSeat, u32> for Desktop {
                     c.focus(*name, None);
                 }
                 input.keyboard = None;
+            }
+            if caps.contains(wl_seat::Capability::Touch) {
+                input
+                    .touch
+                    .get_or_insert_with(|| touch::Touch::new(seat.get_touch(qh, *name)));
+            } else if let Some(mut touch) = input.touch.take() {
+                touch.cancel_all(state.windows.values_mut());
             }
             if caps.contains(wl_seat::Capability::Pointer) {
                 if input.pointer.is_none() {
@@ -473,6 +524,5 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
         }
         state.menus.end_input();
         drop(input);
-        state.sync_cursors();
     }
 }

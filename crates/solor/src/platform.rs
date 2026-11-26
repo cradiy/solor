@@ -31,6 +31,17 @@ impl SurfaceRect {
     }
 }
 
+/// Presentation state confirmed by the host for a top-level window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WindowState {
+    /// The window should display its active appearance.
+    pub active: bool,
+    /// The compositor has maximized the window.
+    pub maximized: bool,
+    /// The window occupies its output in fullscreen mode.
+    pub fullscreen: bool,
+}
+
 /// Host-side lifecycle of a window on its event thread.
 pub trait PlatformWindow {
     /// Returns true while the window accepts input and frame requests, including during startup.
@@ -47,6 +58,12 @@ pub trait PlatformWindow {
     }
     /// Registers a UI-thread listener invoked when negotiated client-side decorations change.
     fn on_client_decorations_changed(&self, _listener: Box<dyn FnMut(bool)>) {}
+    /// Returns the most recently confirmed top-level state, when available.
+    fn state(&self) -> Option<WindowState> {
+        None
+    }
+    /// Observes confirmed top-level state changes on the UI thread.
+    fn on_state_changed(&self, _listener: Box<dyn FnMut(WindowState)>) {}
     /// Marks the window closed and schedules native teardown before the event loop sleeps.
     fn close(&self);
 }
@@ -103,6 +120,21 @@ impl WindowHandle {
     pub fn on_client_decorations_changed(&self, listener: impl FnMut(bool) + 'static) {
         if let Some(window) = self.0.upgrade().filter(|window| window.is_open()) {
             window.on_client_decorations_changed(Box::new(listener));
+        }
+    }
+
+    /// Returns the state confirmed for this open top-level window.
+    pub fn state(&self) -> Option<WindowState> {
+        self.0
+            .upgrade()
+            .filter(|w| w.is_open())
+            .and_then(|w| w.state())
+    }
+
+    /// Receives subsequent state changes on the UI thread.
+    pub fn on_state_changed(&self, listener: impl FnMut(WindowState) + 'static) {
+        if let Some(window) = self.0.upgrade().filter(|w| w.is_open()) {
+            window.on_state_changed(Box::new(listener));
         }
     }
 
@@ -326,6 +358,8 @@ impl<'a> WindowOptions<'a> {
 
 /// Input or a frame opportunity delivered on the window's event thread.
 pub enum WindowEvent {
+    /// The host confirmed a new top-level presentation state.
+    StateChanged(WindowState),
     /// A positioned sample or the end of a pointer sequence.
     Pointer(PointerInput),
     /// A file-drop recipient gained its first hovering drag or lost its last one.
