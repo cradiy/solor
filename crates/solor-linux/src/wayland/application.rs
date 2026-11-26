@@ -114,16 +114,7 @@ impl WaylandApplication {
         options: WindowOptions<'_>,
         view: Box<dyn WindowHandler<Rgba8>>,
     ) -> anyhow::Result<WindowHandle> {
-        self.open_window_with(options, || Ok(view))
-    }
-
-    /// Builds the handler on the UI thread once the application is available.
-    pub fn open_window_with(
-        &self,
-        options: WindowOptions<'_>,
-        build: impl FnOnce() -> anyhow::Result<Box<dyn WindowHandler<Rgba8>>>,
-    ) -> anyhow::Result<WindowHandle> {
-        self.build_window(options, |_| build())
+        self.build_window(options, |_| Ok(view))
     }
 
     /// Builds the window's handler with a weak handle to its newly created toplevel.
