@@ -114,6 +114,17 @@ impl Instance {
 }
 
 impl Delivery<'_> {
+    fn handlers(&mut self, target: NodeId) -> Option<(&Handlers, Context<'_>)> {
+        let node = self.instance.bodies.get_mut(&target)?;
+        node.handlers.as_ref()?;
+        Some(context_and_handlers(
+            node,
+            self.state,
+            self.engine,
+            self.tasks,
+        ))
+    }
+
     fn hover_changed(&mut self) -> Result<()> {
         let router = &mut self.instance.pointer;
         let changes = router.hover.reconcile(
@@ -449,22 +460,33 @@ impl Ui {
             .hit_recipient(position, |r| r.file_drop)
     }
 
+    pub(crate) fn file_drop_hover(
+        &mut self,
+        view: ViewId,
+        target: NodeId,
+        hovered: bool,
+    ) -> Result<()> {
+        let mut delivery = self.pointer_delivery(view)?;
+        if let Some((handlers, mut cx)) = delivery.handlers(target)
+            && let Some(handler) = &handlers.file_drop_hover
+        {
+            handler(hovered, &mut cx)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn drop_files(
         &mut self,
         view: ViewId,
         target: NodeId,
         paths: &[std::path::PathBuf],
     ) -> Result<bool> {
-        let delivery = self.pointer_delivery(view)?;
-        if let Some(node) = delivery.instance.bodies.get_mut(&target)
-            && node.handlers.is_some()
+        let mut delivery = self.pointer_delivery(view)?;
+        if let Some((handlers, mut cx)) = delivery.handlers(target)
+            && let Some(handler) = &handlers.file_drop
         {
-            let (handlers, mut cx) =
-                context_and_handlers(node, delivery.state, delivery.engine, delivery.tasks);
-            if let Some(handler) = &handlers.file_drop {
-                handler(paths, &mut cx)?;
-                return Ok(true);
-            }
+            handler(paths, &mut cx)?;
+            return Ok(true);
         }
         Ok(false)
     }

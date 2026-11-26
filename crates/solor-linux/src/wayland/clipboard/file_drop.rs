@@ -4,6 +4,7 @@ use anyhow::Result;
 use futures_channel::oneshot;
 use solor::{NodeId, layout::Origin, platform::PlatformWindow, px};
 use std::{
+    collections::HashMap,
     os::{fd::AsFd, unix::ffi::OsStringExt},
     path::PathBuf,
     sync::atomic::Ordering,
@@ -13,7 +14,7 @@ use wayland_client::{Proxy, backend::ObjectId, protocol::wl_data_device_manager:
 pub(super) const MIME: &str = "text/uri-list";
 pub(super) const COPY: DndAction = DndAction::Copy;
 
-pub(super) struct Drag {
+pub(in crate::wayland) struct Drag {
     offer: Offer,
     serial: u32,
     surface: ObjectId,
@@ -28,7 +29,7 @@ impl Drag {
         surface: ObjectId,
         x: f64,
         y: f64,
-        desktop: &Desktop,
+        windows: &HashMap<ObjectId, Window>,
     ) -> Option<Self> {
         if !offer
             .0
@@ -52,12 +53,12 @@ impl Drag {
             },
             accepted: false,
         };
-        drag.accept(drag.target(desktop).is_some());
+        drag.accept(drag.target(windows).is_some());
         Some(drag)
     }
 
-    fn target(&self, desktop: &Desktop) -> Option<NodeId> {
-        let window = desktop.windows.get(&self.surface)?;
+    fn target(&self, windows: &HashMap<ObjectId, Window>) -> Option<NodeId> {
+        let window = windows.get(&self.surface)?;
         if !available(window) {
             return None;
         }
@@ -77,23 +78,28 @@ impl Drag {
         self.accepted = accepted;
     }
 
-    pub(super) fn motion(&mut self, x: f64, y: f64, desktop: &Desktop) {
+    pub(super) fn motion(&mut self, x: f64, y: f64, windows: &HashMap<ObjectId, Window>) {
         self.position = Origin {
             x: px(x as f32),
             y: px(y as f32),
         };
-        let accepted = self.target(desktop).is_some();
-        if accepted != self.accepted {
-            self.accept(accepted);
+        self.refresh(windows);
+    }
+
+    fn refresh(&mut self, windows: &HashMap<ObjectId, Window>) -> Option<NodeId> {
+        let target = self.target(windows);
+        if target.is_some() != self.accepted {
+            self.accept(target.is_some());
         }
+        target
     }
 
     pub(super) fn receive(
         self,
-        desktop: &Desktop,
+        windows: &HashMap<ObjectId, Window>,
         clipboard: &Clipboard,
     ) -> Result<Option<PendingDrop>> {
-        let Some(target) = self.target(desktop).filter(|_| self.accepted) else {
+        let Some(target) = self.target(windows).filter(|_| self.accepted) else {
             return Ok(None);
         };
         let (fd, result) = clipboard
@@ -125,6 +131,48 @@ pub(in crate::wayland) struct PendingDrop {
 }
 
 impl Desktop {
+    pub(in crate::wayland) fn sync_file_drop_hover(&mut self) -> bool {
+        if self.file_drags.is_empty() && self.file_drop_hover.is_empty() {
+            return false;
+        }
+        let mut current = smallvec::SmallVec::<[(ObjectId, NodeId); 1]>::new();
+        for drag in self.file_drags.values_mut() {
+            let target = drag.refresh(&self.windows);
+            if let Some(target) = target
+                && (drag.offer.0.version() < 3
+                    || drag
+                        .offer
+                        .0
+                        .data::<OfferFormats>()
+                        .is_some_and(|f| f.copy.load(Ordering::Relaxed)))
+            {
+                let entry = (drag.surface.clone(), target);
+                if !current.contains(&entry) {
+                    current.push(entry);
+                }
+            }
+        }
+        let mut changed = false;
+        for (from, to, hovered) in [
+            (&self.file_drop_hover, &current, false),
+            (&current, &self.file_drop_hover, true),
+        ] {
+            for entry in from {
+                if !to.contains(entry)
+                    && let Some(window) = self.windows.get_mut(&entry.0)
+                {
+                    window.event(solor::platform::WindowEvent::FileDropHover {
+                        target: entry.1,
+                        hovered,
+                    });
+                    changed = true;
+                }
+            }
+        }
+        self.file_drop_hover = current;
+        changed
+    }
+
     pub(in crate::wayland) fn deliver_file_drops(&mut self) {
         self.file_drops.retain_mut(|drop| {
             let Some(window) = self.windows.get_mut(&drop.surface).filter(|w| available(w)) else {

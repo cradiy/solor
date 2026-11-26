@@ -42,6 +42,8 @@ pub(super) struct Desktop {
     pub(super) menus: Rc<super::menu::Menus>,
     pub(super) locks: Rc<super::session_lock::Locks>,
     pub(super) effects: Option<super::background_effect::Manager>,
+    pub(super) file_drags: HashMap<u32, super::clipboard::Drag>,
+    pub(super) file_drop_hover: smallvec::SmallVec<[(ObjectId, solor::NodeId); 1]>,
     pub(super) file_drops: Vec<super::clipboard::PendingDrop>,
     pub(super) clipboard: Option<Rc<super::clipboard::Clipboard>>,
     pub(super) text_inputs: Option<super::text_input::Manager>,
@@ -913,7 +915,8 @@ impl EventLoop {
             self.desktop.sync_cursors();
             self.desktop.sync_text_inputs();
             // A newly mapped parent or a callback can make another window ready.
-            if self.windows.revisit.get()
+            if self.desktop.sync_file_drop_hover()
+                || self.windows.revisit.get()
                 || !self.windows.pending.borrow().is_empty()
                 || !self.windows.inboxes.borrow().is_empty()
             {

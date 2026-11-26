@@ -26,7 +26,9 @@ impl WindowHandler<Rgba8> for Renderer {
             y: p.position.y.into(),
         };
         let redraw = match event {
-            WindowEvent::Key(_) | WindowEvent::TextInput(_) => false,
+            WindowEvent::Key(_) | WindowEvent::TextInput(_) | WindowEvent::FileDropHover { .. } => {
+                false
+            }
             WindowEvent::FrameReady(_) => self.view.frame_ready(),
             WindowEvent::Pointer(PointerInput::Scroll(_, delta)) => {
                 self.view.scroll_by(delta.y.into())

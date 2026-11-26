@@ -26,8 +26,7 @@ use wayland_client::{
 };
 
 mod file_drop;
-use file_drop::Drag;
-pub(super) use file_drop::PendingDrop;
+pub(super) use file_drop::{Drag, PendingDrop};
 mod transfers;
 use transfers::Transfers;
 
@@ -75,7 +74,6 @@ struct Seat {
     device: WlDataDevice,
     selection: Option<Offer>,
     source: RefCell<Option<Source>>,
-    drag: Option<Drag>,
     focus: Option<(ObjectId, Rc<()>)>,
     serial: Option<u32>,
 }
@@ -129,7 +127,6 @@ impl Clipboard {
                 device,
                 selection: None,
                 source: RefCell::default(),
-                drag: None,
                 focus: None,
                 serial: None,
             },
@@ -258,12 +255,10 @@ impl Dispatch<WlDataDevice, u32> for Desktop {
         let Some(hub) = &state.clipboard else {
             return;
         };
-        let mut seats = hub.seats.borrow_mut();
-        let seat = seats.get_mut(name);
         match event {
             wl_data_device::Event::Selection { id } => {
                 let offer = id.map(Offer);
-                if let Some(s) = seat {
+                if let Some(s) = hub.seats.borrow_mut().get_mut(name) {
                     s.selection = offer;
                 }
             }
@@ -275,24 +270,26 @@ impl Dispatch<WlDataDevice, u32> for Desktop {
                 id,
             } => {
                 let offer = id.map(Offer);
-                if let Some(s) = seat {
-                    s.drag = offer
-                        .and_then(|offer| Drag::enter(offer, serial, surface.id(), x, y, state));
+                state.file_drags.remove(name);
+                if hub.seats.borrow().contains_key(name)
+                    && let Some(drag) = offer.and_then(|offer| {
+                        Drag::enter(offer, serial, surface.id(), x, y, &state.windows)
+                    })
+                {
+                    state.file_drags.insert(*name, drag);
                 }
             }
             wl_data_device::Event::Motion { x, y, .. } => {
-                if let Some(drag) = seat.and_then(|s| s.drag.as_mut()) {
-                    drag.motion(x, y, state);
+                if let Some(drag) = state.file_drags.get_mut(name) {
+                    drag.motion(x, y, &state.windows);
                 }
             }
             wl_data_device::Event::Leave => {
-                if let Some(s) = seat {
-                    s.drag = None;
-                }
+                state.file_drags.remove(name);
             }
             wl_data_device::Event::Drop => {
-                if let Some(drag) = seat.and_then(|s| s.drag.take()) {
-                    match drag.receive(state, hub) {
+                if let Some(drag) = state.file_drags.remove(name) {
+                    match drag.receive(&state.windows, hub) {
                         Ok(Some(pending)) => state.file_drops.push(pending),
                         Ok(None) => {}
                         Err(error) => log::warn!("file drop transfer failed: {error}"),

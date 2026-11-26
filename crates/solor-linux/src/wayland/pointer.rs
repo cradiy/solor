@@ -259,6 +259,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Desktop {
                 }
                 if let Some(index) = state.seats.iter().position(|s| s.name == name) {
                     let seat = state.seats.swap_remove(index);
+                    state.file_drags.remove(&name);
                     if let Some(c) = &state.clipboard {
                         c.remove_seat(name);
                     }

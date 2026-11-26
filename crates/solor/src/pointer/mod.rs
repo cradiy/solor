@@ -226,6 +226,7 @@ pub(crate) struct Handlers {
     moved: Option<PositionHandler>,
     scroll: Option<ScrollHandler>,
     file_drop: Option<FileDropHandler>,
+    file_drop_hover: Option<HoverHandler>,
     up: Option<PositionHandler>,
     cancel: Option<CancelHandler>,
     pub(crate) key_context: Option<crate::SharedString>,
@@ -315,6 +316,9 @@ impl<E: crate::Element> crate::Node<E> {
         /// Reports changes in content coordinates or dimensions after input or frame acceptance,
         /// and reports `None` when the last mouse leaves.
         on_hover_position => hover_position (Option<HoverPosition>, &mut Context<'_>);
+        /// Observes when this element becomes or ceases to be the target of an external file drag.
+        /// Attach alongside `on_file_drop` on the receiving element.
+        on_file_drop_hover => file_drop_hover (bool, &mut Context<'_>);
         /// Receives local paths dropped on this element or its descendants.
         /// The nearest listening ancestor of the hit element receives the drop.
         on_file_drop => file_drop (&[std::path::PathBuf], &mut Context<'_>);

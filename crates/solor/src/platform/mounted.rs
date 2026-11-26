@@ -104,6 +104,9 @@ impl<R: ViewRenderer> WindowHandler<R::Target> for UiWindow<R> {
     fn event(&mut self, event: WindowEvent) -> Result<EventResponse> {
         let mut response = EventResponse::default();
         match event {
+            WindowEvent::FileDropHover { target, hovered } => {
+                self.ui.file_drop_hover(self.view, target, hovered)?;
+            }
             WindowEvent::TextInput(edit) => {
                 self.ui.dispatch_text_input(self.view, edit)?;
             }

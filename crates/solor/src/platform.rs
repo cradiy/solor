@@ -294,6 +294,13 @@ impl<'a> WindowOptions<'a> {
 pub enum WindowEvent {
     /// A positioned sample or the end of a pointer sequence.
     Pointer(PointerInput),
+    /// A file-drop recipient gained its first hovering drag or lost its last one.
+    FileDropHover {
+        /// Recipient in the submitted frame.
+        target: crate::NodeId,
+        /// Whether an external file drag is over the target.
+        hovered: bool,
+    },
     /// A layout-resolved key press or release for this window.
     Key(crate::keyboard::KeyEvent),
     /// A text edit from the active platform input method.
