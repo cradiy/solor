@@ -770,6 +770,7 @@ impl EventLoop {
         let wake = &self.windows.wake;
         let app = WaylandApplication(Rc::downgrade(&self.windows));
         let mut inboxes = Vec::new();
+        let mut first_frame_error = None;
         let waker = std::task::Waker::from(wake.clone());
         loop {
             self.windows.revisit.set(false);
@@ -886,8 +887,18 @@ impl EventLoop {
                     if self.desktop.popup_only && window.input_region.changed() {
                         window.dirty = true;
                     }
-                    if let Some(next) = window.present_if_due(&self.windows.compositor, &qh)? {
-                        deadline = Some(deadline.map_or(next, |d: Instant| d.min(next)));
+                    match window.present_if_due(&self.windows.compositor, &qh) {
+                        Ok(Some(next)) => deadline = Some(deadline.map_or(next, |d| d.min(next))),
+                        Ok(None) => {}
+                        Err(error) => {
+                            let error = error.context(format!("presenting window {id}"));
+                            if matches!(window.role, Role::Lock { .. }) {
+                                return Err(error);
+                            }
+                            log::error!("{error:#}");
+                            first_frame_error.get_or_insert(error);
+                            window.life.close();
+                        }
                     }
                 }
             }
@@ -909,7 +920,7 @@ impl EventLoop {
             let write_interest = flush_interest(&self.queue)?;
             if self.desktop.windows.is_empty() && inboxes.is_empty() && !self.windows.locks.active()
             {
-                return Ok(());
+                return first_frame_error.map_or(Ok(()), Err);
             }
             dispatch_until(
                 &mut self.queue,
