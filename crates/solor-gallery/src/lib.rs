@@ -1,4 +1,5 @@
 //! Interactive specimens of Solor typography, fills and layout.
+mod files;
 mod lists;
 mod markets;
 mod specimens;
@@ -19,7 +20,7 @@ const INK: Rgba = rgb(0x252e29);
 const MUTED: Rgba = rgb(0x526058);
 const LINE: Rgba = rgb(0xd7dbd2);
 const CITRON: Rgba = rgb(0xe0efa3);
-const PAGES: [&str; 5] = ["Lists", "Markets", "Typography", "Paint", "Layout"];
+const PAGES: [&str; 6] = ["Files", "Lists", "Markets", "Typography", "Paint", "Layout"];
 
 fn label(value: &'static str, size: f32, leading: f32) -> impl IntoElement + Styled {
     text(value)
@@ -223,7 +224,7 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
     Ok((
         ui,
         component(move |cx| {
-            let pages = Selection::new(cx, 2, true);
+            let pages = Selection::new(cx, 3, true);
             let spacing = Selection::new(cx, 1, false);
             let sample_text = cx.signal(solor::text::TextInputState::new("Aa"));
             let geometry = Selection::new(cx, 0, false);
@@ -280,15 +281,16 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
                         .child(div().w(px(14.0)).window_resize_region(ResizeEdge::TopRight)),
                 )
                 .child(header)
-                .child_when(pages.choices[0].selected, lists::palette)
-                .child_when(pages.choices[1].selected, markets::market)
-                .child_when(pages.choices[2].selected, move || {
+                .child_when(pages.choices[0].selected, files::file_drop)
+                .child_when(pages.choices[1].selected, lists::palette)
+                .child_when(pages.choices[2].selected, markets::market)
+                .child_when(pages.choices[3].selected, move || {
                     specimens::typography(spacing, sample_text, &clipboard)
                 })
-                .child_when(pages.choices[3].selected, move || {
+                .child_when(pages.choices[4].selected, move || {
                     specimens::paint(geometry, overlay, preview, ramp, &patterns, map.clone())
                 })
-                .child_when(pages.choices[4].selected, move || {
+                .child_when(pages.choices[5].selected, move || {
                     specimens::layout(alignment)
                 })
         }),
