@@ -1,5 +1,5 @@
 //! Fixed and signal-driven property declarations.
-use std::{fmt, rc::Rc};
+use std::{any::Any, fmt, rc::Rc};
 
 use super::*;
 use crate::{
@@ -7,7 +7,22 @@ use crate::{
     state::{Runtime, SignalId},
 };
 
-type Reader<T> = Rc<dyn Fn(&Runtime<()>) -> Result<T>>;
+type Projection<T> = Rc<dyn Fn(&dyn Any) -> T>;
+
+#[derive(Clone)]
+enum Reader<T> {
+    Convert(fn(&dyn Any) -> T),
+    Map(Projection<T>),
+}
+
+impl<T> Reader<T> {
+    fn get(&self, value: &dyn Any) -> T {
+        match self {
+            Self::Convert(convert) => convert(value),
+            Self::Map(map) => map(value),
+        }
+    }
+}
 
 /// A property supplied by value or sampled from a typed signal.
 /// Style setters accept both forms directly.
@@ -20,12 +35,37 @@ enum Source<T> {
     Signal(SignalId, Reader<T>),
 }
 
+impl<T: fmt::Debug> fmt::Debug for Property<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            Source::Fixed(value) => value.fmt(f),
+            Source::Signal(id, _) => id.fmt(f),
+        }
+    }
+}
+
+impl<T: PartialEq> PartialEq for Property<T> {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (Source::Fixed(a), Source::Fixed(b)) => a == b,
+            // The signal fixes the input type and T fixes the conversion.
+            (Source::Signal(a, Reader::Convert(_)), Source::Signal(b, Reader::Convert(_))) => {
+                a == b
+            }
+            (Source::Signal(a, Reader::Map(f)), Source::Signal(b, Reader::Map(g))) => {
+                a == b && Rc::ptr_eq(f, g)
+            }
+            _ => false,
+        }
+    }
+}
+
 macro_rules! inputs {
     ($($ty:ty),+ $(,)?) => {$(
         impl<S: Clone + Into<$ty> + 'static> From<Signal<S>> for Property<$ty> {
             fn from(source: Signal<S>) -> Self {
-                Self(Source::Signal(source.id(), Rc::new(move |state| {
-                    Ok(state.read(source)?.clone().into())
+                Self(Source::Signal(source.id(), Reader::Convert(|value| {
+                    value.downcast_ref::<S>().expect("property signal type").clone().into()
                 })))
             }
         }
@@ -111,6 +151,24 @@ impl<P: Into<Property<f32>>> From<crate::GradientColor<P>> for Property<Backgrou
     }
 }
 
+impl From<Property<Rgba>> for Background {
+    fn from(color: Property<Rgba>) -> Self {
+        match color.0 {
+            Source::Fixed(value) => value.into(),
+            Source::Signal(..) => Self::Color(color),
+        }
+    }
+}
+
+impl From<Property<Rgba>> for Foreground {
+    fn from(color: Property<Rgba>) -> Self {
+        match color.0 {
+            Source::Fixed(value) => value.into(),
+            Source::Signal(..) => Self::Bound(color),
+        }
+    }
+}
+
 impl From<Property<Rgba>> for Property<crate::Ink> {
     fn from(color: Property<Rgba>) -> Self {
         color.map(crate::Ink::from)
@@ -130,8 +188,15 @@ impl From<std::num::NonZeroUsize> for Property<Option<std::num::NonZeroUsize>> {
 }
 
 impl<T: 'static> Property<T> {
+    pub(crate) fn source_id(&self) -> Option<SignalId> {
+        match self.0 {
+            Source::Fixed(_) => None,
+            Source::Signal(id, _) => Some(id),
+        }
+    }
+
     pub(crate) fn is_signal(&self) -> bool {
-        matches!(self.0, Source::Signal(..))
+        self.source_id().is_some()
     }
 
     pub(crate) fn read(&self, state: &Runtime<()>) -> Result<T>
@@ -140,16 +205,34 @@ impl<T: 'static> Property<T> {
     {
         match &self.0 {
             Source::Fixed(value) => Ok(value.clone()),
-            Source::Signal(_, read) => read(state),
+            Source::Signal(id, read) => Ok(read.get(state.signal_value(*id)?)),
         }
+    }
+
+    pub(crate) fn observe_value(
+        self,
+        state: &mut Runtime<()>,
+        node: crate::NodeId,
+        mut changed: impl FnMut(T) + 'static,
+    ) -> Result<()> {
+        if let Source::Signal(id, reader) = self.0 {
+            state.register_binding(
+                id,
+                node,
+                true,
+                Box::new(move |value, _| changed(reader.get(value))),
+            )?;
+        }
+        Ok(())
     }
 
     pub(crate) fn map<U: 'static>(self, convert: impl Fn(T) -> U + 'static) -> Property<U> {
         Property(match self.0 {
             Source::Fixed(value) => Source::Fixed(convert(value)),
-            Source::Signal(id, read) => {
-                Source::Signal(id, Rc::new(move |state| Ok(convert(read(state)?))))
-            }
+            Source::Signal(id, read) => Source::Signal(
+                id,
+                Reader::Map(Rc::new(move |value| convert(read.get(value)))),
+            ),
         })
     }
 }
@@ -279,7 +362,7 @@ impl<T: 'static> Property<T> {
                     source,
                     clear,
                     apply: Rc::new(move |state, style| {
-                        set(style, read(state)?);
+                        set(style, read.get(state.signal_value(source)?));
                         Ok(())
                     }),
                 };
@@ -302,13 +385,13 @@ impl StyleRefinement {
         if self.background.is_none() && self.bindings.contains("background") {
             return;
         }
-        let source: Property<Fill> = match self.background.as_ref().unwrap_or(&base.background) {
-            Some(Background::Color(source)) => (*source).into(),
-            Some(Background::Bound(source)) => (*source).into(),
+        let source = match self.background.as_ref().unwrap_or(&base.background) {
+            Some(Background::Color(color)) => color.clone().map(Background::from),
+            Some(Background::Bound(fill)) => Property::<Fill>::from(*fill).map(Background::Fixed),
             _ => return,
         };
         // Subscribe at style resolution so a new target wakes an idle transition.
-        self.set_background(source.map(Background::Fixed));
+        self.set_background(source);
     }
 
     pub(super) fn set_background(&mut self, source: Property<Background>) {

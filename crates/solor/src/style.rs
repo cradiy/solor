@@ -78,6 +78,8 @@ macro_rules! background_sources {
         pub enum Background {
             /// Paint stored directly on the declaration.
             Fixed(Fill),
+            /// Solid color sampled during paint.
+            Color(Property<Rgba>),
             /// A uniform color sampled at a normalized position along a gradient.
             GradientColor(crate::GradientColor<f32>),
             $($(#[$doc])* $variant(Signal<$ty>)),+
@@ -98,6 +100,7 @@ macro_rules! background_sources {
                 }
                 match self {
                     Self::Fixed(fill) => Ok(fill.clone()),
+                    Self::Color(color) => Ok(cx.read_property(color)?.into()),
                     Self::GradientColor(color) => Ok(color.palette.sample(color.position)?.into()),
                     $(Self::$variant(signal) => read(cx, *signal)),+
                 }
@@ -109,8 +112,6 @@ macro_rules! background_sources {
 background_sources! {
     /// Fill sampled during paint.
     Bound(Fill),
-    /// Solid color sampled during paint.
-    Color(Rgba),
     /// Gradient sampled during paint.
     Gradient(crate::Gradient),
     /// Checkerboard sampled during paint.
@@ -125,6 +126,12 @@ background_sources! {
     CustomImage(crate::CustomImage),
 }
 
+impl From<Signal<Rgba>> for Background {
+    fn from(signal: Signal<Rgba>) -> Self {
+        Self::Color(signal.into())
+    }
+}
+
 impl<T: Into<Fill>> From<T> for Background {
     fn from(fill: T) -> Self {
         Self::Fixed(fill.into())
@@ -137,7 +144,7 @@ pub enum Foreground {
     /// Use this color for the lifetime of the declaration.
     Fixed(crate::Ink),
     /// Read the current color when an element paints with the foreground.
-    Bound(Signal<Rgba>),
+    Bound(Property<Rgba>),
     /// Read the current gradient when painting.
     Gradient(Signal<crate::Gradient>),
     /// Read the current ink when painting.
@@ -172,7 +179,7 @@ impl From<crate::ShaderFill<Signal<[f32; 4]>>> for Foreground {
 
 impl From<Signal<Rgba>> for Foreground {
     fn from(signal: Signal<Rgba>) -> Self {
-        Self::Bound(signal)
+        Self::Bound(signal.into())
     }
 }
 

@@ -394,7 +394,7 @@ impl<'paint> PaintContext<'paint> {
     pub fn text_color(&self) -> Result<crate::Ink> {
         match self.text_color {
             Foreground::Fixed(ink) => Ok(ink.clone()),
-            Foreground::Bound(signal) => Ok((*self.read(*signal)?).into()),
+            Foreground::Bound(color) => Ok(self.read_property(color)?.into()),
             Foreground::Gradient(signal) => Ok(self.read(*signal)?.clone().into()),
             Foreground::Ink(signal) => Ok(self.read(*signal)?.clone()),
             #[cfg(feature = "shader")]
@@ -408,11 +408,26 @@ impl<'paint> PaintContext<'paint> {
     /// The value can stay borrowed while recording drawing commands.
     pub fn read<T: 'static>(&self, signal: Signal<T>) -> Result<&'paint T> {
         let value = self.state.read(signal)?;
-        let mut reads = self.reads.borrow_mut();
-        if !reads.contains(&signal.id()) {
-            reads.push(signal.id());
+        self.track_read(signal.id());
+        Ok(value)
+    }
+
+    pub(crate) fn read_property<T: Clone + 'static>(
+        &self,
+        property: &crate::style::Property<T>,
+    ) -> Result<T> {
+        let value = property.read(self.state)?;
+        if let Some(id) = property.source_id() {
+            self.track_read(id);
         }
         Ok(value)
+    }
+
+    fn track_read(&self, id: SignalId) {
+        let mut reads = self.reads.borrow_mut();
+        if !reads.contains(&id) {
+            reads.push(id);
+        }
     }
 
     /// Requests another host-paced frame after this view frame is submitted.

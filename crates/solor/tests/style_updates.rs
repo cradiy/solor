@@ -1520,3 +1520,74 @@ fn border_width_tracks_content_and_paint_when_reversed() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn badge_accent_drives_background_border_and_inherited_text_together() -> Result<()> {
+    use solor::{Ink, IntoElement, Transition, TransitionProperty as P, style::Property};
+    use std::time::Duration;
+
+    fn badge(accent: impl Into<Property<Rgba>>) -> impl IntoElement {
+        let accent = accent.into();
+        div()
+            .bg(accent.clone())
+            .border(px(1.0))
+            .border_color(accent.clone())
+            .text_color(accent)
+            .transition(
+                [P::BackgroundColor, P::BorderColor, P::TextColor],
+                Transition::new(Duration::from_millis(100)),
+            )
+            .child(text("Badge"))
+    }
+
+    let mut ui = Ui::with_font(FONT.to_vec())?;
+    let color = ui.context().signal([0_u8, 0, 0, 255]);
+    let view = ui.mount(component(|_| div().child(badge(INK)).child(badge(color))))?;
+    ui.flush()?;
+    ui.layout(
+        view,
+        Size {
+            width: px(180.),
+            height: px(80.),
+        },
+    )?;
+    ui.record_frame(view)?;
+    ui.context().set(color, [200, 100, 80, 255])?;
+
+    for (ms, expected) in [
+        (0, [0, 0, 0, 255]),
+        (50, [100, 50, 40, 255]),
+        (100, [200, 100, 80, 255]),
+    ] {
+        ui.dispatch_frame(view, Duration::from_millis(ms))?;
+        let frame = ui.record_frame(view)?;
+        let mut backgrounds = Vec::new();
+        let mut borders = Vec::new();
+        let mut labels = Vec::new();
+        for draw in frame.draws() {
+            match draw {
+                Draw::Fill {
+                    fill: Fill::Solid(color),
+                    ..
+                } => backgrounds.push(*color),
+                Draw::Border { paint, .. } => borders.push(paint.visible_fills()),
+                Draw::Text {
+                    color: Ink::Solid(color),
+                    ..
+                } => labels.push(*color),
+                _ => {}
+            }
+        }
+        let expected = Rgba::from(expected);
+        assert_eq!(backgrounds, [INK, expected]);
+        assert_eq!(labels, [INK, expected]);
+        assert_eq!(
+            borders,
+            [
+                [Some(&Fill::Solid(INK)); 4],
+                [Some(&Fill::Solid(expected)); 4]
+            ]
+        );
+    }
+    Ok(())
+}

@@ -1,5 +1,6 @@
 //! Resolves local and inherited style inputs for retained element bodies.
 use super::*;
+use crate::{Ink, style::Property};
 
 pub(super) struct PreparedStyle {
     pub scroll_axes: crate::pointer::ScrollAxes,
@@ -164,29 +165,33 @@ fn bind_text_color<E: Element>(
         .or(inherited.fixed.color.as_ref())
         .unwrap_or(&base.text.color);
     let displayed = match color {
-        Foreground::Bound(source) => watch_text_color(*source, timing, &mut node.watches, cx)?,
-        Foreground::Ink(source) => watch_text_color(*source, timing, &mut node.watches, cx)?,
+        Foreground::Bound(source) => {
+            watch_text_color(source.clone(), timing, &mut node.watches, cx)?
+        }
+        Foreground::Ink(source) => {
+            watch_text_color::<Ink>((*source).into(), timing, &mut node.watches, cx)?
+        }
         _ => return Ok(false),
     };
     node.style.text.color = Some(displayed.into());
     Ok(true)
 }
 
-fn watch_text_color<T: Clone + Into<crate::Ink> + 'static>(
-    source: Signal<T>,
+fn watch_text_color<T: Clone + Into<Ink> + 'static>(
+    source: Property<T>,
     timing: crate::Transition,
     watches: &mut Vec<Watch>,
     cx: &mut Context<'_>,
-) -> Result<Signal<crate::Ink>> {
-    let initial = cx.read(source)?.clone().into();
+) -> Result<Signal<Ink>> {
+    let initial = source.read(cx.state)?.into();
     let displayed = cx.signal(initial);
     watches.push(Box::new(move |cx, binding, node, _, _| {
         let updates = cx.styles.clone();
         let key = (ViewId(cx.scope), node);
-        cx.state.bind(source, binding, move |value, _| {
+        source.observe_value(cx.state, binding, move |value| {
             updates.borrow_mut().entry(key).or_default().foreground =
                 Some(crate::TextColorTarget {
-                    ink: value.clone().into(),
+                    ink: value.into(),
                     displayed,
                     timing,
                 });

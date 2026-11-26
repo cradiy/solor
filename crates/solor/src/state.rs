@@ -263,10 +263,13 @@ impl<N> Runtime<N> {
 
     /// Borrows the current value of a live signal.
     pub fn read<S: 'static>(&self, signal: Signal<S>) -> Result<&S, StateError> {
-        self.signal(signal.id)?
-            .value
+        self.signal_value(signal.id)?
             .downcast_ref()
             .ok_or(StateError::InvalidSignal)
+    }
+
+    pub(crate) fn signal_value(&self, id: SignalId) -> Result<&dyn Any, StateError> {
+        Ok(self.signal(id)?.value.as_ref())
     }
 
     /// Replaces a changed value and schedules only its subscribers.
@@ -383,7 +386,7 @@ impl<N> Runtime<N> {
         self.register_binding(signal, target, false, Box::new(move |_, _| invalidate()))
     }
 
-    fn register_binding(
+    pub(crate) fn register_binding(
         &mut self,
         signal: SignalId,
         node: NodeId,
