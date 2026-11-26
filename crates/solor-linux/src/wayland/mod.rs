@@ -322,7 +322,7 @@ impl Window {
                     decorations.toggle();
                 }
             }
-            WindowControl::Close => self.life.close(),
+            WindowControl::Close => self.life.request_close(),
             WindowControl::Minimize => top.set_minimized(),
             WindowControl::ToggleMaximize if self.life.state().is_some_and(|s| s.maximized) => {
                 top.unset_maximized()
@@ -794,7 +794,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for Desktop {
                     },
                 });
             }
-            xdg_toplevel::Event::Close if !state.life.blocked() => state.life.close(),
+            xdg_toplevel::Event::Close => state.life.request_close(),
             _ => {}
         }
     }

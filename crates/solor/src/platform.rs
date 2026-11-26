@@ -10,7 +10,7 @@ use crate::{
     raster::RasterScale,
 };
 use anyhow::Result;
-use std::rc::Weak;
+use std::rc::{Rc, Weak};
 
 /// A rectangle in surface-local logical pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -64,6 +64,8 @@ pub trait PlatformWindow {
     }
     /// Observes confirmed top-level state changes on the UI thread.
     fn on_state_changed(&self, _listener: Box<dyn FnMut(WindowState)>) {}
+    /// Sets the predicate for user-initiated top-level close requests.
+    fn on_should_close(&self, handler: Rc<dyn Fn() -> bool>);
     /// Marks the window closed and schedules native teardown before the event loop sleeps.
     fn close(&self);
 }
@@ -79,7 +81,7 @@ impl WindowHandle {
         Self(window)
     }
 
-    /// Returns true from successful creation until closure is requested or the host exits.
+    /// Returns true from successful creation until the window closes or the host exits.
     pub fn is_open(&self) -> bool {
         self.0.upgrade().is_some_and(|window| window.is_open())
     }
@@ -138,7 +140,16 @@ impl WindowHandle {
         }
     }
 
-    /// Requests closure of this window. All clones immediately observe it as closed.
+    /// Replaces the handler for native and title-bar close requests on this top-level window.
+    /// Return true to close, or false to keep it open. Requests are accepted by default.
+    pub fn on_should_close(&self, handler: impl Fn() -> bool + 'static) {
+        if let Some(window) = self.0.upgrade().filter(|window| window.is_open()) {
+            window.on_should_close(Rc::new(handler));
+        }
+    }
+
+    /// Closes the window directly, including after application confirmation.
+    /// All clones immediately observe it as closed.
     /// Repeated requests and requests after the window is gone have no effect.
     pub fn close(&self) {
         if let Some(window) = self.0.upgrade() {

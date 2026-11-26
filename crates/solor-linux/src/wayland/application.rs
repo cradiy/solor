@@ -296,6 +296,7 @@ pub(super) struct WindowLife {
     blur: BlurRequests,
     pub(super) activation: Option<ActivationTarget>,
     open: Cell<bool>,
+    should_close: RefCell<Option<Rc<dyn Fn() -> bool>>>,
     state: Cell<Option<WindowState>>,
     state_listeners: RefCell<Vec<StateListener>>,
     client_decorations: Cell<bool>,
@@ -320,6 +321,7 @@ impl WindowLife {
             },
             activation,
             open: Cell::new(true),
+            should_close: Default::default(),
             state: Default::default(),
             state_listeners: Default::default(),
             client_decorations: Cell::new(false),
@@ -329,6 +331,15 @@ impl WindowLife {
             modal_children: RefCell::default(),
             cancel_pointer: Cell::default(),
         })
+    }
+
+    pub(super) fn request_close(&self) {
+        if self.is_open() && !self.blocked() {
+            let handler = self.should_close.borrow().clone();
+            if handler.is_none_or(|allow| allow()) {
+                self.close();
+            }
+        }
     }
 
     pub(super) fn confirm_state(&self, state: WindowState) -> bool {
@@ -405,6 +416,10 @@ impl WindowLife {
 }
 
 impl PlatformWindow for WindowLife {
+    fn on_should_close(&self, handler: Rc<dyn Fn() -> bool>) {
+        self.should_close.replace(Some(handler));
+    }
+
     fn state(&self) -> Option<WindowState> {
         self.state.get()
     }

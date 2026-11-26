@@ -25,19 +25,48 @@ fn settings() -> impl Render {
 
 struct OpenSettings;
 
+fn confirm_close(app: &Application, parent: &WindowHandle) -> anyhow::Result<()> {
+    let owner = parent.clone();
+    app.open_window(
+        WindowOptions::new("Close workspace?")
+            .modal_for(parent)
+            .size(px(280.0), px(160.0)),
+        Ui::new(),
+        component(move |_| {
+            div()
+                .flex_col()
+                .p(px(12.0))
+                .gap(px(6.0))
+                .child("Close this workspace?")
+                .child(button("Cancel").window_close_button())
+                .child(button("Close workspace").on_click(move |_| {
+                    owner.close();
+                    Ok(())
+                }))
+        }),
+    )?;
+    Ok(())
+}
+
 fn main_view(app: Application, parent: WindowHandle) -> impl Render {
-    component(move |_| {
-        let open = {
-            let app = app.clone();
-            let parent = parent.clone();
-            move |_: &mut Context<'_>| {
-                let options = WindowOptions::new("Settings")
-                    .modal_for(&parent)
-                    .app_id("org.solor.SettingsExample")
-                    .size(px(280.0), px(160.0));
-                app.open_window(options, Ui::new(), settings())?;
-                Ok(())
+    parent.on_should_close({
+        let app = app.clone();
+        let parent = parent.clone();
+        move || {
+            if let Err(error) = confirm_close(&app, &parent) {
+                eprintln!("Could not open close confirmation: {error:#}");
             }
+            false
+        }
+    });
+    component(move |_| {
+        let open = move |_: &mut Context<'_>| {
+            let options = WindowOptions::new("Settings")
+                .modal_for(&parent)
+                .app_id("org.solor.SettingsExample")
+                .size(px(280.0), px(160.0));
+            app.open_window(options, Ui::new(), settings())?;
+            Ok(())
         };
         div()
             .flex_col()
@@ -49,28 +78,7 @@ fn main_view(app: Application, parent: WindowHandle) -> impl Render {
                     .on_click(open.clone())
                     .on_action(move |_: &OpenSettings, cx| open(cx)),
             )
-            .child(button("Close workspace…").on_click(move |_| {
-                let owner = parent.clone();
-                app.open_window(
-                    WindowOptions::new("Close workspace?")
-                        .modal_for(&parent)
-                        .size(px(280.0), px(160.0)),
-                    Ui::new(),
-                    component(move |_| {
-                        div()
-                            .flex_col()
-                            .p(px(12.0))
-                            .gap(px(6.0))
-                            .child("Close this workspace?")
-                            .child(button("Cancel").window_close_button())
-                            .child(button("Close workspace").on_click(move |_| {
-                                owner.close();
-                                Ok(())
-                            }))
-                    }),
-                )?;
-                Ok(())
-            }))
+            .child(button("Close workspace…").window_close_button())
     })
 }
 

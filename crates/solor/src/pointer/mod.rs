@@ -276,7 +276,7 @@ impl<E: crate::Element> crate::Node<E> {
     window_controls! {
         /// Starts a native window drag on primary press.
         window_drag_region => Drag;
-        /// Closes the window on a completed click.
+        /// Requests window closure on a completed click.
         window_close_button => Close;
         /// Minimizes the window on a completed click.
         window_minimize_button => Minimize;

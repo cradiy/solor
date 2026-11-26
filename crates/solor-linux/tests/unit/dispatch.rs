@@ -454,3 +454,57 @@ fn window_state_is_published_once_per_confirmed_change() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn native_and_title_bar_close_requests_share_the_modal_confirmation() -> anyhow::Result<()> {
+    use solor::platform::WindowControl;
+    use wayland_client::Dispatch;
+    use wayland_protocols::xdg::shell::client::xdg_toplevel;
+
+    let mut host = fixture::Host::new()?;
+    let events = &mut host.events;
+    let app = WaylandApplication(Rc::downgrade(&events.windows));
+    let parent = app.open_window(WindowOptions::new("Workspace"), Box::new(Redraw::default()))?;
+    let window = events.windows.pending.take().pop().unwrap();
+    let id = window.surface.id();
+    let Role::Toplevel { top, .. } = &window.role else {
+        unreachable!()
+    };
+    let top = top.clone();
+    events.desktop.windows.insert(id.clone(), window);
+    let dialog = Rc::new(RefCell::new(None));
+    parent.on_should_close({
+        let parent = parent.clone();
+        let dialog = dialog.clone();
+        move || {
+            let modal = app
+                .open_window(
+                    WindowOptions::new("Confirm").modal_for(&parent),
+                    Box::new(Redraw::default()),
+                )
+                .unwrap();
+            assert!(dialog.replace(Some(modal)).is_none());
+            false
+        }
+    });
+
+    for _ in 0..2 {
+        Desktop::event(
+            &mut events.desktop,
+            &top,
+            xdg_toplevel::Event::Close,
+            &id,
+            &events.connection,
+            &events.windows.qh,
+        );
+    }
+    dialog.take().unwrap().close();
+    assert!(parent.is_open());
+    let window = events.desktop.windows.get_mut(&id).unwrap();
+    window.window_control(WindowControl::Close, None);
+    let confirmation = dialog.take().unwrap();
+    assert!(confirmation.is_open() && parent.is_open());
+    parent.close();
+    assert!(!confirmation.is_open() && !parent.is_open());
+    Ok(())
+}
