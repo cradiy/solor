@@ -65,6 +65,7 @@ fn run(title: &str, app_id: &str, view: window_content::Content) -> anyhow::Resu
     let platform = Wayland {
         verify_shm: audit,
         trace_submissions: true,
+        ..Default::default()
     };
     platform.run_window(
         WindowOptions::new(title)

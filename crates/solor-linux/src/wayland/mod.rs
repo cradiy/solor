@@ -59,6 +59,8 @@ use solor::{
 /// Wayland platform for XDG windows and desktop layer surfaces with shared-memory buffers.
 #[derive(Default)]
 pub struct Wayland {
+    /// Allocation preference used when creating the shared GPU device.
+    pub gpu_memory_policy: solor::platform::GpuMemoryPolicy,
     /// Verifies uploaded shared memory and damage on every submission.
     pub verify_shm: bool,
     /// Logs frame callbacks, buffer availability, commits and presentation feedback to stderr.

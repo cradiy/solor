@@ -2,11 +2,11 @@ use anyhow::{Context, Result, bail};
 use solor::{
     ViewFrame,
     layout::Size,
-    platform::{Presentation, ViewRenderer, WindowBackground},
+    platform::{GpuMemoryPolicy, Presentation, ViewRenderer, WindowBackground},
     raster::RasterScale,
 };
 use solor_render_gpu::Renderer;
-use std::ptr::NonNull;
+use std::{cell::OnceCell, ptr::NonNull};
 use wayland_client::{Proxy, backend::Backend, protocol::wl_surface::WlSurface};
 use wgpu::{
     CurrentSurfaceTexture as Acquisition,
@@ -19,13 +19,15 @@ impl Presentation for Native {
 }
 
 pub(super) struct GpuContext {
-    instance: wgpu::Instance,
+    memory_policy: GpuMemoryPolicy,
+    instance: OnceCell<wgpu::Instance>,
     hardware: Option<(wgpu::Adapter, wgpu::Device, wgpu::Queue)>,
 }
-impl Default for GpuContext {
-    fn default() -> Self {
+impl GpuContext {
+    pub(super) fn new(memory_policy: GpuMemoryPolicy) -> Self {
         Self {
-            instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle()),
+            memory_policy,
+            instance: OnceCell::new(),
             hardware: None,
         }
     }
@@ -78,7 +80,12 @@ impl Presenter {
             .backend()
             .upgrade()
             .context("Wayland connection closed")?;
-        let instance = context.instance.clone();
+        let instance = context
+            .instance
+            .get_or_init(|| {
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle())
+            })
+            .clone();
         let surface = native_surface(&instance, window, &connection)?;
         if context.hardware.is_none() {
             let adapter =
@@ -89,7 +96,14 @@ impl Presenter {
             if trace {
                 eprintln!("gpu_adapter={:?}", adapter.get_info());
             }
-            let (device, queue) = pollster::block_on(adapter.request_device(&Default::default()))?;
+            let descriptor = wgpu::DeviceDescriptor {
+                memory_hints: match context.memory_policy {
+                    GpuMemoryPolicy::Performance => wgpu::MemoryHints::Performance,
+                    GpuMemoryPolicy::MemoryUsage => wgpu::MemoryHints::MemoryUsage,
+                },
+                ..Default::default()
+            };
+            let (device, queue) = pollster::block_on(adapter.request_device(&descriptor))?;
             context.hardware = Some((adapter, device, queue));
         }
         let (adapter, device, queue) = context.hardware.as_ref().unwrap();

@@ -273,7 +273,9 @@ impl Dispatch<WlDataDevice, u32> for Desktop {
                 state.file_drags.remove(name);
                 if hub.seats.borrow().contains_key(name)
                     && let Some(drag) = offer.and_then(|offer| {
-                        Drag::enter(offer, serial, surface.id(), x, y, &state.windows)
+                        let surface = surface.id();
+                        let window = state.windows.get(&surface);
+                        Drag::enter(offer, serial, surface, x, y, window)
                     })
                 {
                     state.file_drags.insert(*name, drag);
@@ -281,7 +283,7 @@ impl Dispatch<WlDataDevice, u32> for Desktop {
             }
             wl_data_device::Event::Motion { x, y, .. } => {
                 if let Some(drag) = state.file_drags.get_mut(name) {
-                    drag.motion(x, y, &state.windows);
+                    drag.motion(x, y, state.windows.get(&drag.surface));
                 }
             }
             wl_data_device::Event::Leave => {
@@ -289,7 +291,8 @@ impl Dispatch<WlDataDevice, u32> for Desktop {
             }
             wl_data_device::Event::Drop => {
                 if let Some(drag) = state.file_drags.remove(name) {
-                    match drag.receive(&state.windows, hub) {
+                    let window = state.windows.get(&drag.surface);
+                    match drag.receive(window, hub) {
                         Ok(Some(pending)) => state.file_drops.push(pending),
                         Ok(None) => {}
                         Err(error) => log::warn!("file drop transfer failed: {error}"),

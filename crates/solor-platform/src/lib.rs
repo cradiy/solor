@@ -6,7 +6,9 @@ use solor::{Assets, Render, Ui};
 #[cfg_attr(not(target_os = "linux"), path = "unsupported.rs")]
 mod system;
 
-pub use solor::platform::{Renderer, SurfaceRect, WindowBackground, WindowHandle, WindowOptions};
+pub use solor::platform::{
+    GpuMemoryPolicy, Renderer, SurfaceRect, WindowBackground, WindowHandle, WindowOptions,
+};
 #[cfg(target_os = "linux")]
 pub use solor_linux::{ApplicationSender, layer_shell, popup, session_lock};
 
@@ -191,6 +193,13 @@ impl SystemPlatform {
     #[must_use]
     pub fn with_renderer(mut self, renderer: Renderer) -> Self {
         self.renderer = renderer;
+        self
+    }
+
+    /// Sets the allocation preference used when the first GPU window opens.
+    #[must_use]
+    pub fn with_gpu_memory_policy(mut self, policy: GpuMemoryPolicy) -> Self {
+        self.host.set_gpu_memory_policy(policy);
         self
     }
 

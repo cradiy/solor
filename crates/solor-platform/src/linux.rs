@@ -11,6 +11,7 @@ pub(super) fn select() -> Result<Host> {
     Ok(Host(Wayland {
         verify_shm: std::env::var_os("SOLOR_VERIFY_SHM").is_some(),
         trace_submissions: std::env::var_os("SOLOR_TRACE_SUBMISSIONS").is_some(),
+        gpu_memory_policy: Default::default(),
     }))
 }
 
@@ -117,6 +118,10 @@ pub(super) fn open_layer_surface<R: Render>(
 }
 
 impl Host {
+    pub(super) fn set_gpu_memory_policy(&mut self, policy: super::GpuMemoryPolicy) {
+        self.0.gpu_memory_policy = policy;
+    }
+
     pub(super) fn run(&self, setup: impl FnOnce(Windows) -> Result<()>) -> Result<()> {
         self.0.run(setup)
     }

@@ -32,6 +32,10 @@ pub(super) fn open_window<R: Render>(
 }
 
 impl Host {
+    pub(super) fn set_gpu_memory_policy(&mut self, _: super::GpuMemoryPolicy) {
+        match *self {}
+    }
+
     pub(super) fn run(&self, _: impl FnOnce(Windows) -> Result<()>) -> Result<()> {
         match *self {}
     }

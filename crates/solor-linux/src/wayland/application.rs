@@ -250,7 +250,7 @@ impl WaylandApplication {
         let windows = self.factory()?;
         windows.open_with_surface(request, control, |handle, surface| {
             let presenter = super::gpu::Presenter::new(
-                &mut windows.gpu.get_or_init(Default::default).borrow_mut(),
+                &mut windows.gpu.borrow_mut(),
                 surface,
                 background,
                 windows.trace_submissions,
@@ -410,7 +410,7 @@ pub(super) struct WindowFactory {
     inboxes: RefCell<Vec<super::channel::Inbox>>,
     menus: Rc<super::menu::Menus>,
     #[cfg(feature = "gpu")]
-    gpu: std::cell::OnceCell<RefCell<super::gpu::GpuContext>>,
+    gpu: RefCell<super::gpu::GpuContext>,
     clipboard: Option<Rc<super::clipboard::Clipboard>>,
     toplevels: Toplevels,
     activation: Option<Rc<Activation>>,
@@ -545,7 +545,7 @@ impl EventLoop {
             inboxes: Default::default(),
             menus: desktop.menus.clone(),
             #[cfg(feature = "gpu")]
-            gpu: Default::default(),
+            gpu: RefCell::new(super::gpu::GpuContext::new(host.gpu_memory_policy)),
             clipboard: desktop.clipboard.clone(),
             toplevels: Toplevels::default(),
             activation: desktop.activation.clone(),

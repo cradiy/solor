@@ -15,12 +15,12 @@ shader = ["solor-platform/shader", "solor-render-cpu/shader"]
 
 [dependencies]
 anyhow.workspace = true
+clap = { version = "4", default-features = false, features = ["std", "help", "usage"] }
 log.workspace = true
 solor = { workspace = true, default-features = true }
 solor-platform.workspace = true
 
 [dev-dependencies]
-clap = { version = "4", default-features = false, features = ["std", "help", "usage"] }
 solor-render-cpu.workspace = true
 
 [[example]]

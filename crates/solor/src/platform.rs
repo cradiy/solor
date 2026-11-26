@@ -162,6 +162,16 @@ pub enum Renderer {
     Gpu,
 }
 
+/// Allocation preference for the GPU device shared by an application's windows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GpuMemoryPolicy {
+    /// Favor allocation performance.
+    #[default]
+    Performance,
+    /// Favor a smaller memory footprint.
+    MemoryUsage,
+}
+
 /// Options applied when opening a window.
 #[derive(Clone, Copy, Debug)]
 #[must_use]

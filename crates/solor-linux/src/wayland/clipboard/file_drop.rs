@@ -4,7 +4,6 @@ use anyhow::Result;
 use futures_channel::oneshot;
 use solor::{NodeId, layout::Origin, platform::PlatformWindow, px};
 use std::{
-    collections::HashMap,
     os::{fd::AsFd, unix::ffi::OsStringExt},
     path::PathBuf,
     sync::atomic::Ordering,
@@ -17,7 +16,7 @@ pub(super) const COPY: DndAction = DndAction::Copy;
 pub(in crate::wayland) struct Drag {
     offer: Offer,
     serial: u32,
-    surface: ObjectId,
+    pub(super) surface: ObjectId,
     position: Origin,
     accepted: bool,
 }
@@ -29,7 +28,7 @@ impl Drag {
         surface: ObjectId,
         x: f64,
         y: f64,
-        windows: &HashMap<ObjectId, Window>,
+        window: Option<&Window>,
     ) -> Option<Self> {
         if !offer
             .0
@@ -53,15 +52,12 @@ impl Drag {
             },
             accepted: false,
         };
-        drag.accept(drag.target(windows).is_some());
+        drag.accept(drag.target(window).is_some());
         Some(drag)
     }
 
-    fn target(&self, windows: &HashMap<ObjectId, Window>) -> Option<NodeId> {
-        let window = windows.get(&self.surface)?;
-        if !available(window) {
-            return None;
-        }
+    fn target(&self, window: Option<&Window>) -> Option<NodeId> {
+        let window = window.filter(|w| available(w))?;
         let mut local = self.position;
         if let Some(panel) = &window.floating {
             let [x, y, _, _] = panel.geometry.bounds();
@@ -78,16 +74,16 @@ impl Drag {
         self.accepted = accepted;
     }
 
-    pub(super) fn motion(&mut self, x: f64, y: f64, windows: &HashMap<ObjectId, Window>) {
+    pub(super) fn motion(&mut self, x: f64, y: f64, window: Option<&Window>) {
         self.position = Origin {
             x: px(x as f32),
             y: px(y as f32),
         };
-        self.refresh(windows);
+        self.refresh(window);
     }
 
-    fn refresh(&mut self, windows: &HashMap<ObjectId, Window>) -> Option<NodeId> {
-        let target = self.target(windows);
+    fn refresh(&mut self, window: Option<&Window>) -> Option<NodeId> {
+        let target = self.target(window);
         if target.is_some() != self.accepted {
             self.accept(target.is_some());
         }
@@ -96,10 +92,10 @@ impl Drag {
 
     pub(super) fn receive(
         self,
-        windows: &HashMap<ObjectId, Window>,
+        window: Option<&Window>,
         clipboard: &Clipboard,
     ) -> Result<Option<PendingDrop>> {
-        let Some(target) = self.target(windows).filter(|_| self.accepted) else {
+        let Some(target) = self.target(window).filter(|_| self.accepted) else {
             return Ok(None);
         };
         let (fd, result) = clipboard
@@ -137,7 +133,7 @@ impl Desktop {
         }
         let mut current = smallvec::SmallVec::<[(ObjectId, NodeId); 1]>::new();
         for drag in self.file_drags.values_mut() {
-            let target = drag.refresh(&self.windows);
+            let target = drag.refresh(self.windows.get(&drag.surface));
             if let Some(target) = target
                 && (drag.offer.0.version() < 3
                     || drag
