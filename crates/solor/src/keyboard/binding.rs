@@ -62,6 +62,7 @@ impl Instance {
         tasks: &Tasks,
         engine: &TextSystem,
         state: &mut Runtime<()>,
+        request: &mut Option<crate::FocusHandle>,
         resolve: impl for<'h> Fn(&'h [ActionHandler]) -> Option<(&'h Callback, &'a dyn Any)>,
     ) -> Result<bool> {
         let mut target = self.focused;
@@ -73,6 +74,7 @@ impl Instance {
                 handler(
                     action,
                     &mut Context {
+                        focus_request: Some(request),
                         tasks,
                         engine,
                         state,
@@ -154,12 +156,16 @@ impl Ui {
             .instances
             .get_mut(&view)
             .ok_or(TreeError::InvalidNode(view.0))?;
-        instance.route_action(
+        let mut request = None;
+        let delivered = instance.route_action(
             &self.tasks,
             &self.engine,
             self.state.get_mut(),
+            &mut request,
             |handlers| ActionHandler::for_value(handlers, action),
-        )
+        )?;
+        instance.apply_focus_request(request, self.state.get_mut());
+        Ok(delivered)
     }
 
     /// Replaces all shortcut bindings for this UI in registration order.

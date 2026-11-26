@@ -391,6 +391,7 @@ impl Ui {
                     .get_mut()
                     .publish_for_frame(displayed, crate::Ink::Solid(color))?)
             })?;
+        let mut request = None;
         for id in instance.pointer.frame_listeners() {
             if let Some(handler) = instance.frame_handlers.get_mut(id)
                 && let Some(node) = instance.bodies.get_mut(id)
@@ -400,6 +401,7 @@ impl Ui {
                 (handler.callback)(
                     now,
                     &mut crate::Context {
+                        focus_request: Some(&mut request),
                         tasks: &self.tasks,
                         state: self.state.get_mut(),
                         engine: &self.engine,
@@ -408,6 +410,7 @@ impl Ui {
                 )?;
             }
         }
+        instance.apply_focus_request(request, self.state.get_mut());
         Ok(())
     }
 

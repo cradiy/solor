@@ -7,6 +7,8 @@ use anyhow::Result;
 
 pub use crate::pointer::Modifiers;
 mod binding;
+mod focus;
+pub use focus::FocusHandle;
 mod shortcut;
 pub use binding::KeyBinding;
 pub(crate) use binding::{ActionHandler, BoundAction};
@@ -280,10 +282,12 @@ impl Ui {
             .get_mut(&view)
             .ok_or(TreeError::InvalidNode(view.0))?;
         let mut delivered = false;
+        let mut request = None;
         if let Some(node) = instance.focused.and_then(|id| instance.bodies.get_mut(&id))
             && let Some(handlers) = node.handlers.as_deref()
         {
             let mut context = Context {
+                focus_request: Some(&mut request),
                 tasks: &self.tasks,
                 state: self.state.get_mut(),
                 engine: &self.engine,
@@ -299,6 +303,7 @@ impl Ui {
                         };
                         handler(event, &mut cx)?;
                         if cx.prevented {
+                            instance.apply_focus_request(request, self.state.get_mut());
                             return Ok(true);
                         }
                         delivered = true;
@@ -321,13 +326,18 @@ impl Ui {
                 &self.tasks,
                 &self.engine,
                 self.state.get_mut(),
+                &mut request,
                 |handlers| {
                     ActionHandler::find(handlers, actions, &contexts)
                         .map(|(handler, binding)| (handler, binding.value.as_ref()))
                 },
             )? {
+                instance.apply_focus_request(request, self.state.get_mut());
                 return Ok(true);
             }
+        }
+        if instance.apply_focus_request(request, self.state.get_mut()) {
+            return Ok(true);
         }
         let mods = event.modifiers;
         if event.state == KeyState::Down

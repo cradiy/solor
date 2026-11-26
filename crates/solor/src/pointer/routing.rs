@@ -75,6 +75,7 @@ impl PointerRouter {
 
 // The callback can change signals, but structural reconciliation occurs only at flush.
 struct Delivery<'a> {
+    focus_request: Option<crate::FocusHandle>,
     tasks: &'a crate::Tasks,
     tooltip_style: &'a crate::TooltipStyle,
     instance: &'a mut Instance,
@@ -87,10 +88,12 @@ fn context_and_handlers<'a>(
     state: &'a mut Runtime<()>,
     engine: &'a TextSystem,
     tasks: &'a crate::Tasks,
+    request: &'a mut Option<crate::FocusHandle>,
 ) -> (&'a Handlers, Context<'a>) {
     (
         node.handlers.as_deref().expect("interactive recipient"),
         Context {
+            focus_request: Some(request),
             tasks,
             state,
             engine,
@@ -122,6 +125,7 @@ impl Delivery<'_> {
             self.state,
             self.engine,
             self.tasks,
+            &mut self.focus_request,
         ))
     }
 
@@ -142,8 +146,13 @@ impl Delivery<'_> {
                 .bodies
                 .get_mut(&id)
                 .expect("live hover listener");
-            let (handlers, mut cx) =
-                context_and_handlers(node, self.state, self.engine, self.tasks);
+            let (handlers, mut cx) = context_and_handlers(
+                node,
+                self.state,
+                self.engine,
+                self.tasks,
+                &mut self.focus_request,
+            );
             match change {
                 HoverChange::Presence(entered) => {
                     if let Some(handler) = &handlers.hover {
@@ -235,7 +244,13 @@ impl Delivery<'_> {
             .bodies
             .get_mut(&owner)
             .expect("live recipient");
-        let (handlers, context) = context_and_handlers(node, self.state, self.engine, self.tasks);
+        let (handlers, context) = context_and_handlers(
+            node,
+            self.state,
+            self.engine,
+            self.tasks,
+            &mut self.focus_request,
+        );
         let control = handlers.window_control(self.instance.pointer.fixed_size);
         let mut cx = PointerDownContext {
             context,
@@ -299,8 +314,13 @@ impl Delivery<'_> {
                     .bodies
                     .get_mut(&owner)
                     .expect("live scroll ancestor");
-                let (handlers, context) =
-                    context_and_handlers(node, self.state, self.engine, self.tasks);
+                let (handlers, context) = context_and_handlers(
+                    node,
+                    self.state,
+                    self.engine,
+                    self.tasks,
+                    &mut self.focus_request,
+                );
                 let scroll = handlers.scroll.as_ref().expect("accepted scroll listener");
                 let mut cx = ScrollContext {
                     context,
@@ -339,7 +359,13 @@ impl Delivery<'_> {
             .bodies
             .get_mut(&target)
             .expect("live recipient");
-        let (handlers, mut cx) = context_and_handlers(node, self.state, self.engine, self.tasks);
+        let (handlers, mut cx) = context_and_handlers(
+            node,
+            self.state,
+            self.engine,
+            self.tasks,
+            &mut self.focus_request,
+        );
         if let Some(moved) = &handlers.moved {
             moved(&event, &mut cx)?;
         }
@@ -366,7 +392,13 @@ impl Delivery<'_> {
             .bodies
             .get_mut(&target)
             .expect("live recipient");
-        let (handlers, mut cx) = context_and_handlers(node, self.state, self.engine, self.tasks);
+        let (handlers, mut cx) = context_and_handlers(
+            node,
+            self.state,
+            self.engine,
+            self.tasks,
+            &mut self.focus_request,
+        );
         if let Some(up) = &handlers.up {
             up(&event, &mut cx)?;
         }
@@ -404,8 +436,13 @@ impl Delivery<'_> {
                 .bodies
                 .get_mut(&press.owner)
                 .expect("live press owner");
-            let (handlers, mut cx) =
-                context_and_handlers(node, self.state, self.engine, self.tasks);
+            let (handlers, mut cx) = context_and_handlers(
+                node,
+                self.state,
+                self.engine,
+                self.tasks,
+                &mut self.focus_request,
+            );
             if let Some(cancel) = &handlers.cancel {
                 result = result.and(cancel(id, &mut cx));
             }
@@ -436,18 +473,28 @@ impl PointerInput {
 }
 
 impl Ui {
-    fn pointer_delivery(&mut self, view: ViewId) -> Result<Delivery<'_>> {
+    fn with_pointer_delivery<T>(
+        &mut self,
+        view: ViewId,
+        deliver: impl FnOnce(&mut Delivery<'_>) -> Result<T>,
+    ) -> Result<T> {
         let instance = self
             .instances
             .get_mut(&view)
             .context("pointer view is no longer mounted")?;
-        Ok(Delivery {
+        let mut delivery = Delivery {
+            focus_request: None,
             tooltip_style: &self.tooltip_style,
             instance,
             tasks: &self.tasks,
             state: self.state.get_mut(),
             engine: &self.engine,
-        })
+        };
+        let result = deliver(&mut delivery)?;
+        delivery
+            .instance
+            .apply_focus_request(delivery.focus_request, delivery.state);
+        Ok(result)
     }
 
     pub(crate) fn file_drop_target(
@@ -466,13 +513,14 @@ impl Ui {
         target: NodeId,
         hovered: bool,
     ) -> Result<()> {
-        let mut delivery = self.pointer_delivery(view)?;
-        if let Some((handlers, mut cx)) = delivery.handlers(target)
-            && let Some(handler) = &handlers.file_drop_hover
-        {
-            handler(hovered, &mut cx)?;
-        }
-        Ok(())
+        self.with_pointer_delivery(view, |delivery| {
+            if let Some((handlers, mut cx)) = delivery.handlers(target)
+                && let Some(handler) = &handlers.file_drop_hover
+            {
+                handler(hovered, &mut cx)?;
+            }
+            Ok(())
+        })
     }
 
     pub(crate) fn drop_files(
@@ -481,26 +529,28 @@ impl Ui {
         target: NodeId,
         paths: &[std::path::PathBuf],
     ) -> Result<bool> {
-        let mut delivery = self.pointer_delivery(view)?;
-        if let Some((handlers, mut cx)) = delivery.handlers(target)
-            && let Some(handler) = &handlers.file_drop
-        {
-            handler(paths, &mut cx)?;
-            return Ok(true);
-        }
-        Ok(false)
+        self.with_pointer_delivery(view, |delivery| {
+            if let Some((handlers, mut cx)) = delivery.handlers(target)
+                && let Some(handler) = &handlers.file_drop
+            {
+                handler(paths, &mut cx)?;
+                return Ok(true);
+            }
+            Ok(false)
+        })
     }
 
     /// Enables or disables native resize and maximize actions for a mounted window.
     /// An explicit cursor style always applies, including on a fixed-size window.
     pub fn set_window_resizable(&mut self, view: ViewId, resizable: bool) -> Result<()> {
-        let mut delivery = self.pointer_delivery(view)?;
-        let fixed = !resizable;
-        if delivery.instance.pointer.fixed_size != fixed {
-            delivery.instance.pointer.fixed_size = fixed;
-            delivery.hover_changed()?;
-        }
-        Ok(())
+        self.with_pointer_delivery(view, |delivery| {
+            let fixed = !resizable;
+            if delivery.instance.pointer.fixed_size != fixed {
+                delivery.instance.pointer.fixed_size = fixed;
+                delivery.hover_changed()?;
+            }
+            Ok(())
+        })
     }
 
     /// Returns the cursor for this mouse in the accepted view, or the default arrow outside it.
@@ -543,28 +593,29 @@ impl Ui {
     /// Makes this submission's snapshot authoritative for input. Active sequences whose
     /// recipients disappear from the accepted frame are canceled after the switch.
     pub fn accept_pointer_frame(&mut self, frame: PointerFrame) -> Result<()> {
-        let mut delivery = self.pointer_delivery(frame.view)?;
-        let router = &mut delivery.instance.pointer;
-        let canceled: Vec<_> = router
-            .presses
-            .iter()
-            .filter(|(_, presses)| presses.iter().any(|p| !frame.has_recipient(p.owner)))
-            .map(|(&id, _)| id)
-            .collect();
-        let changed = router
-            .frame
-            .as_ref()
-            .is_none_or(|old| !old.same_geometry(&frame));
-        if frame.is_current(router) {
-            router.scroll_pending = false;
-        }
-        router.frame = Some(frame);
-        let result = delivery.cancel_ids(canceled);
-        if changed {
-            result.and(delivery.hover_changed())
-        } else {
-            result
-        }
+        self.with_pointer_delivery(frame.view, |delivery| {
+            let router = &mut delivery.instance.pointer;
+            let canceled: Vec<_> = router
+                .presses
+                .iter()
+                .filter(|(_, presses)| presses.iter().any(|p| !frame.has_recipient(p.owner)))
+                .map(|(&id, _)| id)
+                .collect();
+            let changed = router
+                .frame
+                .as_ref()
+                .is_none_or(|old| !old.same_geometry(&frame));
+            if frame.is_current(router) {
+                router.scroll_pending = false;
+            }
+            router.frame = Some(frame);
+            let result = delivery.cancel_ids(canceled);
+            if changed {
+                result.and(delivery.hover_changed())
+            } else {
+                result
+            }
+        })
     }
 
     /// Delivers host input against the view's accepted frame. Returns the native operation requested by this event.
@@ -573,34 +624,38 @@ impl Ui {
         view: ViewId,
         input: PointerInput,
     ) -> Result<Option<WindowControl>> {
-        let mut delivery = self.pointer_delivery(view)?;
-        input.validate()?;
-        if matches!(input, PointerInput::Scroll(_, d) if d == ScrollDelta::default()) {
-            return Ok(None);
-        }
-        let router = &mut delivery.instance.pointer;
-        router.hover.observe(input);
-        router.tooltips.observe(input, &router.hover);
-        let hover = delivery.hover_changed();
-        let routed = match input {
-            PointerInput::Down(sample, button) => delivery.down(sample, button),
-            PointerInput::Scroll(sample, delta) => delivery.scroll(sample, delta).map(|()| None),
-            PointerInput::Move(sample) => delivery.moved(sample).map(|()| None),
-            PointerInput::Up(sample, button) => delivery.up(sample, button),
-            PointerInput::Cancel(id) => delivery.cancel(id).map(|()| None),
-            PointerInput::Leave(id) if delivery.instance.pointer.capture(id).is_none() => {
-                delivery.cancel(id).map(|()| None)
+        self.with_pointer_delivery(view, |delivery| {
+            input.validate()?;
+            if matches!(input, PointerInput::Scroll(_, d) if d == ScrollDelta::default()) {
+                return Ok(None);
             }
-            PointerInput::Leave(_) => Ok(None),
-        };
-        hover.and(routed)
+            let router = &mut delivery.instance.pointer;
+            router.hover.observe(input);
+            router.tooltips.observe(input, &router.hover);
+            let hover = delivery.hover_changed();
+            let routed = match input {
+                PointerInput::Down(sample, button) => delivery.down(sample, button),
+                PointerInput::Scroll(sample, delta) => {
+                    delivery.scroll(sample, delta).map(|()| None)
+                }
+                PointerInput::Move(sample) => delivery.moved(sample).map(|()| None),
+                PointerInput::Up(sample, button) => delivery.up(sample, button),
+                PointerInput::Cancel(id) => delivery.cancel(id).map(|()| None),
+                PointerInput::Leave(id) if delivery.instance.pointer.capture(id).is_none() => {
+                    delivery.cancel(id).map(|()| None)
+                }
+                PointerInput::Leave(_) => Ok(None),
+            };
+            hover.and(routed)
+        })
     }
 
     /// Cancels every active pointer on view deactivation, even if a callback reports an error.
     pub fn cancel_pointers(&mut self, view: ViewId) -> Result<()> {
-        let mut delivery = self.pointer_delivery(view)?;
-        let ids = delivery.instance.pointer.presses.keys().copied().collect();
-        delivery.instance.pointer.hover.clear();
-        delivery.hover_changed().and(delivery.cancel_ids(ids))
+        self.with_pointer_delivery(view, |delivery| {
+            let ids = delivery.instance.pointer.presses.keys().copied().collect();
+            delivery.instance.pointer.hover.clear();
+            delivery.hover_changed().and(delivery.cancel_ids(ids))
+        })
     }
 }

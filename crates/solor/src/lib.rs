@@ -96,6 +96,7 @@ pub use fill::{
     diagonal_stripes, gradient_bottom_to_top, gradient_left_to_right, gradient_right_to_left,
     gradient_top_to_bottom, linear_gradient, rgb, rgba,
 };
+pub use keyboard::FocusHandle;
 use length::UnitResolver;
 pub use length::{AbsoluteLength, Length, percent, rem};
 pub use pixels::{Pixels, px};
@@ -143,6 +144,7 @@ impl Owned {
 impl Mount<'_> {
     fn context<'a>(&'a mut self, engine: &'a TextSystem, tasks: &'a Tasks) -> Context<'a> {
         Context {
+            focus_request: None,
             state: self.state,
             tasks,
             engine,
@@ -161,6 +163,7 @@ impl Drop for Mount<'_> {
 
 /// State access during an application operation, component mount, or event.
 pub struct Context<'a> {
+    focus_request: Option<&'a mut Option<FocusHandle>>,
     tasks: &'a Tasks,
     engine: &'a TextSystem,
     state: &'a mut Runtime<()>,
@@ -388,6 +391,7 @@ enum ContentUpdate {
 type ContentUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), ContentUpdate>>>;
 
 struct Instance {
+    focus_targets: HashMap<FocusHandle, NodeId>,
     focused: Option<NodeId>,
     focus_generation: Rc<std::cell::Cell<u64>>,
     tab_order: Option<keyboard::TabOrder>,
@@ -631,6 +635,20 @@ impl Instance {
         scroll_handle: Option<ScrollHandle>,
         cx: &mut Attachment<'_>,
     ) -> Result<()> {
+        if let Some(handle) = self.bodies[&parent]
+            .handlers
+            .as_deref()
+            .and_then(|h| h.focus_handle)
+        {
+            match self.focus_targets.entry(handle) {
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(parent);
+                }
+                std::collections::hash_map::Entry::Occupied(_) => {
+                    anyhow::bail!("focus handle already attached in this view")
+                }
+            }
+        }
         if let Some(handle) = scroll_handle {
             self.tracked_scroll
                 .insert(parent, pointer::TrackedScroll::attach(handle)?);
@@ -767,6 +785,11 @@ impl Instance {
                 self.set_focus(None, false, cx.state);
             }
             let mut node = self.bodies.remove(&node).expect("mounted body");
+            if let Some(handle) = node.handlers.as_deref().and_then(|h| h.focus_handle)
+                && self.focus_targets.get(&handle) == Some(&node.id)
+            {
+                self.focus_targets.remove(&handle);
+            }
             self.visible_nodes -= usize::from(node.visible);
             if let Some(tracked) = self.tracked_scroll.remove(&node.id) {
                 tracked.detach(cx.state);
@@ -912,6 +935,7 @@ impl Ui {
         drop(mount);
         let root = scene.root();
         let mut instance = Instance {
+            focus_targets: HashMap::new(),
             focused: None,
             focus_generation: Rc::default(),
             tab_order: None,
@@ -961,6 +985,7 @@ impl Ui {
     /// Opens an application-owned state context.
     pub fn context(&mut self) -> Context<'_> {
         Context {
+            focus_request: None,
             tasks: &self.tasks,
             state: self.state.get_mut(),
             engine: &self.engine,
@@ -979,12 +1004,15 @@ impl Ui {
         let Some(click) = node.handlers.as_deref().and_then(|h| h.click.as_ref()) else {
             return Ok(false);
         };
+        let mut request = None;
         click(&mut Context {
+            focus_request: Some(&mut request),
             tasks: &self.tasks,
             state: self.state.get_mut(),
             engine: &self.engine,
             owned: Some(&mut node.owned),
         })?;
+        instance.apply_focus_request(request, self.state.get_mut());
         Ok(true)
     }
 

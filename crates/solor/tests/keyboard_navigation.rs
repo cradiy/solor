@@ -311,3 +311,96 @@ fn tab_resumes_from_pointer_focus_and_reads_the_current_stop_policy() -> Result<
     assert_eq!(ui.focused(view)?, Some(nodes[2]));
     Ok(())
 }
+
+#[test]
+fn search_shortcuts_switch_the_active_input_and_end_its_composition() -> Result<()> {
+    use solor::{
+        FocusHandle,
+        keyboard::{Key, KeyBinding, Modifier},
+        text::{Preedit, TextInputEvent, TextInputState},
+    };
+
+    struct Find;
+    let mut ui = Ui::new();
+    let editor = FocusHandle::new();
+    let search = FocusHandle::new();
+    let document = ui.context().signal(TextInputState::new("draft"));
+    let query = ui.context().signal(TextInputState::new(""));
+    let view = ui.mount(component(|_| {
+        div()
+            .on_action(move |_: &Find, cx| cx.focus(search))
+            .child(div().text_input(document).track_focus(editor).auto_focus())
+            .child(
+                div()
+                    .text_input(query)
+                    .track_focus(search)
+                    .on_key_down(move |event, cx| {
+                        if event.key == Key::Escape {
+                            cx.prevent_default();
+                            cx.focus(editor)?;
+                        }
+                        Ok(())
+                    }),
+            )
+    }))?;
+    ui.bind_keys([KeyBinding::new(Key::F.with(Modifier::Ctrl), Find)]);
+    let mut key = tab(KeyState::Down, false);
+    key.key = Key::F;
+    key.modifiers.control = true;
+    assert!(ui.dispatch_key(view, &key)?);
+    assert!(ui.dispatch_text_input(view, TextInputEvent::Commit("needle".into()))?);
+    assert!(ui.dispatch_text_input(
+        view,
+        TextInputEvent::Preedit(Preedit {
+            text: "x".into(),
+            selection: None,
+        })
+    )?);
+    let session = ui.text_input_session(view)?;
+    key.key = Key::Escape;
+    key.modifiers.control = false;
+    assert!(ui.dispatch_key(view, &key)?);
+    assert_ne!(ui.text_input_session(view)?, session);
+    assert_eq!(ui.focused_text_input(view)?.unwrap().text(), "draft");
+    assert_eq!(ui.context().read(query)?.text(), "needle");
+    assert!(ui.context().read(query)?.preedit().is_none());
+    Ok(())
+}
+
+#[test]
+fn focus_requests_resolve_only_visible_live_targets_in_the_callback_view() -> Result<()> {
+    use solor::FocusHandle;
+
+    let mut ui = Ui::new();
+    let target = FocusHandle::new();
+    let shown = ui.context().signal(false);
+    let mounted = ui.context().signal(true);
+    let view = ui.mount(component(|_| {
+        div()
+            .auto_focus()
+            .on_click(move |cx| cx.focus(target))
+            .child_when(mounted, move || {
+                div().track_focus(target).visible_when(shown)
+            })
+    }))?;
+    let foreign = ui.mount(component(|_| {
+        div().auto_focus().on_click(move |cx| cx.focus(target))
+    }))?;
+    ui.flush()?;
+    let root = ui.root(view)?;
+    ui.click(view, root)?;
+    assert_eq!(ui.focused(view)?, Some(root));
+    ui.context().set(shown, true)?;
+    ui.flush()?;
+    ui.click(foreign, ui.root(foreign)?)?;
+    assert_eq!(ui.focused(view)?, Some(root));
+    assert_eq!(ui.focused(foreign)?, Some(ui.root(foreign)?));
+    ui.click(view, root)?;
+    assert_eq!(ui.focused(view)?, ui.children(view, root)?.next());
+    ui.context().set(mounted, false)?;
+    ui.flush()?;
+    ui.focus(view, root)?;
+    ui.click(view, root)?;
+    assert_eq!(ui.focused(view)?, Some(root));
+    Ok(())
+}

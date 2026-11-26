@@ -695,6 +695,7 @@ impl Instance {
         engine: &crate::TextSystem,
         tasks: &crate::Tasks,
     ) -> Result<()> {
+        let mut request = None;
         for (path, list) in &mut self.lists {
             let Some(listener) = &mut list.range_listener else {
                 continue;
@@ -716,6 +717,7 @@ impl Instance {
                 (listener.callback)(
                     range,
                     &mut crate::Context {
+                        focus_request: Some(&mut request),
                         tasks,
                         state,
                         engine,
@@ -724,6 +726,7 @@ impl Instance {
                 )?;
             }
         }
+        self.apply_focus_request(request, state);
         Ok(())
     }
 
