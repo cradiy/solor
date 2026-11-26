@@ -16,6 +16,11 @@ pub(super) fn select() -> Result<Host> {
 
 pub(super) type Windows = solor_linux::WaylandApplication;
 
+#[cfg(not(feature = "gpu"))]
+fn gpu_unavailable<T>() -> Result<T> {
+    anyhow::bail!("GPU rendering requires the solor-platform `gpu` feature")
+}
+
 fn mount(
     ui: Ui,
     root: impl Render,
@@ -40,6 +45,8 @@ pub(super) fn open_window<R: Render>(
         }),
         #[cfg(feature = "gpu")]
         Renderer::Gpu => app.build_gpu_window(options, ui, root),
+        #[cfg(not(feature = "gpu"))]
+        Renderer::Gpu => gpu_unavailable(),
     }
 }
 
@@ -64,6 +71,8 @@ pub(super) fn lock_session<R: Render>(
         ),
         #[cfg(feature = "gpu")]
         Renderer::Gpu => app.lock_gpu_session(build, notify),
+        #[cfg(not(feature = "gpu"))]
+        Renderer::Gpu => gpu_unavailable(),
     }
 }
 
@@ -82,6 +91,8 @@ pub(super) fn open_popup<R: Render>(
         }
         #[cfg(feature = "gpu")]
         Renderer::Gpu => app.build_gpu_popup(options, ui, root),
+        #[cfg(not(feature = "gpu"))]
+        Renderer::Gpu => gpu_unavailable(),
     }
 }
 
@@ -99,6 +110,8 @@ pub(super) fn open_layer_surface<R: Render>(
         }),
         #[cfg(feature = "gpu")]
         Renderer::Gpu => app.build_gpu_layer_surface(options, ui, root),
+        #[cfg(not(feature = "gpu"))]
+        Renderer::Gpu => gpu_unavailable(),
     }
     .map(drop)
 }
@@ -127,6 +140,8 @@ impl Host {
             ),
             #[cfg(feature = "gpu")]
             Renderer::Gpu => self.0.run_gpu_popup(connection, control, assign, ui, root),
+            #[cfg(not(feature = "gpu"))]
+            Renderer::Gpu => gpu_unavailable(),
         }
     }
 }

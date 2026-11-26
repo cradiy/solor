@@ -153,10 +153,21 @@ pub enum WindowBackground {
     Transparent,
 }
 
-/// Initial identity and preferred logical size of a window.
+/// Rendering backend requested by an application.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Renderer {
+    /// Rasterize on the CPU.
+    Cpu,
+    /// Render on the GPU. Requires the platform's `gpu` feature.
+    Gpu,
+}
+
+/// Options applied when opening a window.
 #[derive(Clone, Copy, Debug)]
 #[must_use]
 pub struct WindowOptions<'a> {
+    /// Overrides the platform's default renderer for this window.
+    pub renderer: Option<Renderer>,
     /// Optional parent for an auxiliary window in the same application.
     pub parent: Option<&'a WindowHandle>,
     /// Blocks input to the parent while this window is open. Requires an open parent.
@@ -185,6 +196,7 @@ impl<'a> WindowOptions<'a> {
     /// Creates a titled window configuration with an 800 × 600 logical-pixel preference.
     pub const fn new(title: &'a str) -> Self {
         Self {
+            renderer: None,
             parent: None,
             modal: false,
             always_on_top: false,
@@ -200,6 +212,12 @@ impl<'a> WindowOptions<'a> {
                 height: px(600.0),
             },
         }
+    }
+
+    /// Selects the renderer for this window.
+    pub const fn renderer(mut self, renderer: Renderer) -> Self {
+        self.renderer = Some(renderer);
+        self
     }
 
     /// Associates this window with an open parent. Each window can be closed independently.

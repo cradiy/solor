@@ -6,28 +6,16 @@ use solor::{Assets, Render, Ui};
 #[cfg_attr(not(target_os = "linux"), path = "unsupported.rs")]
 mod system;
 
-pub use solor::platform::{SurfaceRect, WindowBackground, WindowHandle, WindowOptions};
+pub use solor::platform::{Renderer, SurfaceRect, WindowBackground, WindowHandle, WindowOptions};
 #[cfg(target_os = "linux")]
 pub use solor_linux::{ApplicationSender, layer_shell, popup, session_lock};
 
-/// Rendering backend used for surfaces opened by a platform instance.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Renderer {
-    /// Rasterize on the CPU.
-    Cpu,
-    /// Render with the GPU backend. Requires the `gpu` Cargo feature.
+fn default_renderer() -> Renderer {
     #[cfg(feature = "gpu")]
-    Gpu,
-}
-
-impl Renderer {
-    fn from_env() -> Self {
-        #[cfg(feature = "gpu")]
-        if std::env::var_os("SOLOR_RENDERER").as_deref() == Some(std::ffi::OsStr::new("gpu")) {
-            return Self::Gpu;
-        }
-        Self::Cpu
+    if std::env::var_os("SOLOR_RENDERER").as_deref() == Some(std::ffi::OsStr::new("gpu")) {
+        return Renderer::Gpu;
     }
+    Renderer::Cpu
 }
 
 /// Hosts application windows with the window system and renderer selected for this target.
@@ -41,7 +29,7 @@ pub struct SystemPlatform {
 /// on targets without a window implementation.
 pub fn current_platform() -> Result<SystemPlatform> {
     Ok(SystemPlatform {
-        renderer: Renderer::from_env(),
+        renderer: default_renderer(),
         host: system::select()?,
         assets: None,
     })
@@ -88,7 +76,7 @@ impl Application {
         root: impl FnOnce(WindowHandle) -> R,
     ) -> Result<WindowHandle> {
         system::open_window(
-            self.renderer,
+            options.renderer.unwrap_or(self.renderer),
             &self.windows,
             options,
             configured_ui(ui, &self.assets),
@@ -199,7 +187,7 @@ fn configured_ui(ui: Ui, assets: &Option<Assets>) -> Ui {
 }
 
 impl SystemPlatform {
-    /// Selects the renderer for all windows on this host, overriding `SOLOR_RENDERER`.
+    /// Selects the default renderer for this host, overriding `SOLOR_RENDERER`.
     #[must_use]
     pub fn with_renderer(mut self, renderer: Renderer) -> Self {
         self.renderer = renderer;
