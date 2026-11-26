@@ -947,6 +947,7 @@ pub(super) struct MountedNode {
     pub(super) visible: bool,
     pub(super) local_visible: bool,
     pub(super) focusable: bool,
+    pub(super) auto_focus: bool,
     paint_mode: RefreshPolicy,
     pub(super) text_style: InheritedText,
     text_color: Foreground,
@@ -1086,10 +1087,12 @@ impl MountedNode {
         self.alpha() < 255 || self.gradient_map.is_some()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
         id: NodeId,
         handlers: Option<Box<Handlers>>,
         focusable: bool,
+        auto_focus: bool,
         mounted: style_binding::PreparedStyle,
         fixed_label: bool,
         paint_mode: RefreshPolicy,
@@ -1136,6 +1139,7 @@ impl MountedNode {
             offset: 0,
             local_visible: mounted.visible,
             focusable,
+            auto_focus,
             visible: mounted.visible,
             frame_paint,
             paint_mode,
@@ -1432,6 +1436,7 @@ impl AnyElement {
                     id,
                     node.handlers,
                     node.focusable,
+                    node.auto_focus,
                     mounted,
                     fixed_label,
                     node.paint_mode,
@@ -1548,6 +1553,7 @@ pub trait ParentElement: Sized {
 /// A primitive and the children, handlers and styles to attach with it.
 pub struct Node<E> {
     focusable: bool,
+    auto_focus: bool,
     scroll_handle: Option<crate::ScrollHandle>,
     record: Option<Record>,
     on_frame: Option<FrameHandler>,
@@ -1567,6 +1573,7 @@ pub fn element<E: Element>(body: E) -> Node<E> {
 fn node<E>(body: E, record: Option<Record>) -> Node<E> {
     Node {
         focusable: false,
+        auto_focus: false,
         scroll_handle: None,
         record,
         on_frame: None,
@@ -1602,6 +1609,12 @@ impl<E: Element> Node<E> {
     pub fn focusable(mut self) -> Self {
         self.focusable = true;
         self
+    }
+
+    /// Focuses this element when it attaches to a view that has no current focus.
+    pub fn auto_focus(mut self) -> Self {
+        self.auto_focus = true;
+        self.focusable()
     }
 
     /// Makes this element focusable and exposes its editing state to the host while focused.

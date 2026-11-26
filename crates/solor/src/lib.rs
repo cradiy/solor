@@ -646,6 +646,14 @@ impl Instance {
                 watch(cx, target, parent, path, repaints)?;
             }
         }
+        if self.focused.is_none()
+            && self
+                .bodies
+                .get(&parent)
+                .is_some_and(|node| node.auto_focus && node.visible)
+        {
+            self.set_focus(Some(parent), false, cx.state);
+        }
         self.register_children(parent, path, children, cx)
     }
 
