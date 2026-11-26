@@ -273,10 +273,14 @@ enum BlurRequests {
     Shared(Control),
 }
 
+type DecorationListener = Box<dyn FnMut(bool)>;
+
 pub(super) struct WindowLife {
     blur: BlurRequests,
     pub(super) activation: Option<ActivationTarget>,
     open: Cell<bool>,
+    client_decorations: Cell<bool>,
+    decoration_listeners: RefCell<Vec<DecorationListener>>,
     modal_parent: Weak<Self>,
     modal_children: RefCell<Vec<Weak<Self>>>,
     cancel_pointer: Cell<bool>,
@@ -297,11 +301,26 @@ impl WindowLife {
             },
             activation,
             open: Cell::new(true),
+            client_decorations: Cell::new(false),
+            decoration_listeners: RefCell::default(),
             revisit,
             modal_parent,
             modal_children: RefCell::default(),
             cancel_pointer: Cell::default(),
         })
+    }
+
+    pub(super) fn set_client_decorations(&self, enabled: bool) -> bool {
+        if self.client_decorations.replace(enabled) == enabled {
+            return false;
+        }
+        let mut listeners = std::mem::take(&mut *self.decoration_listeners.borrow_mut());
+        for listener in &mut listeners {
+            listener(enabled);
+        }
+        self.decoration_listeners.borrow_mut().extend(listeners);
+        self.revisit.set(true);
+        true
     }
 
     fn attach_modal(self: &Rc<Self>, parent: &Self) {
@@ -361,6 +380,14 @@ impl PlatformWindow for WindowLife {
                 Ok(())
             }
         }
+    }
+
+    fn client_decorations(&self) -> bool {
+        self.client_decorations.get()
+    }
+
+    fn on_client_decorations_changed(&self, listener: Box<dyn FnMut(bool)>) {
+        self.decoration_listeners.borrow_mut().push(listener);
     }
 
     fn activate(&self) {
@@ -673,7 +700,20 @@ impl WindowFactory {
         if matches!(&request, Request::Menu(options) if options.input_transparent) {
             input_region.update(Some(crate::surface_control::InputRegion::Rects(Vec::new())));
         }
+        let requested_csd = match &request {
+            Request::Toplevel(options) => !options.native_decorations,
+            _ => false,
+        };
         let (role, size) = request.create(globals, qh, surface, &self.menus, handle.clone())?;
+        if matches!(
+            &role,
+            Role::Toplevel {
+                decorations: None,
+                ..
+            }
+        ) {
+            life.set_client_decorations(requested_csd);
+        }
         if let (Some(control), Role::Layer(layer, placement)) = (&control, &role) {
             control.set_layer_rules(crate::layer_shell::LayerRules {
                 anchor: placement.anchor,

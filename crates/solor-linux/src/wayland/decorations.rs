@@ -1,5 +1,5 @@
 use wayland_client::{
-    Connection, Dispatch, QueueHandle, delegate_noop,
+    Connection, Dispatch, QueueHandle, WEnum, delegate_noop,
     globals::{BindError, GlobalList},
 };
 use wayland_protocols::xdg::{
@@ -16,6 +16,7 @@ pub(super) struct Decorations {
     handle: ZxdgToplevelDecorationV1,
     requested: bool,
     pending_configure: bool,
+    pending_mode: Option<Mode>,
 }
 
 impl Decorations {
@@ -38,6 +39,7 @@ impl Decorations {
             handle,
             requested: enabled,
             pending_configure: false,
+            pending_mode: None,
         };
         decorations.request_mode();
         Ok(Some(decorations))
@@ -56,8 +58,11 @@ impl Decorations {
         self.request_mode();
     }
 
-    pub(super) fn take_configure(&mut self) -> bool {
-        std::mem::take(&mut self.pending_configure)
+    pub(super) fn take_configure(&mut self) -> (bool, Option<Mode>) {
+        (
+            std::mem::take(&mut self.pending_configure),
+            self.pending_mode.take(),
+        )
     }
 }
 
@@ -81,13 +86,16 @@ impl Dispatch<ZxdgToplevelDecorationV1, wayland_client::backend::ObjectId> for D
         let Some(state) = desktop.windows.get_mut(id) else {
             return;
         };
-        if let Event::Configure { .. } = event
+        if let Event::Configure { mode } = event
             && let Role::Toplevel {
                 decorations: Some(decorations),
                 ..
             } = &mut state.role
         {
             decorations.pending_configure = true;
+            if let WEnum::Value(mode) = mode {
+                decorations.pending_mode = Some(mode);
+            }
         }
     }
 }

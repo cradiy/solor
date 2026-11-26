@@ -41,6 +41,12 @@ pub trait PlatformWindow {
     fn set_background_blur_region(&self, _rects: &[SurfaceRect]) -> std::io::Result<()> {
         Ok(())
     }
+    /// Returns whether the window should draw client-side decorations.
+    fn client_decorations(&self) -> bool {
+        false
+    }
+    /// Registers a UI-thread listener invoked when negotiated client-side decorations change.
+    fn on_client_decorations_changed(&self, _listener: Box<dyn FnMut(bool)>) {}
     /// Marks the window closed and schedules native teardown before the event loop sleeps.
     fn close(&self);
 }
@@ -80,6 +86,24 @@ impl WindowHandle {
             .filter(|window| window.is_open())
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "window closed"))?;
         window.set_background_blur_region(rects)
+    }
+
+    /// Returns whether this window should render client-side decorations.
+    ///
+    /// Returns `false` when the compositor negotiates server-side decorations or
+    /// requests undecorated content via `xdg-decoration`.
+    pub fn client_decorations(&self) -> bool {
+        self.0
+            .upgrade()
+            .is_some_and(|window| window.client_decorations())
+    }
+
+    /// Registers a UI-thread callback invoked when the compositor updates whether
+    /// client-side decorations should be rendered.
+    pub fn on_client_decorations_changed(&self, listener: impl FnMut(bool) + 'static) {
+        if let Some(window) = self.0.upgrade().filter(|window| window.is_open()) {
+            window.on_client_decorations_changed(Box::new(listener));
+        }
     }
 
     /// Requests closure of this window. All clones immediately observe it as closed.

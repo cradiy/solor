@@ -793,17 +793,27 @@ impl Dispatch<xdg_surface::XdgSurface, ObjectId> for Desktop {
             surface.ack_configure(serial);
             state.mapping.configure();
             state.maximized = state.pending_maximized;
-            let decorations_configured = match &mut state.role {
+            let (decorations_configured, decoration_mode) = match &mut state.role {
                 Role::Toplevel {
                     decorations: Some(d),
                     ..
                 } => d.take_configure(),
                 Role::Menu(menu) => {
                     menu.finish_configure();
-                    false
+                    (false, None)
                 }
-                _ => false,
+                _ => (false, None),
             };
+            if let Some(mode) = decoration_mode {
+                let csd = matches!(
+                    mode,
+                    wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1::Mode::ClientSide
+                );
+                if state.life.set_client_decorations(csd) {
+                    state.dirty = true;
+                    state.full_damage = true;
+                }
+            }
             if let Some(size) = state.pending_size.take() {
                 state.resize(size);
             }

@@ -96,6 +96,28 @@ impl AsyncContext {
             .context("outside foreground task dispatch")
     }
 
+    /// Borrows the ordered item handles of a signal vector for the duration of the closure.
+    pub fn items<T: 'static, R>(
+        &self,
+        rows: SignalVec<T>,
+        read: impl FnOnce(&[Signal<T>]) -> R,
+    ) -> Result<R> {
+        let state = self.active_state()?;
+        Ok(read(state.try_borrow()?.read(rows.order)?.as_slice()))
+    }
+
+    /// Replaces a half-open range of a signal vector and publishes the new order once.
+    pub fn splice<T: 'static>(
+        &self,
+        rows: SignalVec<T>,
+        range: std::ops::Range<usize>,
+        values: impl IntoIterator<Item = T>,
+    ) -> Result<()> {
+        let state = self.active_state()?;
+        let mut state = state.try_borrow_mut()?;
+        rows.splice_in(range, values, &mut state)
+    }
+
     /// Appends a batch to the current end of a signal vector and publishes the new order once.
     pub fn extend<T: 'static>(
         &self,
