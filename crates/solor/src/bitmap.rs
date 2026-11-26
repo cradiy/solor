@@ -1,4 +1,6 @@
 //! Shared bitmap pixels and placement within a painted box.
+#[cfg(any(feature = "gif", feature = "webp"))]
+mod animation;
 mod custom;
 #[cfg(feature = "network")]
 pub(crate) mod remote;
@@ -22,6 +24,8 @@ pub struct ImageAsset(Arc<Bitmap>);
 struct Bitmap {
     dimensions: DeviceSize,
     rgba: Vec<u8>,
+    #[cfg(any(feature = "gif", feature = "webp"))]
+    animation: Option<Box<animation::Animation>>,
 }
 
 #[cfg(feature = "image")]
@@ -49,6 +53,8 @@ impl ImageAsset {
         Ok(Self(Arc::new(Bitmap {
             dimensions: DeviceSize { width, height },
             rgba: bytes,
+            #[cfg(any(feature = "gif", feature = "webp"))]
+            animation: None,
         })))
     }
 

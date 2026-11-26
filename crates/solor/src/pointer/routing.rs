@@ -527,7 +527,17 @@ impl Ui {
         {
             return Some(std::time::Instant::now());
         }
-        instance.pointer.tooltips.deadline()
+        let deadline = instance.pointer.tooltips.deadline();
+        #[cfg(any(feature = "gif", feature = "webp"))]
+        let deadline = instance
+            .repaints
+            .borrow()
+            .image_deadlines
+            .values()
+            .copied()
+            .chain(deadline)
+            .min();
+        deadline
     }
 
     /// Makes this submission's snapshot authoritative for input. Active sequences whose

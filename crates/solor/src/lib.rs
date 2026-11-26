@@ -250,13 +250,27 @@ struct Branch {
 
 #[derive(Default)]
 struct PaintState {
+    #[cfg(any(feature = "gif", feature = "webp"))]
+    image_deadlines: HashMap<NodeId, std::time::Instant>,
     dirty: HashSet<NodeId>,
     commands: HashMap<NodeId, Vec<Draw>>,
 }
 
 impl PaintState {
-    fn invalidate(&mut self, node: NodeId) {
+    fn clear_commands(&mut self) {
+        self.commands.clear();
+        #[cfg(any(feature = "gif", feature = "webp"))]
+        self.image_deadlines.clear();
+    }
+
+    fn forget_commands(&mut self, node: NodeId) {
         self.commands.remove(&node);
+        #[cfg(any(feature = "gif", feature = "webp"))]
+        self.image_deadlines.remove(&node);
+    }
+
+    fn invalidate(&mut self, node: NodeId) {
+        self.forget_commands(node);
         self.dirty.insert(node);
     }
 }
@@ -378,7 +392,7 @@ impl Instance {
             self.invalidate_geometry();
         } else if layout_pending {
             // Custom layout can change internal paint data at the same published size.
-            self.repaints.borrow_mut().commands.clear();
+            self.repaints.borrow_mut().clear_commands();
         }
         Ok((changed, layout_pending || changed != 0))
     }
@@ -428,7 +442,7 @@ impl Instance {
     fn invalidate_geometry(&mut self) {
         self.pointer.invalidate_geometry();
         self.fixed_draws = Default::default();
-        self.repaints.borrow_mut().commands.clear();
+        self.repaints.borrow_mut().clear_commands();
     }
 
     fn apply_visibility(

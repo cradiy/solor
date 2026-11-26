@@ -317,6 +317,8 @@ impl Draw {
 
 /// Local content bounds, inherited color and state access during recording.
 pub struct PaintContext<'a> {
+    #[cfg(any(feature = "gif", feature = "webp"))]
+    image_owner: (&'a crate::Instance, crate::NodeId),
     origin: Origin,
     // Position of this node's border box in the clip coordinate system.
     frame_offset: Origin,
@@ -1200,6 +1202,8 @@ impl MountedNode {
             }
         };
         let mut cx = PaintContext {
+            #[cfg(any(feature = "gif", feature = "webp"))]
+            image_owner: (instance, self.id),
             clip: clips.content.clone(),
             frame_offset,
             units: instance.units,

@@ -34,3 +34,7 @@ required-features = ["shader"]
 [[example]]
 name = "gpu_fills"
 required-features = ["gpu"]
+
+[[example]]
+name = "animated_images"
+required-features = ["solor/gif", "solor/webp"]

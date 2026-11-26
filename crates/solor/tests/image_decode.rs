@@ -55,3 +55,44 @@ fn raw_rgba_validates_pixel_count_and_premultiplies_alpha() -> Result<()> {
     assert_eq!(asset.pixels(), &[[16, 32, 128, 128]]);
     Ok(())
 }
+
+#[cfg(feature = "webp")]
+#[test]
+fn file_element_repaints_at_webp_deadlines_and_rests_on_the_final_frame() -> Result<()> {
+    use solor::{Draw, Fill, Ui, component, image, layout::Size, px};
+    use std::{path::Path, time::Duration};
+
+    // Two passes, each with a 70 ms red frame and a 130 ms blue frame.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/red-blue.webp");
+    let mut ui = Ui::new();
+    let view = ui.mount(component(move |_| image(path)))?;
+    ui.flush()?;
+    ui.layout(
+        view,
+        Size {
+            width: px(2.),
+            height: px(1.),
+        },
+    )?;
+    let pixel = |ui: &Ui| -> Result<[u8; 4]> {
+        let frame = ui.record_frame(view)?;
+        assert!(!frame.requests_animation_frame());
+        let [
+            Draw::Fill {
+                fill: Fill::Image(fill),
+                ..
+            },
+        ] = frame.draws()
+        else {
+            anyhow::bail!("expected a decoded frame");
+        };
+        Ok(fill.asset().pixels()[0])
+    };
+    assert_eq!(pixel(&ui)?, [255, 0, 0, 255]);
+    let first_boundary = ui.next_redraw(view).expect("second frame scheduled");
+    let last_boundary = first_boundary + Duration::from_millis(200);
+    std::thread::sleep(last_boundary.saturating_duration_since(std::time::Instant::now()));
+    assert_eq!(pixel(&ui)?, [0, 0, 255, 255]);
+    assert!(ui.next_redraw(view).is_none());
+    Ok(())
+}

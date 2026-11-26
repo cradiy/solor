@@ -4,7 +4,7 @@ use anyhow::{Context as _, Result, ensure};
 use image::{DynamicImage, ImageDecoder, ImageReader, metadata::Orientation};
 use std::{
     fs::File,
-    io::{BufReader, Cursor},
+    io::{BufRead, BufReader, Cursor, Seek},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -41,12 +41,12 @@ impl ImageFile {
         Ok(reader)
     }
 
-    pub(crate) fn dimensions(&self) -> Result<DeviceSize> {
+    pub(crate) fn info(&self) -> Result<(DeviceSize, bool)> {
         self.probe()
             .with_context(|| format!("reading image dimensions from {}", self.path.display()))
     }
 
-    fn probe(&self) -> Result<DeviceSize> {
+    fn probe(&self) -> Result<(DeviceSize, bool)> {
         let reader = self.reader()?;
         // The general JPEG adapter buffers the encoded stream. Probe the JPEG headers directly.
         #[cfg(feature = "jpeg")]
@@ -57,15 +57,34 @@ impl ImageFile {
             let orientation = jpeg
                 .exif()
                 .and_then(|exif| Orientation::from_exif_chunk(exif));
-            return Ok(oriented(
-                w as u32,
-                h as u32,
-                orientation.unwrap_or(Orientation::NoTransforms),
+            return Ok((
+                oriented(
+                    w as u32,
+                    h as u32,
+                    orientation.unwrap_or(Orientation::NoTransforms),
+                ),
+                false,
             ));
         }
+        #[cfg(feature = "webp")]
+        if reader.format() == Some(image::ImageFormat::WebP) {
+            let mut decoder = image::codecs::webp::WebPDecoder::new(reader.into_inner())?;
+            let (w, h) = decoder.dimensions();
+            return Ok((
+                oriented(w, h, decoder.orientation()?),
+                decoder.has_animation(),
+            ));
+        }
+        let may_animate = reader.format() == Some(image::ImageFormat::Gif);
         let mut decoder = reader.into_decoder()?;
         let (w, h) = decoder.dimensions();
-        Ok(oriented(w, h, decoder.orientation()?))
+        Ok((oriented(w, h, decoder.orientation()?), may_animate))
+    }
+
+    #[cfg(any(feature = "gif", feature = "webp"))]
+    pub(crate) fn decode_for_playback(&self) -> Result<ImageAsset> {
+        ImageAsset::decode_reader(self.reader()?, DECODE_BUDGET)
+            .with_context(|| format!("decoding image from {}", self.path.display()))
     }
 
     pub(super) fn decode(&self) -> Result<ImageAsset> {
@@ -114,18 +133,45 @@ impl ImageAsset {
         let mut limits = image::Limits::default();
         limits.max_alloc = Some(DECODE_BUDGET);
         reader.limits(limits);
-        Self::decode(reader.into_decoder()?, DECODE_BUDGET)
+        Self::decode_reader(reader, DECODE_BUDGET)
     }
 
     /// Decodes caller-supplied bytes immediately and applies the encoded orientation.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let decoder = ImageReader::new(Cursor::new(bytes))
-            .with_guessed_format()?
-            .into_decoder()?;
-        Self::decode(
-            decoder,
+        let reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+        Self::decode_reader(
+            reader,
             image::Limits::default().max_alloc.unwrap_or(u64::MAX),
         )
+    }
+
+    fn decode_reader<R: BufRead + Seek>(reader: ImageReader<R>, budget: u64) -> Result<Self> {
+        #[cfg(feature = "gif")]
+        if reader.format() == Some(image::ImageFormat::Gif) {
+            let mut input = reader.into_inner();
+            // GIF counts repeats after the first play. An absent loop extension plays once.
+            let plays = match gif::Decoder::new(&mut input)?.repeat() {
+                gif::Repeat::Finite(n) => Some(u32::from(n) + 1),
+                gif::Repeat::Infinite => None,
+            };
+            input.rewind()?;
+            let decoder = image::codecs::gif::GifDecoder::new(input)?;
+            return Self::decode_animation(decoder, plays, budget.min(DECODE_BUDGET));
+        }
+        #[cfg(feature = "webp")]
+        if reader.format() == Some(image::ImageFormat::WebP) {
+            use image::{AnimationDecoder as _, metadata::LoopCount};
+            let decoder = image::codecs::webp::WebPDecoder::new(reader.into_inner())?;
+            if decoder.has_animation() {
+                let plays = match decoder.loop_count() {
+                    LoopCount::Finite(n) => Some(n.get()),
+                    LoopCount::Infinite => None,
+                };
+                return Self::decode_animation(decoder, plays, budget.min(DECODE_BUDGET));
+            }
+            return Self::decode(decoder, budget);
+        }
+        Self::decode(reader.into_decoder()?, budget)
     }
 
     fn decode(mut decoder: impl ImageDecoder, budget: u64) -> Result<Self> {

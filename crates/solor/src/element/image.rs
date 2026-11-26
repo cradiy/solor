@@ -183,6 +183,8 @@ pub(super) enum ImageContent {
     Svg(SvgAsset, bool),
     #[cfg(feature = "image")]
     File(crate::ImageFile, Size),
+    #[cfg(any(feature = "gif", feature = "webp"))]
+    PlaybackFile(crate::ImageFile, Size, std::cell::OnceCell<ImageFill>),
 }
 impl ImageContent {
     fn bitmap(asset: impl Into<ImageFill>) -> Self {
@@ -191,7 +193,12 @@ impl ImageContent {
 
     #[cfg(feature = "image")]
     fn file(file: crate::ImageFile) -> Result<Self> {
-        let size = file.dimensions()?.at_unit_scale();
+        let (dimensions, _may_animate) = file.info()?;
+        let size = dimensions.at_unit_scale();
+        #[cfg(any(feature = "gif", feature = "webp"))]
+        if _may_animate {
+            return Ok(Self::PlaybackFile(file, size, Default::default()));
+        }
         Ok(Self::File(file, size))
     }
 
@@ -204,10 +211,14 @@ impl ImageContent {
             Self::Svg(asset, _) => asset.size(),
             #[cfg(feature = "image")]
             Self::File(_, size) => *size,
+            #[cfg(any(feature = "gif", feature = "webp"))]
+            Self::PlaybackFile(_, size, _) => *size,
         }
     }
 }
 pub(super) struct ImageBody {
+    #[cfg(any(feature = "gif", feature = "webp"))]
+    started: std::cell::Cell<Option<std::time::Instant>>,
     #[cfg(feature = "network")]
     remote: Option<Box<crate::bitmap::remote::Subscription>>,
     image: ImageContent,
@@ -215,6 +226,52 @@ pub(super) struct ImageBody {
     placement: Placement,
 }
 impl ImageBody {
+    #[cfg(any(feature = "gif", feature = "webp"))]
+    fn image_visible(cx: &PaintContext) -> Result<bool> {
+        let origin = cx
+            .frame_offset
+            .checked_add(cx.origin)
+            .context("invalid image origin")?;
+        let scene = &cx.image_owner.0.scene;
+        let viewport = scene
+            .geometry(scene.root())
+            .context("missing root geometry")?
+            .metrics
+            .size;
+        Ok(origin.x < viewport.width
+            && origin.y < viewport.height
+            && origin.x + cx.size.width > px(0.)
+            && origin.y + cx.size.height > px(0.)
+            && cx
+                .clip
+                .as_ref()
+                .is_none_or(|clip| clip.intersects(origin, cx.size)))
+    }
+
+    fn paint_bitmap(&self, cx: &mut PaintContext, image: &ImageFill) -> Result<()> {
+        let mut image = image.clone();
+        #[cfg(any(feature = "gif", feature = "webp"))]
+        if image.asset().is_animated() {
+            if !Self::image_visible(cx)? {
+                return Ok(());
+            }
+            let now = std::time::Instant::now();
+            let start = self.started.get().unwrap_or(now);
+            self.started.set(Some(start));
+            if let Some(next) = image.sample_animation(now - start) {
+                let (instance, id) = cx.image_owner;
+                instance
+                    .repaints
+                    .borrow_mut()
+                    .image_deadlines
+                    .insert(id, start + next);
+            }
+        }
+        image.placement = self.placement;
+        cx.record_fill(cx.origin, cx.size, image.into(), cx.corner_radii());
+        Ok(())
+    }
+
     #[cfg(feature = "network")]
     fn from_url(
         url: crate::Url,
@@ -243,6 +300,8 @@ impl ImageBody {
         units: UnitResolver,
     ) -> super::Node<Self> {
         let mut node = element(Self {
+            #[cfg(any(feature = "gif", feature = "webp"))]
+            started: Default::default(),
             #[cfg(feature = "network")]
             remote: None,
             image,
@@ -287,7 +346,11 @@ impl crate::Instance {
             return Ok(());
         }
         let same_size = current.size() == image.size();
-        let replace = |body: &mut Body| body.content.image = image;
+        let replace = |body: &mut Body| {
+            body.content.image = image;
+            #[cfg(any(feature = "gif", feature = "webp"))]
+            body.content.started.set(None);
+        };
         if same_size {
             replace(self.scene.body_mut::<Body>(id)?);
         } else {
@@ -362,11 +425,16 @@ impl Element for ImageBody {
                 cx.record_fill(cx.origin, cx.size, image.into(), cx.corner_radii());
                 Ok(())
             }
-            ImageContent::Bitmap(image) => {
-                let mut image = image.clone();
-                image.placement = self.placement;
-                cx.record_fill(cx.origin, cx.size, image.into(), cx.corner_radii());
-                Ok(())
+            ImageContent::Bitmap(image) => self.paint_bitmap(cx, image),
+            #[cfg(any(feature = "gif", feature = "webp"))]
+            ImageContent::PlaybackFile(file, _, decoded) => {
+                if !Self::image_visible(cx)? {
+                    return Ok(());
+                }
+                if decoded.get().is_none() {
+                    let _ = decoded.set(file.decode_for_playback()?.into());
+                }
+                self.paint_bitmap(cx, decoded.get().expect("decoded file image"))
             }
             #[cfg(feature = "image")]
             ImageContent::File(file, _) => {

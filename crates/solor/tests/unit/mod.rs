@@ -1,4 +1,6 @@
 use crate::px;
+#[cfg(feature = "gif")]
+mod animated_gif;
 mod custom_element;
 
 use super::element::{div, text};

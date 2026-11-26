@@ -415,6 +415,26 @@ impl Ui {
     /// after successful recording. Input continues to use the last accepted frame.
     pub fn record_frame(&self, view: ViewId) -> Result<ViewFrame> {
         let instance = self.instance(view)?;
+        #[cfg(any(feature = "gif", feature = "webp"))]
+        {
+            let mut paint = instance.repaints.borrow_mut();
+            if !paint.image_deadlines.is_empty() {
+                let now = std::time::Instant::now();
+                let crate::PaintState {
+                    image_deadlines,
+                    commands,
+                    ..
+                } = &mut *paint;
+                image_deadlines.retain(|id, deadline| {
+                    if *deadline <= now {
+                        commands.remove(id);
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
+        }
         let pointer = self.prepare_pointer_frame(view)?;
         let cache = &instance.fixed_draws;
         let mut state = self.state.try_borrow_mut()?;

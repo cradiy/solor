@@ -644,7 +644,9 @@ pixels with `ImageAsset::from_rgba8`. Clones share the decoded pixels. The
 `solor` crate enables `png` and `jpeg` by default. Add `webp`, `gif`, `bmp`,
 `ico`, or `tiff` individually, or enable `image-full` for all seven formats. Use
 `default-features = false` to select codecs individually. Raw RGBA input works
-without any codec. Each asset contains one still image.
+without any codec. With the corresponding codec enabled, `image(...)` plays
+GIF and animated WebP at their encoded frame delays (10 ms minimum). Finite
+animations hold their final frame. Background fills use the first frame.
 
 ```rust
 let photo = ImageFile::new(absolute_path);
@@ -686,8 +688,9 @@ A standalone `Ui` accepts the same packs through `with_assets`.
 Registration stores the providers. Attaching a named element requests its
 resource. Windows on the same configured host share the parsed tree of a live
 named SVG. A file-backed bitmap probes dimensions for element layout and
-decodes synchronously on visible CPU paint. Each window caches up to 64 MiB of
-decoded file images by path. File contents should remain stable while in use.
+decodes synchronously on visible paint. A mounted file animation retains its
+composited frames within a 128 MiB decode budget. The window cache for static
+file draws holds up to 64 MiB by path. File contents should remain stable while in use.
 The current whole-image decoder accepts regular files up to 64 MiB and checks
 pixel storage against a 128 MiB decode budget. Encoded bytes supplied directly
 or returned by a pack are decoded at element attachment.

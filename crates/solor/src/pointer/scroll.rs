@@ -608,7 +608,7 @@ impl Instance {
         let mut paint = self.repaints.borrow_mut();
         let mut pending: Vec<_> = self.scene.children(owner)?.collect();
         while let Some(id) = pending.pop() {
-            paint.commands.remove(&id);
+            paint.forget_commands(id);
             pending.extend(self.scene.children(id)?);
         }
         Ok(true)
