@@ -98,7 +98,7 @@ opens additional notes from a button in any existing note.
 
 Keep the `WindowHandle` returned by `app.open_window(...)?` to manage a
 specific window. Use `window.is_open()` to reuse a settings window, and
-`window.close()` to close it from another window's callback. Use `window.on_should_close(...)` to decide whether a user request
+`window.close()` to close it from another window's callback. Use `window.set_close_guard(...)` to decide whether a user request
 closes a top-level window. Return `false` to keep the window open while confirming,
 then call `window.close()` if the user accepts. Reopening creates a
 distinct handle. Dropping a handle leaves its window open.

@@ -42,6 +42,33 @@ pub struct WindowState {
     pub fullscreen: bool,
 }
 
+/// A UI-thread observation that is cancelled when its owner drops it.
+#[must_use = "keep the subscription or bind it to a component"]
+#[derive(Default)]
+pub struct WindowSubscription(Option<Box<dyn FnOnce()>>);
+
+impl WindowSubscription {
+    /// Creates a subscription with a host-provided cancellation callback.
+    pub fn new(cancel: impl FnOnce() + 'static) -> Self {
+        Self(Some(Box::new(cancel)))
+    }
+
+    /// Keeps the observation until the current element unmounts or the owning UI closes.
+    pub fn bind_to(self, cx: &mut crate::Context<'_>) {
+        if self.0.is_some() {
+            cx.signal(self);
+        }
+    }
+}
+
+impl Drop for WindowSubscription {
+    fn drop(&mut self) {
+        if let Some(cancel) = self.0.take() {
+            cancel();
+        }
+    }
+}
+
 /// Host-side lifecycle of a window on its event thread.
 pub trait PlatformWindow {
     /// Returns true while the window accepts input and frame requests, including during startup.
@@ -57,15 +84,19 @@ pub trait PlatformWindow {
         false
     }
     /// Registers a UI-thread listener invoked when negotiated client-side decorations change.
-    fn on_client_decorations_changed(&self, _listener: Box<dyn FnMut(bool)>) {}
+    fn observe_client_decorations(&self, _listener: Box<dyn FnMut(bool)>) -> WindowSubscription {
+        WindowSubscription::default()
+    }
     /// Returns the most recently confirmed top-level state, when available.
     fn state(&self) -> Option<WindowState> {
         None
     }
     /// Observes confirmed top-level state changes on the UI thread.
-    fn on_state_changed(&self, _listener: Box<dyn FnMut(WindowState)>) {}
+    fn observe_state(&self, _listener: Box<dyn FnMut(WindowState)>) -> WindowSubscription {
+        WindowSubscription::default()
+    }
     /// Sets the predicate for user-initiated top-level close requests.
-    fn on_should_close(&self, handler: Rc<dyn Fn() -> bool>);
+    fn set_close_guard(&self, handler: Rc<dyn Fn() -> bool>);
     /// Marks the window closed and schedules native teardown before the event loop sleeps.
     fn close(&self);
 }
@@ -119,10 +150,15 @@ impl WindowHandle {
 
     /// Registers a UI-thread callback invoked when the compositor updates whether
     /// client-side decorations should be rendered.
-    pub fn on_client_decorations_changed(&self, listener: impl FnMut(bool) + 'static) {
-        if let Some(window) = self.0.upgrade().filter(|window| window.is_open()) {
-            window.on_client_decorations_changed(Box::new(listener));
-        }
+    pub fn observe_client_decorations(
+        &self,
+        listener: impl FnMut(bool) + 'static,
+    ) -> WindowSubscription {
+        self.0
+            .upgrade()
+            .filter(|window| window.is_open())
+            .map(|window| window.observe_client_decorations(Box::new(listener)))
+            .unwrap_or_default()
     }
 
     /// Returns the state confirmed for this open top-level window.
@@ -134,17 +170,19 @@ impl WindowHandle {
     }
 
     /// Receives subsequent state changes on the UI thread.
-    pub fn on_state_changed(&self, listener: impl FnMut(WindowState) + 'static) {
-        if let Some(window) = self.0.upgrade().filter(|w| w.is_open()) {
-            window.on_state_changed(Box::new(listener));
-        }
+    pub fn observe_state(&self, listener: impl FnMut(WindowState) + 'static) -> WindowSubscription {
+        self.0
+            .upgrade()
+            .filter(|window| window.is_open())
+            .map(|window| window.observe_state(Box::new(listener)))
+            .unwrap_or_default()
     }
 
     /// Replaces the handler for native and title-bar close requests on this top-level window.
     /// Return true to close, or false to keep it open. Requests are accepted by default.
-    pub fn on_should_close(&self, handler: impl Fn() -> bool + 'static) {
+    pub fn set_close_guard(&self, handler: impl Fn() -> bool + 'static) {
         if let Some(window) = self.0.upgrade().filter(|window| window.is_open()) {
-            window.on_should_close(Rc::new(handler));
+            window.set_close_guard(Rc::new(handler));
         }
     }
 

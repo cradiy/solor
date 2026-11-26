@@ -49,7 +49,7 @@ fn confirm_close(app: &Application, parent: &WindowHandle) -> anyhow::Result<()>
 }
 
 fn main_view(app: Application, parent: WindowHandle) -> impl Render {
-    parent.on_should_close({
+    parent.set_close_guard({
         let app = app.clone();
         let parent = parent.clone();
         move || {

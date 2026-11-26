@@ -17,6 +17,7 @@ use rustix::event::PollFlags;
 use solor::{
     platform::{
         PlatformWindow, WindowBackground, WindowHandle, WindowHandler, WindowOptions, WindowState,
+        WindowSubscription,
     },
     raster::Rgba8,
 };
@@ -289,8 +290,51 @@ enum BlurRequests {
     Shared(Control),
 }
 
-type StateListener = Box<dyn FnMut(WindowState)>;
-type DecorationListener = Box<dyn FnMut(bool)>;
+type Listener<T> = RefCell<Box<dyn FnMut(T)>>;
+type ListenerList<T> = RefCell<Vec<Rc<Listener<T>>>>;
+
+#[derive(Default)]
+struct WindowListeners<T>(std::cell::OnceCell<Rc<ListenerList<T>>>);
+
+impl<T: Copy + 'static> WindowListeners<T> {
+    fn observe(&self, listener: Box<dyn FnMut(T)>) -> WindowSubscription {
+        let listeners = self.0.get_or_init(Rc::default);
+        let callback = Rc::new(RefCell::new(listener));
+        let target = Rc::downgrade(&callback);
+        listeners.borrow_mut().push(callback);
+        let list = Rc::downgrade(listeners);
+        WindowSubscription::new(move || {
+            if let Some(list) = list.upgrade() {
+                let removed = {
+                    let mut entries = list.borrow_mut();
+                    entries
+                        .iter()
+                        .position(|entry| std::ptr::eq(Rc::as_ptr(entry), target.as_ptr()))
+                        .map(|index| entries.remove(index))
+                };
+                drop(removed);
+            }
+        })
+    }
+
+    fn notify(&self, value: T) {
+        if let Some(list) = self.0.get() {
+            let pending: smallvec::SmallVec<[_; 4]> =
+                list.borrow().iter().map(Rc::downgrade).collect();
+            for entry in pending {
+                if let Some(listener) = entry.upgrade() {
+                    listener.borrow_mut()(value);
+                }
+            }
+        }
+    }
+
+    fn clear(&self) {
+        if let Some(list) = self.0.get() {
+            drop(list.take());
+        }
+    }
+}
 
 pub(super) struct WindowLife {
     blur: BlurRequests,
@@ -298,9 +342,9 @@ pub(super) struct WindowLife {
     open: Cell<bool>,
     should_close: RefCell<Option<Rc<dyn Fn() -> bool>>>,
     state: Cell<Option<WindowState>>,
-    state_listeners: RefCell<Vec<StateListener>>,
+    state_listeners: WindowListeners<WindowState>,
     client_decorations: Cell<bool>,
-    decoration_listeners: RefCell<Vec<DecorationListener>>,
+    decoration_listeners: WindowListeners<bool>,
     modal_parent: Weak<Self>,
     modal_children: RefCell<Vec<Weak<Self>>>,
     cancel_pointer: Cell<bool>,
@@ -325,7 +369,7 @@ impl WindowLife {
             state: Default::default(),
             state_listeners: Default::default(),
             client_decorations: Cell::new(false),
-            decoration_listeners: RefCell::default(),
+            decoration_listeners: Default::default(),
             revisit,
             modal_parent,
             modal_children: RefCell::default(),
@@ -346,11 +390,7 @@ impl WindowLife {
         if self.state.replace(Some(state)) == Some(state) {
             return false;
         }
-        let mut listeners = self.state_listeners.take();
-        for listener in &mut listeners {
-            listener(state);
-        }
-        self.state_listeners.borrow_mut().extend(listeners);
+        self.state_listeners.notify(state);
         true
     }
 
@@ -358,11 +398,7 @@ impl WindowLife {
         if self.client_decorations.replace(enabled) == enabled {
             return false;
         }
-        let mut listeners = std::mem::take(&mut *self.decoration_listeners.borrow_mut());
-        for listener in &mut listeners {
-            listener(enabled);
-        }
-        self.decoration_listeners.borrow_mut().extend(listeners);
+        self.decoration_listeners.notify(enabled);
         self.revisit.set(true);
         true
     }
@@ -416,15 +452,15 @@ impl WindowLife {
 }
 
 impl PlatformWindow for WindowLife {
-    fn on_should_close(&self, handler: Rc<dyn Fn() -> bool>) {
+    fn set_close_guard(&self, handler: Rc<dyn Fn() -> bool>) {
         self.should_close.replace(Some(handler));
     }
 
     fn state(&self) -> Option<WindowState> {
         self.state.get()
     }
-    fn on_state_changed(&self, listener: StateListener) {
-        self.state_listeners.borrow_mut().push(listener);
+    fn observe_state(&self, listener: Box<dyn FnMut(WindowState)>) -> WindowSubscription {
+        self.state_listeners.observe(listener)
     }
 
     fn is_open(&self) -> bool {
@@ -446,8 +482,8 @@ impl PlatformWindow for WindowLife {
         self.client_decorations.get()
     }
 
-    fn on_client_decorations_changed(&self, listener: Box<dyn FnMut(bool)>) {
-        self.decoration_listeners.borrow_mut().push(listener);
+    fn observe_client_decorations(&self, listener: Box<dyn FnMut(bool)>) -> WindowSubscription {
+        self.decoration_listeners.observe(listener)
     }
 
     fn activate(&self) {
@@ -459,6 +495,8 @@ impl PlatformWindow for WindowLife {
 
     fn close(&self) {
         if self.open.replace(false) {
+            self.state_listeners.clear();
+            self.decoration_listeners.clear();
             if let Some(target) = &self.activation {
                 target.cancel();
             }

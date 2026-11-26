@@ -389,7 +389,7 @@ fn window_state_is_published_once_per_confirmed_change() -> anyhow::Result<()> {
     let (top, xdg) = (top.clone(), surface.clone());
     events.desktop.windows.insert(id.clone(), window);
     let updates = Rc::new(RefCell::new(Vec::new()));
-    handle.on_state_changed({
+    let _subscription = handle.observe_state({
         let updates = updates.clone();
         let handle = handle.clone();
         move |state| {
@@ -473,7 +473,7 @@ fn native_and_title_bar_close_requests_share_the_modal_confirmation() -> anyhow:
     let top = top.clone();
     events.desktop.windows.insert(id.clone(), window);
     let dialog = Rc::new(RefCell::new(None));
-    parent.on_should_close({
+    parent.set_close_guard({
         let parent = parent.clone();
         let dialog = dialog.clone();
         move || {
