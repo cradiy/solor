@@ -22,7 +22,6 @@ mod pointer;
 mod presentation;
 mod role;
 pub mod session_lock;
-mod stacking;
 mod text_input;
 mod wake;
 pub use application::WaylandApplication;

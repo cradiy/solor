@@ -22,17 +22,6 @@ pub struct Edges<T = Pixels> {
     pub left: T,
 }
 
-impl<T> Edges<T> {
-    pub(crate) fn zip_map<U, V>(self, other: Edges<U>, mut f: impl FnMut(T, U) -> V) -> Edges<V> {
-        Edges {
-            top: f(self.top, other.top),
-            right: f(self.right, other.right),
-            bottom: f(self.bottom, other.bottom),
-            left: f(self.left, other.left),
-        }
-    }
-}
-
 impl<T: Copy> Edges<T> {
     /// Assigns one value to all four sides.
     pub const fn all(value: T) -> Self {

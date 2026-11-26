@@ -142,13 +142,7 @@ controls issue no size changes. On Wayland, minima round up and maxima round dow
 logical pixels. Opening fails when the range contains no usable size. The
 compositor can still assign a different size, for example when tiling.
 
-Use `WindowOptions::new("Player").always_on_top()` to request that an ordinary
-window stay above other ordinary windows. Decorations, application identity
-and interactive movement use the usual toplevel options. The Wayland host
-sends this request when the compositor advertises version 2 of
-`treeland_dde_shell_manager_v2`. Other compositors open the ordinary window at its
-usual level. The compositor and the user retain control of the effective
-stacking order.
+On Wayland, the compositor controls the stacking order of ordinary windows.
 
 Windows request the native frame and title bar by default. Pass a boolean to
 `WindowOptions::new("Settings").decorations(enabled)` or use

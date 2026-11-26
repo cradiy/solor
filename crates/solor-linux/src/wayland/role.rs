@@ -20,7 +20,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_surface_v1::{Event, ZwlrLayerSurfaceV1},
 };
 
-use super::{Desktop, decorations::Decorations, stacking::Topmost};
+use super::{Desktop, decorations::Decorations};
 use crate::layer_shell::{
     Anchor, KeyboardInteractivity, Layer, LayerChanges, LayerRules, LayerShellOptions, extent,
     units,
@@ -57,7 +57,6 @@ pub(super) enum Role {
         top: XdgToplevel,
         decorations: Option<Box<Decorations>>,
         dialog: Option<Box<XdgDialogV1>>,
-        topmost: Option<Topmost>,
     },
     Layer(ZwlrLayerSurfaceV1, LayerPlacement),
 }
@@ -170,11 +169,6 @@ impl Request<'_> {
                 );
                 let sizing = ToplevelSizing::new(&options)?;
                 let shell: XdgWmBase = globals.bind(qh, 1..=1, ())?;
-                let topmost = if options.always_on_top {
-                    Topmost::request(globals, qh, surface)
-                } else {
-                    None
-                };
                 let xdg_surface = shell.get_xdg_surface(surface, qh, surface.id());
                 let top = xdg_surface.get_toplevel(qh, surface.id());
                 sizing.apply(&top);
@@ -205,7 +199,6 @@ impl Request<'_> {
                         top,
                         decorations: decorations.map(Box::new),
                         dialog,
-                        topmost,
                     },
                     sizing.initial,
                 ))
@@ -358,7 +351,6 @@ impl Drop for Role {
         match self {
             Self::Toplevel {
                 decorations,
-                topmost,
                 dialog,
                 top,
                 surface,
@@ -368,7 +360,6 @@ impl Drop for Role {
                 if let Some(dialog) = dialog.take() {
                     dialog.destroy();
                 }
-                drop(topmost.take());
                 drop(decorations.take());
                 top.destroy();
                 surface.destroy();

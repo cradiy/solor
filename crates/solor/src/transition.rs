@@ -292,6 +292,17 @@ impl Interpolate for Option<ComputedLength> {
     }
 }
 
+impl<T> Edges<T> {
+    pub(crate) fn zip_map(self, target: Self, mut f: impl FnMut(T, T) -> T) -> Self {
+        Self {
+            top: f(self.top, target.top),
+            right: f(self.right, target.right),
+            bottom: f(self.bottom, target.bottom),
+            left: f(self.left, target.left),
+        }
+    }
+}
+
 impl<T: Interpolate> Interpolate for Edges<T> {
     fn interpolate(self, target: Self, t: f32) -> Self {
         self.zip_map(target, |a, b| a.interpolate(b, t))
