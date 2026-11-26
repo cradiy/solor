@@ -21,11 +21,15 @@ impl Target {
         let fragment = match self {
             Self::Path => include_str!("path.wgsl"),
             Self::Underline => include_str!("underline.wgsl"),
-            Self::Fill | Self::Mask => {
-                concat!(include_str!("coverage.wgsl"), include_str!("quad.wgsl"))
-            }
+            Self::Fill | Self::Mask => include_str!("quad.wgsl"),
         };
-        [include_str!("vertex.wgsl"), body, fragment].join("\n")
+        [
+            include_str!("vertex.wgsl"),
+            include_str!("coverage.wgsl"),
+            body,
+            fragment,
+        ]
+        .join("\n")
     }
 }
 

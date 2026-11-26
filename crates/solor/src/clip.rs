@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::Context as _;
 
-/// A rectangular clip in the command's coordinate system, with independent axes.
+/// Effective overflow bounds and rounded ancestors in drawing coordinates.
 /// Each specified range includes its start and excludes its end.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ContentClip {
@@ -17,6 +17,8 @@ pub struct ContentClip {
     pub x: Option<Range<Pixels>>,
     /// Vertical interval, or unrestricted when absent.
     pub y: Option<Range<Pixels>>,
+    /// Rounded viewports intersected with the axis bounds.
+    pub rounded: Option<Arc<RoundedClips>>,
 }
 
 /// A rounded clipping box in the drawing coordinate system.
@@ -30,6 +32,44 @@ pub struct RoundedClip {
     pub radii: crate::style::Corners<Pixels>,
 }
 
+/// One rounded viewport and its shared ancestor clips.
+#[derive(Debug, PartialEq)]
+pub struct RoundedClips {
+    shape: RoundedClip,
+    parent: Option<Arc<Self>>,
+}
+
+impl RoundedClips {
+    /// Iterates from the innermost rounded viewport to the outermost.
+    pub fn iter(&self) -> impl Iterator<Item = &RoundedClip> {
+        std::iter::successors(Some(self), |node| node.parent.as_deref()).map(|node| &node.shape)
+    }
+}
+
+impl RoundedClip {
+    fn contains(self, point: Origin) -> bool {
+        let x = f64::from(point.x) - f64::from(self.origin.x);
+        let y = f64::from(point.y) - f64::from(self.origin.y);
+        let w = f64::from(self.size.width);
+        let h = f64::from(self.size.height);
+        if x < 0. || y < 0. || x >= w || y >= h {
+            return false;
+        }
+        let r = self.radii;
+        [
+            (x, y, r.top_left),
+            (w - x, y, r.top_right),
+            (w - x, h - y, r.bottom_right),
+            (x, h - y, r.bottom_left),
+        ]
+        .into_iter()
+        .all(|(dx, dy, radius)| {
+            let r = f64::from(radius);
+            dx >= r || dy >= r || (dx - r).powi(2) + (dy - r).powi(2) <= r * r
+        })
+    }
+}
+
 impl ContentClip {
     pub(crate) fn intersect_rect(mut self, origin: Origin, size: Size) -> Result<Self> {
         anyhow::ensure!(
@@ -39,11 +79,6 @@ impl ContentClip {
         intersect_axis(&mut self.x, origin.x, size.width)?;
         intersect_axis(&mut self.y, origin.y, size.height)?;
         Ok(self)
-    }
-
-    pub(crate) fn contains(&self, point: Origin) -> bool {
-        self.x.as_ref().is_none_or(|x| x.contains(&point.x))
-            && self.y.as_ref().is_none_or(|y| y.contains(&point.y))
     }
 
     pub(crate) fn intersects(&self, origin: Origin, size: Size) -> bool {
@@ -78,15 +113,27 @@ impl OverflowClip {
         &self,
         inherited: Option<Arc<ContentClip>>,
         origin: Origin,
+        viewport: Size,
         size: Size,
+        radii: crate::style::Corners<Pixels>,
     ) -> Result<NodeClips> {
         let content = if self.x || self.y {
             let mut clip = inherited.as_deref().cloned().unwrap_or_default();
             if self.x {
-                intersect_axis(&mut clip.x, origin.x, size.width)?;
+                intersect_axis(&mut clip.x, origin.x, viewport.width)?;
             }
             if self.y {
-                intersect_axis(&mut clip.y, origin.y, size.height)?;
+                intersect_axis(&mut clip.y, origin.y, viewport.height)?;
+            }
+            if self.x && self.y && radii != Default::default() {
+                clip.rounded = Some(Arc::new(RoundedClips {
+                    shape: RoundedClip {
+                        origin,
+                        size,
+                        radii: radii.fit_to(size),
+                    },
+                    parent: clip.rounded,
+                }));
             }
             Some(Arc::new(clip))
         } else {
@@ -111,4 +158,19 @@ fn intersect_axis(axis: &mut Option<Range<Pixels>>, start: Pixels, length: Pixel
 pub(crate) struct NodeClips {
     pub(crate) inherited: Option<Arc<ContentClip>>,
     pub(crate) content: Option<Arc<ContentClip>>,
+}
+
+impl NodeClips {
+    pub(crate) fn contains(&self, point: Origin) -> bool {
+        let within_parent = self.inherited.as_ref().is_none_or(|clip| {
+            clip.x.as_ref().is_none_or(|x| x.contains(&point.x))
+                && clip.y.as_ref().is_none_or(|y| y.contains(&point.y))
+        });
+        within_parent
+            && self
+                .content
+                .as_ref()
+                .and_then(|clip| clip.rounded.as_deref())
+                .is_none_or(|shapes| shapes.iter().all(|shape| shape.contains(point)))
+    }
 }

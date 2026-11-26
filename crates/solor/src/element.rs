@@ -297,6 +297,24 @@ pub enum Draw {
     },
 }
 
+impl Draw {
+    /// Effective overflow clip for this primitive. Group children carry their own clips.
+    pub fn content_clip(&self) -> Option<&ContentClip> {
+        match self {
+            Self::Group { .. } => None,
+            Self::WavyUnderline { clip, .. }
+            | Self::BackdropBlur { clip, .. }
+            | Self::Shadow { clip, .. }
+            | Self::Border { clip, .. }
+            | Self::Fill { clip, .. }
+            | Self::Polygon { clip, .. }
+            | Self::Polyline { clip, .. }
+            | Self::Svg { clip, .. }
+            | Self::Text { clip, .. } => clip.as_deref(),
+        }
+    }
+}
+
 /// Local content bounds, inherited color and state access during recording.
 pub struct PaintContext<'a> {
     origin: Origin,
@@ -930,7 +948,7 @@ pub(super) struct MountedNode {
     paint_mode: RefreshPolicy,
     pub(super) text_style: InheritedText,
     text_color: Foreground,
-    corner_radii: Corners<Pixels>,
+    pub(crate) corner_radii: Corners<Pixels>,
     backdrop_blur: Pixels,
     background: Option<Box<MountedBackground>>,
     border: Option<Rc<crate::style::BorderPaint>>,
@@ -1175,6 +1193,8 @@ impl MountedNode {
                     None,
                     Origin::default(),
                     self.scroll_axes.viewport(size),
+                    size,
+                    self.corner_radii,
                 )?;
                 (&local_clips, Origin::default())
             }

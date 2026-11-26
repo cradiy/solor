@@ -152,6 +152,7 @@ fn ordered_fills_match_cpu_across_scales() -> Result<()> {
     draw_gpu_only_effect(&device, &queue, &mut renderer)?;
     compare_shadows(&device, &queue, &mut renderer)?;
     compare_backdrop_blur(&device, &queue, &mut renderer)?;
+    compare_rounded_subtree(&device, &queue, &mut renderer)?;
     compare_groups(&device, &queue, &mut renderer)?;
     compare_paths(&device, &queue, &mut renderer)?;
     compare_borders(&device, &queue, &mut renderer)?;
@@ -1092,6 +1093,60 @@ fn compare_svg(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &mut Render
                     scale.0
                 );
             }
+        }
+    }
+    Ok(())
+}
+
+fn compare_rounded_subtree(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut Renderer,
+) -> Result<()> {
+    let logical = Size {
+        width: px(32.),
+        height: px(24.),
+    };
+    let mut ui = Ui::new();
+    let radius = ui.context().signal(px(10.));
+    let view = ui.mount(component(move |_| {
+        div()
+            .w_full()
+            .h_full()
+            .rounded(radius)
+            .overflow_hidden()
+            .child(div().absolute().inset(px(0.)).bg(rgb(0xff0000)))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(8.))
+                    .top(px(0.))
+                    .size(px(24.))
+                    .rounded_tl(px(8.))
+                    .overflow_hidden()
+                    .child(div().w_full().h_full().bg(rgb(0x0000ff))),
+            )
+    }))?;
+    for r in [10., 0., 10.] {
+        ui.context().set(radius, px(r))?;
+        ui.flush()?;
+        ui.layout(view, logical)?;
+        let frame = ui.record_frame(view)?;
+        for scale in [1., 1.25, 2.].map(RasterScale) {
+            let size = scale.buffer_size(logical)?;
+            let cpu = Surface::draw_view(&frame, size, scale)?;
+            let gpu = pixels(device, queue, renderer, &frame, size, scale)?;
+            for (x, y, expected) in [
+                (0., 0., if r > 0. { [255; 3] } else { [255, 0, 0] }),
+                (9., 0., [255, 0, 0]),
+                (16., 12., [0, 0, 255]),
+                (1., 12., [255, 0, 0]),
+            ] {
+                let i = ((y * scale.0) as usize * size.width as usize + (x * scale.0) as usize) * 4;
+                assert_eq!(cpu.rgba[i..i + 3], expected);
+                assert_eq!(gpu[i..i + 3], expected);
+            }
+            assert!(cpu.rgba.iter().zip(&gpu).all(|(c, g)| c.abs_diff(*g) <= 3));
         }
     }
     Ok(())

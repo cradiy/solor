@@ -23,5 +23,5 @@
         coverage += max(bottom - top, 0.) * step;
     }
     let ink = clamp(solor_paint(point / scale, q.rect.zw, q), vec4f(0.), vec4f(1.));
-    return vec4f(ink.rgb, ink.a * coverage);
+    return vec4f(ink.rgb, ink.a * coverage * solor_clip_coverage(v.pos.xy, v.clip));
 }

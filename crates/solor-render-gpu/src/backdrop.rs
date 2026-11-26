@@ -15,6 +15,7 @@ impl Blur {
         canvas: DeviceSize,
         scale: RasterScale,
         depth: usize,
+        clip_id: u32,
         frame: &mut FrameData,
     ) {
         let Draw::BackdropBlur {
@@ -88,7 +89,12 @@ impl Blur {
         ]);
         let mut resume = Pass::new(depth, wgpu::LoadOp::Load);
         resume.blur = Some(Self { size: work, quad });
-        resume.batches.push((Material::Blur, quad + 1..quad + 2));
+        super::batch(
+            &mut resume.batches,
+            Material::Blur,
+            clip_id,
+            quad + 1..quad + 2,
+        );
         frame.passes.push(resume);
     }
 }

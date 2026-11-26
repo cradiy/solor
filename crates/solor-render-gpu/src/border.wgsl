@@ -37,5 +37,5 @@ fn edge_color(paint: vec4f, coverage: f32, gradient: bool, local: vec2f, size: v
           + edge_color(bl.color,   cover.z, (mask & 4u) != 0u, local, q.rect.zw)
           + edge_color(bl.segment, cover.w, (mask & 8u) != 0u, local, q.rect.zw);
     if c.a <= 0. { discard; }
-    return vec4f(c.rgb / c.a, min(c.a, 1.));
+    return vec4f(c.rgb / c.a, min(c.a, 1.) * solor_clip_coverage(v.pos.xy, v.clip));
 }

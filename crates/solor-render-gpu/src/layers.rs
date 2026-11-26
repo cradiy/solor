@@ -1,12 +1,11 @@
-use super::{GradientBrush, Images, Material};
+use super::{Batch, GradientBrush, Images};
 use solor::{ColorSpace, GradientKind, GradientMap, raster::DeviceSize};
-use std::ops::Range;
 
 pub(super) struct Pass {
     pub depth: usize,
     pub load: wgpu::LoadOp<wgpu::Color>,
     pub blur: Option<super::backdrop::Blur>,
-    pub batches: Vec<(Material, Range<u32>)>,
+    pub batches: Vec<Batch>,
 }
 
 impl Pass {

@@ -1259,3 +1259,53 @@ fn checkerboard_cells_keep_their_phase_across_partial_repairs() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn transparent_window_repairs_corners_when_the_candidate_radius_changes() -> Result<()> {
+    use solor::platform::{WindowBackground, WindowEvent, WindowHandler};
+    use solor_render_cpu::CpuWindow;
+    use std::time::Duration;
+
+    let mut window = CpuWindow::mount_with_background(
+        Ui::new(),
+        component(|cx| {
+            let radius = cx.signal(px(0.));
+            div().child(
+                div()
+                    .absolute()
+                    .top(px(4.))
+                    .left(px(4.))
+                    .size(px(24.))
+                    .rounded(radius)
+                    .overflow_hidden()
+                    .child(div().w_full().h_full().bg(rgb(0x44bb99)))
+                    .on_frame(move |_, cx| {
+                        cx.update(radius, |r| *r = if *r == px(0.) { px(10.) } else { px(0.) })
+                    }),
+            )
+        }),
+        WindowBackground::Transparent,
+    )?;
+    let size = DeviceSize {
+        width: 48,
+        height: 40,
+    }
+    .at_unit_scale();
+    let scale = RasterScale(1.5);
+    for (step, alpha) in [255, 0, 255].into_iter().enumerate() {
+        if step > 0 {
+            window.event(WindowEvent::FrameReady(Duration::from_millis(
+                8 * step as u64,
+            )))?;
+        }
+        let frame = window.frame(size, scale)?;
+        let pixel_alpha = |x, y| frame.rgba[(y * frame.size.width as usize + x) * 4 + 3];
+        assert_eq!(pixel_alpha(6usize, 6usize), alpha);
+        assert_eq!(pixel_alpha(24usize, 24usize), 255);
+        if step > 0 {
+            assert_eq!(frame.damage.bounds().unwrap().left, 6);
+        }
+        window.frame_submitted()?;
+    }
+    Ok(())
+}

@@ -613,8 +613,8 @@ Offsets, blur and spread accept pixels or rems.
 Each background corner has an independent circular radius. If two adjacent
 radii exceed their shared edge, the frame scales all four by the same factor
 until they fit. The CPU renderer applies this shape to solid and gradient
-backgrounds and borders. Overflow clipping and pointer hit boxes remain
-rectangular. Additional layout, paint, text shaping and input behaviors in
+backgrounds and borders. When overflow clips both axes, the same corners
+constrain content, descendant painting and pointer hits on both renderers. Additional layout, paint, text shaping and input behaviors in
 this table are declarations pending engine support.
 
 ## Contracts to establish next

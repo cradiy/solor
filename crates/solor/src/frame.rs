@@ -312,16 +312,21 @@ impl Ui {
             .advance_with_data(now, |id, margins, apply| {
                 Ok(apply(&mut instance.scene, id, margins)?)
             })?;
+        let mut clip_changed = false;
         instance.transitions.radii.advance(now, |id, radii| {
             let node = instance
                 .bodies
                 .get_mut(&id)
                 .expect("mounted transition owner");
             if node.set_corner_radii(radii) {
+                clip_changed |= node.overflow_clip.x && node.overflow_clip.y;
                 instance.repaints.borrow_mut().invalidate(id);
             }
             Ok(())
         })?;
+        if clip_changed {
+            instance.invalidate_geometry();
+        }
         instance.transitions.opacity.advance(now, |id, opacity| {
             let node = instance
                 .bodies

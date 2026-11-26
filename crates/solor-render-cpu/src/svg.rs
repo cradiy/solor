@@ -1,67 +1,12 @@
-use crate::pixels::Surface;
+use crate::{pixels::Surface, rounded_clip::CornerMask};
 use solor::raster::svg::SvgRaster;
-use solor::{
-    RoundedClip, SvgAsset,
-    raster::{Clip, RasterScale},
-    style::Corners,
-};
-use std::{collections::VecDeque, io::Result, ops::Range, rc::Rc};
+use solor::{SvgAsset, raster::Clip};
+use std::{collections::VecDeque, io::Result, rc::Rc};
 
 pub(super) struct Viewport {
     pub bounds: Clip,
     pub visible: Clip,
     pub corners: Option<CornerMask>,
-}
-
-pub(super) struct CornerMask {
-    left: f64,
-    top: f64,
-    width: f64,
-    height: f64,
-    radii: Corners<f64>,
-}
-
-impl CornerMask {
-    pub(super) fn new(clip: &RoundedClip, scale: RasterScale) -> Self {
-        let device = |v| f64::from(v) * scale.0;
-        Self {
-            left: device(clip.origin.x),
-            top: device(clip.origin.y),
-            width: device(clip.size.width),
-            height: device(clip.size.height),
-            radii: clip.radii.map(device),
-        }
-    }
-
-    fn interior(&self, y: i64, span: Range<i64>) -> Range<i64> {
-        let top = y as f64 - self.top;
-        let bottom = self.height - top - 1.;
-        if top < 0. || bottom < 0. {
-            return span.start..span.start;
-        }
-        let inset = |a: f64, b: f64| {
-            let upper = if top < a { a } else { 0. };
-            upper.max(if bottom < b { b } else { 0. })
-        };
-        let r = self.radii;
-        let left = (self.left + inset(r.top_left, r.bottom_left)).ceil() as i64;
-        let right = (self.left + self.width - inset(r.top_right, r.bottom_right)).floor() as i64;
-        let start = left.clamp(span.start, span.end);
-        start..right.clamp(start, span.end)
-    }
-
-    fn coverage(&self, x: i64, y: i64) -> u8 {
-        let dy = y as f64 - self.top;
-        let row_height = ((dy + 1.).min(self.height) - dy.max(0.)).clamp(0., 1.);
-        crate::view::coverage(
-            x as f64 - self.left,
-            dy,
-            self.width,
-            self.height,
-            row_height,
-            self.radii,
-        )
-    }
 }
 
 fn multiply_alpha(value: u8, alpha: u8) -> u8 {

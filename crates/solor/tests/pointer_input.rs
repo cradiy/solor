@@ -1643,3 +1643,29 @@ fn an_anchored_badge_tracks_the_painted_hit_target_across_resize() -> Result<()>
     assert_eq!(click(&mut ui, 51.)?, 2);
     Ok(())
 }
+
+#[test]
+fn rounded_overflow_routes_only_visible_hits_after_a_radius_change() -> Result<()> {
+    let mut ui = Ui::new();
+    let radius = ui.context().signal(px(12.));
+    let hit = ui.context().signal(0);
+    let view = ui.mount(component(|_| {
+        div().on_click(move |cx| cx.set(hit, 1)).child(
+            div()
+                .size(px(32.))
+                .rounded_tl(radius)
+                .overflow_hidden()
+                .on_click(move |cx| cx.set(hit, 2))
+                .child(div().w_full().h(px(16.)).on_click(move |cx| cx.set(hit, 3))),
+        )
+    }))?;
+    for (radius_value, x, expected) in [(12., 1., 1), (12., 16., 3), (0., 1., 3)] {
+        ui.context().set(radius, px(radius_value))?;
+        accept(&mut ui, view, 40.)?;
+        let point = sample(1, x, 1.);
+        ui.dispatch_pointer(view, Down(point, Primary))?;
+        ui.dispatch_pointer(view, Up(point, Primary))?;
+        assert_eq!(*ui.context().read(hit)?, expected);
+    }
+    Ok(())
+}

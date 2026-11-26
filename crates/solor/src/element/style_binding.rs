@@ -600,6 +600,7 @@ impl crate::Instance {
         node.background = background;
         node.border = border;
         node.outline = outline;
+        let rounded_clip_changed = clip.x && clip.y && node.corner_radii != radii;
         node.corner_radii = style.corner_radii;
         node.set_corner_radii(radii);
         for (property, timing, current) in colors.into_iter().flatten() {
@@ -615,7 +616,7 @@ impl crate::Instance {
             }
         }
         node.shadows = shadows;
-        if routing_changed {
+        if routing_changed || rounded_clip_changed {
             self.invalidate_geometry();
         }
         self.repaints.borrow_mut().invalidate(id);

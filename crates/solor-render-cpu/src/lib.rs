@@ -13,6 +13,7 @@ mod path;
 pub mod pixels;
 mod polygon;
 mod polyline;
+mod rounded_clip;
 #[cfg(feature = "shader")]
 mod shader;
 #[cfg(feature = "shader")]

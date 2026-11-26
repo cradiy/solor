@@ -5,6 +5,7 @@ use std::{
 
 use crate::glyph_masks::GlyphMasks;
 use crate::pixels::{Clip, DeviceSize, RasterScale, Surface, TextRaster, blend, blend_solid_span};
+use crate::rounded_clip::{CornerMask, SavedEdges};
 use solor::{
     Draw, Fill, Pixels, ViewFrame,
     layout::{Origin, Size},
@@ -205,6 +206,10 @@ impl Surface {
             if bounds.empty() {
                 continue;
             }
+            let edges = draw
+                .content_clip()
+                .and_then(|clip| clip.rounded.as_deref())
+                .map(|corners| SavedEdges::capture(self, bounds, scale, corners));
             match draw {
                 Draw::Group {
                     alpha,
@@ -248,6 +253,9 @@ impl Surface {
                                     ..bounds
                                 };
                                 self.fill_box(*origin, *size, &fill, *corner_radii, scale, band)?;
+                            }
+                            if let Some(edges) = edges {
+                                edges.apply(self);
                             }
                             continue;
                         }
@@ -341,7 +349,7 @@ impl Surface {
                         visible,
                         corners: rounded_clip
                             .as_deref()
-                            .map(|clip| crate::svg::CornerMask::new(clip, scale)),
+                            .map(|clip| CornerMask::new(clip, scale)),
                     };
                     replay.svgs.draw(self, asset, tint, region, bounds)?;
                 }
@@ -362,6 +370,9 @@ impl Surface {
                     };
                     raster.draw(self, *origin, *allocated, paragraph, color, bounds)?;
                 }
+            }
+            if let Some(edges) = edges {
+                edges.apply(self);
             }
         }
         Ok(())
@@ -522,7 +533,16 @@ fn opaque_cover(draw: &Draw, scale: RasterScale, area: Clip) -> Result<Option<so
     else {
         return Ok(None);
     };
-    if color.alpha != 255 {
+    if color.alpha != 255
+        || draw
+            .content_clip()
+            .and_then(|c| c.rounded.as_deref())
+            .is_some_and(|shapes| {
+                shapes
+                    .iter()
+                    .any(|s| !CornerMask::new(s, scale).covers(area))
+            })
+    {
         return Ok(None);
     }
     let left = f64::from(origin.x) * scale.0;
@@ -549,19 +569,7 @@ fn opaque_cover(draw: &Draw, scale: RasterScale, area: Clip) -> Result<Option<so
 // Fill coverage includes fractional edge pixels. Text is clipped to rounded layout edges.
 fn device_bounds(draw: &Draw, scale: RasterScale) -> Result<Clip> {
     let bounds = primitive_bounds(draw, scale)?;
-    let (Draw::WavyUnderline { clip, .. }
-    | Draw::BackdropBlur { clip, .. }
-    | Draw::Shadow { clip, .. }
-    | Draw::Border { clip, .. }
-    | Draw::Fill { clip, .. }
-    | Draw::Polygon { clip, .. }
-    | Draw::Polyline { clip, .. }
-    | Draw::Svg { clip, .. }
-    | Draw::Text { clip, .. }) = draw
-    else {
-        return Ok(bounds);
-    };
-    Ok(clip_to_content(bounds, clip.as_deref(), scale))
+    Ok(clip_to_content(bounds, draw.content_clip(), scale))
 }
 
 fn clip_to_content(

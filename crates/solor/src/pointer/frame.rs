@@ -179,12 +179,7 @@ impl PointerFrame {
             return None;
         }
         let hit = self.geometry.entries.iter().rev().find(|entry| {
-            entry.testable
-                && entry.area.contains(p)
-                && self.geometry.clips[entry.clips]
-                    .inherited
-                    .as_deref()
-                    .is_none_or(|clip| clip.contains(p))
+            entry.testable && entry.area.contains(p) && self.geometry.clips[entry.clips].contains(p)
         })?;
         Some((hit.node, hit.recipients))
     }
@@ -494,6 +489,8 @@ impl HitGeometry {
             self.clips[inherited].content.clone(),
             area.origin,
             body.scroll_axes.viewport(area.size),
+            area.size,
+            body.corner_radii,
         )?;
         let own = self.clips.len();
         self.clips.push(clips);

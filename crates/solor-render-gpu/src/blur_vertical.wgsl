@@ -11,5 +11,5 @@ fn read_sample(p: vec2i) -> vec4f {
     let original = unpack4x8unorm(textureLoad(rows, p, 0).y);
     let filtered = box_filter(p, vec2i(0, 1), i32(q.params.w), q.params.z);
     let coverage = solor_box_coverage(v.pos.xy / q.viewport.z - q.rect.xy, q);
-    return mix(original, filtered, coverage);
+    return mix(original, filtered, coverage * solor_clip_coverage(v.pos.xy, v.clip));
 }

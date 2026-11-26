@@ -89,5 +89,5 @@ fn solor_polygon(p: vec2f, base: u32, count: u32, nonzero: bool) -> f32 {
         cover = solor_polygon(v.pos.xy, base, count, q.viewport.w == 1.);
     }
     let color = solor_path_color(v.pos.xy, q);
-    return vec4f(color.rgb, color.a * cover);
+    return vec4f(color.rgb, color.a * cover * solor_clip_coverage(v.pos.xy, v.clip));
 }

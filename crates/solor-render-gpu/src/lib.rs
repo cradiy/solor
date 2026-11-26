@@ -57,6 +57,54 @@ enum Material {
     Mask { page: usize, effect: Option<usize> },
 }
 
+struct Batch {
+    material: Material,
+    clip: u32,
+    instances: Range<u32>,
+}
+
+#[derive(Default)]
+struct ClipTable<'a> {
+    last: Option<(&'a solor::RoundedClips, u32)>,
+}
+
+impl<'a> ClipTable<'a> {
+    fn index(
+        &mut self,
+        clip: Option<&'a solor::ContentClip>,
+        scale: RasterScale,
+        data: &mut Vec<[[f32; 4]; 2]>,
+    ) -> u32 {
+        let Some(shapes) = clip.and_then(|c| c.rounded.as_deref()) else {
+            return 0;
+        };
+        if let Some((last, index)) = self.last
+            && std::ptr::eq(last, shapes)
+        {
+            return index;
+        }
+        let index = data.len();
+        data.push([[0.; 4]; 2]);
+        let physical = |v: solor::Pixels| (f64::from(v) * scale.0) as f32;
+        for shape in shapes.iter() {
+            let r = shape.radii;
+            data.push([
+                [
+                    shape.origin.x,
+                    shape.origin.y,
+                    shape.size.width,
+                    shape.size.height,
+                ]
+                .map(physical),
+                [r.top_left, r.top_right, r.bottom_right, r.bottom_left].map(physical),
+            ]);
+        }
+        data[index][0][0] = f32::from_bits(data.len() as u32);
+        self.last = Some((shapes, index as u32));
+        index as u32
+    }
+}
+
 struct FrameData {
     quads: Vec<[[f32; 4]; 6]>,
     stops: Vec<[[f32; 4]; 2]>,
@@ -267,7 +315,9 @@ impl Renderer {
         depth: usize,
         frame: &mut FrameData,
     ) -> Result<()> {
+        let mut clips = ClipTable::default();
         for (index, cmd) in draws.iter().enumerate() {
+            let clip_id = clips.index(cmd.content_clip(), scale, &mut frame.stops);
             if let Draw::Group {
                 alpha,
                 gradient_map,
@@ -293,12 +343,17 @@ impl Renderer {
                     &mut frame.stops,
                 ));
                 let mut parent = layers::Pass::new(depth, wgpu::LoadOp::Load);
-                batch(&mut parent.batches, Material::Composite, index);
+                batch(
+                    &mut parent.batches,
+                    Material::Composite,
+                    0,
+                    index..index + 1,
+                );
                 frame.passes.push(parent);
                 continue;
             }
             if matches!(cmd, Draw::BackdropBlur { .. }) {
-                backdrop::Blur::record(cmd, size, scale, depth, frame);
+                backdrop::Blur::record(cmd, size, scale, depth, clip_id, frame);
                 continue;
             }
             let FrameData {
@@ -333,7 +388,7 @@ impl Renderer {
                 if let Some(quad) = shadow::quad(&geometry, clip.as_deref(), size, scale, stops) {
                     let index = quads.len() as u32;
                     quads.push(quad);
-                    batch(batches, Material::Shadow, index);
+                    batch(batches, Material::Shadow, clip_id, index..index + 1);
                 }
                 continue;
             }
@@ -347,7 +402,7 @@ impl Renderer {
                         }
                         None => Material::Path,
                     };
-                    batches.push((material, first as u32..quads.len() as u32));
+                    batch(batches, material, clip_id, first as u32..quads.len() as u32);
                 }
                 continue;
             }
@@ -420,7 +475,7 @@ impl Renderer {
                             [size.width as f32, size.height as f32, 1., 1.],
                             [0., 0., width, height],
                         ]);
-                        batch(batches, Material::Image(image), index);
+                        batch(batches, Material::Image(image), clip_id, index..index + 1);
                         continue;
                     }
                     Some((region, rect, radii))
@@ -464,7 +519,12 @@ impl Renderer {
                         [size.width as f32, size.height as f32, 1., oklab],
                         [uv[0], uv[1], paint_box, scale.0 as f32],
                     ]);
-                    batch(batches, Material::Mask { page, effect }, index);
+                    batch(
+                        batches,
+                        Material::Mask { page, effect },
+                        clip_id,
+                        index..index + 1,
+                    );
                 };
                 if let Some((region, rect, radii)) = svg {
                     let tile = self
@@ -542,7 +602,7 @@ impl Renderer {
                         .map_err(unsupported)?;
                 let index = quads.len() as u32;
                 quads.push(quad);
-                batch(batches, material, index);
+                batch(batches, material, clip_id, index..index + 1);
                 continue;
             }
             let underline_fill;
@@ -651,7 +711,7 @@ impl Renderer {
                 ],
                 ramp,
             ]);
-            batch(batches, material, index);
+            batch(batches, material, clip_id, index..index + 1);
         }
         Ok(())
     }
@@ -688,7 +748,12 @@ impl Renderer {
                 &mut frame_data.stops,
             ));
             let mut present = layers::Pass::new(0, wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT));
-            batch(&mut present.batches, Material::Composite, index);
+            batch(
+                &mut present.batches,
+                Material::Composite,
+                0,
+                index..index + 1,
+            );
             frame_data.passes.push(present);
         }
         let FrameData {
@@ -796,8 +861,8 @@ impl Renderer {
                 ..Default::default()
             });
             pass.set_bind_group(0, &buffers.group, &[]);
-            for (id, range) in layer_pass.batches {
-                match id {
+            for batch in layer_pass.batches {
+                match batch.material {
                     Material::Brush => pass.set_pipeline(&self.brush),
                     Material::Blur => {
                         let filter = self.backdrop.as_ref().expect("prepared backdrop filter");
@@ -832,6 +897,7 @@ impl Renderer {
                                 self.format,
                                 concat!(
                                     include_str!("vertex.wgsl"),
+                                    include_str!("coverage.wgsl"),
                                     "\n",
                                     include_str!("gradient.wgsl"),
                                     "\n",
@@ -853,8 +919,12 @@ impl Renderer {
                                 &self.device,
                                 &self.layout,
                                 self.format,
-                                concat!(include_str!("vertex.wgsl"), include_str!("shadow.wgsl"))
-                                    .to_owned(),
+                                concat!(
+                                    include_str!("vertex.wgsl"),
+                                    include_str!("coverage.wgsl"),
+                                    include_str!("shadow.wgsl")
+                                )
+                                .to_owned(),
                                 "solor_",
                                 wgpu::BlendState::ALPHA_BLENDING,
                             )
@@ -874,6 +944,7 @@ impl Renderer {
                                     self.format,
                                     [
                                         include_str!("vertex.wgsl"),
+                                        include_str!("coverage.wgsl"),
                                         include_str!("gradient.wgsl"),
                                         coverage,
                                         include_str!("border.wgsl"),
@@ -908,7 +979,9 @@ impl Renderer {
                         pass.set_bind_group(1, &image_groups[i], &[]);
                     }
                 }
-                pass.draw(0..6, range);
+                // Each clip selects six procedural vertices. Instance indices stay contiguous across batches.
+                let vertex = batch.clip * 6;
+                pass.draw(vertex..vertex + 6, batch.instances);
             }
         }
         self.queue.submit([encoder.finish()]);
@@ -983,13 +1056,19 @@ fn visible_bounds(
     Some(bounds)
 }
 
-fn batch(batches: &mut Vec<(Material, Range<u32>)>, material: Material, index: u32) {
-    if let Some((id, span)) = batches.last_mut()
-        && *id == material
+fn batch(batches: &mut Vec<Batch>, material: Material, clip: u32, instances: Range<u32>) {
+    if let Some(last) = batches.last_mut()
+        && last.material == material
+        && last.clip == clip
+        && last.instances.end == instances.start
     {
-        span.end += 1;
+        last.instances.end = instances.end;
     } else {
-        batches.push((material, index..index + 1));
+        batches.push(Batch {
+            material,
+            clip,
+            instances,
+        });
     }
 }
 

@@ -119,5 +119,5 @@ fn band_area(x: vec2f, ys: vec2f, base: vec2f, hard: vec2f, caster: BoxShape, bl
         }
     }
     area += band_area(x, vec2f(start, p.y + 1.), prev_base, prev_hard, caster, blur, inset);
-    return vec4f(q.params.rgb, q.params.a * clamp(area, 0., 1.));
+    return vec4f(q.params.rgb, q.params.a * clamp(area, 0., 1.) * solor_clip_coverage(v.pos.xy, v.clip));
 }
