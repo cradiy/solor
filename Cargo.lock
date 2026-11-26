@@ -1593,6 +1593,8 @@ dependencies = [
  "solor",
  "solor-platform",
  "solor-render-cpu",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

@@ -422,7 +422,7 @@ impl Ui {
         {
             let mut paint = instance.repaints.borrow_mut();
             if !paint.image_deadlines.is_empty() {
-                let now = std::time::Instant::now();
+                let now = web_time::Instant::now();
                 let crate::PaintState {
                     image_deadlines,
                     commands,

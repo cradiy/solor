@@ -1159,3 +1159,18 @@ scrollbar(&list).paint_with(move |cx, bar| {
     )
 })
 ```
+
+## Browser canvas example
+
+The Web canvas example mounts a click counter with the CPU renderer. From the
+workspace root, use the `wasm32-unknown-unknown` target and a `wasm-bindgen`
+CLI matching the version in `Cargo.lock`.
+
+```sh
+cargo build --locked --release -p solor-gallery --example web_canvas --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-dir target/web-canvas target/wasm32-unknown-unknown/release/examples/web_canvas.wasm
+cp crates/solor-gallery/examples/web_canvas/index.html target/web-canvas/
+python3 -m http.server 8000 --bind 127.0.0.1 --directory target/web-canvas
+```
+
+Open `http://127.0.0.1:8000` and click the counter.

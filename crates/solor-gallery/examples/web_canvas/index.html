@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solor · Click counter</title>
+<style>
+  body { margin: 0; }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+</style>
+<canvas aria-label="Solor click counter"></canvas>
+<script type="module">
+  import init, { CanvasView } from "./web_canvas.js";
+  await init();
+  const canvas = document.querySelector("canvas");
+  const view = new CanvasView(canvas);
+  let pending = false;
+  function redraw() {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => {
+      pending = false;
+      const { width, height } = canvas.getBoundingClientRect();
+      if (width && height) view.draw(width, height, devicePixelRatio);
+    });
+  }
+  for (const type of ["pointerdown", "pointerup", "pointermove", "pointercancel", "pointerleave"]) {
+    canvas.addEventListener(type, event => {
+      if (type === "pointerdown" && event.button === 0) canvas.setPointerCapture(event.pointerId);
+      if (view.pointer(event)) redraw();
+    });
+  }
+  new ResizeObserver(redraw).observe(canvas);
+  window.addEventListener("resize", redraw);
+  redraw();
+</script>
+</html>

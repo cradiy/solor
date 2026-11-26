@@ -124,7 +124,7 @@ impl<R: ViewRenderer> WindowHandler<R::Target> for UiWindow<R> {
         }
         response.redraw |= self
             .next_redraw()
-            .is_some_and(|deadline| deadline <= std::time::Instant::now());
+            .is_some_and(|deadline| deadline <= web_time::Instant::now());
         Ok(response)
     }
 
@@ -132,7 +132,7 @@ impl<R: ViewRenderer> WindowHandler<R::Target> for UiWindow<R> {
         self.ui.pointer_cursor(self.view, pointer)
     }
 
-    fn next_redraw(&self) -> Option<std::time::Instant> {
+    fn next_redraw(&self) -> Option<web_time::Instant> {
         self.ui.next_redraw(self.view)
     }
 

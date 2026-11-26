@@ -564,7 +564,7 @@ impl Ui {
 
     /// Earliest time an idle host should record this view for pending updates or pointer feedback.
     /// A host rechecks this after input and after accepting a frame.
-    pub fn next_redraw(&self, view: ViewId) -> Option<std::time::Instant> {
+    pub fn next_redraw(&self, view: ViewId) -> Option<web_time::Instant> {
         let instance = self.instances.get(&view)?;
         if self.has_pending_bindings()
             || !instance.repaints.borrow().dirty.is_empty()
@@ -575,7 +575,7 @@ impl Ui {
             || instance.pointer.scroll_pending
             || instance.lists.values().any(|list| list.dirty.get())
         {
-            return Some(std::time::Instant::now());
+            return Some(web_time::Instant::now());
         }
         let deadline = instance.pointer.tooltips.deadline();
         #[cfg(any(feature = "gif", feature = "webp"))]

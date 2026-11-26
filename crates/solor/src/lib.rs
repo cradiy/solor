@@ -296,7 +296,7 @@ struct Branch {
 #[derive(Default)]
 struct PaintState {
     #[cfg(any(feature = "gif", feature = "webp"))]
-    image_deadlines: HashMap<NodeId, std::time::Instant>,
+    image_deadlines: HashMap<NodeId, web_time::Instant>,
     dirty: HashSet<NodeId>,
     commands: HashMap<NodeId, Vec<Draw>>,
 }

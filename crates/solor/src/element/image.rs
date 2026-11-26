@@ -218,7 +218,7 @@ impl ImageContent {
 }
 pub(super) struct ImageBody {
     #[cfg(any(feature = "gif", feature = "webp"))]
-    started: std::cell::Cell<Option<std::time::Instant>>,
+    started: std::cell::Cell<Option<web_time::Instant>>,
     #[cfg(feature = "network")]
     remote: Option<Box<crate::bitmap::remote::Subscription>>,
     image: ImageContent,
@@ -255,7 +255,7 @@ impl ImageBody {
             if !Self::image_visible(cx)? {
                 return Ok(());
             }
-            let now = std::time::Instant::now();
+            let now = web_time::Instant::now();
             let start = self.started.get().unwrap_or(now);
             self.started.set(Some(start));
             if let Some(next) = image.sample_animation(now - start) {

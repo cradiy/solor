@@ -427,7 +427,7 @@ pub trait WindowHandler<T: Presentation> {
     }
 
     /// Earliest monotonic deadline for an on-demand redraw. Recheck after input or submission.
-    fn next_redraw(&self) -> Option<std::time::Instant> {
+    fn next_redraw(&self) -> Option<web_time::Instant> {
         None
     }
 

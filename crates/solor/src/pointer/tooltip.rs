@@ -11,9 +11,9 @@ use crate::{
 use std::{
     cell::{Cell, OnceCell},
     collections::HashMap,
-    time::Instant,
 };
 pub use style::{Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle};
+use web_time::Instant;
 
 impl Ui {
     /// Sets the default tooltip style for existing and future views.
