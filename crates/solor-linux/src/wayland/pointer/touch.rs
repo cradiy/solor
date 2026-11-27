@@ -146,9 +146,7 @@ impl Dispatch<WlTouch, u32> for Desktop {
         let press = serial
             .filter(|_| matches!(input, PointerInput::Down(..)))
             .map(|serial| (seat.seat.clone(), serial));
-        if let Some(grab_serial) = grab_serial {
-            state.menus.input(window, &seat.seat, grab_serial);
-        }
+        let _menu_input = grab_serial.map(|serial| state.menus.input(window, &seat.seat, serial));
         let activation = serial.and_then(|serial| {
             if let Some(c) = &state.clipboard {
                 c.input(*seat_name, &surface, serial);
@@ -159,7 +157,6 @@ impl Dispatch<WlTouch, u32> for Desktop {
                 .map(|a| a.input(&window.surface, &seat.seat, serial))
         });
         window.dispatch(WindowEvent::Pointer(input), press);
-        state.menus.end_input();
         drop(activation);
     }
 }

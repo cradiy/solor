@@ -412,6 +412,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
         let seat = &mut state.seats[index];
         let blocked = window.life.blocked();
         let mut input = None;
+        let mut grab_serial = None;
         let mut press = None;
         let event = match event {
             wl_pointer::Event::Enter {
@@ -497,7 +498,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
                 match button_state {
                     wl_pointer::ButtonState::Pressed => {
                         seat.button_presses.push((button, serial));
-                        state.menus.input(window, &seat.seat, serial);
+                        grab_serial = Some(serial);
                         if button == PointerButton::Primary {
                             press = Some((seat.seat.clone(), serial));
                         }
@@ -510,7 +511,7 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
                             .position(|(pressed, _)| *pressed == button)
                         {
                             let (_, press_serial) = seat.button_presses.swap_remove(index);
-                            state.menus.input(window, &seat.seat, press_serial);
+                            grab_serial = Some(press_serial);
                         }
                         PointerInput::Up(p, button)
                     }
@@ -520,9 +521,10 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Desktop {
             _ => return,
         };
         if !blocked {
+            let _menu_input =
+                grab_serial.map(|serial| state.menus.input(window, &seat.seat, serial));
             window.dispatch(WindowEvent::Pointer(event), press);
         }
-        state.menus.end_input();
         drop(input);
     }
 }

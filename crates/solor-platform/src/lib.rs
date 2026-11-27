@@ -117,7 +117,7 @@ impl Application {
     }
 
     /// Opens an XDG popup, replacing the previous child of the same parent.
-    /// A grabbing popup must open during a pointer button event on its parent.
+    /// Open a grabbing popup from its parent's pointer button, touch press/release or key press callback.
     #[cfg(target_os = "linux")]
     pub fn open_popup<R: Render>(
         &self,

@@ -319,6 +319,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
                     .activation
                     .as_ref()
                     .map(|activation| activation.input(&window.surface, seat, serial));
+                let _menu_input =
+                    (state == KeyState::Down).then(|| desktop.menus.input(window, seat, serial));
                 window.event(WindowEvent::Key(event));
             }
             _ => {}

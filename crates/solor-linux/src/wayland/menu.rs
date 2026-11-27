@@ -132,18 +132,20 @@ impl Menus {
         Ok(menu.clone())
     }
 
-    pub fn input(&self, window: &Window, seat: &WlSeat, serial: u32) {
-        if let Some(parent) = &window.popup_parent {
-            self.input.replace(Some(Trigger {
+    pub(super) fn input(&self, window: &Window, seat: &WlSeat, serial: u32) -> impl Drop + '_ {
+        struct Scope<'a>(&'a Menus);
+        impl Drop for Scope<'_> {
+            fn drop(&mut self) {
+                self.0.input.take();
+            }
+        }
+        self.input
+            .replace(window.popup_parent.as_ref().map(|parent| Trigger {
                 parent: parent.handle.clone(),
                 seat: seat.clone(),
                 serial,
             }));
-        }
-    }
-
-    pub fn end_input(&self) {
-        self.input.take();
+        Scope(self)
     }
 
     pub(super) fn dismiss_child(&self, handle: &WindowHandle) {
@@ -173,7 +175,7 @@ impl Menus {
             .parent
             .as_ref()
             .or_else(|| input.as_ref().map(|t| &t.parent))
-            .context("a popup needs a parent window or a current pointer button event")?;
+            .context("a popup needs a parent window or a triggering input event")?;
         let parent = self
             .parents
             .borrow()
@@ -192,7 +194,9 @@ impl Menus {
             let trigger = input
                 .as_ref()
                 .filter(|t| t.parent == *parent_handle)
-                .context("a popup grab requires a pointer button event on its parent")?;
+                .context(
+                    "a popup grab requires a pointer button, touch or key press on its parent",
+                )?;
             if let ParentRole::Menu(menu) = &parent.role {
                 ensure!(
                     menu.seat.as_ref() == Some(&trigger.seat),

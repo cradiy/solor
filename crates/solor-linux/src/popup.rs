@@ -63,9 +63,9 @@ pub use wayland_protocols::xdg::shell::client::xdg_positioner::{
 /// Placement of an XDG popup relative to its parent's content.
 #[derive(Clone, Debug)]
 pub struct PopupOptions {
-    /// Mapped toplevel, layer surface or popup to anchor to. Defaults to the pointer button event's window.
+    /// Mapped toplevel, layer surface or popup to anchor to. Defaults to the triggering input's window.
     pub parent: Option<solor::platform::WindowHandle>,
-    /// Requests an explicit grab using the current parent pointer button event.
+    /// Requests a grab using the parent window's triggering pointer, touch or key press.
     pub grab: bool,
     /// Lets pointer and touch input pass through the entire popup surface.
     pub input_transparent: bool,

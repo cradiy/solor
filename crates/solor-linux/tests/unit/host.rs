@@ -67,14 +67,23 @@ impl Host {
         factory.open(Request::Popup(Box::new(|_| Ok(Box::new(())))), None, |_| {
             Ok(Box::new(view))
         })?;
-        let id = factory.pending.borrow().last().unwrap().surface.id();
-        for window in factory.pending.take() {
+        Ok(self.install_pending())
+    }
+
+    pub(in crate::wayland) fn application(&self) -> WaylandApplication {
+        WaylandApplication(Rc::downgrade(&self.events.windows))
+    }
+
+    pub(in crate::wayland) fn install_pending(&mut self) -> ObjectId {
+        let pending = self.events.windows.pending.take();
+        let id = pending.last().unwrap().surface.id();
+        for window in pending {
             self.events
                 .desktop
                 .windows
                 .insert(window.surface.id(), window);
         }
-        Ok(id)
+        id
     }
 
     pub(in crate::wayland) fn desktop(&mut self) -> &mut Desktop {
