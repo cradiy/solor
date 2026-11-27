@@ -3,7 +3,11 @@ use anyhow::Result;
 use solor::{Assets, Render, Ui};
 
 #[cfg_attr(target_os = "linux", path = "linux.rs")]
-#[cfg_attr(not(target_os = "linux"), path = "unsupported.rs")]
+#[cfg_attr(target_os = "macos", path = "macos.rs")]
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "macos")),
+    path = "unsupported.rs"
+)]
 mod system;
 
 pub use solor::platform::{

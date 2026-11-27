@@ -21,6 +21,10 @@ solor.workspace = true
 solor-linux.workspace = true
 solor-render-cpu.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+solor-macos.workspace = true
+solor-render-cpu.workspace = true
+
 [[example]]
 name = "image"
 required-features = ["solor/webp"]
