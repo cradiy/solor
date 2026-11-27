@@ -21,6 +21,12 @@ pub struct NodeId {
     key: NodeKey,
 }
 
+impl NodeId {
+    pub(crate) fn sort_key(self) -> impl Ord {
+        (self.tree, self.key)
+    }
+}
+
 /// A rejected structural operation. The tree is unchanged on these errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TreeError {

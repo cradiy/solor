@@ -422,7 +422,13 @@ fn a_menu_action_on_the_list_anchors_to_the_presented_focused_row() -> Result<()
         move |_| {
             div()
                 .overflow_y_scroll()
-                .children((0..4).map(|_| div().w_full().min_h(px(10.5)).focusable()))
+                .children((0..4).map(|i| {
+                    div()
+                        .w_full()
+                        .min_h(px(10.5))
+                        .focusable()
+                        .z_index(if i == 2 { -1 } else { 0 })
+                }))
                 .on_action(move |_: &OpenMenu, cx| {
                     anchor.set(cx.focused_bounds());
                     Ok(())

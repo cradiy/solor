@@ -25,8 +25,8 @@ pub(super) struct Recipients {
 }
 
 struct InteractiveBox {
-    border: SurfaceRect,
-    pointer_padding: Option<crate::styled_body::ContentInsets>,
+    entry: usize,
+    padding: crate::styled_body::ContentInsets,
 }
 
 struct Entry {
@@ -72,6 +72,8 @@ pub(super) struct HitGeometry {
     group_events: Vec<(usize, Option<NodeId>)>,
     clips: Vec<NodeClips>,
     interactive: HashMap<NodeId, InteractiveBox>,
+    // Entry indices sorted by node identity, independent of paint order.
+    focus_only: Vec<usize>,
     hover_parents: HashMap<NodeId, Option<NodeId>>,
     scroll_parents: HashMap<NodeId, NodeId>,
     scroll_viewports: HashMap<NodeId, ScrollViewport>,
@@ -160,10 +162,7 @@ impl PointerFrame {
     }
 
     pub(super) fn has_recipient(&self, node: NodeId) -> bool {
-        self.geometry
-            .interactive
-            .get(&node)
-            .is_some_and(|area| area.pointer_padding.is_some())
+        self.geometry.interactive.contains_key(&node)
     }
 
     pub(super) fn hit(&self, p: Origin) -> Option<(NodeId, Recipients)> {
@@ -210,7 +209,15 @@ impl PointerFrame {
     }
 
     pub(crate) fn bounds(&self, node: NodeId) -> Option<SurfaceRect> {
-        self.geometry.interactive.get(&node).map(|b| b.border)
+        let geometry = &self.geometry;
+        if let Some(target) = geometry.interactive.get(&node) {
+            return Some(geometry.entries[target.entry].area);
+        }
+        let index = geometry
+            .focus_only
+            .binary_search_by_key(&node.sort_key(), |&i| geometry.entries[i].node.sort_key())
+            .ok()?;
+        Some(geometry.entries[geometry.focus_only[index]].area)
     }
 
     pub(super) fn event(
@@ -223,8 +230,8 @@ impl PointerFrame {
         Some(PointerEvent {
             sample,
             button,
-            bounds: target.border,
-            padding: target.pointer_padding?,
+            bounds: self.geometry.entries[target.entry].area,
+            padding: target.padding,
         })
     }
 }
@@ -292,6 +299,7 @@ impl HitGeometry {
             entries: Vec::with_capacity(instance.visible_nodes),
             clips: vec![NodeClips::default()],
             interactive: HashMap::new(),
+            focus_only: Vec::new(),
             hover_parents: HashMap::new(),
             scroll_parents: HashMap::new(),
             scroll_viewports: HashMap::new(),
@@ -357,16 +365,14 @@ impl HitGeometry {
                 frame.has_cursor = true;
             }
             let pointer_handlers = body.handlers.as_deref().filter(|_| body.hit_testable);
-            if body.focusable || pointer_handlers.is_some() {
+            if let Some(handlers) = pointer_handlers {
                 frame.interactive.insert(
                     id,
                     InteractiveBox {
-                        border: area,
-                        pointer_padding: pointer_handlers.map(|h| h.padding),
+                        entry: frame.entries.len(),
+                        padding: handlers.padding,
                     },
                 );
-            }
-            if let Some(handlers) = pointer_handlers {
                 if handlers.hover.is_some()
                     || handlers.hover_position.is_some()
                     || handlers.tooltip.is_some()
@@ -382,6 +388,8 @@ impl HitGeometry {
                     frame.has_cursor |=
                         matches!(handlers.control, Some(crate::WindowControl::Resize(_)));
                 }
+            } else if body.focusable {
+                frame.focus_only.push(frame.entries.len());
             }
             if let Some(owner) = recipients.focus
                 && let Some(source) = instance.bodies[&owner]
@@ -460,6 +468,9 @@ impl HitGeometry {
             // Pop lower layers first, visiting each entire subtree before the next sibling.
             siblings.reverse();
         }
+        frame
+            .focus_only
+            .sort_unstable_by_key(|&i| frame.entries[i].node.sort_key());
         Ok(frame)
     }
 
