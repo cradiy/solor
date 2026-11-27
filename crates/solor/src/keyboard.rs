@@ -8,6 +8,7 @@ use anyhow::Result;
 pub use crate::pointer::Modifiers;
 mod binding;
 mod focus;
+pub(crate) use focus::CallbackFocus;
 pub use focus::FocusHandle;
 mod shortcut;
 pub use binding::KeyBinding;
@@ -287,7 +288,11 @@ impl Ui {
             && let Some(handlers) = node.handlers.as_deref()
         {
             let mut context = Context {
-                focus_request: Some(&mut request),
+                focus: Some(
+                    instance
+                        .pointer
+                        .callback_focus(instance.focused, &mut request),
+                ),
                 tasks: &self.tasks,
                 state: self.state.get_mut(),
                 engine: &self.engine,

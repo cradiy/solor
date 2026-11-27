@@ -74,7 +74,7 @@ impl Instance {
                 handler(
                     action,
                     &mut Context {
-                        focus_request: Some(request),
+                        focus: Some(self.pointer.callback_focus(self.focused, request)),
                         tasks,
                         engine,
                         state,

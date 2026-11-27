@@ -36,14 +36,27 @@ impl<E: Element> Node<E> {
     }
 }
 
+pub(crate) struct CallbackFocus<'a> {
+    pub(crate) request: &'a mut Option<FocusHandle>,
+    pub(crate) target: Option<(crate::NodeId, &'a crate::pointer::PointerFrame)>,
+}
+
 impl Context<'_> {
+    /// Returns the current focus target's border box in view-local logical pixels.
+    /// Returns `None` outside a view callback or when the accepted frame has no box for that target.
+    pub fn focused_bounds(&self) -> Option<crate::platform::SurfaceRect> {
+        let (node, frame) = self.focus.as_ref()?.target?;
+        frame.bounds(node)
+    }
+
     /// Requests logical focus from a view callback. The last request in a dispatch takes
     /// effect if its target is still mounted and visible in that view.
     pub fn focus(&mut self, handle: FocusHandle) -> Result<()> {
         *self
-            .focus_request
-            .as_deref_mut()
-            .context("focus requires a view callback")? = Some(handle);
+            .focus
+            .as_mut()
+            .context("focus requires a view callback")?
+            .request = Some(handle);
         Ok(())
     }
 }

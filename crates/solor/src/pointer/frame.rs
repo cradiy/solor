@@ -26,7 +26,7 @@ pub(super) struct Recipients {
 
 struct InteractiveBox {
     border: SurfaceRect,
-    padding: crate::styled_body::ContentInsets,
+    pointer_padding: Option<crate::styled_body::ContentInsets>,
 }
 
 struct Entry {
@@ -160,7 +160,10 @@ impl PointerFrame {
     }
 
     pub(super) fn has_recipient(&self, node: NodeId) -> bool {
-        self.geometry.interactive.contains_key(&node)
+        self.geometry
+            .interactive
+            .get(&node)
+            .is_some_and(|area| area.pointer_padding.is_some())
     }
 
     pub(super) fn hit(&self, p: Origin) -> Option<(NodeId, Recipients)> {
@@ -206,7 +209,7 @@ impl PointerFrame {
         self.geometry.scroll_parents.get(&owner).copied()
     }
 
-    pub(super) fn bounds(&self, node: NodeId) -> Option<SurfaceRect> {
+    pub(crate) fn bounds(&self, node: NodeId) -> Option<SurfaceRect> {
         self.geometry.interactive.get(&node).map(|b| b.border)
     }
 
@@ -221,7 +224,7 @@ impl PointerFrame {
             sample,
             button,
             bounds: target.border,
-            padding: target.padding,
+            padding: target.pointer_padding?,
         })
     }
 }
@@ -353,16 +356,17 @@ impl HitGeometry {
                 recipients.cursor = body.cursor;
                 frame.has_cursor = true;
             }
-            if body.hit_testable
-                && let Some(handlers) = body.handlers.as_deref()
-            {
+            let pointer_handlers = body.handlers.as_deref().filter(|_| body.hit_testable);
+            if body.focusable || pointer_handlers.is_some() {
                 frame.interactive.insert(
                     id,
                     InteractiveBox {
                         border: area,
-                        padding: handlers.padding,
+                        pointer_padding: pointer_handlers.map(|h| h.padding),
                     },
                 );
+            }
+            if let Some(handlers) = pointer_handlers {
                 if handlers.hover.is_some()
                     || handlers.hover_position.is_some()
                     || handlers.tooltip.is_some()

@@ -404,3 +404,71 @@ fn focus_requests_resolve_only_visible_live_targets_in_the_callback_view() -> Re
     assert_eq!(ui.focused(view)?, Some(root));
     Ok(())
 }
+
+#[test]
+fn a_menu_action_on_the_list_anchors_to_the_presented_focused_row() -> Result<()> {
+    use solor::{
+        keyboard::{Key, KeyBinding},
+        layout::Origin,
+        platform::SurfaceRect,
+    };
+    use std::{cell::Cell, rc::Rc};
+
+    struct OpenMenu;
+    let mut ui = Ui::new();
+    let anchor = Rc::new(Cell::new(None));
+    let view = ui.mount(component({
+        let anchor = anchor.clone();
+        move |_| {
+            div()
+                .overflow_y_scroll()
+                .children((0..4).map(|_| div().w_full().min_h(px(10.5)).focusable()))
+                .on_action(move |_: &OpenMenu, cx| {
+                    anchor.set(cx.focused_bounds());
+                    Ok(())
+                })
+        }
+    }))?;
+    let key = Key::Named(NamedKey::ContextMenu);
+    ui.bind_keys([KeyBinding::new(key.clone(), OpenMenu)]);
+    let press = KeyEvent {
+        key,
+        state: KeyState::Down,
+        repeat: false,
+        modifiers: Modifiers::default(),
+    };
+    let root = ui.root(view)?;
+    let row = ui.children(view, root)?.nth(2).unwrap();
+    ui.focus(view, row)?;
+    let query = |ui: &mut Ui| -> Result<_> {
+        assert!(ui.dispatch_key(view, &press)?);
+        Ok(anchor.take())
+    };
+    ui.flush()?;
+    ui.layout(
+        view,
+        Size {
+            width: px(60.),
+            height: px(30.),
+        },
+    )?;
+    let initial = ui.record_frame(view)?.into_pointer_frame();
+    assert_eq!(query(&mut ui)?, None);
+    ui.accept_pointer_frame(initial)?;
+    let rect = |y| Some(SurfaceRect::new(px(0.), px(y), px(60.), px(10.5)));
+    assert_eq!(query(&mut ui)?, rect(21.));
+
+    ui.set_scroll_offset(
+        view,
+        root,
+        Origin {
+            x: px(0.),
+            y: px(5.25),
+        },
+    )?;
+    let scrolled = ui.record_frame(view)?.into_pointer_frame();
+    assert_eq!(query(&mut ui)?, rect(21.));
+    ui.accept_pointer_frame(scrolled)?;
+    assert_eq!(query(&mut ui)?, rect(15.75));
+    Ok(())
+}

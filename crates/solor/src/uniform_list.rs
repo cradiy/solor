@@ -716,7 +716,7 @@ impl Instance {
                 (listener.callback)(
                     range,
                     &mut crate::Context {
-                        focus_request: Some(&mut request),
+                        focus: Some(self.pointer.callback_focus(self.focused, &mut request)),
                         tasks,
                         state,
                         engine,

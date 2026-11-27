@@ -144,7 +144,7 @@ impl Owned {
 impl Mount<'_> {
     fn context<'a>(&'a mut self, engine: &'a TextSystem, tasks: &'a Tasks) -> Context<'a> {
         Context {
-            focus_request: None,
+            focus: None,
             state: self.state,
             tasks,
             engine,
@@ -163,7 +163,7 @@ impl Drop for Mount<'_> {
 
 /// State access during an application operation, component mount, or event.
 pub struct Context<'a> {
-    focus_request: Option<&'a mut Option<FocusHandle>>,
+    focus: Option<keyboard::CallbackFocus<'a>>,
     tasks: &'a Tasks,
     engine: &'a TextSystem,
     state: &'a mut Runtime<()>,
@@ -988,7 +988,7 @@ impl Ui {
     /// Opens an application-owned state context.
     pub fn context(&mut self) -> Context<'_> {
         Context {
-            focus_request: None,
+            focus: None,
             tasks: &self.tasks,
             state: self.state.get_mut(),
             engine: &self.engine,
@@ -1009,7 +1009,11 @@ impl Ui {
         };
         let mut request = None;
         click(&mut Context {
-            focus_request: Some(&mut request),
+            focus: Some(
+                instance
+                    .pointer
+                    .callback_focus(instance.focused, &mut request),
+            ),
             tasks: &self.tasks,
             state: self.state.get_mut(),
             engine: &self.engine,

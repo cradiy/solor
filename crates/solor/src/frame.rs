@@ -401,7 +401,11 @@ impl Ui {
                 (handler.callback)(
                     now,
                     &mut crate::Context {
-                        focus_request: Some(&mut request),
+                        focus: Some(
+                            instance
+                                .pointer
+                                .callback_focus(instance.focused, &mut request),
+                        ),
                         tasks: &self.tasks,
                         state: self.state.get_mut(),
                         engine: &self.engine,

@@ -10,10 +10,7 @@ use super::{
     frame::{HitGeometry, Recipients},
     hover::HoverChange,
 };
-use crate::{
-    Context, Instance, NodeId, Result, Ui, ViewId, WindowControl, element::MountedNode,
-    text::TextSystem,
-};
+use crate::{Context, Instance, NodeId, Result, Ui, ViewId, WindowControl, text::TextSystem};
 
 struct Press {
     owner: NodeId,
@@ -35,6 +32,17 @@ pub(crate) struct PointerRouter {
 }
 
 impl PointerRouter {
+    pub(crate) fn callback_focus<'a>(
+        &'a self,
+        focused: Option<NodeId>,
+        request: &'a mut Option<crate::FocusHandle>,
+    ) -> crate::keyboard::CallbackFocus<'a> {
+        crate::keyboard::CallbackFocus {
+            request,
+            target: focused.zip(self.frame.as_ref()),
+        }
+    }
+
     pub(crate) fn frame_listeners(&self) -> &[NodeId] {
         self.frame
             .as_ref()
@@ -83,25 +91,6 @@ struct Delivery<'a> {
     engine: &'a TextSystem,
 }
 
-fn context_and_handlers<'a>(
-    node: &'a mut MountedNode,
-    state: &'a mut Runtime<()>,
-    engine: &'a TextSystem,
-    tasks: &'a crate::Tasks,
-    request: &'a mut Option<crate::FocusHandle>,
-) -> (&'a Handlers, Context<'a>) {
-    (
-        node.handlers.as_deref().expect("interactive recipient"),
-        Context {
-            focus_request: Some(request),
-            tasks,
-            state,
-            engine,
-            owned: Some(&mut node.owned),
-        },
-    )
-}
-
 impl Instance {
     fn hit_recipient(
         &self,
@@ -119,13 +108,19 @@ impl Instance {
 impl Delivery<'_> {
     fn handlers(&mut self, target: NodeId) -> Option<(&Handlers, Context<'_>)> {
         let node = self.instance.bodies.get_mut(&target)?;
-        node.handlers.as_ref()?;
-        Some(context_and_handlers(
-            node,
-            self.state,
-            self.engine,
-            self.tasks,
-            &mut self.focus_request,
+        Some((
+            node.handlers.as_deref()?,
+            Context {
+                focus: Some(
+                    self.instance
+                        .pointer
+                        .callback_focus(self.instance.focused, &mut self.focus_request),
+                ),
+                tasks: self.tasks,
+                state: self.state,
+                engine: self.engine,
+                owned: Some(&mut node.owned),
+            },
         ))
     }
 
@@ -141,18 +136,7 @@ impl Delivery<'_> {
             .reconcile(&router.hover, self.tooltip_style, &self.instance.bodies);
         let mut result = Ok(());
         for (id, change) in changes {
-            let node = self
-                .instance
-                .bodies
-                .get_mut(&id)
-                .expect("live hover listener");
-            let (handlers, mut cx) = context_and_handlers(
-                node,
-                self.state,
-                self.engine,
-                self.tasks,
-                &mut self.focus_request,
-            );
+            let (handlers, mut cx) = self.handlers(id).expect("live hover listener");
             match change {
                 HoverChange::Presence(entered) => {
                     if let Some(handler) = &handlers.hover {
@@ -239,19 +223,9 @@ impl Delivery<'_> {
             return Ok(None);
         };
         let event = self.event(owner, sample, Some(button))?;
-        let node = self
-            .instance
-            .bodies
-            .get_mut(&owner)
-            .expect("live recipient");
-        let (handlers, context) = context_and_handlers(
-            node,
-            self.state,
-            self.engine,
-            self.tasks,
-            &mut self.focus_request,
-        );
-        let control = handlers.window_control(self.instance.pointer.fixed_size);
+        let fixed_size = self.instance.pointer.fixed_size;
+        let (handlers, context) = self.handlers(owner).expect("live recipient");
+        let control = handlers.window_control(fixed_size);
         let mut cx = PointerDownContext {
             context,
             capture: false,
@@ -309,18 +283,7 @@ impl Delivery<'_> {
                 )?;
             } else {
                 let pointer = self.event(owner, sample, None)?;
-                let node = self
-                    .instance
-                    .bodies
-                    .get_mut(&owner)
-                    .expect("live scroll ancestor");
-                let (handlers, context) = context_and_handlers(
-                    node,
-                    self.state,
-                    self.engine,
-                    self.tasks,
-                    &mut self.focus_request,
-                );
+                let (handlers, context) = self.handlers(owner).expect("live scroll ancestor");
                 let scroll = handlers.scroll.as_ref().expect("accepted scroll listener");
                 let mut cx = ScrollContext {
                     context,
@@ -354,18 +317,7 @@ impl Delivery<'_> {
             return Ok(());
         };
         let event = self.event(target, sample, None)?;
-        let node = self
-            .instance
-            .bodies
-            .get_mut(&target)
-            .expect("live recipient");
-        let (handlers, mut cx) = context_and_handlers(
-            node,
-            self.state,
-            self.engine,
-            self.tasks,
-            &mut self.focus_request,
-        );
+        let (handlers, mut cx) = self.handlers(target).expect("live recipient");
         if let Some(moved) = &handlers.moved {
             moved(&event, &mut cx)?;
         }
@@ -387,18 +339,8 @@ impl Delivery<'_> {
             return Ok(None);
         };
         let event = self.event(target, sample, Some(button))?;
-        let node = self
-            .instance
-            .bodies
-            .get_mut(&target)
-            .expect("live recipient");
-        let (handlers, mut cx) = context_and_handlers(
-            node,
-            self.state,
-            self.engine,
-            self.tasks,
-            &mut self.focus_request,
-        );
+        let fixed_size = self.instance.pointer.fixed_size;
+        let (handlers, mut cx) = self.handlers(target).expect("live recipient");
         if let Some(up) = &handlers.up {
             up(&event, &mut cx)?;
         }
@@ -406,7 +348,7 @@ impl Delivery<'_> {
             if let Some(click) = &handlers.click {
                 click(&mut cx)?;
             }
-            return Ok(handlers.window_control(self.instance.pointer.fixed_size));
+            return Ok(handlers.window_control(fixed_size));
         }
         Ok(None)
     }
@@ -431,18 +373,7 @@ impl Delivery<'_> {
             {
                 continue;
             }
-            let node = self
-                .instance
-                .bodies
-                .get_mut(&press.owner)
-                .expect("live press owner");
-            let (handlers, mut cx) = context_and_handlers(
-                node,
-                self.state,
-                self.engine,
-                self.tasks,
-                &mut self.focus_request,
-            );
+            let (handlers, mut cx) = self.handlers(press.owner).expect("live press owner");
             if let Some(cancel) = &handlers.cancel {
                 result = result.and(cancel(id, &mut cx));
             }
