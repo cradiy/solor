@@ -334,3 +334,59 @@ fn a_scrolled_view_uses_the_new_row_bounds_after_a_height_change() -> Result<()>
     assert_eq!(top_pixel(&mut ui)?, [255, 0, 0, 255]);
     Ok(())
 }
+
+#[test]
+fn overflowing_row_children_keep_their_pixels_and_inherited_click_targets() -> Result<()> {
+    use solor::raster::DeviceSize;
+    use solor_render_cpu::pixels::Surface;
+
+    let mut ui = Ui::new();
+    let selected = ui.context().signal(None);
+    let view = ui.mount(component(|_| {
+        div().flex_col().gap(px(16.)).overflow_y_scroll().children(
+            [(0., 12., 0xff0000), (6., -11., 0x00ff00)]
+                .into_iter()
+                .enumerate()
+                .map(|(index, (x, y, color))| {
+                    div()
+                        .relative()
+                        .w_full()
+                        .min_h(px(8.))
+                        .on_click(move |cx| cx.set(selected, Some(index)))
+                        .child(
+                            div()
+                                .absolute()
+                                .left(px(x))
+                                .top(px(y))
+                                .size(px(4.))
+                                .bg(rgb(color)),
+                        )
+                }),
+        )
+    }))?;
+    let size = DeviceSize {
+        width: 12,
+        height: 8,
+    };
+    ui.layout(view, size.at_unit_scale())?;
+    ui.set_scroll_offset(
+        view,
+        ui.root(view)?,
+        Origin {
+            x: px(0.),
+            y: px(12.5),
+        },
+    )?;
+    let frame = ui.record_frame(view)?;
+    let image = Surface::draw_view(&frame, size, RasterScale::ONE)?;
+    ui.accept_pointer_frame(frame.into_pointer_frame())?;
+    for (x, index, color) in [(1, 0, [255, 0, 0]), (7, 1, [0, 255, 0])] {
+        let offset = (size.width as usize * 2 + x) * 4;
+        assert_eq!(image.rgba[offset..offset + 3], color);
+        let point = mouse(x as f32, 2.);
+        ui.dispatch_pointer(view, PointerInput::Down(point, PointerButton::Primary))?;
+        ui.dispatch_pointer(view, PointerInput::Up(point, PointerButton::Primary))?;
+        assert_eq!(*ui.context().read(selected)?, Some(index));
+    }
+    Ok(())
+}

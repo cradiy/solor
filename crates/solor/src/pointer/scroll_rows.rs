@@ -1,12 +1,12 @@
-//! Scroll-time culling for vertically ordered leaves in an overflow viewport.
+//! Scroll-time culling for vertically ordered rows in an overflow viewport.
 use std::{collections::HashMap, collections::hash_map::Entry, ops::Range, sync::Arc};
 
 use anyhow::Context as _;
 
 use crate::{
     Instance, NodeId, Pixels, Result,
-    element::FramePaint,
-    layout::Origin,
+    element::{FramePaint, MountedNode},
+    layout::{Origin, Size},
     platform::SurfaceRect,
     styled_body::{ContentInsets, StyledBody},
     text::Text,
@@ -33,7 +33,7 @@ impl ScrollRows {
             Entry::Vacant(entry) => {
                 let rows = RowBounds::from_layout(instance, owner)?;
                 if let Some(rows) = &rows {
-                    self.indexed += rows.len;
+                    self.indexed += rows.nodes;
                 }
                 entry.insert(rows)
             }
@@ -46,6 +46,9 @@ impl ScrollRows {
 pub(super) struct RowBounds {
     targets: Option<Arc<[RowTarget]>>,
     len: usize,
+    nodes: usize,
+    min_child_y: Pixels,
+    max_child_y: Pixels,
     min_content_y: Pixels,
     max_content_y: Pixels,
     max_height: Pixels,
@@ -60,14 +63,7 @@ impl RowBounds {
         let mut targets = Vec::new();
         for id in children {
             let node = &instance.bodies[&id];
-            if !node.visible
-                || instance.frame_handlers.contains_key(&id)
-                || !matches!(
-                    node.frame_paint,
-                    FramePaint::Empty | FramePaint::FixedLabel | FramePaint::FixedBackground
-                )
-                || instance.scene.children(id)?.len() != 0
-            {
+            if !can_cull(instance, node) {
                 return Ok(None);
             }
             let Some(layout) = instance.scene.geometry(id) else {
@@ -92,15 +88,26 @@ impl RowBounds {
                 });
             }
             previous = Some(layout.origin.y);
-            rows.max_height = rows.max_height.max(layout.metrics.size.height);
-            if node.frame_paint == FramePaint::FixedLabel {
-                let label = instance.scene.body::<StyledBody<Text>>(id)?;
-                let y = label.origin().y;
-                rows.min_content_y = rows.min_content_y.min(y);
-                rows.max_content_y = rows.max_content_y.max(y);
-                rows.max_height = rows
-                    .max_height
-                    .max(label.content_size(layout.metrics.size).height);
+            rows.include_box(instance, node, layout.metrics.size)?;
+            let contents = instance.scene.children(id)?;
+            if contents.len() > 0 && node.scroll_axes != Default::default() {
+                return Ok(None);
+            }
+            for child in contents {
+                let leaf = &instance.bodies[&child];
+                if !can_cull(instance, leaf)
+                    || leaf.handlers.is_some()
+                    || leaf.focusable
+                    || instance.scene.children(child)?.len() != 0
+                {
+                    return Ok(None);
+                }
+                let Some(layout) = instance.scene.geometry(child) else {
+                    return Ok(None);
+                };
+                rows.min_child_y = rows.min_child_y.min(layout.origin.y);
+                rows.max_child_y = rows.max_child_y.max(layout.origin.y);
+                rows.include_box(instance, leaf, layout.metrics.size)?;
             }
         }
         if !targets.is_empty() {
@@ -108,6 +115,19 @@ impl RowBounds {
             rows.targets = Some(targets.into());
         }
         Ok(Some(rows))
+    }
+
+    fn include_box(&mut self, instance: &Instance, node: &MountedNode, size: Size) -> Result<()> {
+        self.nodes += 1;
+        self.max_height = self.max_height.max(size.height);
+        if node.frame_paint == FramePaint::FixedLabel {
+            let label = instance.scene.body::<StyledBody<Text>>(node.id)?;
+            let y = label.origin().y;
+            self.min_content_y = self.min_content_y.min(y);
+            self.max_content_y = self.max_content_y.max(y);
+            self.max_height = self.max_height.max(label.content_size(size).height);
+        }
+        Ok(())
     }
 
     pub(super) fn targets_at(&self, origin: Origin) -> Option<PlacedRowTargets> {
@@ -146,13 +166,21 @@ impl RowBounds {
             Ok(start)
         };
         // Use the same additions as painting for fractional origins and padded labels.
-        let end = partition(self.len, &|top| top + self.min_content_y < clip.end)?;
+        let end = partition(self.len, &|top| {
+            top + self.min_child_y + self.min_content_y < clip.end
+        })?;
         let start = partition(end, &|top| {
-            f64::from(clip.start) - f64::from(top + self.max_content_y)
+            f64::from(clip.start) - f64::from(top + self.max_child_y + self.max_content_y)
                 >= f64::from(self.max_height)
         })?;
         Ok(start..end)
     }
+}
+
+fn can_cull(instance: &Instance, node: &MountedNode) -> bool {
+    node.visible
+        && node.frame_paint != FramePaint::Recorded
+        && !instance.frame_handlers.contains_key(&node.id)
 }
 
 struct RowTarget {
