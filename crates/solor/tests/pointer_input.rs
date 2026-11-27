@@ -1672,3 +1672,75 @@ fn rounded_overflow_routes_only_visible_hits_after_a_radius_change() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn a_press_after_recording_keeps_capture_and_focus_on_the_scrolled_out_row() -> Result<()> {
+    let mut ui = Ui::new();
+    let moved = Rc::new(Cell::new(None));
+    let view = ui.mount(component(|_| {
+        div().overflow_y_scroll().children((0..16).map(|index| {
+            let moved = moved.clone();
+            div()
+                .w_full()
+                .min_h(px(10.0))
+                .pt(px(1.5))
+                .focusable()
+                .on_pointer_down(|_, cx| {
+                    cx.capture_pointer();
+                    Ok(())
+                })
+                .on_pointer_move(move |event, cx| {
+                    moved.set(Some((
+                        index,
+                        event.bounds(),
+                        event.content_position(),
+                        cx.focused_bounds(),
+                    )));
+                    Ok(())
+                })
+        }))
+    }))?;
+    accept(&mut ui, view, 40.0)?;
+    let root = ui.root(view)?;
+    let scroll = |ui: &mut Ui, y| {
+        ui.set_scroll_offset(
+            view,
+            root,
+            Origin {
+                x: px(0.0),
+                y: px(y),
+            },
+        )
+    };
+    scroll(&mut ui, 82.5)?;
+    let queued = ui.prepare_pointer_frame(view)?;
+    let pointer = sample(1, 2.0, 12.0);
+    ui.dispatch_pointer(view, Down(pointer, Primary))?;
+    ui.accept_pointer_frame(queued)?;
+    scroll(&mut ui, 40.0)?;
+    ui.layout(
+        view,
+        Size {
+            width: px(56.0),
+            height: px(40.0),
+        },
+    )?;
+    let next = ui.prepare_pointer_frame(view)?;
+
+    for (frame, expected_y, width) in [(None, -72.5, 40.0), (Some(next), -30.0, 56.0)] {
+        if let Some(frame) = frame {
+            ui.accept_pointer_frame(frame)?;
+        }
+        ui.dispatch_pointer(view, Move(pointer))?;
+        let (row, bounds, content, focus) = moved.take().expect("captured move");
+        assert_eq!(row, 1);
+        assert_eq!(bounds.origin.y, px(expected_y));
+        assert_eq!(bounds.size.width, px(width));
+        assert_eq!(content.y, pointer.position.y - bounds.origin.y - px(1.5));
+        assert_eq!(focus, Some(bounds));
+    }
+    ui.dispatch_pointer(view, Up(pointer, Primary))?;
+    ui.dispatch_pointer(view, Move(pointer))?;
+    assert_eq!(moved.take().expect("visible row").0, 5);
+    Ok(())
+}

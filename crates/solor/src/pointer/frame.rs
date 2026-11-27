@@ -3,14 +3,14 @@ use std::{collections::HashMap, ops::Range, rc::Rc, sync::Arc};
 
 use anyhow::{Context as _, ensure};
 
-use super::{PointerButton, PointerEvent, PointerSample};
+use super::{PointerButton, PointerEvent, PointerSample, scroll_rows::PlacedRowTargets};
 use crate::clip::{NodeClips, OverflowClip};
 use crate::{
     Instance, NodeId, Result, Ui, ViewId,
     element::{FramePaint, MountedNode},
     layout::{Origin, Size},
     platform::SurfaceRect,
-    styled_body::StyledBody,
+    styled_body::{ContentInsets, StyledBody},
     text::Text,
 };
 
@@ -39,7 +39,7 @@ impl<T> Recipients<T> {
 
 struct InteractiveBox {
     entry: usize,
-    padding: crate::styled_body::ContentInsets,
+    padding: ContentInsets,
 }
 
 struct Entry {
@@ -85,6 +85,7 @@ pub(super) struct HitGeometry {
     group_events: Vec<(usize, Option<NodeId>)>,
     clips: Vec<NodeClips>,
     interactive: HashMap<NodeId, InteractiveBox>,
+    row_targets: Vec<PlacedRowTargets>,
     // Entry indices sorted by node identity, independent of paint order.
     focus_only: Vec<usize>,
     hover_parents: HashMap<NodeId, Option<NodeId>>,
@@ -175,7 +176,8 @@ impl PointerFrame {
     }
 
     pub(super) fn has_recipient(&self, node: NodeId) -> bool {
-        self.geometry.interactive.contains_key(&node)
+        self.target_geometry(node)
+            .is_some_and(|(_, padding)| padding.is_some())
     }
 
     pub(super) fn hit(&self, p: Origin) -> Option<(NodeId, Recipients)> {
@@ -232,8 +234,8 @@ impl PointerFrame {
 
     pub(crate) fn bounds(&self, node: NodeId) -> Option<SurfaceRect> {
         let geometry = &self.geometry;
-        if let Some(target) = geometry.interactive.get(&node) {
-            return Some(geometry.entries[target.entry].area);
+        if let Some((bounds, _)) = self.target_geometry(node) {
+            return Some(bounds);
         }
         let index = geometry
             .focus_only
@@ -242,18 +244,31 @@ impl PointerFrame {
         Some(geometry.entries[geometry.focus_only[index]].area)
     }
 
+    fn target_geometry(&self, node: NodeId) -> Option<(SurfaceRect, Option<ContentInsets>)> {
+        if let Some(target) = self.geometry.interactive.get(&node) {
+            return Some((
+                self.geometry.entries[target.entry].area,
+                Some(target.padding),
+            ));
+        }
+        self.geometry
+            .row_targets
+            .iter()
+            .find_map(|rows| rows.get(node))
+    }
+
     pub(super) fn event(
         &self,
         node: NodeId,
         sample: PointerSample,
         button: Option<PointerButton>,
     ) -> Option<PointerEvent> {
-        let target = self.geometry.interactive.get(&node)?;
+        let (bounds, padding) = self.target_geometry(node)?;
         Some(PointerEvent {
             sample,
             button,
-            bounds: self.geometry.entries[target.entry].area,
-            padding: target.padding,
+            bounds,
+            padding: padding?,
         })
     }
 }
@@ -324,6 +339,7 @@ impl HitGeometry {
             hit_ranges: Vec::new(),
             clips: vec![NodeClips::default()],
             interactive: HashMap::new(),
+            row_targets: Vec::new(),
             focus_only: Vec::new(),
             hover_parents: HashMap::new(),
             scroll_parents: HashMap::new(),
@@ -512,9 +528,14 @@ impl HitGeometry {
                     .content
                     .as_ref()
                     .and_then(|c| c.y.as_ref())
-                && let Some(visible) = row_indices.visible(instance, id, child_origin.y, clip)?
+                && let Some(rows) = row_indices.layout(instance, id)?
             {
-                range = visible;
+                range = rows.visible(instance, id, child_origin.y, clip)?;
+                if range.len() < children.len()
+                    && let Some(targets) = rows.targets_at(child_origin)
+                {
+                    frame.row_targets.push(targets);
+                }
             }
             for child in children.skip(range.start).take(range.len()) {
                 let child = &instance.bodies[&child];
