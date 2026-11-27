@@ -3,7 +3,7 @@ use crate::surface_control::{Control, InputRegion};
 use solor::{layout::Size, px};
 use std::io;
 
-pub use crate::surface_control::{InputRect, SurfaceRect};
+pub use solor::platform::SurfaceRect;
 pub use wayland_client::{Connection, protocol::wl_surface::WlSurface};
 
 /// Controls one popup from the panel or input-method thread.
@@ -19,7 +19,7 @@ impl PopupHandle {
     /// Shows or updates the popup at its measured logical size. The size rounds
     /// outward. Rectangles accept input in surface coordinates; `None` accepts
     /// the entire surface and an empty slice passes all input through.
-    pub fn show(&self, size: Size, input: Option<&[InputRect]>) -> io::Result<()> {
+    pub fn show(&self, size: Size, input: Option<&[SurfaceRect]>) -> io::Result<()> {
         let size = Size {
             width: px(size.width.get().ceil()),
             height: px(size.height.get().ceil()),
@@ -70,7 +70,7 @@ pub struct PopupOptions {
     /// Lets pointer and touch input pass through the entire popup surface.
     pub input_transparent: bool,
     /// Origin and extent of the anchor rectangle in parent-local logical pixels.
-    pub anchor_rect: (solor::layout::Origin, Size),
+    pub anchor_rect: SurfaceRect,
     /// Preferred logical popup size.
     pub size: Size,
     /// Point on the anchor rectangle used for placement.
@@ -85,7 +85,7 @@ pub struct PopupOptions {
 
 impl PopupOptions {
     /// Places a popup below the anchor rectangle, aligned with its left edge.
-    pub fn new(anchor_rect: (solor::layout::Origin, Size), size: Size) -> Self {
+    pub fn new(anchor_rect: SurfaceRect, size: Size) -> Self {
         Self {
             parent: None,
             grab: true,
@@ -107,11 +107,11 @@ impl PopupOptions {
         width: solor::Pixels,
         height: solor::Pixels,
     ) -> Self {
-        let point = Size {
-            width: px(1.),
-            height: px(1.),
-        };
-        let mut options = Self::new((event.sample.position, point), Size { width, height });
+        let point = event.sample.position;
+        let mut options = Self::new(
+            SurfaceRect::new(point.x, point.y, px(1.), px(1.)),
+            Size { width, height },
+        );
         options.anchor = Anchor::TopLeft;
         options.constraints |= ConstraintAdjustment::FlipX;
         options
@@ -129,7 +129,13 @@ impl PopupOptions {
             x: point.x - local.x,
             y: point.y - local.y,
         };
-        Self::new((origin, event.bounds()), Size { width, height })
+        Self::new(
+            SurfaceRect {
+                origin,
+                size: event.bounds(),
+            },
+            Size { width, height },
+        )
     }
 
     /// Places a submenu to the right of its triggering item, with aligned top edges.

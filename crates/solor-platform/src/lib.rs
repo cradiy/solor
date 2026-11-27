@@ -147,7 +147,7 @@ impl Application {
     pub fn set_popup_input_region(
         &self,
         popup: &WindowHandle,
-        rects: Option<&[popup::InputRect]>,
+        rects: Option<&[SurfaceRect]>,
     ) -> Result<()> {
         self.windows.set_popup_input_region(popup, rects)
     }

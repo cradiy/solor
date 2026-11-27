@@ -7,8 +7,7 @@ use rustix::{
     event::{EventfdFlags, eventfd},
     io::{Errno, retry_on_intr},
 };
-use solor::layout::Size;
-pub use solor::platform::{SurfaceRect, SurfaceRect as InputRect};
+use solor::{layout::Size, platform::SurfaceRect};
 use std::{
     io,
     os::fd::OwnedFd,

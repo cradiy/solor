@@ -231,11 +231,11 @@ outside those rectangles to the surface underneath.
 
 ```rust
 use solor::px;
-use solor_platform::layer_shell::InputRect;
+use solor_platform::SurfaceRect;
 
 handle.set_input_region(Some(&[
-    InputRect::new(px(8.0), px(4.0), px(240.0), px(32.0)),
-    InputRect::new(px(8.0), px(40.0), px(144.0), px(24.0)),
+    SurfaceRect::new(px(8.0), px(4.0), px(240.0), px(32.0)),
+    SurfaceRect::new(px(8.0), px(40.0), px(144.0), px(24.0)),
 ]))?;
 ```
 

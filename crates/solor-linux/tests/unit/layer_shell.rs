@@ -70,11 +70,11 @@ fn a_single_surface_consumes_the_latest_visibility_and_close_is_final() -> std::
 
 #[test]
 fn input_region_rounds_logical_edges_outward_and_ignores_empty_rectangles() -> std::io::Result<()> {
-    use crate::surface_control::{InputRect, InputRegion};
+    use crate::{layer_shell::SurfaceRect, surface_control::InputRegion};
     let region = InputRegion::from_rects(Some(&[
-        InputRect::new(px(-0.25), px(1.75), px(2.5), px(1.25)),
-        InputRect::new(px(2.25), px(3.25), px(0.0), px(1.0)),
-        InputRect::new(px(8.0), px(4.0), px(f32::MIN_POSITIVE), px(1.0)),
+        SurfaceRect::new(px(-0.25), px(1.75), px(2.5), px(1.25)),
+        SurfaceRect::new(px(2.25), px(3.25), px(0.0), px(1.0)),
+        SurfaceRect::new(px(8.0), px(4.0), px(f32::MIN_POSITIVE), px(1.0)),
     ]))?;
     assert_eq!(
         region,
@@ -86,19 +86,19 @@ fn input_region_rounds_logical_edges_outward_and_ignores_empty_rectangles() -> s
 #[test]
 fn invalid_region_updates_preserve_the_last_complete_request() -> std::io::Result<()> {
     use crate::{
-        layer_shell::LayerSurfaceHandle,
-        surface_control::{InputRect, InputRegion},
+        layer_shell::{LayerSurfaceHandle, SurfaceRect},
+        surface_control::InputRegion,
     };
     use std::io::ErrorKind;
 
     let panel = LayerSurfaceHandle::new(false)?;
     let receiver = panel.claim()?;
-    let first = InputRect::new(px(0.0), px(0.0), px(10.0), px(8.0));
+    let first = SurfaceRect::new(px(0.0), px(0.0), px(10.0), px(8.0));
     panel.set_input_region(Some(&[first]))?;
     for invalid in [
-        InputRect::new(px(f32::NAN), px(1.0), px(1.0), px(1.0)),
-        InputRect::new(px(0.0), px(1.0), px(-1.0), px(1.0)),
-        InputRect::new(px(128.0), px(1.0), px(2147483520.0), px(1.0)),
+        SurfaceRect::new(px(f32::NAN), px(1.0), px(1.0), px(1.0)),
+        SurfaceRect::new(px(0.0), px(1.0), px(-1.0), px(1.0)),
+        SurfaceRect::new(px(128.0), px(1.0), px(2147483520.0), px(1.0)),
     ] {
         assert_eq!(
             panel

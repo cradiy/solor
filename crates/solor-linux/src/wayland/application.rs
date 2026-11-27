@@ -10,14 +10,14 @@ use super::{
 use crate::{
     layer_shell::LayerShellOptions,
     popup::PopupHandle,
-    surface_control::{Binding, Control, SurfaceRect, region_rectangles},
+    surface_control::{Binding, Control, region_rectangles},
 };
 use anyhow::Context as _;
 use rustix::event::PollFlags;
 use solor::{
     platform::{
-        PlatformWindow, WindowBackground, WindowHandle, WindowHandler, WindowOptions, WindowState,
-        WindowSubscription,
+        PlatformWindow, SurfaceRect, WindowBackground, WindowHandle, WindowHandler, WindowOptions,
+        WindowState, WindowSubscription,
     },
     raster::Rgba8,
 };
@@ -177,7 +177,7 @@ impl WaylandApplication {
     pub fn set_popup_input_region(
         &self,
         popup: &WindowHandle,
-        rects: Option<&[crate::popup::InputRect]>,
+        rects: Option<&[SurfaceRect]>,
     ) -> anyhow::Result<()> {
         let factory = self.factory()?;
         let menu = factory.menus.menu(popup, false)?;

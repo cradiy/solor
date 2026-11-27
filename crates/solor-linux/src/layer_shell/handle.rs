@@ -1,5 +1,5 @@
-use super::{ExclusiveZone, KeyboardInteractivity, extent};
-use crate::surface_control::{Binding, Control, InputRect, InputRegion, SurfaceRect};
+use super::{ExclusiveZone, KeyboardInteractivity, SurfaceRect, extent};
+use crate::surface_control::{Binding, Control, InputRegion};
 use solor::Pixels;
 use std::io;
 
@@ -40,7 +40,7 @@ impl LayerSurfaceHandle {
     /// or `Some(&[])` to pass all input through. Keyboard focus is controlled separately.
     /// Nonempty rectangles round outward to whole logical pixels. Invalid coordinates or
     /// extents return an error and preserve the previous request.
-    pub fn set_input_region(&self, rects: Option<&[InputRect]>) -> io::Result<()> {
+    pub fn set_input_region(&self, rects: Option<&[SurfaceRect]>) -> io::Result<()> {
         let region = InputRegion::from_rects(rects)?;
         self.0.update(|state| {
             state.region = Some(region);

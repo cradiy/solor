@@ -2,7 +2,12 @@ use super::{Desktop, Role, Window, WindowLife};
 use crate::popup::{ConstraintAdjustment, PopupOptions};
 use crate::surface_control::InputRegion;
 use anyhow::{Context, Result, ensure};
-use solor::{Pixels, layout::Size, platform::WindowHandle, px};
+use solor::{
+    Pixels,
+    layout::Size,
+    platform::{SurfaceRect, WindowHandle},
+    px,
+};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -282,19 +287,23 @@ fn positioner(
     shell: &MenuShell,
     qh: &QueueHandle<Desktop>,
     options: &PopupOptions,
-    [ox, oy, pw, ph]: [i32; 4],
+    parent_bounds: [i32; 4],
     [w, h]: [i32; 2],
 ) -> Result<XdgPositioner> {
-    let (origin, size) = options.anchor_rect;
-    let (x, width) = anchor_axis(origin.x, size.width, pw)?;
-    let (y, height) = anchor_axis(origin.y, size.height, ph)?;
+    let [x, y, width, height] = anchor_bounds(options.anchor_rect, parent_bounds)?;
     let positioner = shell.0.create_positioner(qh, ());
     positioner.set_size(w, h);
-    positioner.set_anchor_rect(ox + x, oy + y, width, height);
+    positioner.set_anchor_rect(x, y, width, height);
     positioner.set_anchor(options.anchor);
     positioner.set_gravity(options.gravity);
     positioner.set_constraint_adjustment(options.constraints);
     Ok(positioner)
+}
+
+fn anchor_bounds(rect: SurfaceRect, [ox, oy, pw, ph]: [i32; 4]) -> Result<[i32; 4]> {
+    let (x, width) = anchor_axis(rect.origin.x, rect.size.width, pw)?;
+    let (y, height) = anchor_axis(rect.origin.y, rect.size.height, ph)?;
+    Ok([ox + x, oy + y, width, height])
 }
 
 fn anchor_axis(origin: Pixels, extent: Pixels, limit: i32) -> Result<(i32, i32)> {
@@ -431,3 +440,7 @@ impl Dispatch<XdgPopup, ObjectId> for Desktop {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/menu.rs"]
+mod tests;
