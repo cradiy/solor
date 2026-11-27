@@ -11,6 +11,7 @@ pub use tooltip::{Tooltip, TooltipAlignment, TooltipPlacement, TooltipStyle};
 use crate::{
     Context, Result,
     layout::{Origin, Size},
+    platform::SurfaceRect,
 };
 pub use frame::PointerFrame;
 pub(crate) use routing::PointerRouter;
@@ -120,8 +121,7 @@ pub struct PointerEvent {
     pub sample: PointerSample,
     /// Changed button on press or release.
     pub button: Option<PointerButton>,
-    position: Origin,
-    size: Size,
+    bounds: SurfaceRect,
     padding: crate::styled_body::ContentInsets,
 }
 
@@ -132,23 +132,27 @@ impl PointerEvent {
     }
     /// Returns the position relative to the recipient's border-box origin.
     pub fn local_position(&self) -> Origin {
-        self.position
+        Origin {
+            x: self.sample.position.x - self.bounds.origin.x,
+            y: self.sample.position.y - self.bounds.origin.y,
+        }
     }
-    /// Returns the recipient's accepted border-box dimensions.
-    pub fn bounds(&self) -> Size {
-        self.size
+    /// Returns the recipient's border box in view coordinates from the accepted frame.
+    pub fn bounds(&self) -> SurfaceRect {
+        self.bounds
     }
     /// Position relative to the content origin used by the recipient's paint callback.
     /// Points in the padding or outside the box during capture can lie outside the content.
     pub fn content_position(&self) -> Origin {
+        let local = self.local_position();
         Origin {
-            x: self.position.x - self.padding.origin.x,
-            y: self.position.y - self.padding.origin.y,
+            x: local.x - self.padding.origin.x,
+            y: local.y - self.padding.origin.y,
         }
     }
     /// Content dimensions used for drawing in the accepted frame, excluding padding.
     pub fn content_size(&self) -> Size {
-        self.padding.content_size(self.size)
+        self.padding.content_size(self.bounds.size)
     }
     /// Whether the changed button represents the primary action.
     pub fn is_primary_action(&self) -> bool {

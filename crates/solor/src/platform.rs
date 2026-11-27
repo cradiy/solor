@@ -29,6 +29,12 @@ impl SurfaceRect {
             size: Size { width, height },
         }
     }
+
+    pub(crate) fn contains(self, p: Origin) -> bool {
+        let x = p.x - self.origin.x;
+        let y = p.y - self.origin.y;
+        x.is_extent() && y.is_extent() && x < self.size.width && y < self.size.height
+    }
 }
 
 /// Presentation state confirmed by the host for a top-level window.

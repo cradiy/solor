@@ -173,7 +173,7 @@ fn captured_content_coordinates_follow_the_presented_paint_box() -> Result<()> {
     let last_move = Rc::new(Cell::new(None));
     let view = ui.mount(component(|_| {
         let last_move = last_move.clone();
-        div().p(px(3.0)).child(
+        div().p(px(3.0)).pl(px(3.00001)).child(
             div()
                 .w(px(20.0))
                 .h(px(12.0))
@@ -217,7 +217,7 @@ fn captured_content_coordinates_follow_the_presented_paint_box() -> Result<()> {
     ui.accept_pointer_frame(first)?;
     // Press inside the padding, then drag beyond the border box.
     ui.dispatch_pointer(view, Down(sample(1, 3.5, 3.5), Primary))?;
-    let outside = sample(1, 30.0, 1.0);
+    let outside = sample(1, 1024.0, 1.0);
     let check = |ui: &mut Ui, (origin, size): (Origin, Size)| -> Result<()> {
         ui.dispatch_pointer(view, Move(outside))?;
         let event = last_move.take().expect("captured move");
@@ -232,11 +232,14 @@ fn captured_content_coordinates_follow_the_presented_paint_box() -> Result<()> {
         assert_eq!(
             event.local_position(),
             Origin {
-                x: px(27.0),
+                x: outside.position.x - px(3.00001),
                 y: px(-2.0)
             }
         );
-        assert_eq!(event.bounds().width, px(20.0));
+        assert_eq!(
+            event.bounds(),
+            solor::platform::SurfaceRect::new(px(3.00001), px(3.0), px(20.0), px(12.0))
+        );
         Ok(())
     };
     assert_eq!(presented.1.width, px(14.5));
@@ -275,7 +278,7 @@ fn capture_uses_accepted_bounds_and_ends_on_release_error_or_cancel() -> Result<
                     if *cx.read(owner)? == Some(event.pointer_id()) {
                         cx.set(
                             value,
-                            event.local_position().x.get() / event.bounds().width.get(),
+                            event.local_position().x.get() / event.bounds().size.width.get(),
                         )?;
                     }
                     Ok(())

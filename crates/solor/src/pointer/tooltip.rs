@@ -163,7 +163,7 @@ impl Tooltips {
         if owner != Some(tip.owner) {
             return Ok(());
         }
-        let (at, size) = frame.bounds(tip.owner).expect("live tooltip hit box");
+        let bounds = frame.bounds(tip.owner).expect("live tooltip hit box");
         let tooltip = instance.bodies[&tip.owner]
             .handlers
             .as_ref()
@@ -175,7 +175,14 @@ impl Tooltips {
             .expect("laid out view")
             .metrics
             .size;
-        tip.draw(tooltip, engine.engine(), at, size, viewport, draws)?;
+        tip.draw(
+            tooltip,
+            engine.engine(),
+            bounds.origin,
+            bounds.size,
+            viewport,
+            draws,
+        )?;
         tip.painted.set(true);
         Ok(())
     }

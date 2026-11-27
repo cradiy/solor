@@ -9,22 +9,10 @@ use crate::{
     Instance, NodeId, Result, Ui, ViewId,
     element::{FramePaint, MountedNode},
     layout::{Origin, Size},
+    platform::SurfaceRect,
     styled_body::StyledBody,
     text::Text,
 };
-
-#[derive(Clone, Copy)]
-struct HitBox {
-    origin: Origin,
-    size: Size,
-}
-impl HitBox {
-    fn contains(self, p: Origin) -> bool {
-        let x = p.x - self.origin.x;
-        let y = p.y - self.origin.y;
-        x.is_extent() && y.is_extent() && x < self.size.width && y < self.size.height
-    }
-}
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Recipients {
@@ -37,13 +25,13 @@ pub(super) struct Recipients {
 }
 
 struct InteractiveBox {
-    border: HitBox,
+    border: SurfaceRect,
     padding: crate::styled_body::ContentInsets,
 }
 
 struct Entry {
     node: NodeId,
-    area: HitBox,
+    area: SurfaceRect,
     recipients: Recipients,
     testable: bool,
     paints: bool,
@@ -218,11 +206,8 @@ impl PointerFrame {
         self.geometry.scroll_parents.get(&owner).copied()
     }
 
-    pub(super) fn bounds(&self, node: NodeId) -> Option<(Origin, Size)> {
-        self.geometry
-            .interactive
-            .get(&node)
-            .map(|b| (b.border.origin, b.border.size))
+    pub(super) fn bounds(&self, node: NodeId) -> Option<SurfaceRect> {
+        self.geometry.interactive.get(&node).map(|b| b.border)
     }
 
     pub(super) fn event(
@@ -232,16 +217,11 @@ impl PointerFrame {
         button: Option<PointerButton>,
     ) -> Option<PointerEvent> {
         let target = self.geometry.interactive.get(&node)?;
-        let area = target.border;
         Some(PointerEvent {
             sample,
             button,
-            size: area.size,
+            bounds: target.border,
             padding: target.padding,
-            position: Origin {
-                x: sample.position.x - area.origin.x,
-                y: sample.position.y - area.origin.y,
-            },
         })
     }
 }
@@ -347,7 +327,7 @@ impl HitGeometry {
                     .checked_add(geometry.origin.y)
                     .context("pointer y outside layout range")?,
             };
-            let area = HitBox {
+            let area = SurfaceRect {
                 origin,
                 size: geometry.metrics.size,
             };
@@ -483,7 +463,7 @@ impl HitGeometry {
         &mut self,
         inherited: usize,
         body: &MountedNode,
-        area: HitBox,
+        area: SurfaceRect,
         has_children: bool,
     ) -> Result<(usize, usize)> {
         if body.overflow_clip == OverflowClip::default() {

@@ -123,19 +123,7 @@ impl PopupOptions {
         width: solor::Pixels,
         height: solor::Pixels,
     ) -> Self {
-        let point = event.sample.position;
-        let local = event.local_position();
-        let origin = solor::layout::Origin {
-            x: point.x - local.x,
-            y: point.y - local.y,
-        };
-        Self::new(
-            SurfaceRect {
-                origin,
-                size: event.bounds(),
-            },
-            Size { width, height },
-        )
+        Self::new(event.bounds(), Size { width, height })
     }
 
     /// Places a submenu to the right of its triggering item, with aligned top edges.

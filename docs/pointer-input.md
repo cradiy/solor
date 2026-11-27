@@ -90,7 +90,8 @@ For a control drawn with `div().paint(...)`, use `event.content_position()`
 and `event.content_size()` to map input to its drawing area. Both use the padding
 from the accepted frame. Positions are unclamped, so a drag can cross either
 end of a track. An axis has zero content size when padding consumes the full
-extent. `local_position()` and `bounds()` measure from the border box.
+extent. `local_position()` measures from the border-box origin. `bounds()` gives
+that box's origin and size in view coordinates.
 
 ```rust
 let dragging = cx.signal(None);
