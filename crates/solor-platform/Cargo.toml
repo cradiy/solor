@@ -10,7 +10,7 @@ description = "System platform selection and window hosting for Solor"
 workspace = true
 
 [features]
-gpu = ["solor-linux/gpu"]
+gpu = ["solor-linux/gpu", "solor-macos/gpu"]
 shader = ["solor/shader", "solor-render-cpu/shader"]
 
 [dependencies]
@@ -19,6 +19,10 @@ solor.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 solor-linux.workspace = true
+solor-render-cpu.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+solor-macos.workspace = true
 solor-render-cpu.workspace = true
 
 [[example]]

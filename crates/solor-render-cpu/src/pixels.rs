@@ -14,6 +14,9 @@ pub struct Surface {
     pub rgba: Vec<u8>,
 }
 
+/// Maximum physical pixel count accepted by a single CPU raster surface (64 MiB RGBA8).
+pub const MAX_SURFACE_PIXELS: u64 = 16 * 1024 * 1024;
+
 impl Surface {
     /// Draws the clipped frame at unit scale.
     pub fn draw(frame: &Frame, size: DeviceSize, clip: Clip) -> Result<Self> {
@@ -106,8 +109,10 @@ impl Surface {
             return Err(Error::other("invalid raster scale"));
         }
         let pixels = u64::from(size.width) * u64::from(size.height);
-        if pixels == 0 || pixels > 4 * 1024 * 1024 {
-            return Err(Error::other("surface requires 1 to 4194304 pixels"));
+        if pixels == 0 || pixels > MAX_SURFACE_PIXELS {
+            return Err(Error::other(format!(
+                "surface requires 1 to {MAX_SURFACE_PIXELS} pixels"
+            )));
         }
         Ok(pixels as usize * 4)
     }
@@ -297,3 +302,7 @@ impl<'a> TextRaster<'a> {
 #[cfg(test)]
 #[path = "../tests/unit/blend.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/pixels.rs"]
+mod pixel_tests;

@@ -56,10 +56,16 @@ pub(super) fn typography(
                 .focus_indicator(crate::viewport_focus_indicator)
                 .on_key_down(move |key, cx| {
                     let mods = key.modifiers;
-                    if mods.alt || mods.meta || cx.read(input)?.preedit().is_some() {
+                    if cx.read(input)?.preedit().is_some() {
                         return Ok(());
                     }
-                    if mods.control && !matches!(key.key, Key::ArrowLeft | Key::ArrowRight) {
+                    let primary_shortcut = (mods.control && !mods.meta && !mods.alt)
+                        || (cfg!(target_os = "macos") && mods.meta && !mods.control && !mods.alt);
+                    let word_jump = mods.control || (cfg!(target_os = "macos") && mods.alt);
+                    let line_jump =
+                        cfg!(target_os = "macos") && mods.meta && !mods.control && !mods.alt;
+
+                    if primary_shortcut && !matches!(key.key, Key::ArrowLeft | Key::ArrowRight) {
                         if mods.shift {
                             return Ok(());
                         }
@@ -86,18 +92,27 @@ pub(super) fn typography(
                         return Ok(());
                     }
                     match &key.key {
-                        Key::Character(ch) if !ch.is_control() => {
+                        Key::Character(ch)
+                            if !mods.control && !mods.meta && !mods.alt && !ch.is_control() =>
+                        {
                             cx.update_in_place(input, |state| {
                                 state.commit(ch.encode_utf8(&mut [0; 4]))
                             })?;
                         }
-                        Key::Text(value) if !value.chars().any(char::is_control) => {
+                        Key::Text(value)
+                            if !mods.control
+                                && !mods.meta
+                                && !mods.alt
+                                && !value.chars().any(char::is_control) =>
+                        {
                             cx.update_in_place(input, |state| state.commit(value))?;
                         }
                         &Key::ArrowLeft | &Key::ArrowRight | &Key::Home | &Key::End => {
                             let movement = match key.key {
-                                Key::ArrowLeft if mods.control => CaretMove::PreviousWord,
-                                Key::ArrowRight if mods.control => CaretMove::NextWord,
+                                Key::ArrowLeft if line_jump => CaretMove::Start,
+                                Key::ArrowRight if line_jump => CaretMove::End,
+                                Key::ArrowLeft if word_jump => CaretMove::PreviousWord,
+                                Key::ArrowRight if word_jump => CaretMove::NextWord,
                                 Key::ArrowLeft => CaretMove::Previous,
                                 Key::ArrowRight => CaretMove::Next,
                                 Key::Home => CaretMove::Start,

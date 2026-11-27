@@ -8,12 +8,17 @@ mod transitions;
 
 use anyhow::Result;
 use solor::{
-    Context, Div, Fill, IntoElement, Render, ResizeEdge, Rgba, Signal, Styled, TooltipStyle, Ui,
-    checkerboard, color_stop, component, diagonal_stripes, div,
+    Context, Div, Fill, Gradient, IntoElement, Render, ResizeEdge, Rgba, Signal, Styled,
+    TooltipStyle, Ui, checkerboard,
+    clipboard::Clipboard,
+    color_stop, component, diagonal_stripes, div,
     keyboard::{Key, KeyBinding},
     layout::{Origin, Size},
-    linear_gradient, px, rgb, rgba, text,
+    linear_gradient,
+    platform::WindowHandle,
+    px, rgb, rgba, text,
 };
+use std::{cell::RefCell, rc::Rc, task::Waker};
 
 const PAPER: Rgba = rgb(0xf8f7f2);
 const INK: Rgba = rgb(0x252e29);
@@ -197,42 +202,185 @@ fn header_button(title: &'static str, hint: &'static str, cx: &mut Context<'_>) 
         .child(label(title, 13.0, 18.0))
 }
 
+struct TitlebarInsetState {
+    client_decorations: bool,
+    fullscreen: bool,
+    dirty: bool,
+    waker: Option<Waker>,
+}
+
+/// Prepared gallery state ready to mount into a UI window.
+pub struct Gallery {
+    clipboard: Clipboard,
+    ramp: Gradient,
+    patterns: [Fill; 2],
+}
+
+impl Gallery {
+    /// Configures the supplied UI and prepares gallery assets before opening a window.
+    pub fn prepare(mut ui: Ui) -> Result<(Ui, Self)> {
+        let clipboard = ui.clipboard();
+        ui.bind_keys([
+            KeyBinding::new(Key::Enter, ActivateChoice),
+            KeyBinding::new(Key::Space, ActivateChoice),
+        ]);
+        lists::bind_keys(&mut ui);
+        markets::bind_keys(&mut ui);
+        tone_sheet::bind_keys(&mut ui);
+        ui.set_tooltip_style(TooltipStyle {
+            background: INK.into(),
+            text_color: PAPER,
+            ..TooltipStyle::default()
+        })?;
+        let ramp = linear_gradient(
+            110.0,
+            specimens::STOPS.map(|(at, color, _)| color_stop(color, at)),
+        )?;
+        let overlay_ink = rgba(0x201e394d);
+        let patterns = [
+            checkerboard(overlay_ink, px(10.0))?.into(),
+            diagonal_stripes(overlay_ink, px(2.5), px(5.0))?.into(),
+        ];
+        Ok((
+            ui,
+            Self {
+                clipboard,
+                ramp,
+                patterns,
+            },
+        ))
+    }
+
+    /// Consumes the prepared gallery into an unmounted root component, adapting the header
+    /// for integrated macOS titlebars when a host window handle is supplied on macOS.
+    pub fn into_root(self, window: Option<WindowHandle>) -> impl Render {
+        let mac_titlebar = cfg!(target_os = "macos") && window.is_some();
+        build_root(self, window, mac_titlebar)
+    }
+}
+
 /// Configures the supplied UI and creates the gallery's unmounted root component.
-pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
-    let clipboard = ui.clipboard();
-    ui.bind_keys([
-        KeyBinding::new(Key::Enter, ActivateChoice),
-        KeyBinding::new(Key::Space, ActivateChoice),
-    ]);
-    lists::bind_keys(&mut ui);
-    markets::bind_keys(&mut ui);
-    tone_sheet::bind_keys(&mut ui);
-    ui.set_tooltip_style(TooltipStyle {
-        background: INK.into(),
-        text_color: PAPER,
-        ..TooltipStyle::default()
-    })?;
-    let ramp = linear_gradient(
-        110.0,
-        specimens::STOPS.map(|(at, color, _)| color_stop(color, at)),
-    )?;
-    let overlay_ink = rgba(0x201e394d);
-    let patterns = [
-        checkerboard(overlay_ink, px(10.0))?.into(),
-        diagonal_stripes(overlay_ink, px(2.5), px(5.0))?.into(),
-    ];
-    Ok((
-        ui,
-        component(move |cx| {
-            let pages = Selection::new(cx, 3, true);
-            let spacing = Selection::new(cx, 1, false);
-            let sample_text = cx.signal(solor::text::TextInputState::new("Aa"));
-            let geometry = Selection::new(cx, 0, false);
-            let map = solor::GradientMap::from(ramp.clone());
-            let ramp = cx.signal(ramp);
-            let overlay = Selection::new(cx, 0, false);
-            let preview = Selection::new(cx, 0, false);
-            let alignment = Selection::new(cx, 1, false);
+pub fn gallery(ui: Ui) -> Result<(Ui, impl Render)> {
+    let (ui, prepared) = Gallery::prepare(ui)?;
+    Ok((ui, prepared.into_root(None)))
+}
+
+fn bind_traffic_light_inset(cx: &mut Context<'_>, window: &WindowHandle) -> Signal<bool> {
+    let initial_csd = window.client_decorations();
+    let initial_fullscreen = window.state().is_some_and(|state| state.fullscreen);
+    let initial_inset = initial_csd && !initial_fullscreen;
+    let traffic_light_inset = cx.signal(initial_inset);
+
+    let inset_state = Rc::new(RefCell::new(TitlebarInsetState {
+        client_decorations: initial_csd,
+        fullscreen: initial_fullscreen,
+        dirty: false,
+        waker: None,
+    }));
+
+    let csd_state = inset_state.clone();
+    window
+        .observe_client_decorations(move |enabled| {
+            let mut state = csd_state.borrow_mut();
+            state.client_decorations = enabled;
+            state.dirty = true;
+            if let Some(waker) = state.waker.take() {
+                waker.wake();
+            }
+        })
+        .bind_to(cx);
+
+    let win_state = inset_state.clone();
+    window
+        .observe_state(move |window_state| {
+            let mut state = win_state.borrow_mut();
+            state.fullscreen = window_state.fullscreen;
+            state.dirty = true;
+            if let Some(waker) = state.waker.take() {
+                waker.wake();
+            }
+        })
+        .bind_to(cx);
+
+    cx.spawn(move |async_cx| async move {
+        let mut current = initial_inset;
+        loop {
+            let next = std::future::poll_fn(|task_cx| {
+                let mut state = inset_state.borrow_mut();
+                if state.dirty {
+                    state.dirty = false;
+                    std::task::Poll::Ready(state.client_decorations && !state.fullscreen)
+                } else {
+                    state.waker = Some(task_cx.waker().clone());
+                    std::task::Poll::Pending
+                }
+            })
+            .await;
+            if next != current {
+                current = next;
+                async_cx.set(traffic_light_inset, current)?;
+            }
+        }
+    });
+
+    traffic_light_inset
+}
+
+fn build_root(gallery: Gallery, window: Option<WindowHandle>, mac_titlebar: bool) -> impl Render {
+    let Gallery {
+        clipboard,
+        ramp,
+        patterns,
+    } = gallery;
+    component(move |cx| {
+        let pages = Selection::new(cx, 3, true);
+        let spacing = Selection::new(cx, 1, false);
+        let sample_text = cx.signal(solor::text::TextInputState::new("Aa"));
+        let geometry = Selection::new(cx, 0, false);
+        let map = solor::GradientMap::from(ramp.clone());
+        let ramp = cx.signal(ramp);
+        let overlay = Selection::new(cx, 0, false);
+        let preview = Selection::new(cx, 0, false);
+        let alignment = Selection::new(cx, 1, false);
+
+        let root = div().items_stretch().bg(PAPER).text_color(INK);
+        let root = if mac_titlebar {
+            let traffic_light_inset = window
+                .as_ref()
+                .map(|handle| bind_traffic_light_inset(cx, handle))
+                .unwrap_or_else(|| cx.signal(false));
+            let header = div()
+                .window_drag_region()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .bg(INK)
+                .px(px(18.0))
+                .h(px(52.0))
+                .child(
+                    div()
+                        .flex_row()
+                        .items_center()
+                        .child_when(traffic_light_inset, || div().w(px(70.0)))
+                        .child(
+                            div()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(12.0))
+                                .child(brand())
+                                .child(
+                                    header_button(
+                                        "Toggle frame",
+                                        "Show or hide the native window frame",
+                                        cx,
+                                    )
+                                    .window_decorations_toggle(),
+                                ),
+                        ),
+                )
+                .child(pages.buttons(PAGES));
+            root.child(header)
+        } else {
             let header = div()
                 .window_drag_region()
                 .flex_row()
@@ -266,35 +414,32 @@ pub fn gallery(mut ui: Ui) -> Result<(Ui, impl Render)> {
                             header_button("Close", "Close this window", cx).window_close_button(),
                         ),
                 );
-            div()
-                .items_stretch()
-                .bg(PAPER)
-                .text_color(INK)
-                .child(
-                    div()
-                        .flex_row()
-                        .items_stretch()
-                        .bg(INK)
-                        .h(px(5.0))
-                        .child(div().w(px(14.0)).window_resize_region(ResizeEdge::TopLeft))
-                        .child(div().flex_1().window_resize_region(ResizeEdge::Top))
-                        .child(div().w(px(14.0)).window_resize_region(ResizeEdge::TopRight)),
-                )
-                .child(header)
-                .child_when(pages.choices[0].selected, files::file_drop)
-                .child_when(pages.choices[1].selected, lists::palette)
-                .child_when(pages.choices[2].selected, markets::market)
-                .child_when(pages.choices[3].selected, move || {
-                    specimens::typography(spacing, sample_text, &clipboard)
-                })
-                .child_when(pages.choices[4].selected, move || {
-                    specimens::paint(geometry, overlay, preview, ramp, &patterns, map.clone())
-                })
-                .child_when(pages.choices[5].selected, move || {
-                    specimens::layout(alignment)
-                })
-        }),
-    ))
+            root.child(
+                div()
+                    .flex_row()
+                    .items_stretch()
+                    .bg(INK)
+                    .h(px(5.0))
+                    .child(div().w(px(14.0)).window_resize_region(ResizeEdge::TopLeft))
+                    .child(div().flex_1().window_resize_region(ResizeEdge::Top))
+                    .child(div().w(px(14.0)).window_resize_region(ResizeEdge::TopRight)),
+            )
+            .child(header)
+        };
+
+        root.child_when(pages.choices[0].selected, files::file_drop)
+            .child_when(pages.choices[1].selected, lists::palette)
+            .child_when(pages.choices[2].selected, markets::market)
+            .child_when(pages.choices[3].selected, move || {
+                specimens::typography(spacing, sample_text, &clipboard)
+            })
+            .child_when(pages.choices[4].selected, move || {
+                specimens::paint(geometry, overlay, preview, ramp, &patterns, map.clone())
+            })
+            .child_when(pages.choices[5].selected, move || {
+                specimens::layout(alignment)
+            })
+    })
 }
 
 fn page(title: &'static str, control: Div, sample: impl IntoElement, details: Div) -> Div {

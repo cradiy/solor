@@ -1,0 +1,98 @@
+[package]
+name = "solor-macos"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "macOS platform implementation for Solor"
+
+[features]
+gpu = ["dep:solor-render-gpu", "dep:wgpu", "dep:pollster"]
+
+[lints]
+workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+anyhow.workspace = true
+block2 = "0.6.2"
+dispatch2 = "0.3.1"
+log.workspace = true
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSApplication",
+    "NSButton",
+    "NSColor",
+    "NSControl",
+    "NSCursor",
+    "NSDirection",
+    "NSDragging",
+    "NSEvent",
+    "NSFont",
+    "NSGraphics",
+    "NSGraphicsContext",
+    "NSMenu",
+    "NSMenuItem",
+    "NSPanel",
+    "NSPasteboard",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSScreen",
+    "NSTextInputClient",
+    "NSTextInputContext",
+    "NSTrackingArea",
+    "NSView",
+    "NSVisualEffectView",
+    "NSWindow",
+    "block2",
+    "objc2-core-foundation",
+    "objc2-quartz-core",
+] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CFBase",
+    "CFCGTypes",
+    "CFData",
+    "CFString",
+] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CGColorSpace",
+    "CGDataProvider",
+    "CGImage",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSAttributedString",
+    "NSData",
+    "NSDate",
+    "NSDictionary",
+    "NSGeometry",
+    "NSNotification",
+    "NSObjCRuntime",
+    "NSObject",
+    "NSProcessInfo",
+    "NSRange",
+    "NSRunLoop",
+    "NSString",
+    "NSThread",
+    "NSTimer",
+    "NSURL",
+    "NSValue",
+    "block2",
+    "objc2-core-foundation",
+] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CADisplayLink",
+    "CALayer",
+    "CAMetalLayer",
+    "CATransaction",
+    "objc2-core-foundation",
+] }
+pollster = { workspace = true, optional = true }
+smallvec.workspace = true
+solor.workspace = true
+solor-render-gpu = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true, features = ["metal"] }
