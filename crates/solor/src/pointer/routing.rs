@@ -1,5 +1,9 @@
 //! Synchronous direct delivery to live nodes from accepted hit geometry.
-use std::{cell::OnceCell, collections::HashMap, sync::Arc};
+use std::{
+    cell::{OnceCell, RefCell},
+    collections::HashMap,
+    sync::Arc,
+};
 
 use crate::state::Runtime;
 use anyhow::{Context as _, ensure};
@@ -25,6 +29,7 @@ pub(crate) struct PointerRouter {
     pub(super) frame: Option<PointerFrame>,
     pub(crate) scroll_offsets: HashMap<NodeId, crate::layout::Origin>,
     pub(super) scroll_pending: bool,
+    pub(super) scroll_rows: RefCell<super::scroll_rows::ScrollRows>,
     pub(super) geometry: OnceCell<Arc<HitGeometry>>,
     presses: HashMap<PointerId, Vec<Press>>,
     pub(super) hover: super::hover::Hover,
@@ -50,6 +55,7 @@ impl PointerRouter {
     }
     pub(crate) fn invalidate_geometry(&mut self) {
         self.geometry.take();
+        *self.scroll_rows.get_mut() = Default::default();
     }
 
     pub(crate) fn retire(&mut self, node: NodeId) {

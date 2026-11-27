@@ -314,11 +314,13 @@ impl Ui {
 
 impl HitGeometry {
     fn from_layout(instance: &Instance) -> Result<Self> {
+        let mut row_indices = instance.pointer.scroll_rows.borrow_mut();
+        let indexed = row_indices.indexed();
         let mut frame = Self {
             fields: HashMap::new(),
             frame_listeners: Vec::new(),
             group_events: Vec::new(),
-            entries: Vec::with_capacity(instance.visible_nodes),
+            entries: Vec::with_capacity(instance.visible_nodes - indexed),
             hit_ranges: Vec::new(),
             clips: vec![NodeClips::default()],
             interactive: HashMap::new(),
@@ -440,9 +442,11 @@ impl HitGeometry {
             }
             let children = instance.scene.children(id)?;
             let mut child_origin = origin;
+            let mut scrolls_vertically = false;
             let mut scroll_listener = body.handlers.as_deref().is_some_and(|h| h.scroll.is_some());
             if body.scroll_axes != super::ScrollAxes::default() && children.len() != 0 {
                 let limit = body.scroll_axes.limit(geometry);
+                scrolls_vertically = limit.height > crate::px(0.0);
                 if limit != Size::default() {
                     if let Some(offset) = instance.pointer.scroll_offsets.get(&id) {
                         child_origin.x = origin.x - offset.x.min(limit.width);
@@ -502,7 +506,17 @@ impl HitGeometry {
             let start = pending.len();
             let mut sorted = true;
             let mut previous_z = i32::MIN;
-            for child in children {
+            let mut range = 0..children.len();
+            if scrolls_vertically
+                && let Some(clip) = frame.clips[child_clip]
+                    .content
+                    .as_ref()
+                    .and_then(|c| c.y.as_ref())
+                && let Some(visible) = row_indices.visible(instance, id, child_origin.y, clip)?
+            {
+                range = visible;
+            }
+            for child in children.skip(range.start).take(range.len()) {
                 let child = &instance.bodies[&child];
                 if child.visible {
                     sorted &= previous_z <= child.z_index;
@@ -520,6 +534,9 @@ impl HitGeometry {
             } else if group {
                 frame.group_events.push((paint_index, None));
             }
+        }
+        if row_indices.indexed() > indexed {
+            frame.entries.shrink_to_fit();
         }
         frame
             .focus_only

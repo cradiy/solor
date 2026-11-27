@@ -279,3 +279,58 @@ fn scrollbar_gutters_share_viewport_geometry_with_scrolling_paint_and_hits() -> 
     }
     Ok(())
 }
+
+#[test]
+fn a_scrolled_view_uses_the_new_row_bounds_after_a_height_change() -> Result<()> {
+    use solor::raster::DeviceSize;
+    use solor_render_cpu::pixels::Surface;
+
+    let mut ui = Ui::new();
+    let height = ui.context().signal(px(4.0));
+    let row = |color| div().w_full().min_h(px(4.0)).bg(rgb(color));
+    let view = ui.mount(component(|_| {
+        div()
+            .overflow_y_scroll()
+            .child(div().w_full().min_h(height).bg(rgb(0xff0000)))
+            .child(row(0x00ff00))
+            .child(row(0x0000ff))
+            .child(row(0xff00ff))
+    }))?;
+    let root = ui.root(view)?;
+    let size = DeviceSize {
+        width: 8,
+        height: 4,
+    };
+    let top_pixel = |ui: &mut Ui| -> Result<[u8; 4]> {
+        ui.flush()?;
+        ui.layout(view, size.at_unit_scale())?;
+        let frame = ui.record_frame(view)?;
+        let image = Surface::draw_view(&frame, size, RasterScale::ONE)?;
+        ui.accept_pointer_frame(frame.into_pointer_frame())?;
+        Ok(image.rgba[..4].try_into()?)
+    };
+    assert_eq!(top_pixel(&mut ui)?, [255, 0, 0, 255]);
+    ui.set_scroll_offset(
+        view,
+        root,
+        Origin {
+            x: px(0.0),
+            y: px(8.0),
+        },
+    )?;
+    assert_eq!(top_pixel(&mut ui)?, [0, 0, 255, 255]);
+    ui.context().set(height, px(6.5))?;
+    assert_eq!(top_pixel(&mut ui)?, [0, 255, 0, 255]);
+    ui.set_scroll_offset(
+        view,
+        root,
+        Origin {
+            x: px(0.0),
+            y: px(14.5),
+        },
+    )?;
+    assert_eq!(top_pixel(&mut ui)?, [255, 0, 255, 255]);
+    ui.set_scroll_offset(view, root, Origin::default())?;
+    assert_eq!(top_pixel(&mut ui)?, [255, 0, 0, 255]);
+    Ok(())
+}

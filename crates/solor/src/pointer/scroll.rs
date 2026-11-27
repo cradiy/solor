@@ -602,7 +602,7 @@ impl Instance {
             offsets.insert(owner, next);
         }
         self.pointer.scroll_pending = true;
-        self.pointer.invalidate_geometry();
+        self.pointer.geometry.take();
         self.fixed_draws = Default::default();
         // Retained draw commands include absolute origins and inherited clips.
         let mut paint = self.repaints.borrow_mut();
