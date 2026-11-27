@@ -83,3 +83,24 @@ fn state_listeners_deduplicate_and_unsubscribe() {
     assert!(life.confirm_state(fullscreen));
     assert_eq!(observed_ref.borrow().len(), 1);
 }
+
+#[test]
+fn blur_region_updates_mark_revisit_and_drain_once() {
+    let revisit = Rc::new(Cell::new(false));
+    let life = make_life(revisit.clone(), Weak::new());
+    let handle = life.handle();
+
+    let rect = SurfaceRect::new(
+        solor::px(12.0),
+        solor::px(24.0),
+        solor::px(120.0),
+        solor::px(80.0),
+    );
+    handle.set_background_blur_region(&[rect]).unwrap();
+    assert!(revisit.get());
+    assert_eq!(life.take_blur_region(), Some(vec![rect]));
+    assert_eq!(life.take_blur_region(), None);
+
+    handle.set_background_blur_region(&[]).unwrap();
+    assert_eq!(life.take_blur_region(), Some(Vec::new()));
+}

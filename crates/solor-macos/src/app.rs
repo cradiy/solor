@@ -1,5 +1,6 @@
 //! `NSApplication` lifecycle, main run-loop integration, and window orchestration.
 use crate::{
+    channel::{ApplicationSender, Poll},
     wake::{MacWake, RedrawTimer, TickGuard, invoke_main_tick},
     window::WindowRecord,
 };
@@ -31,6 +32,7 @@ pub(crate) struct AppState {
     app: Retained<NSApplication>,
     windows: Vec<Rc<RefCell<WindowRecord>>>,
     pending: Vec<Rc<RefCell<WindowRecord>>>,
+    inboxes: Vec<crate::channel::Inbox>,
     #[cfg(feature = "gpu")]
     gpu: Rc<RefCell<crate::gpu::GpuContext>>,
     #[cfg(feature = "gpu")]
@@ -153,6 +155,30 @@ impl AppState {
         }
         let waker = Waker::from(state.borrow().wake.clone());
         loop {
+            let mut inboxes = std::mem::take(&mut state.borrow_mut().inboxes);
+            let mut more_messages = false;
+            if !inboxes.is_empty() {
+                let app_handle = MacApplication(Rc::downgrade(state));
+                let mut retained = Vec::with_capacity(inboxes.len());
+                for mut inbox in inboxes.drain(..) {
+                    match inbox(&app_handle) {
+                        Poll::Idle => retained.push(inbox),
+                        Poll::More => {
+                            more_messages = true;
+                            retained.push(inbox);
+                        }
+                        Poll::Closed => {}
+                    }
+                }
+                let mut st = state.borrow_mut();
+                let newly_added = std::mem::take(&mut st.inboxes);
+                retained.extend(newly_added);
+                st.inboxes = retained;
+                if more_messages {
+                    st.revisit.set(true);
+                }
+            }
+
             let (mut windows, mtm) = {
                 let mut st = state.borrow_mut();
                 st.revisit.set(false);
@@ -189,7 +215,11 @@ impl AppState {
                     closed.push(Rc::as_ptr(record));
                     continue;
                 }
-                record.borrow_mut().sync_cursor(mtm);
+                {
+                    let mut rec = record.borrow_mut();
+                    rec.sync_blur_views(mtm);
+                    rec.sync_cursor(mtm);
+                }
                 let deadline = record.borrow().next_redraw();
                 if let Some(deadline) = deadline {
                     earliest_redraw = Some(match earliest_redraw {
@@ -225,7 +255,7 @@ impl AppState {
             if !should_continue {
                 let mut st = state.borrow_mut();
                 st.redraw_timer.update(earliest_redraw, mtm);
-                let empty = st.windows.is_empty() && st.pending.is_empty();
+                let empty = st.windows.is_empty() && st.pending.is_empty() && st.inboxes.is_empty();
                 st.ticking = false;
                 if empty {
                     st.stopping = true;
@@ -345,6 +375,11 @@ pub struct MacOs {
 pub struct MacApplication(Weak<RefCell<AppState>>);
 
 impl MacApplication {
+    #[cfg(test)]
+    pub(crate) fn empty_for_test() -> Self {
+        Self(Weak::new())
+    }
+
     /// Sets the UI-thread callback invoked when a window fails due to a runtime error.
     pub fn on_window_error(
         &self,
@@ -353,6 +388,25 @@ impl MacApplication {
         let state = self.0.upgrade().context("application has exited")?;
         state.borrow_mut().error_handler = Some(Rc::new(handler));
         Ok(())
+    }
+
+    /// Delivers background messages on the UI thread, including while no windows are open.
+    /// Dropping the last sender drains queued messages and releases the channel.
+    pub fn channel<T: Send + 'static>(
+        &self,
+        capacity: usize,
+        receive: impl FnMut(&MacApplication, T) + 'static,
+    ) -> Result<ApplicationSender<T>> {
+        ensure!(
+            capacity > 0,
+            "application channel requires a positive capacity"
+        );
+        let state = self.0.upgrade().context("application has exited")?;
+        let wake = state.borrow().wake.clone();
+        let (sender, inbox) = crate::channel::channel(capacity, &wake, receive);
+        state.borrow_mut().inboxes.push(inbox);
+        wake_tick_if_idle(&state);
+        Ok(sender)
     }
 
     /// Mounts a window handler and opens a window on the running `NSApplication`.
@@ -416,6 +470,7 @@ impl MacOs {
             app: app.clone(),
             windows: Vec::new(),
             pending: Vec::new(),
+            inboxes: Vec::new(),
             #[cfg(feature = "gpu")]
             gpu: Rc::new(RefCell::new(crate::gpu::GpuContext::new(
                 self.gpu_memory_policy,
@@ -484,6 +539,7 @@ impl MacOs {
         for rec in pending_windows {
             WindowRecord::destroy(&rec);
         }
+        state.borrow_mut().inboxes.clear();
 
         let setup_error = delegate.ivars().setup_error.borrow_mut().take();
         if let Some(error) = setup_error {
@@ -527,6 +583,40 @@ fn install_minimal_menu_bar(app: &NSApplication, mtm: MainThreadMarker) {
 
     app_menu_item.setSubmenu(Some(&app_menu));
     menu_bar.addItem(&app_menu_item);
+
+    let window_menu_item = NSMenuItem::new(mtm);
+    let window_menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str("Window"));
+    #[allow(unsafe_code)]
+    // SAFETY: Standard AppKit `NSWindow` action selectors (`performClose:`, `performMiniaturize:`, `performZoom:`).
+    unsafe {
+        let close_item = NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            &NSString::from_str("Close Window"),
+            Some(sel!(performClose:)),
+            &NSString::from_str("w"),
+        );
+        window_menu.addItem(&close_item);
+
+        let minimize_item = NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            &NSString::from_str("Minimize"),
+            Some(sel!(performMiniaturize:)),
+            &NSString::from_str("m"),
+        );
+        window_menu.addItem(&minimize_item);
+
+        let zoom_item = NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            &NSString::from_str("Zoom"),
+            Some(sel!(performZoom:)),
+            &NSString::from_str(""),
+        );
+        window_menu.addItem(&zoom_item);
+    }
+    window_menu_item.setSubmenu(Some(&window_menu));
+    menu_bar.addItem(&window_menu_item);
+    app.setWindowsMenu(Some(&window_menu));
+
     app.setMainMenu(Some(&menu_bar));
 }
 

@@ -23,7 +23,8 @@ use objc2_app_kit::{
     NSDragOperation, NSDraggingDestination, NSDraggingInfo, NSEvent, NSEventModifierFlags,
     NSFloatingWindowLevel, NSNormalWindowLevel, NSPasteboardReadingOptionKey,
     NSPasteboardTypeFileURL, NSScreen, NSTextInputClient, NSTrackingArea, NSTrackingAreaOptions,
-    NSView, NSViewLayerContentsRedrawPolicy, NSWindow, NSWindowButton, NSWindowDelegate,
+    NSView, NSViewLayerContentsRedrawPolicy, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
+    NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton, NSWindowDelegate,
     NSWindowLevel, NSWindowOrderingMode, NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
@@ -37,8 +38,8 @@ use solor::{
     keyboard::KeyState,
     layout::Size,
     platform::{
-        EventResponse, PlatformWindow, WindowBackground, WindowControl, WindowEvent, WindowHandle,
-        WindowHandler, WindowOptions, WindowState,
+        EventResponse, PlatformWindow, SurfaceRect, WindowBackground, WindowControl, WindowEvent,
+        WindowHandle, WindowHandler, WindowOptions, WindowState,
     },
     pointer::PointerInput,
     px,
@@ -192,6 +193,9 @@ pub(crate) struct WindowRecord {
     marked_utf16_len: usize,
     resize_drag: Option<ResizeDrag>,
     traffic_light_frames: Option<TrafficLightFrames>,
+    blur_rects: Vec<SurfaceRect>,
+    blur_dirty: bool,
+    blur_views: Vec<Retained<NSVisualEffectView>>,
     file_drop_hover: Option<solor::NodeId>,
     presented_once: bool,
     revisit: Rc<Cell<bool>>,
@@ -872,14 +876,14 @@ impl SolorView {
             }
         }
 
-        // Let standard macOS application shortcuts (Cmd+Q / Cmd+H / Cmd+M) pass to the menu bar
-        // unless a handler explicitly binds them.
+        // Let standard macOS application shortcuts (Cmd+Q / Cmd+H / Cmd+M / Cmd+W) pass to the
+        // menu bar unless a handler explicitly binds them.
         let is_system_app_shortcut = key_event.modifiers.meta
             && !key_event.modifiers.control
             && !key_event.modifiers.alt
             && matches!(
                 key_event.key,
-                solor::keyboard::Key::Character('q' | 'h' | 'm')
+                solor::keyboard::Key::Character('q' | 'h' | 'm' | 'w')
             );
         if key_equivalent && is_system_app_shortcut {
             return false;
@@ -1169,6 +1173,9 @@ impl WindowRecord {
             marked_utf16_len: 0,
             resize_drag: None,
             traffic_light_frames: None,
+            blur_rects: Vec::new(),
+            blur_dirty: false,
+            blur_views: Vec::new(),
             file_drop_hover: None,
             presented_once: false,
             revisit,
@@ -1411,6 +1418,43 @@ impl WindowRecord {
         }
     }
 
+    pub(crate) fn sync_blur_views(&mut self, mtm: MainThreadMarker) {
+        if let Some(rects) = self.life.take_blur_region() {
+            self.blur_rects = rects;
+            self.blur_dirty = true;
+        }
+        if !self.blur_dirty || !self.life.is_open() {
+            return;
+        }
+        self.blur_dirty = false;
+        for effect_view in self.blur_views.drain(..) {
+            effect_view.removeFromSuperview();
+        }
+        if self.blur_rects.is_empty() {
+            return;
+        }
+        let Some(content_view) = self.ns_window.contentView() else {
+            return;
+        };
+        let view_height = f64::from(self.size.height);
+        for rect in &self.blur_rects {
+            let Some(frame) = blur_rect_to_view_frame(*rect, view_height) else {
+                continue;
+            };
+            let effect_view =
+                NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), frame);
+            effect_view.setMaterial(NSVisualEffectMaterial::UnderWindowBackground);
+            effect_view.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+            effect_view.setState(NSVisualEffectState::FollowsWindowActiveState);
+            content_view.addSubview_positioned_relativeTo(
+                &effect_view,
+                NSWindowOrderingMode::Below,
+                Some(&self.ns_view),
+            );
+            self.blur_views.push(effect_view);
+        }
+    }
+
     pub(crate) fn sync_cursor(&mut self, mtm: MainThreadMarker) {
         if !self.cursor_inside || !self.life.is_open() {
             return;
@@ -1434,7 +1478,7 @@ impl WindowRecord {
     }
 
     pub(crate) fn destroy(record: &Rc<RefCell<Self>>) {
-        let (ns_window, ns_view, view, display_link) = {
+        let (ns_window, ns_view, view, display_link, blur_views) = {
             let mut rec = record.borrow_mut();
             rec.life.close();
             (
@@ -1442,8 +1486,12 @@ impl WindowRecord {
                 rec.ns_view.clone(),
                 rec.view.take(),
                 rec.display_link.take(),
+                std::mem::take(&mut rec.blur_views),
             )
         };
+        for effect_view in blur_views {
+            effect_view.removeFromSuperview();
+        }
         drop(display_link);
         drop(view);
         ns_window.setDelegate(None);
@@ -1696,6 +1744,9 @@ impl WindowRecord {
         let new_size = view_size(&self.ns_view);
         let new_scale = window_scale(&self.ns_window);
         if new_size != self.size || new_scale != self.scale {
+            if new_size != self.size && !self.blur_rects.is_empty() {
+                self.blur_dirty = true;
+            }
             self.size = new_size;
             self.scale = new_scale;
             self.dirty = true;
@@ -1838,6 +1889,17 @@ fn init_native_window_and_view(
     ns_window.makeFirstResponder(Some(&ns_view));
 
     Ok((ns_window, ns_view))
+}
+
+fn blur_rect_to_view_frame(rect: SurfaceRect, view_height: f64) -> Option<NSRect> {
+    let width = f64::from(rect.size.width);
+    let height = f64::from(rect.size.height);
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let x = f64::from(rect.origin.x);
+    let y = view_height - f64::from(rect.origin.y) - height;
+    Some(NSRect::new(NSPoint::new(x, y), NSSize::new(width, height)))
 }
 
 fn style_mask_for(native_decorations: bool, resizable: bool) -> NSWindowStyleMask {

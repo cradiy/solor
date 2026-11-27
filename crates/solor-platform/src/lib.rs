@@ -16,6 +16,8 @@ pub use solor::platform::{
 };
 #[cfg(target_os = "linux")]
 pub use solor_linux::{ApplicationSender, layer_shell, popup, session_lock};
+#[cfg(target_os = "macos")]
+pub use solor_macos::ApplicationSender;
 
 fn default_renderer() -> Renderer {
     #[cfg(feature = "gpu")]
@@ -62,7 +64,7 @@ impl Application {
     }
 
     /// Delivers messages on the UI thread. Each sender keeps the application running.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub fn channel<T: Send + 'static>(
         &self,
         capacity: usize,

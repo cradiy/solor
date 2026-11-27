@@ -1,5 +1,5 @@
 //! Shader fills through retained backgrounds, custom painting and CPU frame repair.
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use anyhow::Result;
 use solor::{EffectShader, raster::DeviceSize};

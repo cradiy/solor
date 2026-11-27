@@ -3,6 +3,7 @@
 
 mod app;
 mod buffer;
+mod channel;
 mod clipboard;
 mod cursor;
 mod display_link;
@@ -15,4 +16,5 @@ mod wake;
 mod window;
 
 pub use app::{MacApplication, MacOs};
+pub use channel::ApplicationSender;
 pub use font::system_ui_font;

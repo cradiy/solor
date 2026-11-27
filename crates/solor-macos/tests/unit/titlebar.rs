@@ -1,10 +1,10 @@
 use super::{
-    MAX_CPU_SURFACE_PIXELS, anchor_frame_top, budgeted_raster_target, compute_traffic_light_layout,
-    style_mask_for,
+    MAX_CPU_SURFACE_PIXELS, anchor_frame_top, blur_rect_to_view_frame, budgeted_raster_target,
+    compute_traffic_light_layout, style_mask_for,
 };
 use objc2_app_kit::NSWindowStyleMask;
 use objc2_foundation::{NSPoint, NSRect, NSSize};
-use solor::{layout::Size, px, raster::RasterScale};
+use solor::{layout::Size, platform::SurfaceRect, px, raster::RasterScale};
 
 #[test]
 fn style_mask_uses_full_size_content_view_for_integrated_titlebar() {
@@ -99,4 +99,27 @@ fn budgeted_raster_target_preserves_retina_5k_and_clamps_oversized_extents() {
         assert!(scale.0 > 0.0 && scale.0 < 2.0);
         assert!(u64::from(physical.width) * u64::from(physical.height) <= MAX_CPU_SURFACE_PIXELS);
     }
+}
+
+#[test]
+fn blur_rect_to_view_frame_flips_y_and_skips_empty_rects() {
+    let rect = SurfaceRect::new(px(10.0), px(20.0), px(200.0), px(80.0));
+    assert_eq!(
+        blur_rect_to_view_frame(rect, 560.0),
+        Some(NSRect::new(
+            NSPoint::new(10.0, 460.0),
+            NSSize::new(200.0, 80.0)
+        ))
+    );
+    assert_eq!(
+        blur_rect_to_view_frame(SurfaceRect::new(px(0.0), px(0.0), px(0.0), px(50.0)), 560.0),
+        None
+    );
+    assert_eq!(
+        blur_rect_to_view_frame(
+            SurfaceRect::new(px(0.0), px(0.0), px(50.0), px(-1.0)),
+            560.0
+        ),
+        None
+    );
 }

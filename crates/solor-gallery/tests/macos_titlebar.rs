@@ -240,3 +240,74 @@ fn macos_titlebar_adapts_header_and_collapses_traffic_light_spacer() -> Result<(
 
     Ok(())
 }
+
+#[test]
+fn typography_sample_supports_macos_command_and_option_shortcuts() -> Result<()> {
+    use solor::clipboard::{ClipboardRead, PlatformClipboard};
+    use solor::keyboard::{Key, KeyEvent, KeyState, Modifiers};
+
+    struct MemoryClipboard(RefCell<String>);
+
+    impl PlatformClipboard for MemoryClipboard {
+        fn write_text(&self, text: String) -> Result<()> {
+            *self.0.borrow_mut() = text;
+            Ok(())
+        }
+
+        fn read_text(&self, _max_bytes: Option<usize>) -> Result<ClipboardRead> {
+            let text = self.0.borrow().clone();
+            Ok(Box::pin(std::future::ready(Ok(Some(text)))))
+        }
+    }
+
+    let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
+    let (ui, root) = solor_gallery::gallery(solor::Ui::with_font(font.to_vec())?)?;
+    let mut window = CpuWindow::mount(ui, root)?;
+    let clipboard = Rc::new(MemoryClipboard(RefCell::new(String::new())));
+    window.set_clipboard(clipboard);
+    render_window(&mut window)?;
+
+    // Focus the sample text box and replace initial text with "hello world".
+    assert_eq!(press_at(&mut window, 120.0, 275.0)?, None);
+    let send = |w: &mut CpuWindow, key: Key, modifiers: Modifiers| -> Result<()> {
+        w.event(WindowEvent::Key(KeyEvent {
+            key,
+            state: KeyState::Down,
+            repeat: false,
+            modifiers,
+        }))?;
+        Ok(())
+    };
+    let cmd = Modifiers {
+        meta: true,
+        ..Default::default()
+    };
+    let opt = Modifiers {
+        alt: true,
+        ..Default::default()
+    };
+
+    send(&mut window, Key::Character('a'), cmd)?;
+    send(
+        &mut window,
+        Key::Text("hello world".into()),
+        Default::default(),
+    )?;
+    assert_eq!(window.surrounding_text(64).unwrap().text(), "hello world");
+
+    // Cmd+Left moves caret to start; Option+Right jumps over first word.
+    send(&mut window, Key::ArrowLeft, cmd)?;
+    assert_eq!(window.surrounding_text(64).unwrap().selection().head, 0);
+    send(&mut window, Key::ArrowRight, opt)?;
+    assert_eq!(window.surrounding_text(64).unwrap().selection().head, 5);
+
+    // Cmd+A, Cmd+X cuts into clipboard; Cmd+V pastes back.
+    send(&mut window, Key::Character('a'), cmd)?;
+    send(&mut window, Key::Character('x'), cmd)?;
+    assert_eq!(window.surrounding_text(64).unwrap().text(), "");
+    send(&mut window, Key::Character('v'), cmd)?;
+    window.poll_tasks(Waker::noop())?;
+    assert_eq!(window.surrounding_text(64).unwrap().text(), "hello world");
+
+    Ok(())
+}

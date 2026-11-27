@@ -67,6 +67,7 @@ pub struct WindowLife {
     modal_children: RefCell<Vec<Weak<Self>>>,
     cancel_pointer: Cell<bool>,
     activate_requested: Cell<bool>,
+    blur_region: RefCell<Option<Vec<SurfaceRect>>>,
     revisit: Rc<Cell<bool>>,
     on_wake: Rc<dyn Fn()>,
 }
@@ -90,6 +91,7 @@ impl WindowLife {
             modal_children: RefCell::default(),
             cancel_pointer: Cell::default(),
             activate_requested: Cell::default(),
+            blur_region: RefCell::default(),
             revisit,
             on_wake,
         })
@@ -180,6 +182,11 @@ impl WindowLife {
         self.activate_requested.replace(false)
     }
 
+    /// Consumes pending background blur rectangles requested for this window.
+    pub fn take_blur_region(&self) -> Option<Vec<SurfaceRect>> {
+        self.blur_region.borrow_mut().take()
+    }
+
     fn mark_revisit(&self) {
         self.revisit.set(true);
         (self.on_wake)();
@@ -203,7 +210,11 @@ impl PlatformWindow for WindowLife {
         }
     }
 
-    fn set_background_blur_region(&self, _rects: &[SurfaceRect]) -> std::io::Result<()> {
+    fn set_background_blur_region(&self, rects: &[SurfaceRect]) -> std::io::Result<()> {
+        if self.is_open() {
+            *self.blur_region.borrow_mut() = Some(rects.to_vec());
+            self.mark_revisit();
+        }
         Ok(())
     }
 
