@@ -1084,6 +1084,40 @@ fn scrollport_pixels_and_clicks_follow_each_accepted_overflow_axis() -> Result<(
 }
 
 #[test]
+fn a_clipped_background_keeps_its_visible_child_in_the_opacity_group() -> Result<()> {
+    let mut ui = Ui::new();
+    let view = ui.mount(component(|_| {
+        div().overflow_hidden().child(
+            div()
+                .relative()
+                .top(px(16.0))
+                .size(px(16.0))
+                .opacity(0.5)
+                .bg(rgb(0xff0000))
+                .child(div().relative().top(px(-8.0)).size(px(8.0)).bg(rgb(0))),
+        )
+    }))?;
+    let size = DeviceSize {
+        width: 16,
+        height: 16,
+    };
+    ui.flush()?;
+    ui.layout(view, size.at_unit_scale())?;
+    for _ in 0..3 {
+        let frame = ui.record_frame(view)?;
+        let [solor::Draw::Group { draws, .. }] = frame.draws() else {
+            panic!("expected an opacity group");
+        };
+        assert_eq!(draws.len(), 1);
+        let image = Surface::draw_view(&frame, size, RasterScale::ONE)?;
+        assert_eq!(pixel(&image, 3, 5), [255; 4]);
+        assert_eq!(pixel(&image, 3, 12), [127, 127, 127, 255]);
+        ui.accept_pointer_frame(frame.into_pointer_frame())?;
+    }
+    Ok(())
+}
+
+#[test]
 fn fixed_text_at_fractional_scroll_clip_edges_matches_the_unclipped_pixels() -> Result<()> {
     use solor::{Draw, style::Overflow};
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");

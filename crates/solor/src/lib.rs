@@ -308,6 +308,14 @@ impl PaintState {
         self.image_deadlines.clear();
     }
 
+    fn has_cached_paint(&self) -> bool {
+        #[cfg(any(feature = "gif", feature = "webp"))]
+        if !self.image_deadlines.is_empty() {
+            return true;
+        }
+        !self.commands.is_empty()
+    }
+
     fn forget_commands(&mut self, node: NodeId) {
         self.commands.remove(&node);
         #[cfg(any(feature = "gif", feature = "webp"))]

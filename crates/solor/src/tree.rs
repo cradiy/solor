@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use slotmap::{SlotMap, new_key_type};
 
 new_key_type! {
-    struct NodeKey;
+    pub(crate) struct NodeKey;
 }
 
 static NEXT_TREE_ID: AtomicU64 = AtomicU64::new(1);
@@ -22,6 +22,14 @@ pub struct NodeId {
 }
 
 impl NodeId {
+    pub(crate) fn local_key(self) -> NodeKey {
+        self.key
+    }
+
+    pub(crate) fn in_same_tree(self, key: NodeKey) -> Self {
+        Self { key, ..self }
+    }
+
     pub(crate) fn sort_key(self) -> impl Ord {
         (self.tree, self.key)
     }

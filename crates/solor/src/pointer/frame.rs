@@ -1,5 +1,5 @@
 //! Immutable hit geometry paired with a host submission.
-use std::{collections::HashMap, rc::Rc, sync::Arc};
+use std::{collections::HashMap, ops::Range, rc::Rc, sync::Arc};
 
 use anyhow::{Context as _, ensure};
 
@@ -15,13 +15,26 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Default)]
-pub(super) struct Recipients {
-    pub focus: Option<NodeId>,
-    pub pointer: Option<NodeId>,
-    pub scroll: Option<NodeId>,
-    pub file_drop: Option<NodeId>,
-    pub(super) hover: Option<NodeId>,
+pub(super) struct Recipients<T = Option<NodeId>> {
+    pub focus: T,
+    pub pointer: T,
+    pub scroll: T,
+    pub file_drop: T,
+    pub(super) hover: T,
     pub(super) cursor: Option<crate::style::Cursor>,
+}
+
+impl<T> Recipients<T> {
+    fn map<U>(self, map: impl Fn(T) -> U) -> Recipients<U> {
+        Recipients {
+            focus: map(self.focus),
+            pointer: map(self.pointer),
+            scroll: map(self.scroll),
+            file_drop: map(self.file_drop),
+            hover: map(self.hover),
+            cursor: self.cursor,
+        }
+    }
 }
 
 struct InteractiveBox {
@@ -32,8 +45,7 @@ struct InteractiveBox {
 struct Entry {
     node: NodeId,
     area: SurfaceRect,
-    recipients: Recipients,
-    testable: bool,
+    recipients: Recipients<Option<crate::tree::NodeKey>>,
     paints: bool,
     clips: usize,
 }
@@ -69,6 +81,7 @@ pub(super) struct HitGeometry {
     fields: HashMap<NodeId, Field>,
     frame_listeners: Vec<NodeId>,
     entries: Vec<Entry>,
+    hit_ranges: Vec<Range<usize>>,
     group_events: Vec<(usize, Option<NodeId>)>,
     clips: Vec<NodeClips>,
     interactive: HashMap<NodeId, InteractiveBox>,
@@ -169,10 +182,19 @@ impl PointerFrame {
         if !self.geometry.entries.first()?.area.contains(p) {
             return None;
         }
-        let hit = self.geometry.entries.iter().rev().find(|entry| {
-            entry.testable && entry.area.contains(p) && self.geometry.clips[entry.clips].contains(p)
+        let hit = self.geometry.hit_ranges.iter().rev().find_map(|range| {
+            self.geometry.entries[range.clone()]
+                .iter()
+                .rev()
+                .find(|entry| {
+                    entry.area.contains(p) && self.geometry.clips[entry.clips].contains(p)
+                })
         })?;
-        Some((hit.node, hit.recipients))
+        Some((
+            hit.node,
+            hit.recipients
+                .map(|key| key.map(|key| hit.node.in_same_tree(key))),
+        ))
     }
 
     pub(super) fn same_geometry(&self, other: &Self) -> bool {
@@ -297,6 +319,7 @@ impl HitGeometry {
             frame_listeners: Vec::new(),
             group_events: Vec::new(),
             entries: Vec::with_capacity(instance.visible_nodes),
+            hit_ranges: Vec::new(),
             clips: vec![NodeClips::default()],
             interactive: HashMap::new(),
             focus_only: Vec::new(),
@@ -309,17 +332,18 @@ impl HitGeometry {
         if !root.visible {
             return Ok(frame);
         }
-        let mut pending = vec![(root, Origin::default(), Recipients::default(), 0)];
-        let mut open_groups = Vec::new();
+        let mut pending = vec![root];
+        let mut branches = vec![(0, Origin::default(), Recipients::default(), 0, false)];
         let mut paint_index = 0;
-        loop {
-            while open_groups.last() == Some(&pending.len()) {
-                open_groups.pop();
-                frame.group_events.push((paint_index, None));
+        while let Some(&(start, offset, inherited, inherited_clip, group)) = branches.last() {
+            if pending.len() == start {
+                if group {
+                    frame.group_events.push((paint_index, None));
+                }
+                branches.pop();
+                continue;
             }
-            let Some((body, offset, inherited, inherited_clip)) = pending.pop() else {
-                break;
-            };
+            let body = pending.pop().expect("pending sibling");
             let id = body.id;
             if instance.frame_handlers.contains_key(&id) {
                 frame.frame_listeners.push(id);
@@ -356,9 +380,11 @@ impl HitGeometry {
                     continue;
                 }
             }
+            let key = id.local_key();
+            let node_id = |key| id.in_same_tree(key);
             let mut recipients = inherited;
             if body.hit_testable && body.focusable {
-                recipients.focus = Some(id);
+                recipients.focus = Some(key);
             }
             if body.hit_testable && body.cursor.is_some() {
                 recipients.cursor = body.cursor;
@@ -377,21 +403,23 @@ impl HitGeometry {
                     || handlers.hover_position.is_some()
                     || handlers.tooltip.is_some()
                 {
-                    frame.hover_parents.insert(id, recipients.hover);
-                    recipients.hover = Some(id);
+                    frame
+                        .hover_parents
+                        .insert(id, recipients.hover.map(node_id));
+                    recipients.hover = Some(key);
                 }
                 if handlers.file_drop.is_some() {
-                    recipients.file_drop = Some(id);
+                    recipients.file_drop = Some(key);
                 }
                 if handlers.handles_pointer() {
-                    recipients.pointer = Some(id);
+                    recipients.pointer = Some(key);
                     frame.has_cursor |=
                         matches!(handlers.control, Some(crate::WindowControl::Resize(_)));
                 }
             } else if body.focusable {
                 frame.focus_only.push(frame.entries.len());
             }
-            if let Some(owner) = recipients.focus
+            if let Some(owner) = recipients.focus.map(node_id)
                 && let Some(source) = instance.bodies[&owner]
                     .handlers
                     .as_deref()
@@ -434,39 +462,64 @@ impl HitGeometry {
             }
             if body.hit_testable && scroll_listener {
                 if let Some(parent) = inherited.scroll {
-                    frame.scroll_parents.insert(id, parent);
+                    frame.scroll_parents.insert(id, node_id(parent));
                 }
-                recipients.scroll = Some(id);
+                recipients.scroll = Some(key);
             }
             let (clips, child_clip) =
                 frame.resolve_clips(inherited_clip, body, area, children.len() > 0)?;
-            if body.is_group() {
+            let group = body.is_group();
+            if group {
                 frame.group_events.push((paint_index, Some(id)));
-                open_groups.push(pending.len());
             }
-            let paints = body.frame_paint != FramePaint::Empty;
+            let intersects_clip = frame.clips[clips]
+                .inherited
+                .as_ref()
+                .is_none_or(|clip| clip.intersects(origin, area.size));
+            let paints = match body.frame_paint {
+                FramePaint::Empty => false,
+                FramePaint::FixedBackground => intersects_clip,
+                _ => true,
+            };
             paint_index += usize::from(paints);
+            if body.hit_testable && intersects_clip {
+                let index = frame.entries.len();
+                if let Some(last) = frame.hit_ranges.last_mut()
+                    && last.end == index
+                {
+                    last.end += 1;
+                } else {
+                    frame.hit_ranges.push(index..index + 1);
+                }
+            }
             frame.entries.push(Entry {
+                recipients,
                 clips,
                 node: id,
                 area,
-                recipients,
-                testable: body.hit_testable,
                 paints,
             });
             let start = pending.len();
+            let mut sorted = true;
+            let mut previous_z = i32::MIN;
             for child in children {
                 let child = &instance.bodies[&child];
                 if child.visible {
-                    pending.push((child, child_origin, recipients, child_clip));
+                    sorted &= previous_z <= child.z_index;
+                    previous_z = child.z_index;
+                    pending.push(child);
                 }
             }
-            let siblings = &mut pending[start..];
-            if !siblings.is_sorted_by_key(|(child, ..)| child.z_index) {
-                siblings.sort_by_key(|(child, ..)| child.z_index);
+            if pending.len() != start {
+                let siblings = &mut pending[start..];
+                if !sorted {
+                    siblings.sort_by_key(|child| child.z_index);
+                }
+                siblings.reverse();
+                branches.push((start, child_origin, recipients, child_clip, group));
+            } else if group {
+                frame.group_events.push((paint_index, None));
             }
-            // Pop lower layers first, visiting each entire subtree before the next sibling.
-            siblings.reverse();
         }
         frame
             .focus_only

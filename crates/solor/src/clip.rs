@@ -87,7 +87,7 @@ impl ContentClip {
                 && range.is_none_or(|r| {
                     r.start < r.end
                         && start < r.end
-                        && f64::from(start) + f64::from(length) > f64::from(r.start)
+                        && f64::from(r.start) - f64::from(start) < f64::from(length)
                 })
         }
         overlaps(self.x.as_ref(), origin.x, size.width)

@@ -606,6 +606,9 @@ impl Instance {
         self.fixed_draws = Default::default();
         // Retained draw commands include absolute origins and inherited clips.
         let mut paint = self.repaints.borrow_mut();
+        if !paint.has_cached_paint() {
+            return Ok(true);
+        }
         let mut pending: Vec<_> = self.scene.children(owner)?.collect();
         while let Some(id) = pending.pop() {
             paint.forget_commands(id);

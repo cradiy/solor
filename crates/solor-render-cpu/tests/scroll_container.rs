@@ -134,6 +134,7 @@ fn horizontal_strip_forwards_diagonal_remainder_and_resets_a_disabled_axis() -> 
             .child(
                 div()
                     .flex_row()
+                    .items_stretch()
                     .overflow_x(policy)
                     .h(px(10.0))
                     .child(div().min_w(px(16.0)).bg(rgb(0xff0000)))
