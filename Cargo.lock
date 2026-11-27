@@ -1658,8 +1658,11 @@ dependencies = [
  "objc2-core-graphics",
  "objc2-foundation",
  "objc2-quartz-core",
+ "pollster",
  "smallvec",
  "solor",
+ "solor-render-gpu",
+ "wgpu",
 ]
 
 [[package]]

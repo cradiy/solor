@@ -31,6 +31,10 @@ pub(crate) struct AppState {
     app: Retained<NSApplication>,
     windows: Vec<Rc<RefCell<WindowRecord>>>,
     pending: Vec<Rc<RefCell<WindowRecord>>>,
+    #[cfg(feature = "gpu")]
+    gpu: Rc<RefCell<crate::gpu::GpuContext>>,
+    #[cfg(feature = "gpu")]
+    trace_submissions: bool,
     error_handler: Option<Rc<WindowErrorHandler>>,
     first_error: Option<anyhow::Error>,
     revisit: Rc<Cell<bool>>,
@@ -40,30 +44,86 @@ pub(crate) struct AppState {
     ticking: bool,
 }
 
+struct WindowOpenEnv {
+    modal_parent: Option<Rc<RefCell<WindowRecord>>>,
+    revisit: Rc<Cell<bool>>,
+    wake: Arc<MacWake>,
+    mtm: MainThreadMarker,
+}
+
 impl AppState {
+    fn prepare_window_open(
+        state: &Rc<RefCell<Self>>,
+        options: WindowOptions<'_>,
+    ) -> Result<WindowOpenEnv> {
+        ensure!(
+            !options.modal || options.parent.is_some(),
+            "a modal window requires a parent"
+        );
+        let modal_parent = options
+            .parent
+            .map(|handle| state.borrow().find_parent(handle))
+            .transpose()?;
+        let st = state.borrow();
+        Ok(WindowOpenEnv {
+            modal_parent,
+            revisit: st.revisit.clone(),
+            wake: st.wake.clone(),
+            mtm: st.mtm,
+        })
+    }
+
+    fn register_window_record(
+        state: &Rc<RefCell<Self>>,
+        record: Rc<RefCell<WindowRecord>>,
+    ) -> WindowHandle {
+        let handle = record.borrow().life.handle();
+        state.borrow_mut().pending.push(record);
+        wake_tick_if_idle(state);
+        handle
+    }
+
     fn open_window_record(
         state: &Rc<RefCell<Self>>,
         options: WindowOptions<'_>,
         build: impl FnOnce(WindowHandle) -> Result<Box<dyn WindowHandler<Rgba8>>>,
     ) -> Result<WindowHandle> {
-        ensure!(
-            !options.modal || options.parent.is_some(),
-            "a modal window requires a parent"
-        );
-        let parent_record = options
-            .parent
-            .map(|handle| state.borrow().find_parent(handle))
-            .transpose()?;
-        let (revisit, wake, mtm) = {
+        let env = Self::prepare_window_open(state, options)?;
+        let record = WindowRecord::create(
+            options,
+            env.modal_parent.as_ref(),
+            env.revisit,
+            env.wake,
+            env.mtm,
+            build,
+        )?;
+        Ok(Self::register_window_record(state, record))
+    }
+
+    #[cfg(feature = "gpu")]
+    fn open_gpu_window_record<R: solor::Render>(
+        state: &Rc<RefCell<Self>>,
+        options: WindowOptions<'_>,
+        ui: solor::Ui,
+        root: impl FnOnce(WindowHandle) -> R,
+    ) -> Result<WindowHandle> {
+        let env = Self::prepare_window_open(state, options)?;
+        let (gpu, trace_submissions) = {
             let st = state.borrow();
-            (st.revisit.clone(), st.wake.clone(), st.mtm)
+            (st.gpu.clone(), st.trace_submissions)
         };
-        let record =
-            WindowRecord::create(options, parent_record.as_ref(), revisit, wake, mtm, build)?;
-        let handle = record.borrow().life.handle();
-        state.borrow_mut().pending.push(record);
-        wake_tick_if_idle(state);
-        Ok(handle)
+        let record = WindowRecord::create_gpu(
+            &gpu,
+            options,
+            env.modal_parent.as_ref(),
+            env.revisit,
+            env.wake,
+            env.mtm,
+            trace_submissions,
+            ui,
+            root,
+        )?;
+        Ok(Self::register_window_record(state, record))
     }
 
     fn find_parent(&self, parent: &WindowHandle) -> Result<Rc<RefCell<WindowRecord>>> {
@@ -271,9 +331,14 @@ define_class!(
     }
 );
 
-/// macOS AppKit platform host for Solor windows with CPU raster presentation.
+/// macOS AppKit platform host for Solor windows.
 #[derive(Default)]
-pub struct MacOs;
+pub struct MacOs {
+    /// Allocation preference used when the first GPU window opens.
+    pub gpu_memory_policy: solor::platform::GpuMemoryPolicy,
+    /// Whether to trace GPU adapter selection to stderr.
+    pub trace_submissions: bool,
+}
 
 /// Cloneable UI-thread handle for opening and managing windows on a running macOS event loop.
 #[derive(Clone)]
@@ -308,6 +373,18 @@ impl MacApplication {
         let state = self.0.upgrade().context("application has exited")?;
         AppState::open_window_record(&state, options, build)
     }
+
+    /// Mounts a Solor view on a Metal GPU surface for a macOS window.
+    #[cfg(feature = "gpu")]
+    pub fn build_gpu_window<R: solor::Render>(
+        &self,
+        options: WindowOptions<'_>,
+        ui: solor::Ui,
+        root: impl FnOnce(WindowHandle) -> R,
+    ) -> Result<WindowHandle> {
+        let state = self.0.upgrade().context("application has exited")?;
+        AppState::open_gpu_window_record(&state, options, ui, root)
+    }
 }
 
 impl Platform for MacOs {
@@ -339,6 +416,12 @@ impl MacOs {
             app: app.clone(),
             windows: Vec::new(),
             pending: Vec::new(),
+            #[cfg(feature = "gpu")]
+            gpu: Rc::new(RefCell::new(crate::gpu::GpuContext::new(
+                self.gpu_memory_policy,
+            ))),
+            #[cfg(feature = "gpu")]
+            trace_submissions: self.trace_submissions,
             error_handler: None,
             first_error: None,
             revisit: Rc::new(Cell::new(false)),

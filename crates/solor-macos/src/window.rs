@@ -82,13 +82,92 @@ struct ResizeDrag {
     start_frame: NSRect,
 }
 
+pub(crate) enum WindowView {
+    Cpu(Box<dyn WindowHandler<Rgba8>>),
+    #[cfg(feature = "gpu")]
+    Gpu {
+        handler: Box<dyn WindowHandler<crate::gpu::Native>>,
+        max_dimension: u32,
+    },
+}
+
+macro_rules! dispatch_view_mut {
+    ($self:expr, $handler:ident => $expr:expr) => {
+        match $self {
+            WindowView::Cpu($handler) => $expr,
+            #[cfg(feature = "gpu")]
+            WindowView::Gpu {
+                handler: $handler, ..
+            } => $expr,
+        }
+    };
+}
+
+macro_rules! dispatch_view_ref {
+    ($self:expr, $handler:ident => $expr:expr) => {
+        match $self {
+            WindowView::Cpu($handler) => $expr,
+            #[cfg(feature = "gpu")]
+            WindowView::Gpu {
+                handler: $handler, ..
+            } => $expr,
+        }
+    };
+}
+
+impl WindowView {
+    fn set_clipboard(&mut self, clipboard: Rc<dyn solor::clipboard::PlatformClipboard>) {
+        dispatch_view_mut!(self, h => h.set_clipboard(clipboard));
+    }
+
+    fn set_window_resizable(&mut self, resizable: bool) -> Result<()> {
+        dispatch_view_mut!(self, h => h.set_window_resizable(resizable))
+    }
+
+    fn file_drop_target(&self, pos: solor::layout::Origin) -> Option<solor::NodeId> {
+        dispatch_view_ref!(self, h => h.file_drop_target(pos))
+    }
+
+    fn drop_files(&mut self, target: solor::NodeId, paths: &[PathBuf]) -> Result<bool> {
+        dispatch_view_mut!(self, h => h.drop_files(target, paths))
+    }
+
+    fn text_input_session(&self) -> Option<u64> {
+        dispatch_view_ref!(self, h => h.text_input_session())
+    }
+
+    fn poll_tasks(&mut self, waker: &Waker) -> Result<()> {
+        dispatch_view_mut!(self, h => h.poll_tasks(waker))
+    }
+
+    fn caret_bounds(&self) -> Option<solor::text::CaretBounds> {
+        dispatch_view_ref!(self, h => h.caret_bounds())
+    }
+
+    fn surrounding_text(&mut self, max_bytes: usize) -> Option<solor::text::SurroundingText<'_>> {
+        dispatch_view_mut!(self, h => h.surrounding_text(max_bytes))
+    }
+
+    fn event(&mut self, event: WindowEvent) -> Result<EventResponse> {
+        dispatch_view_mut!(self, h => h.event(event))
+    }
+
+    fn pointer_cursor(&self, pointer: solor::pointer::PointerId) -> solor::style::Cursor {
+        dispatch_view_ref!(self, h => h.pointer_cursor(pointer))
+    }
+
+    fn next_redraw(&self) -> Option<Instant> {
+        dispatch_view_ref!(self, h => h.next_redraw())
+    }
+}
+
 pub(crate) struct WindowRecord {
     pub(crate) life: Rc<WindowLife>,
     ns_window: Retained<SolorWindow>,
     ns_view: Retained<SolorView>,
-    presenter: CpuLayerPresenter,
+    presenter: Option<CpuLayerPresenter>,
     display_link: Option<DisplayLink>,
-    handler: Option<Box<dyn WindowHandler<Rgba8>>>,
+    view: Option<WindowView>,
     title: String,
     background: WindowBackground,
     resizable: bool,
@@ -99,6 +178,8 @@ pub(crate) struct WindowRecord {
     dirty: bool,
     full_damage: bool,
     wants_animation: bool,
+    #[cfg(feature = "gpu")]
+    acquire_retry: Option<Instant>,
     failure: Option<anyhow::Error>,
     start: Instant,
     cursor: CursorState,
@@ -557,7 +638,7 @@ define_class!(
                 return NSRect::ZERO;
             };
             let rec = record.borrow();
-            let Some(caret) = rec.handler.as_ref().and_then(|h| h.caret_bounds()) else {
+            let Some(caret) = rec.view.as_ref().and_then(WindowView::caret_bounds) else {
                 return NSRect::ZERO;
             };
             let view_h = f64::from(rec.size.height);
@@ -701,7 +782,7 @@ impl SolorView {
     ) -> Option<Retained<NSAttributedString>> {
         let record = self.ivars().record.borrow().upgrade()?;
         let mut rec = record.borrow_mut();
-        let handler = rec.handler.as_mut()?;
+        let handler = rec.view.as_mut()?;
         let surrounding = handler.surrounding_text(MAX_SURROUNDING_BYTES)?;
         let text = surrounding.text();
         let (utf16, byte_start, byte_end) = slice_utf16_range(text, range)?;
@@ -807,9 +888,9 @@ impl SolorView {
         let (has_text_session, has_marked) = {
             let rec = record.borrow();
             (
-                rec.handler
+                rec.view
                     .as_ref()
-                    .and_then(|h| h.text_input_session())
+                    .and_then(WindowView::text_input_session)
                     .is_some(),
                 rec.has_marked_text,
             )
@@ -869,7 +950,7 @@ impl SolorView {
         let pos = view_point_to_solor(local_point, view_height);
         let next = {
             let rec = record.borrow();
-            rec.handler.as_ref().and_then(|h| h.file_drop_target(pos))
+            rec.view.as_ref().and_then(|v| v.file_drop_target(pos))
         };
         if prev != next {
             if let Some(old) = prev {
@@ -918,7 +999,7 @@ impl SolorView {
         };
         let target = {
             let rec = record.borrow();
-            rec.handler.as_ref().and_then(|h| h.file_drop_target(pos))
+            rec.view.as_ref().and_then(|v| v.file_drop_target(pos))
         };
         let prev = record.borrow_mut().file_drop_hover.take();
         if let Some(prev_target) = prev {
@@ -935,7 +1016,7 @@ impl SolorView {
             return false;
         };
         let handled =
-            WindowRecord::with_handler(&record, |h| h.drop_files(target, &paths)).unwrap_or(false);
+            WindowRecord::with_view(&record, |v| v.drop_files(target, &paths)).unwrap_or(false);
         if handled {
             record.borrow_mut().dirty = true;
         }
@@ -964,102 +1045,96 @@ impl WindowRecord {
             Rc::new(move || wake_clone.schedule_tick()),
         );
         let handle = life.handle();
-        let mut handler = build(handle)?;
-        handler.set_clipboard(Rc::new(MacClipboard));
-        handler.set_window_resizable(options.resizable)?;
+        let mut view = WindowView::Cpu(build(handle)?);
+        view.set_clipboard(Rc::new(MacClipboard));
+        view.set_window_resizable(options.resizable)?;
 
-        let style_mask = style_mask_for(options.native_decorations, options.resizable);
-        let content_rect = centered_content_rect(options.size, mtm);
-
-        let ns_window = mtm.alloc::<SolorWindow>().set_ivars(WindowIvars {
-            record: RefCell::new(Weak::new()),
-        });
-        #[allow(unsafe_code)]
-        // SAFETY: Valid `NSWindow` initializer with `Buffered` backing store on main thread.
-        let ns_window: Retained<SolorWindow> = unsafe {
-            msg_send![
-                super(ns_window),
-                initWithContentRect: content_rect,
-                styleMask: style_mask,
-                backing: NSBackingStoreType::Buffered,
-                defer: false
-            ]
-        };
-        #[allow(unsafe_code)]
-        // SAFETY: `SolorWindow` retains ownership via `Retained`; prevent AppKit double-release on close.
-        unsafe {
-            ns_window.setReleasedWhenClosed(false);
-        }
-        ns_window.setTitle(&NSString::from_str(options.title));
-        apply_window_titlebar_appearance(&ns_window, !options.native_decorations, false);
-        ns_window.setAcceptsMouseMovedEvents(true);
-        if let Some(min) = options.min_size {
-            ns_window.setContentMinSize(NSSize::new(f64::from(min.width), f64::from(min.height)));
-        }
-        if let Some(max) = options.max_size {
-            ns_window.setContentMaxSize(NSSize::new(f64::from(max.width), f64::from(max.height)));
-        }
-        if options.background == WindowBackground::Transparent {
-            ns_window.setOpaque(false);
-            ns_window.setBackgroundColor(Some(&NSColor::clearColor()));
-        } else {
-            ns_window.setOpaque(true);
-            ns_window.setBackgroundColor(Some(&NSColor::whiteColor()));
-        }
-        let level: NSWindowLevel = if options.always_on_top {
-            NSFloatingWindowLevel
-        } else {
-            NSNormalWindowLevel
-        };
-        ns_window.setLevel(level);
-
-        let content_view = ns_window
-            .contentView()
-            .context("NSWindow created without a contentView")?;
-        let bounds = content_view.bounds();
-        let ns_view = mtm.alloc::<SolorView>().set_ivars(ViewIvars {
-            record: RefCell::new(Weak::new()),
-        });
-        #[allow(unsafe_code)]
-        // SAFETY: Calling `NSView::initWithFrame:` on a freshly allocated `SolorView`.
-        let ns_view: Retained<SolorView> =
-            unsafe { msg_send![super(ns_view), initWithFrame: bounds] };
-        ns_view.setAutoresizingMask(
-            NSAutoresizingMaskOptions::ViewWidthSizable
-                | NSAutoresizingMaskOptions::ViewHeightSizable,
-        );
         let backing_layer = CALayer::layer();
-        ns_view.setLayer(Some(&backing_layer));
-        ns_view.setWantsLayer(true);
-        ns_view.setLayerContentsRedrawPolicy(NSViewLayerContentsRedrawPolicy::DuringViewResize);
-
-        let tracking_options = NSTrackingAreaOptions::MouseEnteredAndExited
-            | NSTrackingAreaOptions::MouseMoved
-            | NSTrackingAreaOptions::ActiveAlways
-            | NSTrackingAreaOptions::InVisibleRect;
-        #[allow(unsafe_code)]
-        // SAFETY: `ns_view` owns the tracking area and outlives it.
-        let tracking = unsafe {
-            NSTrackingArea::initWithRect_options_owner_userInfo(
-                NSTrackingArea::alloc(),
-                NSRect::ZERO,
-                tracking_options,
-                Some(&ns_view),
-                None,
-            )
-        };
-        ns_view.addTrackingArea(&tracking);
-
-        #[allow(unsafe_code)]
-        // SAFETY: `NSPasteboardTypeFileURL` is a static AppKit constant.
-        let file_url_type = unsafe { NSPasteboardTypeFileURL };
-        let dragged_types = NSArray::from_slice(&[file_url_type]);
-        ns_view.registerForDraggedTypes(&dragged_types);
-
-        content_view.addSubview(&ns_view);
-        ns_window.makeFirstResponder(Some(&ns_view));
-
+        let (ns_window, ns_view) = init_native_window_and_view(options, &backing_layer, mtm)?;
         let presenter = CpuLayerPresenter::new()?;
+        Ok(Self::finalize_created(
+            life,
+            options,
+            modal_parent,
+            revisit,
+            wake,
+            mtm,
+            ns_window,
+            ns_view,
+            Some(presenter),
+            view,
+        ))
+    }
+
+    #[cfg(feature = "gpu")]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn create_gpu<R: solor::Render>(
+        gpu: &Rc<RefCell<crate::gpu::GpuContext>>,
+        options: WindowOptions<'_>,
+        modal_parent: Option<&Rc<RefCell<Self>>>,
+        revisit: Rc<Cell<bool>>,
+        wake: Arc<MacWake>,
+        mtm: MainThreadMarker,
+        trace_submissions: bool,
+        ui: solor::Ui,
+        root: impl FnOnce(WindowHandle) -> R,
+    ) -> Result<Rc<RefCell<Self>>> {
+        let wake_clone = wake.clone();
+        let life = WindowLife::new(
+            revisit.clone(),
+            modal_parent
+                .filter(|_| options.modal)
+                .map(|p| Rc::downgrade(&p.borrow().life))
+                .unwrap_or_default(),
+            !options.native_decorations,
+            Rc::new(move || wake_clone.schedule_tick()),
+        );
+        let handle = life.handle();
+        let metal_layer = objc2_quartz_core::CAMetalLayer::layer();
+        let (ns_window, ns_view) = init_native_window_and_view(options, &metal_layer, mtm)?;
+        metal_layer.setContentsScale(window_scale(&ns_window).0);
+        let presenter = crate::gpu::Presenter::new(
+            &mut gpu.borrow_mut(),
+            metal_layer,
+            options.background,
+            trace_submissions,
+        )?;
+        let max_dimension = presenter.max_dimension();
+        let ui_window = solor::platform::UiWindow::with_renderer(ui, root(handle), presenter)?;
+        let mut view = WindowView::Gpu {
+            handler: Box::new(ui_window),
+            max_dimension,
+        };
+        view.set_clipboard(Rc::new(MacClipboard));
+        view.set_window_resizable(options.resizable)?;
+
+        Ok(Self::finalize_created(
+            life,
+            options,
+            modal_parent,
+            revisit,
+            wake,
+            mtm,
+            ns_window,
+            ns_view,
+            None,
+            view,
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finalize_created(
+        life: Rc<WindowLife>,
+        options: WindowOptions<'_>,
+        modal_parent: Option<&Rc<RefCell<Self>>>,
+        revisit: Rc<Cell<bool>>,
+        wake: Arc<MacWake>,
+        mtm: MainThreadMarker,
+        ns_window: Retained<SolorWindow>,
+        ns_view: Retained<SolorView>,
+        presenter: Option<CpuLayerPresenter>,
+        view: WindowView,
+    ) -> Rc<RefCell<Self>> {
         let initial_scale = window_scale(&ns_window);
         let initial_size = view_size(&ns_view);
 
@@ -1069,7 +1144,7 @@ impl WindowRecord {
             ns_view: ns_view.clone(),
             presenter,
             display_link: None,
-            handler: Some(handler),
+            view: Some(view),
             title: options.title.to_owned(),
             background: options.background,
             resizable: options.resizable,
@@ -1080,6 +1155,8 @@ impl WindowRecord {
             dirty: true,
             full_damage: true,
             wants_animation: false,
+            #[cfg(feature = "gpu")]
+            acquire_retry: None,
             failure: None,
             start: Instant::now(),
             cursor: CursorState::default(),
@@ -1144,23 +1221,23 @@ impl WindowRecord {
         }
         WindowRecord::present_if_dirty(&record);
 
-        Ok(record)
+        record
     }
 
     pub(crate) fn poll_tasks(record: &Rc<RefCell<Self>>, waker: &Waker) {
-        let mut handler = {
+        let mut view = {
             let mut rec = record.borrow_mut();
             if rec.failure.is_some() || !rec.life.is_open() {
                 return;
             }
-            rec.handler.take()
+            rec.view.take()
         };
-        let Some(ref mut h) = handler else {
+        let Some(ref mut v) = view else {
             return;
         };
-        let result = h.poll_tasks(waker);
+        let result = v.poll_tasks(waker);
         let mut rec = record.borrow_mut();
-        rec.handler = handler;
+        rec.view = view;
         if let Err(error) = result {
             rec.record_failure(error.context("polling foreground tasks"));
         }
@@ -1188,23 +1265,46 @@ impl WindowRecord {
     }
 
     pub(crate) fn next_redraw(&self) -> Option<Instant> {
-        if self.failure.is_some() || !self.life.is_open() || self.dirty {
+        if self.failure.is_some() || !self.life.is_open() {
             return None;
         }
-        self.handler.as_ref().and_then(|h| h.next_redraw())
+        #[cfg(feature = "gpu")]
+        if let Some(retry) = self.acquire_retry {
+            return Some(retry);
+        }
+        if self.dirty {
+            return None;
+        }
+        self.view.as_ref().and_then(WindowView::next_redraw)
     }
 
     pub(crate) fn present_if_dirty(record: &Rc<RefCell<Self>>) {
+        enum PresentOutcome {
+            Presented {
+                animate: bool,
+                uploaded: bool,
+            },
+            #[cfg(feature = "gpu")]
+            Retry,
+        }
+
         let (should_present, size, scale, background, full_damage) = {
             let mut rec = record.borrow_mut();
             if rec.failure.is_some() || !rec.life.is_open() {
                 return;
             }
+            #[cfg(feature = "gpu")]
+            if let Some(retry) = rec.acquire_retry {
+                if Instant::now() < retry {
+                    return;
+                }
+                rec.acquire_retry = None;
+            }
             if !rec.dirty
                 && rec
-                    .handler
+                    .view
                     .as_ref()
-                    .and_then(|h| h.next_redraw())
+                    .and_then(WindowView::next_redraw)
                     .is_some_and(|deadline| deadline <= Instant::now())
             {
                 rec.dirty = true;
@@ -1218,54 +1318,91 @@ impl WindowRecord {
             return;
         }
 
-        let mut handler = record.borrow_mut().handler.take();
-        let Some(ref mut h) = handler else {
+        let mut view = record.borrow_mut().view.take();
+        let Some(ref mut v) = view else {
             return;
         };
 
-        let present_result: Result<(bool, bool)> = (|| {
-            let (effective_scale, physical) =
-                budgeted_raster_target(size, scale, MAX_CPU_SURFACE_PIXELS)?;
-            let mut frame = h.frame(size, effective_scale)?;
-            let force_upload = full_damage || !record.borrow().presented_once;
-            if force_upload {
-                frame.damage = Damage::from_rect(Clip::canvas(physical));
+        let present_result: Result<PresentOutcome> = (|| match v {
+            WindowView::Cpu(h) => {
+                let (effective_scale, physical) =
+                    budgeted_raster_target(size, scale, MAX_CPU_SURFACE_PIXELS)?;
+                let mut frame = h.frame(size, effective_scale)?;
+                let force_upload = full_damage || !record.borrow().presented_once;
+                if force_upload {
+                    frame.damage = Damage::from_rect(Clip::canvas(physical));
+                }
+                let rec = record.borrow();
+                let layer = rec
+                    .ns_view
+                    .layer()
+                    .context("SolorView backing CALayer missing")?;
+                let presenter = rec
+                    .presenter
+                    .as_ref()
+                    .context("CPU presenter missing on CPU window")?;
+                presenter.present(
+                    &layer,
+                    &frame,
+                    physical,
+                    effective_scale,
+                    background,
+                    force_upload,
+                )?;
+                let animate = frame.request_callback;
+                let uploaded = force_upload || !frame.damage.is_empty();
+                drop(rec);
+                h.frame_submitted()?;
+                Ok(PresentOutcome::Presented { animate, uploaded })
             }
-            let rec = record.borrow();
-            let layer = rec
-                .ns_view
-                .layer()
-                .context("SolorView backing CALayer missing")?;
-            rec.presenter.present(
-                &layer,
-                &frame,
-                physical,
-                effective_scale,
-                background,
-                force_upload,
-            )?;
-            let animate = frame.request_callback;
-            let uploaded = force_upload || !frame.damage.is_empty();
-            drop(rec);
-            h.frame_submitted()?;
-            Ok((animate, uploaded))
+            #[cfg(feature = "gpu")]
+            WindowView::Gpu {
+                handler,
+                max_dimension,
+            } => {
+                let (effective_scale, _physical) =
+                    crate::gpu::budgeted_gpu_target(size, scale, *max_dimension)?;
+                let Some(crate::gpu::GpuFrame {
+                    queue,
+                    texture,
+                    request_callback,
+                }) = handler.frame(size, effective_scale)?
+                else {
+                    return Ok(PresentOutcome::Retry);
+                };
+                queue.present(texture);
+                handler.frame_submitted()?;
+                Ok(PresentOutcome::Presented {
+                    animate: request_callback,
+                    uploaded: true,
+                })
+            }
         })();
 
         let mut rec = record.borrow_mut();
-        rec.handler = handler;
+        rec.view = view;
         match present_result {
-            Ok((animate, uploaded)) => {
+            Ok(PresentOutcome::Presented { animate, uploaded }) => {
                 rec.dirty = false;
                 rec.full_damage = false;
                 rec.wants_animation = animate;
+                #[cfg(feature = "gpu")]
+                {
+                    rec.acquire_retry = None;
+                }
                 if uploaded {
                     rec.presented_once = true;
                 }
                 rec.sync_display_link();
             }
+            #[cfg(feature = "gpu")]
+            Ok(PresentOutcome::Retry) => {
+                rec.dirty = true;
+                rec.acquire_retry = Some(Instant::now() + std::time::Duration::from_millis(16));
+            }
             Err(error) => {
                 rec.record_failure(error.context(format!(
-                    "presenting CPU frame ({}x{} logical @ scale {:.2})",
+                    "presenting frame ({}x{} logical @ scale {:.2})",
                     f64::from(size.width),
                     f64::from(size.height),
                     scale.0,
@@ -1281,10 +1418,10 @@ impl WindowRecord {
         let cursor = if self.life.blocked() {
             solor::style::Cursor::Default
         } else {
-            self.handler
+            self.view
                 .as_ref()
-                .map_or(solor::style::Cursor::Default, |h| {
-                    h.pointer_cursor(MOUSE_POINTER_ID)
+                .map_or(solor::style::Cursor::Default, |v| {
+                    v.pointer_cursor(MOUSE_POINTER_ID)
                 })
         };
         if self.cursor.sync(cursor, mtm) {
@@ -1297,18 +1434,18 @@ impl WindowRecord {
     }
 
     pub(crate) fn destroy(record: &Rc<RefCell<Self>>) {
-        let (ns_window, ns_view, handler, display_link) = {
+        let (ns_window, ns_view, view, display_link) = {
             let mut rec = record.borrow_mut();
             rec.life.close();
             (
                 rec.ns_window.clone(),
                 rec.ns_view.clone(),
-                rec.handler.take(),
+                rec.view.take(),
                 rec.display_link.take(),
             )
         };
         drop(display_link);
-        drop(handler);
+        drop(view);
         ns_window.setDelegate(None);
         *ns_window.ivars().record.borrow_mut() = Weak::new();
         *ns_view.ivars().record.borrow_mut() = Weak::new();
@@ -1327,9 +1464,9 @@ impl WindowRecord {
         if !is_ready {
             return;
         }
-        let mut handler = record.borrow_mut().handler.take();
-        let result = handler.as_mut().map(|h| h.event(event));
-        record.borrow_mut().handler = handler;
+        let mut view = record.borrow_mut().view.take();
+        let result = view.as_mut().map(|v| v.event(event));
+        record.borrow_mut().view = view;
 
         let Some(result) = result else {
             return;
@@ -1355,13 +1492,13 @@ impl WindowRecord {
         }
     }
 
-    fn with_handler<R>(
+    fn with_view<R>(
         record: &Rc<RefCell<Self>>,
-        f: impl FnOnce(&mut dyn WindowHandler<Rgba8>) -> Result<R>,
+        f: impl FnOnce(&mut WindowView) -> Result<R>,
     ) -> Option<R> {
-        let mut handler = record.borrow_mut().handler.take()?;
-        let result = f(&mut *handler);
-        record.borrow_mut().handler = Some(handler);
+        let mut view = record.borrow_mut().view.take()?;
+        let result = f(&mut view);
+        record.borrow_mut().view = Some(view);
         match result {
             Ok(value) => Some(value),
             Err(error) => {
@@ -1563,6 +1700,10 @@ impl WindowRecord {
             self.scale = new_scale;
             self.dirty = true;
             self.full_damage = true;
+            #[cfg(feature = "gpu")]
+            {
+                self.acquire_retry = None;
+            }
         }
     }
 
@@ -1587,7 +1728,7 @@ impl WindowRecord {
     }
 
     fn surrounding_utf16_selection(&mut self) -> Option<(usize, usize)> {
-        let handler = self.handler.as_mut()?;
+        let handler = self.view.as_mut()?;
         let surrounding = handler.surrounding_text(MAX_SURROUNDING_BYTES)?;
         let text = surrounding.text();
         let range = surrounding.selection().range();
@@ -1601,6 +1742,102 @@ impl WindowRecord {
         self.revisit.set(true);
         self.wake.schedule_tick();
     }
+}
+
+fn init_native_window_and_view(
+    options: WindowOptions<'_>,
+    backing_layer: &CALayer,
+    mtm: MainThreadMarker,
+) -> Result<(Retained<SolorWindow>, Retained<SolorView>)> {
+    let style_mask = style_mask_for(options.native_decorations, options.resizable);
+    let content_rect = centered_content_rect(options.size, mtm);
+
+    let ns_window = mtm.alloc::<SolorWindow>().set_ivars(WindowIvars {
+        record: RefCell::new(Weak::new()),
+    });
+    #[allow(unsafe_code)]
+    // SAFETY: Valid `NSWindow` initializer with `Buffered` backing store on main thread.
+    let ns_window: Retained<SolorWindow> = unsafe {
+        msg_send![
+            super(ns_window),
+            initWithContentRect: content_rect,
+            styleMask: style_mask,
+            backing: NSBackingStoreType::Buffered,
+            defer: false
+        ]
+    };
+    #[allow(unsafe_code)]
+    // SAFETY: `SolorWindow` retains ownership via `Retained`; prevent AppKit double-release on close.
+    unsafe {
+        ns_window.setReleasedWhenClosed(false);
+    }
+    ns_window.setTitle(&NSString::from_str(options.title));
+    apply_window_titlebar_appearance(&ns_window, !options.native_decorations, false);
+    ns_window.setAcceptsMouseMovedEvents(true);
+    if let Some(min) = options.min_size {
+        ns_window.setContentMinSize(NSSize::new(f64::from(min.width), f64::from(min.height)));
+    }
+    if let Some(max) = options.max_size {
+        ns_window.setContentMaxSize(NSSize::new(f64::from(max.width), f64::from(max.height)));
+    }
+    if options.background == WindowBackground::Transparent {
+        ns_window.setOpaque(false);
+        ns_window.setBackgroundColor(Some(&NSColor::clearColor()));
+    } else {
+        ns_window.setOpaque(true);
+        ns_window.setBackgroundColor(Some(&NSColor::whiteColor()));
+    }
+    let level: NSWindowLevel = if options.always_on_top {
+        NSFloatingWindowLevel
+    } else {
+        NSNormalWindowLevel
+    };
+    ns_window.setLevel(level);
+
+    let content_view = ns_window
+        .contentView()
+        .context("NSWindow created without a contentView")?;
+    let bounds = content_view.bounds();
+    let ns_view = mtm.alloc::<SolorView>().set_ivars(ViewIvars {
+        record: RefCell::new(Weak::new()),
+    });
+    #[allow(unsafe_code)]
+    // SAFETY: Calling `NSView::initWithFrame:` on a freshly allocated `SolorView`.
+    let ns_view: Retained<SolorView> = unsafe { msg_send![super(ns_view), initWithFrame: bounds] };
+    ns_view.setAutoresizingMask(
+        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
+    );
+    ns_view.setLayer(Some(backing_layer));
+    ns_view.setWantsLayer(true);
+    ns_view.setLayerContentsRedrawPolicy(NSViewLayerContentsRedrawPolicy::DuringViewResize);
+
+    let tracking_options = NSTrackingAreaOptions::MouseEnteredAndExited
+        | NSTrackingAreaOptions::MouseMoved
+        | NSTrackingAreaOptions::ActiveAlways
+        | NSTrackingAreaOptions::InVisibleRect;
+    #[allow(unsafe_code)]
+    // SAFETY: `ns_view` owns the tracking area and outlives it.
+    let tracking = unsafe {
+        NSTrackingArea::initWithRect_options_owner_userInfo(
+            NSTrackingArea::alloc(),
+            NSRect::ZERO,
+            tracking_options,
+            Some(&ns_view),
+            None,
+        )
+    };
+    ns_view.addTrackingArea(&tracking);
+
+    #[allow(unsafe_code)]
+    // SAFETY: `NSPasteboardTypeFileURL` is a static AppKit constant.
+    let file_url_type = unsafe { NSPasteboardTypeFileURL };
+    let dragged_types = NSArray::from_slice(&[file_url_type]);
+    ns_view.registerForDraggedTypes(&dragged_types);
+
+    content_view.addSubview(&ns_view);
+    ns_window.makeFirstResponder(Some(&ns_view));
+
+    Ok((ns_window, ns_view))
 }
 
 fn style_mask_for(native_decorations: bool, resizable: bool) -> NSWindowStyleMask {

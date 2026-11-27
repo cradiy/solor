@@ -8,10 +8,18 @@ use super::{Renderer, WindowBackground, WindowHandle, WindowOptions};
 pub(super) struct Host(MacOs);
 
 pub(super) fn select() -> Result<Host> {
-    Ok(Host(MacOs))
+    Ok(Host(MacOs {
+        gpu_memory_policy: Default::default(),
+        trace_submissions: std::env::var_os("SOLOR_TRACE_SUBMISSIONS").is_some(),
+    }))
 }
 
 pub(super) type Windows = MacApplication;
+
+#[cfg(not(feature = "gpu"))]
+fn gpu_unavailable<T>() -> Result<T> {
+    anyhow::bail!("GPU rendering requires the solor-platform `gpu` feature")
+}
 
 fn mount(
     ui: Ui,
@@ -36,12 +44,17 @@ pub(super) fn open_window<R: Render>(
             let background = options.background;
             app.build_window(options, |handle| mount(ui, root(handle), background))
         }
-        Renderer::Gpu => anyhow::bail!("GPU rendering is not yet implemented on macOS"),
+        #[cfg(feature = "gpu")]
+        Renderer::Gpu => app.build_gpu_window(options, ui, root),
+        #[cfg(not(feature = "gpu"))]
+        Renderer::Gpu => gpu_unavailable(),
     }
 }
 
 impl Host {
-    pub(super) fn set_gpu_memory_policy(&mut self, _policy: super::GpuMemoryPolicy) {}
+    pub(super) fn set_gpu_memory_policy(&mut self, policy: super::GpuMemoryPolicy) {
+        self.0.gpu_memory_policy = policy;
+    }
 
     pub(super) fn run(&self, setup: impl FnOnce(Windows) -> Result<()>) -> Result<()> {
         self.0.run(setup)
