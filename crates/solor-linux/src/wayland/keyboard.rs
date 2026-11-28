@@ -18,7 +18,7 @@ use wayland_client::backend::ObjectId;
 pub(super) struct Keyboard {
     device: wl_keyboard::WlKeyboard,
     layout: Option<xkb::State>,
-    focus: Option<ObjectId>,
+    pub(super) focus: Option<ObjectId>,
     repeat: Repeat,
     pub(super) modifiers: Modifiers,
 }
@@ -205,6 +205,22 @@ fn logical_key(sym: Keysym) -> Key {
     Key::Named(named)
 }
 
+impl Desktop {
+    pub(super) fn keyboard_focus_changed(&mut self, id: &ObjectId, entered: bool) {
+        let seats = self
+            .seats
+            .iter()
+            .filter_map(|s| s.keyboard.as_ref())
+            .filter(|k| k.focus.as_ref() == Some(id))
+            .count();
+        if seats == usize::from(entered)
+            && let Some(window) = self.windows.get_mut(id)
+        {
+            window.event(WindowEvent::KeyboardFocus(entered));
+        }
+    }
+}
+
 impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
     fn event(
         desktop: &mut Self,
@@ -237,19 +253,32 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Desktop {
             }
             wl_keyboard::Event::Enter { surface, .. } => {
                 keyboard.repeat.held = None;
-                keyboard.focus = Some(surface.id());
-                if let Some(c) = &desktop.clipboard {
-                    c.focus(*name, Some(surface.id()));
+                let id = surface.id();
+                let previous = keyboard.focus.replace(id.clone());
+                if previous.as_ref() == Some(&id) {
+                    return;
                 }
+                if let Some(c) = &desktop.clipboard {
+                    c.focus(*name, Some(id.clone()));
+                }
+                if let Some(previous) = previous {
+                    desktop.keyboard_focus_changed(&previous, false);
+                }
+                desktop.keyboard_focus_changed(&id, true);
             }
             wl_keyboard::Event::RepeatInfo { rate, delay } => {
                 keyboard.repeat.configure(rate, delay, Instant::now());
             }
             wl_keyboard::Event::Leave { surface, .. } => {
-                keyboard.leave(&surface.id());
+                let id = surface.id();
+                if keyboard.focus.as_ref() != Some(&id) {
+                    return;
+                }
+                keyboard.leave(&id);
                 if let Some(c) = &desktop.clipboard {
                     c.focus(*name, None);
                 }
+                desktop.keyboard_focus_changed(&id, false);
             }
             wl_keyboard::Event::Modifiers {
                 mods_depressed,

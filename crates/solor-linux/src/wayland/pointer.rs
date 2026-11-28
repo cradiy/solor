@@ -152,6 +152,7 @@ impl Seat {
 }
 
 pub(super) fn cancel_focus(seats: &mut [Seat], id: &ObjectId, window: &mut Window) {
+    let mut lost_keyboard = false;
     for seat in seats {
         if let Some(touch) = &mut seat.touch {
             touch.cancel_window(id, window);
@@ -162,9 +163,15 @@ pub(super) fn cancel_focus(seats: &mut [Seat], id: &ObjectId, window: &mut Windo
                 seat.name.into(),
             ))));
         }
-        if let Some(keyboard) = &mut seat.keyboard {
+        if let Some(keyboard) = &mut seat.keyboard
+            && keyboard.focus.as_ref() == Some(id)
+        {
+            lost_keyboard = true;
             keyboard.leave(id);
         }
+    }
+    if lost_keyboard {
+        window.event(WindowEvent::KeyboardFocus(false));
     }
 }
 
@@ -300,6 +307,9 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Desktop {
                 }
                 if let Some(index) = state.seats.iter().position(|s| s.name == name) {
                     let mut seat = state.seats.swap_remove(index);
+                    if let Some(id) = seat.keyboard.as_ref().and_then(|k| k.focus.as_ref()) {
+                        state.keyboard_focus_changed(id, false);
+                    }
                     if let Some(touch) = &mut seat.touch {
                         touch.cancel_all(state.windows.values_mut());
                     }
@@ -340,6 +350,7 @@ impl Dispatch<wl_seat::WlSeat, u32> for Desktop {
             capabilities: WEnum::Value(caps),
         } = event
         {
+            let mut lost_focus = None;
             if !state.popup_only && caps.contains(wl_seat::Capability::Keyboard) {
                 input
                     .keyboard
@@ -348,7 +359,7 @@ impl Dispatch<wl_seat::WlSeat, u32> for Desktop {
                 if let Some(c) = &state.clipboard {
                     c.focus(*name, None);
                 }
-                input.keyboard = None;
+                lost_focus = input.keyboard.take().and_then(|mut k| k.focus.take());
             }
             if caps.contains(wl_seat::Capability::Touch) {
                 input
@@ -377,6 +388,9 @@ impl Dispatch<wl_seat::WlSeat, u32> for Desktop {
                     ))));
                 }
                 input.release_pointer();
+            }
+            if let Some(id) = lost_focus {
+                state.keyboard_focus_changed(&id, false);
             }
         }
     }

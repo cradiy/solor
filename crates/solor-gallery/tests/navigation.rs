@@ -23,6 +23,7 @@ fn typography_sample_displays_keyboard_and_composed_text() -> Result<()> {
     use solor::text::{Preedit, TextInputEvent};
     let (ui, root) = gallery()?;
     let mut window = CpuWindow::mount(ui, root)?;
+    window.event(WindowEvent::KeyboardFocus(true))?;
     let size = Size {
         width: px(800.),
         height: px(560.),
@@ -46,6 +47,12 @@ fn typography_sample_displays_keyboard_and_composed_text() -> Result<()> {
     let original = render(&mut window)?;
     let original_caret = window.caret_bounds().expect("focused sample caret");
     assert_eq!(window.surrounding_text(32).unwrap().text(), "Aa");
+    assert!(window.event(WindowEvent::KeyboardFocus(false))?.redraw);
+    assert_ne!(render(&mut window)?, original);
+    assert!(window.caret_bounds().is_none());
+    assert!(window.event(WindowEvent::KeyboardFocus(true))?.redraw);
+    assert_eq!(render(&mut window)?, original);
+    assert_eq!(window.caret_bounds(), Some(original_caret));
     for repeat in [false, true, true] {
         window.event(key(Key::from("e\u{301}"), repeat))?;
     }
@@ -126,6 +133,7 @@ fn keyboard_selection_highlights_and_replaces_complete_graphemes() -> Result<()>
 
     let (ui, root) = gallery()?;
     let mut window = CpuWindow::mount(ui, root)?;
+    window.event(WindowEvent::KeyboardFocus(true))?;
     let size = Size {
         width: px(800.),
         height: px(560.),
@@ -203,6 +211,7 @@ fn cut_keeps_the_selection_until_the_clipboard_accepts_it() -> Result<()> {
     let clipboard = ui.clipboard();
     let contents = Rc::new(TextClipboard::default());
     let mut window = CpuWindow::mount(ui, root)?;
+    window.event(WindowEvent::KeyboardFocus(true))?;
     window.set_clipboard(contents.clone());
     window.frame(
         Size {
@@ -246,6 +255,7 @@ fn paste_requires_the_original_text_focus_even_after_returning_to_the_field() ->
     use std::task::Waker;
     let (ui, root) = gallery()?;
     let mut window = CpuWindow::mount(ui, root)?;
+    window.event(WindowEvent::KeyboardFocus(true))?;
     window.set_clipboard(Rc::new(TextClipboard(RefCell::new("中".into()))));
     let size = Size {
         width: px(800.),
@@ -388,6 +398,7 @@ fn controls_change_the_specimen_and_choices_survive_navigation() -> Result<()> {
 fn startup_keyboard_navigation_keeps_focus_on_the_activated_tab() -> Result<()> {
     let (ui, root) = gallery()?;
     let mut window = CpuWindow::mount(ui, root)?;
+    window.event(WindowEvent::KeyboardFocus(true))?;
     let size = Size {
         width: px(800.),
         height: px(560.),
@@ -507,6 +518,7 @@ fn market_window(scale: RasterScale) -> Result<(CpuWindow, Size)> {
     };
     let (ui, root) = gallery()?;
     let mut window = CpuWindow::mount(ui, root)?;
+    window.event(WindowEvent::KeyboardFocus(true))?;
     window.frame(size, scale)?;
     window.frame_submitted()?;
     click(&mut window, 461.0, 29.0)?;

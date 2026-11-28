@@ -1,5 +1,5 @@
-#![cfg(target_os = "macos")]
 //! Integration checks for the macOS integrated titlebar adaptation in `solor-gallery`.
+#![cfg(target_os = "macos")]
 use anyhow::Result;
 use solor::{
     WindowControl,
@@ -263,6 +263,7 @@ fn typography_sample_supports_macos_command_and_option_shortcuts() -> Result<()>
     let font = include_bytes!("../../../fixtures/fonts/NotoSansCJKsc-fixture.otf");
     let (ui, root) = solor_gallery::gallery(solor::Ui::with_font(font.to_vec())?)?;
     let mut window = CpuWindow::mount(ui, root)?;
+    window.event(WindowEvent::KeyboardFocus(true))?;
     let clipboard = Rc::new(MemoryClipboard(RefCell::new(String::new())));
     window.set_clipboard(clipboard);
     render_window(&mut window)?;

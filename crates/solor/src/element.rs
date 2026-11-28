@@ -852,7 +852,7 @@ impl<'paint> PaintContext<'paint> {
     }
 }
 
-pub(super) type Click = Box<dyn Fn(&mut Context<'_>) -> Result<()>>;
+pub(super) type EventHandler = Box<dyn Fn(&mut Context<'_>) -> Result<()>>;
 
 struct MountedBackground {
     placement: crate::bitmap::Placement,

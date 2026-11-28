@@ -37,6 +37,7 @@ fn native_text_edits_repaint_the_focused_field() -> Result<()> {
                 .child(div().focusable())
         }),
     )?;
+    window.event(WindowEvent::KeyboardFocus(true))?;
     let draw = |w: &mut CpuWindow| -> Result<[u8; 4]> {
         let frame = w.frame(
             Size {
@@ -296,6 +297,7 @@ fn window_keys_follow_focus_and_retire_with_their_controls() -> Result<()> {
                 })
         }),
     )?;
+    window.event(WindowEvent::KeyboardFocus(true))?;
     let submit = |window: &mut CpuWindow| -> Result<()> {
         window.frame(
             Size {
@@ -392,6 +394,7 @@ fn focus_indicator_moves_over_hover_backgrounds_and_under_content() -> Result<()
                 .child(div().size(px(20.)).bg(idle).focus_indicator(indicator))
         }),
     )?;
+    window.event(WindowEvent::KeyboardFocus(true))?;
     let render = |window: &mut CpuWindow, expected: [Rgba; 3]| -> Result<()> {
         let frame = window.frame(
             Size {

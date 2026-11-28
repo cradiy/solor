@@ -424,6 +424,8 @@ pub enum WindowEvent {
         /// Whether an external file drag is over the target.
         hovered: bool,
     },
+    /// Whether the window currently has native keyboard focus.
+    KeyboardFocus(bool),
     /// A layout-resolved key press or release for this window.
     Key(crate::keyboard::KeyEvent),
     /// A text edit from the active platform input method.

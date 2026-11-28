@@ -190,34 +190,114 @@ impl TabOrder {
 }
 
 impl Instance {
+    pub(crate) fn effective_focus(&self) -> Option<NodeId> {
+        self.focused.filter(|_| self.keyboard_active)
+    }
+
+    fn change_focus(
+        &mut self,
+        next: Option<NodeId>,
+        active: bool,
+        show_indicator: bool,
+        state: &mut Runtime<()>,
+        engine: &crate::TextSystem,
+        tasks: &crate::Tasks,
+    ) {
+        let mut redirects = Vec::new();
+        let mut next = next;
+        let mut indicator = show_indicator;
+        while let Some(target) = self
+            .notify_focus_change(next, active, indicator, state, engine, tasks)
+            .and_then(|handle| self.focus_target(handle))
+        {
+            if Some(target) == self.focused {
+                break;
+            }
+            if redirects.contains(&target) {
+                log::warn!("cyclic focus request");
+                break;
+            }
+            redirects.push(target);
+            next = Some(target);
+            indicator = true;
+        }
+    }
+
+    fn notify_focus_change(
+        &mut self,
+        next: Option<NodeId>,
+        active: bool,
+        show_indicator: bool,
+        state: &mut Runtime<()>,
+        engine: &crate::TextSystem,
+        tasks: &crate::Tasks,
+    ) -> Option<crate::FocusHandle> {
+        let previous = self.effective_focus();
+        let current = next.filter(|_| active);
+        if previous != current {
+            self.cancel_focused_preedit(state);
+            self.focus_generation
+                .set(self.focus_generation.get().wrapping_add(1));
+            if let Some(id) = previous {
+                self.set_focus_indicator(id, false);
+            }
+        }
+        self.focused = next;
+        self.keyboard_active = active;
+        self.show_focus_indicator = show_indicator;
+        if let Some(id) = current {
+            self.set_focus_indicator(id, show_indicator);
+        }
+        if previous == current {
+            return None;
+        }
+        let mut request = None;
+        for (target, entering) in [(previous, false), (current, true)] {
+            let Some(node) = target.and_then(|id| self.bodies.get_mut(&id)) else {
+                continue;
+            };
+            let Some(handlers) = &node.handlers else {
+                continue;
+            };
+            if handlers.text_input.is_some() {
+                self.repaints.borrow_mut().invalidate(node.id);
+            }
+            let callback = if entering {
+                &handlers.focus
+            } else {
+                &handlers.blur
+            };
+            if let Some(callback) = callback
+                && let Err(err) = callback(&mut Context {
+                    state,
+                    engine,
+                    tasks,
+                    owned: Some(&mut node.owned),
+                    focus: Some(self.pointer.callback_focus(current, &mut request)),
+                })
+            {
+                log::error!("focus listener failed: {err:#}");
+            }
+        }
+        request
+    }
+
     pub(super) fn set_focus(
         &mut self,
         next: Option<NodeId>,
         show_indicator: bool,
         state: &mut Runtime<()>,
+        engine: &crate::TextSystem,
+        tasks: &crate::Tasks,
     ) {
-        if self.focused != next {
-            for id in [self.focused, next].into_iter().flatten() {
-                if self
-                    .bodies
-                    .get(&id)
-                    .and_then(|n| n.handlers.as_ref())
-                    .is_some_and(|h| h.text_input.is_some())
-                {
-                    self.repaints.borrow_mut().invalidate(id);
-                }
-            }
-            self.focus_generation
-                .set(self.focus_generation.get().wrapping_add(1));
-            if let Some(previous) = self.focused {
-                self.cancel_focused_preedit(state);
-                self.set_focus_indicator(previous, false);
-            }
-        }
-        self.focused = next;
-        if let Some(id) = next {
-            self.set_focus_indicator(id, show_indicator);
-        }
+        self.change_focus(
+            next,
+            self.keyboard_active,
+            show_indicator,
+            state,
+            engine,
+            tasks,
+        );
     }
 
     fn set_focus_indicator(&mut self, id: NodeId, visible: bool) {
@@ -235,6 +315,23 @@ impl Instance {
 }
 
 impl Ui {
+    /// Updates native keyboard focus while retaining the view's logical focus target.
+    pub fn set_window_keyboard_focus(&mut self, view: ViewId, active: bool) -> Result<()> {
+        let instance = self
+            .instances
+            .get_mut(&view)
+            .ok_or(TreeError::InvalidNode(view.0))?;
+        instance.change_focus(
+            instance.focused,
+            active,
+            instance.show_focus_indicator,
+            self.state.get_mut(),
+            &self.engine,
+            &self.tasks,
+        );
+        Ok(())
+    }
+
     fn advance_focus(&mut self, view: ViewId, backwards: bool) -> Result<Option<NodeId>> {
         let instance = self
             .instances
@@ -259,7 +356,7 @@ impl Ui {
             }
         })?;
         if next.is_some() {
-            instance.set_focus(next, true, state);
+            instance.set_focus(next, true, state, &self.engine, &self.tasks);
         }
         Ok(next)
     }
@@ -282,6 +379,9 @@ impl Ui {
             .instances
             .get_mut(&view)
             .ok_or(TreeError::InvalidNode(view.0))?;
+        if !instance.keyboard_active {
+            return Ok(false);
+        }
         let mut delivered = false;
         let mut request = None;
         if let Some(node) = instance.focused.and_then(|id| instance.bodies.get_mut(&id))
@@ -308,7 +408,12 @@ impl Ui {
                         };
                         handler(event, &mut cx)?;
                         if cx.prevented {
-                            instance.apply_focus_request(request, self.state.get_mut());
+                            instance.apply_focus_request(
+                                request,
+                                self.state.get_mut(),
+                                &self.engine,
+                                &self.tasks,
+                            );
                             return Ok(true);
                         }
                         delivered = true;
@@ -337,11 +442,16 @@ impl Ui {
                         .map(|(handler, binding)| (handler, binding.value.as_ref()))
                 },
             )? {
-                instance.apply_focus_request(request, self.state.get_mut());
+                instance.apply_focus_request(
+                    request,
+                    self.state.get_mut(),
+                    &self.engine,
+                    &self.tasks,
+                );
                 return Ok(true);
             }
         }
-        if instance.apply_focus_request(request, self.state.get_mut()) {
+        if instance.apply_focus_request(request, self.state.get_mut(), &self.engine, &self.tasks) {
             return Ok(true);
         }
         let mods = event.modifiers;

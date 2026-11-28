@@ -21,7 +21,7 @@ pub enum TextInputEvent {
 impl Instance {
     pub(crate) fn text_input_signal(&self) -> Option<Signal<TextInputState>> {
         self.bodies
-            .get(&self.focused?)?
+            .get(&self.effective_focus()?)?
             .handlers
             .as_ref()?
             .text_input

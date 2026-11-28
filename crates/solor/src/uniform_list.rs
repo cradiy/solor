@@ -725,7 +725,7 @@ impl Instance {
                 )?;
             }
         }
-        self.apply_focus_request(request, state);
+        self.apply_focus_request(request, state, engine, tasks);
         Ok(())
     }
 

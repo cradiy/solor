@@ -164,7 +164,7 @@ impl Ui {
             &mut request,
             |handlers| ActionHandler::for_value(handlers, action),
         )?;
-        instance.apply_focus_request(request, self.state.get_mut());
+        instance.apply_focus_request(request, self.state.get_mut(), &self.engine, &self.tasks);
         Ok(delivered)
     }
 

@@ -27,6 +27,18 @@ impl Default for FocusHandle {
 }
 
 impl<E: Element> Node<E> {
+    /// Runs when this element receives keyboard focus, including when its window regains it.
+    pub fn on_focus(mut self, handler: impl Fn(&mut Context<'_>) -> Result<()> + 'static) -> Self {
+        self.handlers.get_or_insert_with(Default::default).focus = Some(Box::new(handler));
+        self
+    }
+
+    /// Runs when keyboard focus leaves this element or its window.
+    pub fn on_blur(mut self, handler: impl Fn(&mut Context<'_>) -> Result<()> + 'static) -> Self {
+        self.handlers.get_or_insert_with(Default::default).blur = Some(Box::new(handler));
+        self
+    }
+
     /// Associates this focusable element with a handle. A view can mount one target per handle.
     pub fn track_focus(mut self, handle: FocusHandle) -> Self {
         self.handlers
@@ -62,16 +74,20 @@ impl Context<'_> {
 }
 
 impl Instance {
+    pub(super) fn focus_target(&self, handle: FocusHandle) -> Option<crate::NodeId> {
+        let id = *self.focus_targets.get(&handle)?;
+        self.bodies.get(&id)?.visible.then_some(id)
+    }
+
     pub(crate) fn apply_focus_request(
         &mut self,
         request: Option<FocusHandle>,
         state: &mut Runtime<()>,
+        engine: &crate::TextSystem,
+        tasks: &crate::Tasks,
     ) -> bool {
-        if let Some(handle) = request
-            && let Some(&id) = self.focus_targets.get(&handle)
-            && self.bodies.get(&id).is_some_and(|body| body.visible)
-        {
-            self.set_focus(Some(id), true, state);
+        if let Some(id) = request.and_then(|handle| self.focus_target(handle)) {
+            self.set_focus(Some(id), true, state, engine, tasks);
             return true;
         }
         false

@@ -100,7 +100,7 @@ impl PointerFrame {
         instance: &Instance,
         state: &crate::state::Runtime<()>,
     ) -> Option<crate::text::FrameCaret> {
-        let field = self.geometry.fields.get(&instance.focused?)?;
+        let field = self.geometry.fields.get(&instance.effective_focus()?)?;
         let label = instance.scene.body::<StyledBody<Text>>(field.label).ok()?;
         let color = label
             .content

@@ -27,7 +27,7 @@ fn held_key_uses_seat_timing_and_stops_on_release() {
 
 fn keymap_file() -> (File, u32) {
     let map = br#"xkb_keymap {
-        xkb_keycodes "codes" { minimum = 8; maximum = 255; <AC01> = 38; <FK10> = 76; };
+        xkb_keycodes "codes" { minimum = 8; maximum = 255; <AC01> = 38; <FK10> = 76; <TAB> = 23; };
         xkb_types "types" {
             type "TWO_LEVEL" {
                 modifiers = Shift;
@@ -39,6 +39,7 @@ fn keymap_file() -> (File, u32) {
         xkb_symbols "symbols" {
             key <AC01> { type="TWO_LEVEL", [ Greek_alpha, Greek_ALPHA ] };
             key <FK10> { repeat=yes, [ F10 ] };
+            key <TAB> { [ Tab ] };
         };
     };"#;
     let mut file = File::from(memfd_create("keymap", MemfdFlags::CLOEXEC).unwrap());
@@ -170,5 +171,132 @@ fn a_keyboard_popup_grab_is_scoped_to_the_focused_key_press() -> Result<()> {
         ..options
     };
     assert!(open(&app, explicit_parent).is_err());
+    Ok(())
+}
+
+#[test]
+fn tab_and_surface_focus_notify_the_editor_without_another_keypress() -> Result<()> {
+    use crate::wayland::application::fixture::Host;
+    use solor::{
+        Ui, ViewFrame, component, div,
+        layout::Size,
+        platform::{UiWindow, ViewRenderer},
+        raster::{RasterFrame, RasterScale, Rgba8},
+        text::TextInputState,
+    };
+    use std::{cell::RefCell, rc::Rc};
+    use wayland_client::protocol::wl_seat;
+
+    struct Renderer;
+    impl ViewRenderer for Renderer {
+        type Target = Rgba8;
+        fn render(
+            &mut self,
+            _: ViewFrame,
+            _: Size,
+            _: RasterScale,
+            _: bool,
+        ) -> Result<RasterFrame<'_>> {
+            unreachable!()
+        }
+    }
+
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let field = |name, password: bool| {
+        let entered = events.clone();
+        let left = events.clone();
+        let field = div()
+            .focusable()
+            .on_focus(move |_| {
+                entered.borrow_mut().push((name, true));
+                Ok(())
+            })
+            .on_blur(move |_| {
+                left.borrow_mut().push((name, false));
+                Ok(())
+            });
+        if password { field.auto_focus() } else { field }
+    };
+    let window = UiWindow::with_renderer(
+        Ui::new(),
+        component(|cx| {
+            let text = cx.signal(TextInputState::default());
+            div()
+                .child(field("username", false))
+                .child(field("password", true).text_input(text))
+        }),
+        Renderer,
+    )?;
+    let mut host = Host::new()?;
+    let id = host.open(window)?;
+    let window = host.desktop().windows.get_mut(&id).unwrap();
+    window.mark_mapped();
+    let surface = window.surface.clone();
+    assert!(events.borrow().is_empty());
+    let seat = host.desktop().seats[0].seat.clone();
+    let capabilities = |keyboard| wl_seat::Event::Capabilities {
+        capabilities: WEnum::Value(if keyboard {
+            wl_seat::Capability::Keyboard
+        } else {
+            wl_seat::Capability::empty()
+        }),
+    };
+    host.deliver(&seat, capabilities(true));
+    let keyboard = host.desktop().seats[0].keyboard.as_mut().unwrap();
+    let (file, size) = keymap_file();
+    keyboard.layout = Some(read_layout(file.into(), size)?);
+    let device = keyboard.device.clone();
+    let enter = || wl_keyboard::Event::Enter {
+        serial: 1,
+        surface: surface.clone(),
+        keys: Vec::new(),
+    };
+    host.deliver(&device, enter());
+    let first_session = host.desktop().windows[&id]
+        .view
+        .text_input_session()
+        .unwrap();
+    for serial in [2, 3] {
+        host.deliver(
+            &device,
+            wl_keyboard::Event::Key {
+                serial,
+                time: serial,
+                key: 15,
+                state: WEnum::Value(wl_keyboard::KeyState::Pressed),
+            },
+        );
+    }
+    assert_eq!(
+        &*events.borrow(),
+        &[
+            ("password", true),
+            ("password", false),
+            ("username", true),
+            ("username", false),
+            ("password", true)
+        ]
+    );
+    events.borrow_mut().clear();
+    host.deliver(
+        &device,
+        wl_keyboard::Event::Leave {
+            serial: 4,
+            surface: surface.clone(),
+        },
+    );
+    assert_eq!(host.desktop().windows[&id].view.text_input_session(), None);
+    host.deliver(&device, enter());
+    host.deliver(&device, enter());
+    let resumed = host.desktop().windows[&id]
+        .view
+        .text_input_session()
+        .unwrap();
+    assert_ne!(first_session, resumed);
+    host.deliver(&seat, capabilities(false));
+    assert_eq!(
+        &*events.borrow(),
+        &[("password", false), ("password", true), ("password", false)]
+    );
     Ok(())
 }

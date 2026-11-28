@@ -286,6 +286,7 @@ define_class!(
             if let Some(state) = state {
                 WindowRecord::dispatch_event(&record, WindowEvent::StateChanged(state));
             }
+            WindowRecord::dispatch_event(&record, WindowEvent::KeyboardFocus(true));
             invoke_main_tick();
         }
 
@@ -303,6 +304,7 @@ define_class!(
             if let Some(state) = state {
                 WindowRecord::dispatch_event(&record, WindowEvent::StateChanged(state));
             }
+            WindowRecord::dispatch_event(&record, WindowEvent::KeyboardFocus(false));
             invoke_main_tick();
         }
 

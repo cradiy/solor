@@ -27,6 +27,7 @@ impl WindowHandler<Rgba8> for Renderer {
         };
         let redraw = match event {
             WindowEvent::StateChanged(_)
+            | WindowEvent::KeyboardFocus(_)
             | WindowEvent::Key(_)
             | WindowEvent::TextInput(_)
             | WindowEvent::FileDropHover { .. } => false,

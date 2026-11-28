@@ -401,6 +401,8 @@ type ContentUpdates = Rc<RefCell<HashMap<(ViewId, NodeId), ContentUpdate>>>;
 struct Instance {
     focus_targets: HashMap<FocusHandle, NodeId>,
     focused: Option<NodeId>,
+    keyboard_active: bool,
+    show_focus_indicator: bool,
     focus_generation: Rc<std::cell::Cell<u64>>,
     tab_order: Option<keyboard::TabOrder>,
     transitions: transition::Transitions,
@@ -503,6 +505,8 @@ impl Instance {
         &mut self,
         updates: VisibilityBatch,
         state: &mut Runtime<()>,
+        engine: &TextSystem,
+        tasks: &Tasks,
     ) -> Result<()> {
         // Resolve all local declarations before propagating from parents to children.
         // A branch may have retired or replaced the mount that queued an update.
@@ -587,7 +591,7 @@ impl Instance {
                         body.set_palette_position(position);
                     }
                     if self.focused == Some(id) {
-                        self.set_focus(None, false, state);
+                        self.set_focus(None, false, state, engine, tasks);
                     }
                     self.unobserve_paint(id, state);
                 }
@@ -678,7 +682,7 @@ impl Instance {
                 .get(&parent)
                 .is_some_and(|node| node.auto_focus && node.visible)
         {
-            self.set_focus(Some(parent), false, cx.state);
+            self.set_focus(Some(parent), false, cx.state, cx.engine, cx.tasks);
         }
         self.register_children(parent, path, children, cx)
     }
@@ -798,15 +802,18 @@ impl Instance {
     }
 
     fn retire_node(&mut self, node: NodeId, cx: &mut Attachment<'_>) -> Result<()> {
-        if self.focused == Some(node) {
-            self.set_focus(None, false, cx.state);
-        }
-        let mut node = self.bodies.remove(&node).expect("mounted body");
-        if let Some(handle) = node.handlers.as_deref().and_then(|h| h.focus_handle)
-            && self.focus_targets.get(&handle) == Some(&node.id)
+        if let Some(handle) = self.bodies[&node]
+            .handlers
+            .as_deref()
+            .and_then(|h| h.focus_handle)
+            && self.focus_targets.get(&handle) == Some(&node)
         {
             self.focus_targets.remove(&handle);
         }
+        if self.focused == Some(node) {
+            self.set_focus(None, false, cx.state, cx.engine, cx.tasks);
+        }
+        let mut node = self.bodies.remove(&node).expect("mounted body");
         self.visible_nodes -= usize::from(node.visible);
         if let Some(tracked) = self.tracked_scroll.remove(&node.id) {
             tracked.detach(cx.state);
@@ -924,6 +931,15 @@ impl Ui {
 
     /// Attaches a view with its own positive, finite logical-pixel basis for rem lengths.
     pub fn mount_with_rem_size(&mut self, item: impl Render, rem_size: Pixels) -> Result<ViewId> {
+        self.mount_view(item, rem_size, true)
+    }
+
+    fn mount_view(
+        &mut self,
+        item: impl Render,
+        rem_size: Pixels,
+        keyboard_active: bool,
+    ) -> Result<ViewId> {
         let units = UnitResolver::new(rem_size)?;
         let mut mount = Mount {
             state: self.state.get_mut(),
@@ -948,6 +964,8 @@ impl Ui {
         let mut instance = Instance {
             focus_targets: HashMap::new(),
             focused: None,
+            keyboard_active,
+            show_focus_indicator: false,
             focus_generation: Rc::default(),
             tab_order: None,
             transitions: Default::default(),
@@ -1027,7 +1045,7 @@ impl Ui {
             engine: &self.engine,
             owned: Some(&mut node.owned),
         })?;
-        instance.apply_focus_request(request, self.state.get_mut());
+        instance.apply_focus_request(request, self.state.get_mut(), &self.engine, &self.tasks);
         Ok(true)
     }
 
@@ -1059,7 +1077,12 @@ impl Ui {
                 });
                 for (view, updates) in self.visibility.borrow_mut().drain() {
                     if let Some(instance) = self.instances.get_mut(&view) {
-                        instance.apply_visibility(updates, self.state.get_mut())?;
+                        instance.apply_visibility(
+                            updates,
+                            self.state.get_mut(),
+                            &self.engine,
+                            &self.tasks,
+                        )?;
                     }
                 }
                 if let Some(error) = failure {
@@ -1180,7 +1203,10 @@ impl Ui {
 
     /// Gives focus to a visible, focusable element. An invalid request preserves existing focus.
     pub fn focus(&mut self, view: ViewId, target: NodeId) -> Result<()> {
-        let (instance, state) = self.instance_and_state(view)?;
+        let instance = self
+            .instances
+            .get_mut(&view)
+            .ok_or(tree::TreeError::InvalidNode(view.0))?;
         let body = instance
             .bodies
             .get(&target)
@@ -1189,14 +1215,23 @@ impl Ui {
             body.visible && body.focusable,
             "focus requires a visible, focusable element"
         );
-        instance.set_focus(Some(target), true, state);
+        instance.set_focus(
+            Some(target),
+            true,
+            self.state.get_mut(),
+            &self.engine,
+            &self.tasks,
+        );
         Ok(())
     }
 
     /// Clears logical focus in this view.
     pub fn blur(&mut self, view: ViewId) -> Result<()> {
-        let (instance, state) = self.instance_and_state(view)?;
-        instance.set_focus(None, false, state);
+        let instance = self
+            .instances
+            .get_mut(&view)
+            .ok_or(tree::TreeError::InvalidNode(view.0))?;
+        instance.set_focus(None, false, self.state.get_mut(), &self.engine, &self.tasks);
         Ok(())
     }
 
@@ -1297,9 +1332,7 @@ impl Ui {
 
     /// Retires a mounted tree, its local signals and subscriptions.
     pub fn unmount(&mut self, scope: ViewId) -> Result<()> {
-        if !self.instances.contains_key(&scope) {
-            return Err(crate::tree::TreeError::InvalidNode(scope.0).into());
-        }
+        self.set_window_keyboard_focus(scope, false)?;
         self.state.get_mut().remove_subtree(scope.0)?;
         self.pending.borrow_mut().remove(&scope.0);
         self.visibility.borrow_mut().remove(&scope);

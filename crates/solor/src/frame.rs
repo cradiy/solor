@@ -414,7 +414,7 @@ impl Ui {
                 )?;
             }
         }
-        instance.apply_focus_request(request, self.state.get_mut());
+        instance.apply_focus_request(request, self.state.get_mut(), &self.engine, &self.tasks);
         Ok(())
     }
 

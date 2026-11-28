@@ -35,9 +35,10 @@ struct PreparedFrame {
 }
 
 impl<R: ViewRenderer> UiWindow<R> {
-    /// Mounts a root on a renderer owned by this window.
+    /// Mounts a root on a renderer owned by this window. The host delivers
+    /// [`WindowEvent::KeyboardFocus`] when the window acquires or loses the keyboard.
     pub fn with_renderer(mut ui: Ui, root: impl Render, renderer: R) -> Result<Self> {
-        let view = ui.mount(root)?;
+        let view = ui.mount_view(root, crate::px(16.), false)?;
         Ok(Self {
             ui,
             view,
@@ -112,6 +113,9 @@ impl<R: ViewRenderer> WindowHandler<R::Target> for UiWindow<R> {
             }
             WindowEvent::Pointer(input) => {
                 response.window_control = self.ui.dispatch_pointer(self.view, input)?
+            }
+            WindowEvent::KeyboardFocus(active) => {
+                self.ui.set_window_keyboard_focus(self.view, active)?;
             }
             WindowEvent::Key(event) => {
                 self.ui.dispatch_key(self.view, &event)?;

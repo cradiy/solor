@@ -190,7 +190,8 @@ impl Delivery<'_> {
         };
         let Some((leaf, recipients)) = frame.hit(sample.position) else {
             if button == PointerButton::Primary {
-                self.instance.set_focus(None, false, self.state);
+                self.instance
+                    .set_focus(None, false, self.state, self.engine, self.tasks);
             }
             return Ok(None);
         };
@@ -202,7 +203,8 @@ impl Delivery<'_> {
             if let Some(owner) = recipients.focus {
                 frame.place_caret(owner, sample.position, self.state)?;
             }
-            self.instance.set_focus(recipients.focus, false, self.state);
+            self.instance
+                .set_focus(recipients.focus, false, self.state, self.engine, self.tasks);
         }
         Ok(recipients.pointer)
     }
@@ -428,9 +430,12 @@ impl Ui {
             engine: &self.engine,
         };
         let result = deliver(&mut delivery)?;
-        delivery
-            .instance
-            .apply_focus_request(delivery.focus_request, delivery.state);
+        delivery.instance.apply_focus_request(
+            delivery.focus_request,
+            delivery.state,
+            delivery.engine,
+            delivery.tasks,
+        );
         Ok(result)
     }
 

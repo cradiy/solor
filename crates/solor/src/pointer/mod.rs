@@ -239,7 +239,9 @@ pub(crate) struct Handlers {
     pub(crate) actions: Vec<crate::keyboard::ActionHandler>,
     pub(crate) key_down: Option<crate::keyboard::KeyDownHandler>,
     pub(crate) key_up: Option<crate::keyboard::KeyHandler>,
-    pub(crate) click: Option<crate::element::Click>,
+    pub(crate) click: Option<crate::element::EventHandler>,
+    pub(crate) focus: Option<crate::element::EventHandler>,
+    pub(crate) blur: Option<crate::element::EventHandler>,
 }
 
 impl Handlers {
