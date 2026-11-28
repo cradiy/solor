@@ -3,11 +3,7 @@ use crate::wayland::{Mapping, Window};
 use anyhow::Result;
 use futures_channel::oneshot;
 use solor::{NodeId, layout::Origin, platform::PlatformWindow, px};
-use std::{
-    os::{fd::AsFd, unix::ffi::OsStringExt},
-    path::PathBuf,
-    sync::atomic::Ordering,
-};
+use std::{os::fd::AsFd, path::PathBuf, sync::atomic::Ordering};
 use wayland_client::{Proxy, backend::ObjectId, protocol::wl_data_device_manager::DndAction};
 
 pub(super) const MIME: &str = "text/uri-list";
@@ -206,36 +202,7 @@ impl Desktop {
 
 fn local_paths(list: &str) -> Vec<PathBuf> {
     list.lines()
-        .filter_map(|line| {
-            let (scheme, rest) = line.split_once(':')?;
-            if !scheme.eq_ignore_ascii_case("file") || rest.contains(['?', '#']) {
-                return None;
-            }
-            let path = if let Some(authority) = rest.strip_prefix("//") {
-                let (host, path) = authority.split_at(authority.find('/')?);
-                if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
-                    return None;
-                }
-                path
-            } else {
-                rest
-            };
-            if !path.starts_with('/')
-                || path.match_indices('%').any(|(i, _)| {
-                    !path
-                        .as_bytes()
-                        .get(i + 1..i + 3)
-                        .is_some_and(|pair| pair.iter().all(u8::is_ascii_hexdigit))
-                })
-            {
-                return None;
-            }
-            let decoded = percent_encoding::percent_decode_str(path).collect::<Vec<_>>();
-            if decoded.contains(&0) {
-                return None;
-            }
-            Some(PathBuf::from(std::ffi::OsString::from_vec(decoded)))
-        })
+        .filter_map(crate::file_uri::local_path)
         .collect()
 }
 

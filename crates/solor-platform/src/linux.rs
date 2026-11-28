@@ -150,3 +150,5 @@ impl Host {
         }
     }
 }
+
+pub(super) use solor_linux::select_files;

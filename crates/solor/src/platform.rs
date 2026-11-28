@@ -1,5 +1,7 @@
 //! Window lifecycle and input shared by platform implementations.
+mod file_picker;
 mod mounted;
+pub use file_picker::{FileFilter, FilePickerOptions};
 pub use mounted::{UiWindow, ViewRenderer};
 
 use crate::{

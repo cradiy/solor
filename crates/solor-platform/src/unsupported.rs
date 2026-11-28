@@ -47,3 +47,13 @@ impl Host {
         match *self {}
     }
 }
+
+pub(super) async fn select_files(
+    _: super::FilePickerOptions,
+    _: bool,
+) -> Result<Vec<std::path::PathBuf>> {
+    anyhow::bail!(
+        "system file selection is unavailable on {}",
+        std::env::consts::OS
+    )
+}

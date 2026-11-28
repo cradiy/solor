@@ -1,9 +1,13 @@
-use crate::{CITRON, INK, LINE, MUTED, label, rule};
+use crate::{CITRON, INK, LINE, MUTED, activation_button, label, rule};
 use solor::{
     Div, IntoElement, ListScrollHandle, ScrollAlignment, SharedString, Styled, component, div,
     layout::Origin, px, rgb, scrollbar, text, uniform_list,
 };
-use std::{path::Path, rc::Rc};
+use solor_platform::{FilePickerOptions, pick_paths};
+use std::{
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 pub(super) fn file_drop() -> impl IntoElement {
     component(|cx| {
@@ -13,6 +17,46 @@ pub(super) fn file_drop() -> impl IntoElement {
         let surface = cx.signal(rgb(0xe9ede3));
         let list = ListScrollHandle::new();
         let reset = list.clone();
+        let picker_list = list.clone();
+        let choosing = cx.signal(false);
+        let choose = activation_button(
+            div()
+                .px(px(12.))
+                .py(px(6.))
+                .rounded_md()
+                .bg(CITRON)
+                .child(label("Choose images", 14., 20.)),
+            None,
+            move |cx| {
+                if *cx.read(choosing)? {
+                    return Ok(());
+                }
+                cx.set(choosing, true)?;
+                let list = picker_list.clone();
+                cx.spawn(move |cx| async move {
+                    let options = FilePickerOptions::files()
+                        .title("Select images")
+                        .accept_label("Select")
+                        .filter("Images", ["png", "jpg", "jpeg", "webp"]);
+                    let result = pick_paths(options).await;
+                    cx.set(choosing, false)?;
+                    match result {
+                        Ok(files) if !files.is_empty() => {
+                            cx.set(paths, file_rows(&files))?;
+                            cx.set(count, file_count(files.len()))?;
+                            list.scroll_to(0, ScrollAlignment::Top);
+                        }
+                        Err(error) => {
+                            log::warn!("Could not open file picker: {error:#}");
+                            cx.set(count, "File picker unavailable".into())?;
+                        }
+                        _ => {}
+                    }
+                    Ok(())
+                });
+                Ok(())
+            },
+        );
 
         let target = div()
             .h(px(154.))
@@ -36,19 +80,8 @@ pub(super) fn file_drop() -> impl IntoElement {
                 )
             })
             .on_file_drop(move |files, cx| {
-                cx.set(
-                    paths,
-                    files
-                        .iter()
-                        .enumerate()
-                        .map(|(i, path)| (i, Rc::from(path.as_path())))
-                        .collect(),
-                )?;
-                let n = files.len();
-                cx.set(
-                    count,
-                    format!("{n} {}", if n == 1 { "file" } else { "files" }).into(),
-                )?;
+                cx.set(paths, file_rows(files))?;
+                cx.set(count, file_count(files.len()))?;
                 reset.scroll_to(0, ScrollAlignment::Top);
                 Ok(())
             });
@@ -58,14 +91,21 @@ pub(super) fn file_drop() -> impl IntoElement {
             .items_stretch()
             .p(px(22.))
             .gap(px(12.))
-            .child(label("File drop", 33., 44.).letter_spacing(px(-1.3)))
+            .child(
+                div()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .child(label("Files", 33., 44.).letter_spacing(px(-1.3)))
+                    .child(choose),
+            )
             .child(target)
             .child(
                 div()
                     .flex_row()
                     .items_center()
                     .justify_between()
-                    .child(label("Last drop", 17., 26.))
+                    .child(label("Selected files", 17., 26.))
                     .child(text(count).text_size(px(13.)).text_color(MUTED)),
             )
             .child(rule())
@@ -82,6 +122,18 @@ pub(super) fn file_drop() -> impl IntoElement {
                     .child(scrollbar(&list).ml(px(-12.))),
             )
     })
+}
+
+fn file_rows(files: &[PathBuf]) -> Vec<(usize, Rc<Path>)> {
+    files
+        .iter()
+        .enumerate()
+        .map(|(i, path)| (i, Rc::from(path.as_path())))
+        .collect()
+}
+
+fn file_count(n: usize) -> SharedString {
+    format!("{n} {}", if n == 1 { "file" } else { "files" }).into()
 }
 
 fn file_row(path: &Path) -> Div {

@@ -8,7 +8,9 @@ mod clipboard;
 mod cursor;
 mod display_link;
 mod events;
+mod file_picker;
 mod font;
+pub use file_picker::select_files;
 #[cfg(feature = "gpu")]
 mod gpu;
 mod life;

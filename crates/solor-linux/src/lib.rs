@@ -2,6 +2,9 @@
 #![cfg(target_os = "linux")]
 
 mod desktop_font;
+mod file_picker;
+mod file_uri;
+pub use file_picker::select_files;
 pub mod layer_shell;
 pub mod popup;
 mod surface_control;

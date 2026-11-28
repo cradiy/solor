@@ -60,3 +60,5 @@ impl Host {
         self.0.run(setup)
     }
 }
+
+pub(super) use solor_macos::select_files;

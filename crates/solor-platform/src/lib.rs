@@ -11,13 +11,23 @@ use solor::{Assets, Render, Ui};
 mod system;
 
 pub use solor::platform::{
-    GpuMemoryPolicy, Renderer, SurfaceRect, WindowBackground, WindowHandle, WindowOptions,
-    WindowState,
+    FileFilter, FilePickerOptions, GpuMemoryPolicy, Renderer, SurfaceRect, WindowBackground,
+    WindowHandle, WindowOptions, WindowState,
 };
 #[cfg(target_os = "linux")]
 pub use solor_linux::{ApplicationSender, layer_shell, popup, session_lock};
 #[cfg(target_os = "macos")]
 pub use solor_macos::ApplicationSender;
+
+/// Opens the system file picker from a UI task. Cancelling returns `None`.
+pub async fn pick_path(options: FilePickerOptions) -> Result<Option<std::path::PathBuf>> {
+    Ok(system::select_files(options, false).await?.pop())
+}
+
+/// Opens the system file picker for multiple files or directories. Cancelling returns an empty list.
+pub async fn pick_paths(options: FilePickerOptions) -> Result<Vec<std::path::PathBuf>> {
+    system::select_files(options, true).await
+}
 
 fn default_renderer() -> Renderer {
     #[cfg(feature = "gpu")]
